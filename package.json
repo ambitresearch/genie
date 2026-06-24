@@ -7,7 +7,7 @@
   "engines": {
     "node": ">=18"
   },
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@10.34.4",
   "scripts": {
     "dev": "pnpm --filter @genie/server dev",
     "build": "pnpm -r build",
