@@ -1,0 +1,210 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="980" viewBox="0 0 1440 980" font-family="'Space Grotesk','Inter',sans-serif">
+<!-- Hallmark · genie (Drafting Room) · genre: engineering drawing sheet · pre-emit critique: P5 H5 E5 S5 R5 V5 · surface intent: front door reimagined as a draftsman's sheet — artifact catalog drawn to spec, the prompt lives in a bottom-right TITLE BLOCK like a real engineering drawing, dimension callouts in the margins. Layout diverges from D1's centered editorial hero. -->
+<defs>
+  <pattern id="grid2" width="16" height="16" patternUnits="userSpaceOnUse"><path d="M16 0H0V16" fill="none" stroke="#dde3eb" stroke-width="1"/></pattern>
+  <pattern id="grid2b" width="80" height="80" patternUnits="userSpaceOnUse"><path d="M80 0H0V80" fill="none" stroke="#d3dae3" stroke-width="1"/></pattern>
+  <linearGradient id="clay0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#cf8265"/><stop offset="1" stop-color="#bd6a4c"/></linearGradient>
+  <linearGradient id="mark2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#cf8265"/><stop offset="1" stop-color="#ac5a40"/></linearGradient>
+  <filter id="soft2" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="6" flood-color="#1b2a44" flood-opacity="0.10"/></filter>
+  <filter id="lift2" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="6" stdDeviation="16" flood-color="#1b2a44" flood-opacity="0.15"/></filter>
+  <clipPath id="sheetClip"><rect x="24" y="68" width="1392" height="888"/></clipPath>
+</defs>
+
+<rect width="1440" height="980" fill="#e6eaf0"/>
+
+<!-- top bar (harness-owned chrome stays minimal) -->
+<rect x="0" y="0" width="1440" height="52" fill="#ebeef3"/>
+<line x1="0" y1="52" x2="1440" y2="52" stroke="#d3dae3" stroke-width="1"/>
+<g transform="translate(24,16)">
+  <rect x="0" y="0" width="22" height="22" rx="4" fill="url(#mark2)"/>
+  <path d="M5 17 L5 6 L16 6" fill="none" stroke="#fbe7dd" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M5 6 L16 17" stroke="#fbe7dd" stroke-width="1.6" stroke-linecap="round"/>
+  <text x="32" y="16" font-size="15" font-weight="600" fill="#14171f" letter-spacing="-0.01em">genie</text>
+  <text x="74" y="16" font-family="'JetBrains Mono',monospace" font-size="12.5" fill="#697384">· in Claude Code</text>
+</g>
+<g transform="translate(1416,16)" text-anchor="end">
+  <rect x="-232" y="-1" width="232" height="24" rx="4" fill="#e2e7ee" stroke="#bcc5d2" stroke-width="1"/>
+  <circle cx="-214" cy="11" r="3" fill="#2f8f57"/>
+  <text x="-202" y="15" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#39414f">harness-native · no app to open</text>
+</g>
+
+<!-- drafting sheet (lifted board) -->
+<rect x="24" y="68" width="1392" height="888" fill="#f4f6f9" stroke="#bcc5d2" stroke-width="1.2" filter="url(#lift2)"/>
+<g clip-path="url(#sheetClip)"><rect x="24" y="68" width="1392" height="888" fill="url(#grid2)"/></g>
+<!-- inner drafting frame (ink-blue LEAD) -->
+<rect x="44" y="88" width="1352" height="848" fill="none" stroke="#345197" stroke-width="1.3"/>
+<!-- corner registration ticks -->
+<g stroke="#345197" stroke-width="1.3">
+  <path d="M44 112 L44 88 L68 88" fill="none"/><path d="M1372 88 L1396 88 L1396 112" fill="none"/>
+  <path d="M44 912 L44 936 L68 936" fill="none"/><path d="M1372 936 L1396 936 L1396 912" fill="none"/>
+  <circle cx="44" cy="88" r="2.2" fill="#345197" stroke="none"/><circle cx="1396" cy="88" r="2.2" fill="#345197" stroke="none"/>
+  <circle cx="44" cy="936" r="2.2" fill="#345197" stroke="none"/><circle cx="1396" cy="936" r="2.2" fill="#345197" stroke="none"/>
+</g>
+
+<!-- sheet label + title -->
+<text x="68" y="128" font-family="'JetBrains Mono',monospace" font-size="12" fill="#5a6477" letter-spacing="0.04em">GENIE · COMPONENT SHEET · A-01 · SCALE 1:1</text>
+<text x="66" y="190" font-size="56" font-weight="600" fill="#14171f" letter-spacing="-0.02em">Your wish is my command.</text>
+<text x="68" y="226" font-family="'Inter',sans-serif" font-size="16.5" fill="#39414f">Describe a component. genie drafts it to spec, renders it live, and syncs it to your UI kit —</text>
+<text x="68" y="249" font-family="'Inter',sans-serif" font-size="16.5" fill="#39414f">all without leaving the harness. Pick a blueprint below, or write your own order in the title block.</text>
+
+<!-- left vertical dimension (craft) -->
+<g stroke="#8ba0c9" stroke-width="1">
+  <line x1="56" y1="156" x2="56" y2="236"/>
+  <path d="M53 159 L56 153 L59 159" fill="#8ba0c9" stroke="none"/>
+  <path d="M53 233 L56 239 L59 233" fill="#8ba0c9" stroke="none"/>
+</g>
+<text x="50" y="200" font-family="'JetBrains Mono',monospace" font-size="10" fill="#697384" transform="rotate(-90 50 200)" text-anchor="middle">TITLE</text>
+
+<!-- BLUEPRINT CATALOG label -->
+<text x="68" y="300" font-family="'JetBrains Mono',monospace" font-size="12.5" fill="#27407a" letter-spacing="0.06em">BLUEPRINTS — DRAWN TO SPEC</text>
+<line x1="262" y1="295" x2="1372" y2="295" stroke="#d3dae3" stroke-width="1"/>
+
+<!-- 5 blueprint cards as a measured catalog -->
+<g>
+  <!-- card 1 PRIMITIVE Button -->
+  <g transform="translate(64,318)">
+    <rect x="0" y="0" width="240" height="150" rx="4" fill="#ffffff" stroke="#d3dae3" stroke-width="1" filter="url(#soft2)"/>
+    <text x="14" y="26" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#5a6477" letter-spacing="0.05em">PRIMITIVE</text>
+    <text x="14" y="50" font-size="19" font-weight="600" fill="#14171f">Button</text>
+    <rect x="64" y="78" width="112" height="38" rx="6" fill="none" stroke="#345197" stroke-width="1.4"/>
+    <line x1="84" y1="97" x2="156" y2="97" stroke="#8ba0c9" stroke-width="2"/>
+    <text x="14" y="138" font-family="'JetBrains Mono',monospace" font-size="9.5" fill="#8a93a1">180 × 56</text>
+  </g>
+  <!-- card 2 COMPONENT Card -->
+  <g transform="translate(328,318)">
+    <rect x="0" y="0" width="240" height="150" rx="4" fill="#ffffff" stroke="#d3dae3" stroke-width="1" filter="url(#soft2)"/>
+    <text x="14" y="26" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#5a6477" letter-spacing="0.05em">COMPONENT</text>
+    <text x="14" y="50" font-size="19" font-weight="600" fill="#14171f">Card</text>
+    <rect x="62" y="70" width="116" height="54" rx="6" fill="none" stroke="#345197" stroke-width="1.4"/>
+    <line x1="74" y1="86" x2="166" y2="86" stroke="#8ba0c9" stroke-width="2"/>
+    <line x1="74" y1="98" x2="142" y2="98" stroke="#c3cedd" stroke-width="2"/>
+    <rect x="74" y="106" width="34" height="10" rx="2" fill="#c3cedd"/>
+    <text x="14" y="138" font-family="'JetBrains Mono',monospace" font-size="9.5" fill="#8a93a1">320 × 180</text>
+  </g>
+  <!-- card 3 PATTERN Pricing -->
+  <g transform="translate(592,318)">
+    <rect x="0" y="0" width="240" height="150" rx="4" fill="#ffffff" stroke="#d3dae3" stroke-width="1" filter="url(#soft2)"/>
+    <text x="14" y="26" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#5a6477" letter-spacing="0.05em">PATTERN</text>
+    <text x="14" y="50" font-size="19" font-weight="600" fill="#14171f">Pricing</text>
+    <rect x="56" y="80" width="36" height="40" rx="4" fill="none" stroke="#8ba0c9" stroke-width="1.3"/>
+    <rect x="102" y="70" width="36" height="50" rx="4" fill="none" stroke="#345197" stroke-width="1.6"/>
+    <rect x="148" y="80" width="36" height="40" rx="4" fill="none" stroke="#8ba0c9" stroke-width="1.3"/>
+    <text x="14" y="138" font-family="'JetBrains Mono',monospace" font-size="9.5" fill="#8a93a1">3 tiers</text>
+  </g>
+  <!-- card 4 LAYOUT Dashboard -->
+  <g transform="translate(856,318)">
+    <rect x="0" y="0" width="240" height="150" rx="4" fill="#ffffff" stroke="#d3dae3" stroke-width="1" filter="url(#soft2)"/>
+    <text x="14" y="26" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#5a6477" letter-spacing="0.05em">LAYOUT</text>
+    <text x="14" y="50" font-size="19" font-weight="600" fill="#14171f">Dashboard</text>
+    <rect x="60" y="70" width="120" height="54" rx="5" fill="none" stroke="#345197" stroke-width="1.4"/>
+    <line x1="84" y1="70" x2="84" y2="124" stroke="#8ba0c9" stroke-width="1.2"/>
+    <rect x="94" y="80" width="34" height="14" rx="2" fill="#c3cedd"/>
+    <rect x="136" y="80" width="34" height="14" rx="2" fill="#c3cedd"/>
+    <rect x="94" y="100" width="76" height="14" rx="2" fill="#e0e6ef"/>
+    <text x="14" y="138" font-family="'JetBrains Mono',monospace" font-size="9.5" fill="#8a93a1">12-col grid</text>
+  </g>
+  <!-- card 5 CAMPAIGN Email -->
+  <g transform="translate(1120,318)">
+    <rect x="0" y="0" width="240" height="150" rx="4" fill="#ffffff" stroke="#d3dae3" stroke-width="1" filter="url(#soft2)"/>
+    <text x="14" y="26" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#5a6477" letter-spacing="0.05em">CAMPAIGN</text>
+    <text x="14" y="50" font-size="19" font-weight="600" fill="#14171f">Email</text>
+    <rect x="62" y="72" width="116" height="50" rx="4" fill="none" stroke="#345197" stroke-width="1.4"/>
+    <path d="M62 74 L120 100 L178 74" fill="none" stroke="#8ba0c9" stroke-width="1.4"/>
+    <text x="14" y="138" font-family="'JetBrains Mono',monospace" font-size="9.5" fill="#8a93a1">600 × 800</text>
+  </g>
+</g>
+
+<!-- dimension line bracketing the catalog row -->
+<g stroke="#8ba0c9" stroke-width="1">
+  <line x1="64" y1="484" x2="64" y2="500"/><line x1="1360" y1="484" x2="1360" y2="500"/>
+  <line x1="64" y1="492" x2="612" y2="492"/><line x1="828" y1="492" x2="1360" y2="492"/>
+  <path d="M67 489 L61 492 L67 495 Z" fill="#8ba0c9" stroke="none"/>
+  <path d="M1357 489 L1363 492 L1357 495 Z" fill="#8ba0c9" stroke="none"/>
+</g>
+<text x="720" y="496" font-family="'JetBrains Mono',monospace" font-size="11" fill="#5a6477" text-anchor="middle">5 blueprints · index sheet A-01</text>
+
+<!-- lower-left: RECENT KITS as a revision/parts list -->
+<g transform="translate(64,548)">
+  <text x="0" y="0" font-family="'JetBrains Mono',monospace" font-size="12.5" fill="#27407a" letter-spacing="0.06em">RECENT KITS</text>
+  <rect x="0" y="14" width="640" height="316" rx="4" fill="#ffffff" stroke="#d3dae3" stroke-width="1"/>
+  <!-- table header -->
+  <rect x="0" y="14" width="640" height="34" fill="#ebeef3"/>
+  <line x1="0" y1="48" x2="640" y2="48" stroke="#d3dae3" stroke-width="1"/>
+  <text x="16" y="36" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#5a6477">REV</text>
+  <text x="64" y="36" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#5a6477">KIT</text>
+  <text x="330" y="36" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#5a6477">COMPONENTS</text>
+  <text x="500" y="36" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#5a6477">SYNCED</text>
+  <line x1="52" y1="48" x2="52" y2="330" stroke="#e2e7ee" stroke-width="1"/>
+  <line x1="320" y1="48" x2="320" y2="330" stroke="#e2e7ee" stroke-width="1"/>
+  <line x1="490" y1="48" x2="490" y2="330" stroke="#e2e7ee" stroke-width="1"/>
+  <!-- row Quanta -->
+  <g>
+    <text x="16" y="84" font-family="'JetBrains Mono',monospace" font-size="12" fill="#697384">A</text>
+    <text x="64" y="80" font-size="16" font-weight="600" fill="#14171f">Quanta UI Kit</text>
+    <text x="64" y="98" font-family="'Inter',sans-serif" font-size="12.5" fill="#697384">@quanta/dashboard-ui</text>
+    <text x="330" y="86" font-family="'JetBrains Mono',monospace" font-size="13" fill="#39414f">30</text>
+    <circle cx="506" cy="82" r="3.5" fill="#2f8f57"/>
+    <text x="518" y="86" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#226b40">2m ago</text>
+  </g>
+  <line x1="0" y1="120" x2="640" y2="120" stroke="#e2e7ee" stroke-width="1"/>
+  <!-- row Marketing -->
+  <g>
+    <text x="16" y="156" font-family="'JetBrains Mono',monospace" font-size="12" fill="#697384">B</text>
+    <text x="64" y="152" font-size="16" font-weight="600" fill="#14171f">Marketing Site</text>
+    <text x="64" y="170" font-family="'Inter',sans-serif" font-size="12.5" fill="#697384">@acme/web-marketing</text>
+    <text x="330" y="158" font-family="'JetBrains Mono',monospace" font-size="13" fill="#39414f">18</text>
+    <circle cx="506" cy="154" r="3.5" fill="#8a93a1"/>
+    <text x="518" y="158" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#697384">1d ago</text>
+  </g>
+  <line x1="0" y1="192" x2="640" y2="192" stroke="#e2e7ee" stroke-width="1"/>
+  <!-- new kit row -->
+  <g>
+    <rect x="14" y="214" width="612" height="42" rx="5" fill="none" stroke="#bcc5d2" stroke-width="1.2" stroke-dasharray="4 4"/>
+    <text x="34" y="240" font-family="'JetBrains Mono',monospace" font-size="13" fill="#697384">+  Connect a UI kit  ·  point genie at a repo or package</text>
+  </g>
+  <text x="16" y="290" font-family="'Inter',sans-serif" font-size="12.5" fill="#697384">genie reads real upstream code. Blueprints become components your kit already ships —</text>
+  <text x="16" y="308" font-family="'Inter',sans-serif" font-size="12.5" fill="#697384">drawn to your tokens, never hardcoded hex.</text>
+</g>
+
+<!-- THE TITLE BLOCK (bottom-right) — your order, the signature of this layout -->
+<g transform="translate(816,548)">
+  <rect x="0" y="14" width="556" height="316" rx="3" fill="#ffffff" stroke="#345197" stroke-width="1.5" filter="url(#soft2)"/>
+  <!-- header strip -->
+  <rect x="0" y="14" width="556" height="30" fill="#e7ecf4"/>
+  <line x1="0" y1="44" x2="556" y2="44" stroke="#345197" stroke-width="1.2"/>
+  <text x="16" y="34" font-family="'JetBrains Mono',monospace" font-size="11" fill="#27407a" letter-spacing="0.06em">TITLE BLOCK · YOUR ORDER</text>
+  <text x="540" y="34" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#5a6477" text-anchor="end">FORM ds-01</text>
+  <!-- prompt cell -->
+  <text x="16" y="68" font-family="'JetBrains Mono',monospace" font-size="10" fill="#5a6477" letter-spacing="0.05em">PROMPT</text>
+  <text x="16" y="98" font-size="18" fill="#14171f">a pricing card with three tiers and a</text>
+  <text x="16" y="124" font-size="18" fill="#14171f">highlighted middle plan<tspan fill="#bd6a4c" font-weight="600">|</tspan></text>
+  <line x1="0" y1="142" x2="556" y2="142" stroke="#e2e7ee" stroke-width="1"/>
+  <!-- selectors row: KIT | MODEL -->
+  <line x1="278" y1="142" x2="278" y2="198" stroke="#e2e7ee" stroke-width="1"/>
+  <text x="16" y="162" font-family="'JetBrains Mono',monospace" font-size="10" fill="#5a6477">KIT</text>
+  <rect x="14" y="170" width="248" height="20" rx="3" fill="none"/>
+  <circle cx="24" cy="180" r="4" fill="#345197"/>
+  <text x="36" y="184" font-size="13.5" font-weight="500" fill="#14171f">Quanta · 30 components</text>
+  <text x="294" y="162" font-family="'JetBrains Mono',monospace" font-size="10" fill="#5a6477">MODEL</text>
+  <text x="294" y="184" font-family="'JetBrains Mono',monospace" font-size="13.5" fill="#39414f">design-default</text>
+  <line x1="0" y1="198" x2="556" y2="198" stroke="#e2e7ee" stroke-width="1"/>
+  <!-- conjure button (clay — accent on generate) -->
+  <rect x="14" y="210" width="528" height="44" rx="6" fill="url(#clay0)" stroke="#ac5a40" stroke-width="1"/>
+  <text x="278" y="238" font-size="16" font-weight="600" fill="#1a0f0a" text-anchor="middle">✦  Conjure component  →</text>
+  <!-- metadata strip: SCALE | UNITS | SHEET | REV -->
+  <line x1="0" y1="270" x2="556" y2="270" stroke="#345197" stroke-width="1.2"/>
+  <g font-family="'JetBrains Mono',monospace">
+    <line x1="139" y1="270" x2="139" y2="330" stroke="#e2e7ee" stroke-width="1"/>
+    <line x1="278" y1="270" x2="278" y2="330" stroke="#e2e7ee" stroke-width="1"/>
+    <line x1="417" y1="270" x2="417" y2="330" stroke="#e2e7ee" stroke-width="1"/>
+    <text x="16" y="288" font-size="9.5" fill="#5a6477">SCALE</text><text x="16" y="312" font-size="14" fill="#14171f">1:1</text>
+    <text x="155" y="288" font-size="9.5" fill="#5a6477">UNITS</text><text x="155" y="312" font-size="14" fill="#14171f">px · 8pt</text>
+    <text x="294" y="288" font-size="9.5" fill="#5a6477">SHEET</text><text x="294" y="312" font-size="14" fill="#14171f">A-01</text>
+    <text x="433" y="288" font-size="9.5" fill="#5a6477">REV</text><text x="433" y="312" font-size="14" fill="#bd6a4c">— new</text>
+  </g>
+</g>
+
+<!-- footer caption -->
+<text x="24" y="973" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#697384">genie · front door · the order sheet · surface 0 / 4</text>
+<text x="1416" y="973" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#8a93a1" text-anchor="end">Drafting Room · title-block layout</text>
+</svg>

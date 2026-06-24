@@ -1,5 +1,37 @@
 {
-  "dependencies": {
-    "@azure/mcp-darwin-x64": "^3.0.0-beta.20"
+  "name": "genie-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Harness-agnostic MCP server for AI UI-component generation — workspace root.",
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "pnpm --filter @genie/server dev",
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.0.0",
+    "eslint": "^10.5.0",
+    "prettier": "^3.8.4",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.62.0",
+    "vitest": "^4.1.9"
+  },
+  "license": "MIT",
+  "author": "Roshan Gautam",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/roshangautam/genie.git"
   }
 }

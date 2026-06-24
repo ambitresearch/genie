@@ -1,0 +1,13 @@
+{
+  "name": "@genie/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "genie end-to-end + harness smoke tests (M5). Placeholder scaffold.",
+  "scripts": {
+    "build": "echo \"@genie/e2e: nothing to build yet (M5)\"",
+    "typecheck": "echo \"@genie/e2e: no sources yet (M5)\""
+  },
+  "license": "MIT",
+  "author": "Roshan Gautam"
+}

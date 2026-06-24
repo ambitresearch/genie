@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="980" viewBox="0 0 1440 980" font-family="Inter, sans-serif">
+<!-- Hallmark · genie (lamplight) · genre: atmospheric-editorial · pre-emit critique: P5 H5 E5 S5 R5 V5
+     Surface 1 — THE UI-KIT BROWSER, LAMPLIGHT direction.
+     LAYOUT ARCHETYPE: cinematic single-column SPOTLIGHT (no left tree, no right pane).
+     The kit is a dim horizontal FILMSTRIP across the top — sprocket-holed negatives,
+     only the selected one (Button) pulled into the light. A beam rakes down onto a
+     centre STAGE where the one lit component is inspected large. Detail then DESCENDS
+     the single centre column — variants, then the @dsCard marker, then files — light
+     falling off with distance. Reading path is top→down on one axis, never left↔right. -->
+  <defs>
+    <linearGradient id="flame0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0b483"/><stop offset="0.5" stop-color="#c87c5e"/><stop offset="1" stop-color="#ac5a40"/></linearGradient>
+    <linearGradient id="lamp0" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0b483"/><stop offset="1" stop-color="#ac5a40"/></linearGradient>
+    <radialGradient id="glowH" cx="0.5" cy="0.42" r="0.7"><stop offset="0" stop-color="#ffcf9e" stop-opacity="0.22"/><stop offset="0.55" stop-color="#f0b483" stop-opacity="0.06"/><stop offset="1" stop-color="#ffcf9e" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glowP" cx="0.5" cy="0.5" r="0.6"><stop offset="0" stop-color="#f0b483" stop-opacity="0.20"/><stop offset="1" stop-color="#f0b483" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glowS" cx="0.5" cy="0.5" r="0.6"><stop offset="0" stop-color="#ffcf9e" stop-opacity="0.16"/><stop offset="1" stop-color="#ffcf9e" stop-opacity="0"/></radialGradient>
+    <radialGradient id="vign" cx="0.5" cy="0.40" r="0.82"><stop offset="0" stop-color="#160b09" stop-opacity="0"/><stop offset="0.66" stop-color="#160b09" stop-opacity="0"/><stop offset="1" stop-color="#0e0605" stop-opacity="0.66"/></radialGradient>
+    <linearGradient id="smoke0" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ffcf9e" stop-opacity="0.34"/><stop offset="0.5" stop-color="#f0b483" stop-opacity="0.12"/><stop offset="1" stop-color="#f0b483" stop-opacity="0"/></linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffcf9e" stop-opacity="0.20"/><stop offset="1" stop-color="#ffcf9e" stop-opacity="0"/></linearGradient>
+    <filter id="softD" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="3" stdDeviation="10" flood-color="#0b0504" flood-opacity="0.55"/></filter>
+    <filter id="liftD" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="18" stdDeviation="40" flood-color="#080403" flood-opacity="0.62"/></filter>
+    <filter id="glowf" x="-80%" y="-80%" width="260%" height="260%"><feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#f0a96f" flood-opacity="0.6"/></filter>
+  </defs>
+
+  <rect width="1440" height="980" fill="#241310"/>
+  <!-- stage bloom — the pool of light the inspected component sits in -->
+  <ellipse cx="720" cy="372" rx="600" ry="226" fill="url(#glowH)"/>
+  <ellipse cx="720" cy="392" rx="430" ry="150" fill="url(#glowP)"/>
+  <rect width="1440" height="980" fill="url(#vign)"/>
+
+  <!-- ── top bar — sits in shadow (sunken, warm rim only) ── -->
+  <rect width="1440" height="56" fill="#1d100d"/>
+  <line x1="0" y1="56" x2="1440" y2="56" stroke="#46342b"/>
+  <line x1="0" y1="55" x2="1440" y2="55" stroke="#6b4f40" stroke-opacity="0.35"/>
+  <g transform="translate(28,13)">
+    <rect width="30" height="30" rx="9" fill="url(#lamp0)" filter="url(#glowf)"/>
+    <path d="M7.5 19.5 q7.5 -11 15 0" fill="none" stroke="#fbe7dd" stroke-width="2.1" stroke-linecap="round"/>
+    <path d="M15 4 l1 3 3 1 -3 1 -1 3 -1 -3 -3 -1 3 -1 z" fill="#fbe7dd"/>
+    <text x="44" y="15" font-family="Fraunces, Georgia, serif" font-size="19" font-weight="600" fill="#f4ece3">genie</text>
+    <text x="92" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#9a8579">· in Claude Code</text>
+  </g>
+  <g transform="translate(1188,15)"><rect width="224" height="26" rx="13" fill="#1a0d0a" stroke="#5c4538"/><circle cx="18" cy="13" r="5" fill="#5cc47a"/><text x="32" y="17" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#cbb9ac">harness-native · no app to open</text></g>
+
+  <!-- ════ KIT — a dim horizontal FILMSTRIP of negatives (replaces the left tree) ════ -->
+  <text x="720" y="88" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-size="17" font-weight="600" fill="#cbb9ac">Quanta UI Kit</text>
+  <text x="720" y="107" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#7a675b">30 components · 4 groups · 18 on the strip · ✓ synced</text>
+
+  <!-- strip rail + sprocket holes -->
+  <rect x="206" y="126" width="1028" height="64" rx="7" fill="#1d100d" stroke="#3a2820"/>
+  <line x1="206" y1="127" x2="1234" y2="127" stroke="#6b4f40" stroke-opacity="0.20"/>
+  <g fill="#120a08" stroke="#3a2820" stroke-width="0.7">
+    <rect x="224" y="130" width="9" height="5" rx="1.5"/><rect x="260" y="130" width="9" height="5" rx="1.5"/><rect x="296" y="130" width="9" height="5" rx="1.5"/><rect x="332" y="130" width="9" height="5" rx="1.5"/><rect x="368" y="130" width="9" height="5" rx="1.5"/><rect x="404" y="130" width="9" height="5" rx="1.5"/><rect x="440" y="130" width="9" height="5" rx="1.5"/><rect x="476" y="130" width="9" height="5" rx="1.5"/><rect x="512" y="130" width="9" height="5" rx="1.5"/><rect x="548" y="130" width="9" height="5" rx="1.5"/><rect x="584" y="130" width="9" height="5" rx="1.5"/><rect x="620" y="130" width="9" height="5" rx="1.5"/><rect x="656" y="130" width="9" height="5" rx="1.5"/><rect x="692" y="130" width="9" height="5" rx="1.5"/><rect x="728" y="130" width="9" height="5" rx="1.5"/><rect x="764" y="130" width="9" height="5" rx="1.5"/><rect x="800" y="130" width="9" height="5" rx="1.5"/><rect x="836" y="130" width="9" height="5" rx="1.5"/><rect x="872" y="130" width="9" height="5" rx="1.5"/><rect x="908" y="130" width="9" height="5" rx="1.5"/><rect x="944" y="130" width="9" height="5" rx="1.5"/><rect x="980" y="130" width="9" height="5" rx="1.5"/><rect x="1016" y="130" width="9" height="5" rx="1.5"/><rect x="1052" y="130" width="9" height="5" rx="1.5"/><rect x="1088" y="130" width="9" height="5" rx="1.5"/><rect x="1124" y="130" width="9" height="5" rx="1.5"/><rect x="1160" y="130" width="9" height="5" rx="1.5"/><rect x="1196" y="130" width="9" height="5" rx="1.5"/>
+    <rect x="224" y="181" width="9" height="5" rx="1.5"/><rect x="260" y="181" width="9" height="5" rx="1.5"/><rect x="296" y="181" width="9" height="5" rx="1.5"/><rect x="332" y="181" width="9" height="5" rx="1.5"/><rect x="368" y="181" width="9" height="5" rx="1.5"/><rect x="404" y="181" width="9" height="5" rx="1.5"/><rect x="440" y="181" width="9" height="5" rx="1.5"/><rect x="476" y="181" width="9" height="5" rx="1.5"/><rect x="512" y="181" width="9" height="5" rx="1.5"/><rect x="548" y="181" width="9" height="5" rx="1.5"/><rect x="584" y="181" width="9" height="5" rx="1.5"/><rect x="620" y="181" width="9" height="5" rx="1.5"/><rect x="656" y="181" width="9" height="5" rx="1.5"/><rect x="692" y="181" width="9" height="5" rx="1.5"/><rect x="728" y="181" width="9" height="5" rx="1.5"/><rect x="764" y="181" width="9" height="5" rx="1.5"/><rect x="800" y="181" width="9" height="5" rx="1.5"/><rect x="836" y="181" width="9" height="5" rx="1.5"/><rect x="872" y="181" width="9" height="5" rx="1.5"/><rect x="908" y="181" width="9" height="5" rx="1.5"/><rect x="944" y="181" width="9" height="5" rx="1.5"/><rect x="980" y="181" width="9" height="5" rx="1.5"/><rect x="1016" y="181" width="9" height="5" rx="1.5"/><rect x="1052" y="181" width="9" height="5" rx="1.5"/><rect x="1088" y="181" width="9" height="5" rx="1.5"/><rect x="1124" y="181" width="9" height="5" rx="1.5"/><rect x="1160" y="181" width="9" height="5" rx="1.5"/><rect x="1196" y="181" width="9" height="5" rx="1.5"/>
+  </g>
+
+  <!-- group labels above the strip -->
+  <text x="306" y="120" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="9.5" letter-spacing="0.08em" fill="#6e5b4f">brand · 3</text>
+  <text x="507" y="120" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="9.5" letter-spacing="0.08em" fill="#6e5b4f">dataviz · 4</text>
+  <text x="708" y="120" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="9.5" letter-spacing="0.08em" fill="#6e5b4f">nav · 3</text>
+  <text x="1009" y="120" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="9.5" letter-spacing="0.08em" fill="#6e5b4f">primitives · 8</text>
+
+  <!-- negatives: only Button catches light; neighbours dimmer toward the edges -->
+  <!-- brand(3) @235 -->
+  <g transform="translate(235,142)" fill="#2a1813" stroke="#46342b">
+    <rect width="42" height="32" rx="4"/><rect x="50" width="42" height="32" rx="4"/><rect x="100" width="42" height="32" rx="4"/>
+  </g>
+  <g transform="translate(235,142)" fill="#5c4538"><circle cx="21" cy="16" r="6"/><rect x="64" y="10" width="14" height="12" rx="2"/><path d="M114 24 l7 -12 7 12 z"/></g>
+  <!-- dataviz(4) @411 -->
+  <g transform="translate(411,142)" fill="#2a1813" stroke="#46342b">
+    <rect width="42" height="32" rx="4"/><rect x="50" width="42" height="32" rx="4"/><rect x="100" width="42" height="32" rx="4"/><rect x="150" width="42" height="32" rx="4"/>
+  </g>
+  <g transform="translate(411,142)" fill="#5c4538"><rect x="10" y="10" width="22" height="12" rx="2"/><rect x="58" y="20" width="6" height="6"/><rect x="68" y="14" width="6" height="12"/><rect x="78" y="9" width="6" height="17"/><circle cx="121" cy="16" r="8" fill="none" stroke="#5c4538" stroke-width="3"/><rect x="160" y="11" width="22" height="10" rx="2"/></g>
+  <!-- nav(3) @637 -->
+  <g transform="translate(637,142)" fill="#2a1813" stroke="#46342b">
+    <rect width="42" height="32" rx="4"/><rect x="50" width="42" height="32" rx="4"/><rect x="100" width="42" height="32" rx="4"/>
+  </g>
+  <g transform="translate(637,142)" fill="#5c4538"><rect x="9" y="13" width="24" height="3" rx="1.5"/><rect x="9" y="19" width="16" height="3" rx="1.5"/><rect x="60" y="12" width="22" height="9" rx="2"/><rect x="110" y="13" width="22" height="7" rx="3.5"/></g>
+  <!-- primitives(8) @813 — Button (i=1) is LIT -->
+  <g transform="translate(813,142)" fill="#2a1813" stroke="#46342b">
+    <rect width="42" height="32" rx="4"/><rect x="100" width="42" height="32" rx="4"/><rect x="150" width="42" height="32" rx="4"/><rect x="200" width="42" height="32" rx="4"/><rect x="250" width="42" height="32" rx="4"/><rect x="300" width="42" height="32" rx="4"/><rect x="350" width="42" height="32" rx="4"/>
+  </g>
+  <g transform="translate(813,142)" fill="#5c4538"><rect x="10" y="12" width="22" height="9" rx="3"/><rect x="111" y="11" width="20" height="13" rx="2"/><rect x="160" y="13" width="22" height="7" rx="2"/><circle cx="271" cy="16" r="4"/><rect x="310" y="12" width="22" height="9" rx="4.5"/><circle cx="371" cy="16" r="3.5"/><rect x="408" y="12" width="26" height="9" rx="1.5"/></g>
+  <!-- the lit negative: Button -->
+  <ellipse cx="884" cy="158" rx="60" ry="44" fill="url(#glowS)"/>
+  <g transform="translate(863,142)" filter="url(#glowf)"><rect width="42" height="32" rx="5" fill="#33211b" stroke="#f0b483" stroke-width="1.5"/><line x1="6" y1="1" x2="36" y2="1" stroke="#ffcf9e" stroke-width="1" stroke-opacity="0.5"/><rect x="9" y="11" width="24" height="11" rx="3.5" fill="url(#flame0)"/></g>
+  <text x="884" y="206" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" font-weight="600" fill="#f0b483">Button ●</text>
+
+  <!-- the beam: the selected negative raked down onto the stage -->
+  <polygon points="865,176 903,176 858,250 612,250" fill="url(#beam)" opacity="0.7"/>
+
+  <!-- ════ STAGE — the one lit focus, centre column ════ -->
+  <text x="720" y="278" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-size="42" font-weight="500" letter-spacing="-0.018em" fill="#f4ece3">Button</text>
+  <g transform="translate(621,296)"><rect width="92" height="24" rx="12" fill="#22304a" stroke="#3c5273"/><text x="46" y="16" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#9db4dd">primitives</text></g>
+  <g transform="translate(723,296)"><rect width="98" height="24" rx="12" fill="#22392a"/><text x="49" y="16" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86d7a0">✓ validated</text></g>
+  <text x="720" y="346" text-anchor="middle" font-family="Inter, sans-serif" font-size="14.5" fill="#cbb9ac">The primary action element. Four variants, eight states each —</text>
+  <text x="720" y="367" text-anchor="middle" font-family="Inter, sans-serif" font-size="14.5" fill="#9a8579">real upstream code from <tspan font-family="'JetBrains Mono', monospace" fill="#cbb9ac">@quanta/dashboard-ui</tspan>.</text>
+
+  <!-- the four variants, rendered live and lit, in a single row across the stage -->
+  <!-- Primary -->
+  <g transform="translate(384,392)" filter="url(#glowf)"><rect width="132" height="48" rx="11" fill="url(#flame0)"/><line x1="12" y1="1.5" x2="120" y2="1.5" stroke="#ffe0c8" stroke-width="1.1" stroke-opacity="0.85"/><text x="66" y="30" text-anchor="middle" font-family="Inter, sans-serif" font-size="15" font-weight="700" fill="#2a140d">Get started</text></g>
+  <text x="450" y="462" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#cbb9ac">Primary</text>
+  <text x="450" y="479" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#7a675b">clay · the emitter</text>
+  <!-- Secondary -->
+  <g transform="translate(558,392)" filter="url(#softD)"><rect width="132" height="48" rx="11" fill="#33211b" stroke="#6b4f40"/><line x1="12" y1="1" x2="120" y2="1" stroke="#ffcf9e" stroke-width="1" stroke-opacity="0.32"/><text x="66" y="30" text-anchor="middle" font-family="Inter, sans-serif" font-size="15" font-weight="600" fill="#f4ece3">Get started</text></g>
+  <text x="624" y="462" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#cbb9ac">Secondary</text>
+  <text x="624" y="479" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#7a675b">lifted</text>
+  <!-- Ghost -->
+  <g transform="translate(732,392)"><rect width="132" height="48" rx="11" fill="none" stroke="#7d97c9" stroke-width="1.4" stroke-dasharray="5 4"/><text x="66" y="30" text-anchor="middle" font-family="Inter, sans-serif" font-size="15" font-weight="600" fill="#9db4dd">Get started</text></g>
+  <text x="798" y="462" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#cbb9ac">Ghost</text>
+  <text x="798" y="479" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#7a675b">ink-blue · structure</text>
+  <!-- Danger -->
+  <g transform="translate(906,392)"><rect width="132" height="48" rx="11" fill="#e8645a"/><line x1="12" y1="1.5" x2="120" y2="1.5" stroke="#ffd2cc" stroke-width="1" stroke-opacity="0.6"/><text x="66" y="30" text-anchor="middle" font-family="Inter, sans-serif" font-size="15" font-weight="700" fill="#2a0e0b">Delete</text></g>
+  <text x="972" y="462" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#cbb9ac">Danger</text>
+  <text x="972" y="479" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#7a675b">destructive</text>
+
+  <!-- ════ DESCENT — into the marker layer, light falling off ════ -->
+  <text x="310" y="524" font-family="Inter, sans-serif" font-size="12.5" font-weight="600" letter-spacing="0.05em" fill="#9a8579">THE @dsCard MARKER</text>
+  <text x="1130" y="524" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#7a675b">what turns this preview into a card</text>
+  <line x1="310" y1="534" x2="1130" y2="534" stroke="#3a2820"/>
+
+  <rect x="310" y="548" width="820" height="142" rx="14" fill="#2c1c16" stroke="#46342b"/>
+  <line x1="326" y1="549" x2="1114" y2="549" stroke="#6b4f40" stroke-opacity="0.18"/>
+  <text x="334" y="580" font-family="'JetBrains Mono', monospace" font-size="13" fill="#7a675b">&lt;!-- <tspan fill="#86d7a0">@dsCard</tspan> <tspan fill="#9db4dd">group</tspan>=<tspan fill="#e0b07e">"primitives"</tspan> <tspan fill="#9db4dd">viewport</tspan>=<tspan fill="#e0b07e">"180x56"</tspan> --&gt;</text>
+  <text x="334" y="606" font-family="'JetBrains Mono', monospace" font-size="13" fill="#cbb9ac">&lt;<tspan fill="#9db4dd">button</tspan> <tspan fill="#86d7a0">class</tspan>=<tspan fill="#e0b07e">"ds-btn ds-btn--primary"</tspan>&gt;</text>
+  <text x="358" y="632" font-family="'JetBrains Mono', monospace" font-size="13" fill="#e7dad0">Get started</text>
+  <text x="334" y="658" font-family="'JetBrains Mono', monospace" font-size="13" fill="#cbb9ac">&lt;/<tspan fill="#9db4dd">button</tspan>&gt;</text>
+  <g transform="translate(334,668)"><circle cx="5" cy="-3" r="4" fill="url(#lamp0)" filter="url(#glowf)"/><text x="18" y="1" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86d7a0">✓ genie's regex matches — this preview becomes a card</text></g>
+
+  <!-- files — the source layer, dim, descending further -->
+  <text x="310" y="726" font-family="Inter, sans-serif" font-size="12.5" font-weight="600" letter-spacing="0.05em" fill="#9a8579">FILES</text>
+  <g transform="translate(310,738)"><rect width="246" height="40" rx="9" fill="#1d100d" stroke="#3a2820"/><path d="M14 12 h14 l4 4 v12 h-18 z" fill="none" stroke="#7a675b" stroke-width="1.4"/><text x="42" y="25" font-family="'JetBrains Mono', monospace" font-size="12" fill="#cbb9ac">Button.prompt.md</text></g>
+  <g transform="translate(566,738)"><rect width="216" height="40" rx="9" fill="#1d100d" stroke="#3a2820"/><path d="M14 12 h14 l4 4 v12 h-18 z" fill="none" stroke="#7a675b" stroke-width="1.4"/><text x="42" y="25" font-family="'JetBrains Mono', monospace" font-size="12" fill="#cbb9ac">Button.d.ts</text></g>
+  <g transform="translate(792,738)"><rect width="338" height="40" rx="9" fill="#1d100d" stroke="#3a2820"/><path d="M14 12 h14 l4 4 v12 h-18 z" fill="none" stroke="#f0b483" stroke-width="1.4"/><text x="42" y="25" font-family="'JetBrains Mono', monospace" font-size="12" fill="#e7dad0">Button.html</text><text x="150" y="25" font-family="'JetBrains Mono', monospace" font-size="11" fill="#7a675b">open</text><text x="200" y="25" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86d7a0">· @dsCard ✓</text></g>
+
+  <!-- refine — the lamp invites the next conjure -->
+  <g transform="translate(310,800)" filter="url(#glowf)"><rect width="222" height="44" rx="11" fill="url(#flame0)"/><line x1="12" y1="1.5" x2="210" y2="1.5" stroke="#ffe0c8" stroke-width="1.1" stroke-opacity="0.85"/><path d="M22 22 C24 16 30 17 30 20 C30 24 35 24 37 19" fill="none" stroke="#2a140d" stroke-width="1.6" stroke-linecap="round" stroke-opacity="0.85"/><text x="128" y="28" text-anchor="middle" font-family="Inter, sans-serif" font-size="15" font-weight="700" fill="#2a140d">Refine this component</text></g>
+  <text x="556" y="828" font-family="Inter, sans-serif" font-size="14" fill="#f0b483">✦ Open in preview →</text>
+  <text x="1130" y="828" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11" fill="#7a675b">30 components · 4 groups · ✓ synced</text>
+
+  <!-- faint smoke rising off the stage into the dark -->
+  <path d="M1086 300 C1082 270 1106 262 1098 234 C1092 210 1118 200 1112 176" fill="none" stroke="url(#smoke0)" stroke-width="4" stroke-linecap="round" opacity="0.34"/>
+
+  <text x="24" y="958" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#9a8579">genie · UI-kit browser · one component on the light table · surface 1 / 4</text>
+  <text x="1416" y="958" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#7a675b">Lamplight · spotlight layout</text>
+</svg>

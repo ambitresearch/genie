@@ -1,0 +1,13 @@
+{
+  "name": "@genie/viewer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "genie preview viewer — Vite-backed UI-kit grid (M4). Placeholder scaffold.",
+  "scripts": {
+    "build": "echo \"@genie/viewer: nothing to build yet (M4)\"",
+    "typecheck": "echo \"@genie/viewer: no sources yet (M4)\""
+  },
+  "license": "MIT",
+  "author": "Roshan Gautam"
+}

@@ -1,0 +1,186 @@
+/* ============================================================================
+   genie · Design 4 — "Instrument"  ·  design tokens
+   ----------------------------------------------------------------------------
+   vibe:          precision instrument — Swiss / laboratory white, hairline grid
+   paper-band:    TRUE off-white, chroma 0 (no warm tint, no cool tint) — the
+                  deliberate refusal of both the cream default AND cool-grey-tools
+   display-style: Archivo — ONE grotesque family, hierarchy by weight + size only
+   accent-hue:    genie-clay 42° = the SOLE chroma at rest, FLAT (no gradient/glow)
+   structure:     hairlines + air; ink-blue demoted to focus-ring + selection only
+   direction:     remove every other colour so scarce clay is the loudest mark
+   two-tiers:     most host-deferential of the four (resting state already neutral)
+   ----------------------------------------------------------------------------
+   Mirrors docs/design/tokens.css structure so the four directions diff cleanly.
+   OKLCH is source of truth; hex are sRGB fallbacks for the SVG mockups.
+   ============================================================================ */
+
+:root {
+  /* — type families: ONE brand grotesque (display==body) + mono protocol voice — */
+  --font-display: var(--font-display-brand), var(--font-display-safe);
+  --font-body:    var(--font-body-brand), var(--font-body-safe);
+  --font-mono:    var(--font-mono-brand), var(--font-mono-safe);
+
+  --font-display-safe: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-body-safe:    system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono-safe:    ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+
+  --font-display-brand: "Archivo";
+  --font-body-brand:    "Archivo";   /* same family — hierarchy by weight + size */
+  --font-mono-brand:    "JetBrains Mono";
+
+  /* — type scale · 1.250 major third · 16px base — */
+  --text-xs:   0.75rem;   /* 12 */
+  --text-sm:   0.875rem;  /* 14 */
+  --text-base: 1rem;      /* 16 */
+  --text-md:   1.125rem;  /* 18 */
+  --text-lg:   1.375rem;  /* 22 */
+  --text-xl:   1.75rem;   /* 28 */
+  --text-2xl:  2.25rem;   /* 36 */
+  --text-3xl:  3rem;      /* 48 */
+  --text-display: 3.75rem;/* 60 */
+
+  --leading-tight: 1.1;
+  --leading-snug:  1.28;
+  --leading-body:  1.55;
+  --tracking-display: -0.02em;   /* weight 700; never below -0.04em */
+  --tracking-tight:   -0.01em;
+
+  /* — weight tokens (the hierarchy lives here, not in family changes) — */
+  --weight-body: 400;
+  --weight-medium: 500;
+  --weight-display: 700;
+
+  /* — paper · TRUE off-white, CHROMA 0 (neutral grey ramp) — */
+  --color-paper:    oklch(99%   0 0);  /* #fbfbfb */
+  --color-paper-2:  oklch(96.5% 0 0);  /* #f4f4f5  rails, wells */
+  --color-paper-3:  oklch(93.5% 0 0);  /* #ececed  sunken / gutter */
+
+  /* — ink · neutral near-black ramp, CHROMA 0 — */
+  --color-ink:    oklch(19% 0 0);  /* #16171a */
+  --color-ink-2:  oklch(36% 0 0);  /* #454649 */
+  --color-ink-3:  oklch(58% 0 0);  /* #86878b  ≥4.5:1 on paper */
+
+  --color-hairline:   oklch(90% 0 0); /* #e2e2e4  THE primary structural device */
+  --color-hairline-2: oklch(82% 0 0); /* #c9c9cc  dividers, frames */
+
+  /* — accent · genie-clay = SOLE CHROMA · FLAT · GENERATION + REFINE ONLY — */
+  --color-accent:      oklch(66% 0.105 42); /* #c87c5e  flat fill, no gradient */
+  --color-accent-2:    oklch(56% 0.115 38); /* #ac5a40  pressed / text-on-light */
+  --color-accent-3:    oklch(94% 0.030 46); /* #f6e2d8  generating well (only tint) */
+  --color-accent-edge: oklch(82% 0.060 50); /* #e8bda8  1px frame on generating el */
+
+  /* — structure · ink-blue DEMOTED to focus-ring + selection ONLY — */
+  --color-struct:     oklch(48% 0.13 264);  /* #4064b9  selection fill */
+  --color-struct-tint:oklch(93% 0.04 264);  /* selection bg on light */
+  --color-focus:      oklch(52% 0.14 264);  /* #4f6fc6  :focus-visible */
+
+  /* — semantic · appear only in their moment (no resting chroma elsewhere) — */
+  --color-success:      oklch(56% 0.13 152); /* #2f8f57 */
+  --color-success-tint: oklch(94% 0.04 152);
+  --color-warning:      oklch(70% 0.12 70);  /* #cf8a2e */
+  --color-danger:       oklch(55% 0.20 26);  /* #c5372f */
+
+  /* — code surface · neutral, hairline-framed (no fill personality) — */
+  --color-code-bg:   oklch(97% 0 0);     /* #f7f7f7 */
+  --color-code-ink:  oklch(26% 0 0);     /* near-ink */
+  --color-code-line: oklch(72% 0 0);     /* gutter */
+
+  /* — spacing · 4pt · used with MORE AIR (whitespace = 2nd structural device) — */
+  --space-2xs: 0.25rem; --space-xs: 0.5rem;  --space-sm: 0.75rem;
+  --space-md:  1rem;    --space-lg: 1.5rem;  --space-xl: 2rem;
+  --space-2xl: 3rem;    --space-3xl: 4rem;   --space-4xl: 6rem;
+
+  /* — radii · SHARPEST of the four (precise corners suit a measuring tool) — */
+  --radius-sm: 3px; --radius-md: 5px; --radius-lg: 7px;
+  --radius-xl: 10px; --radius-pill: 999px;
+
+  --rule: 1px solid var(--color-hairline);
+
+  /* — elevation · NEAR-FLAT · neutral (C=0) · structure from hairline+air — */
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.05);
+  --shadow-md: 0 2px 8px oklch(0% 0 0 / 0.07);
+  --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.09);
+  /* NO --shadow-glow — Instrument never glows */
+
+  /* — motion · minimal, exact — */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms; --dur-base: 200ms; --dur-slow: 320ms;
+
+  /* — semantic z-index scale — */
+  --z-dropdown: 10; --z-sticky: 20; --z-backdrop: 30;
+  --z-modal: 40; --z-toast: 50; --z-tooltip: 60;
+}
+
+/* ── dark mode · neutral GRAPHITE (chroma 0) — same instrument, lights down ──
+   Not warm, not oxblood, not blue-grey. True neutral dark. */
+:root[data-scheme="dark"] {
+  --color-paper:   oklch(20% 0 0);   /* #1c1c1d */
+  --color-paper-2: oklch(24% 0 0);   /* #2a2a2b */
+  --color-paper-3: oklch(17% 0 0);   /* #161617 */
+
+  --color-ink:   oklch(95% 0 0);     /* #f3f3f3 */
+  --color-ink-2: oklch(76% 0 0);     /* #b9b9bb */
+  --color-ink-3: oklch(60% 0 0);     /* #8d8d90  ≥4.5:1 */
+
+  --color-hairline:   oklch(32% 0 0);
+  --color-hairline-2: oklch(40% 0 0);
+
+  /* clay lifts a touch for dark legibility, still flat */
+  --color-accent:      oklch(70% 0.105 46);
+  --color-accent-2:    oklch(60% 0.115 42);
+  --color-accent-3:    oklch(34% 0.060 42);
+  --color-accent-edge: oklch(46% 0.080 46);
+
+  --color-struct:  oklch(64% 0.13 266);
+  --color-focus:   oklch(66% 0.14 266);
+
+  --color-code-bg:  oklch(23% 0 0);
+  --color-code-ink: oklch(88% 0 0);
+  --color-code-line:oklch(46% 0 0);
+
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.40);
+  --shadow-md: 0 2px 8px oklch(0% 0 0 / 0.48);
+  --shadow-lg: 0 8px 24px oklch(0% 0 0 / 0.55);
+}
+
+/* ── embedded tier · ui://genie/grid under default-src 'none' ────────────────
+   No web fonts. Defers surface + ink to host. Design 4 is the MOST deferential
+   of the four — its resting state is already neutral, so adopting host theme is
+   near-seamless. Identity holds via flat clay accent + hairline discipline. */
+.genie-embedded {
+  --font-display-brand: ;   /* force the -safe fallbacks */
+  --font-body-brand: ;
+  --font-mono-brand: ;
+
+  --color-paper:    var(--host-bg, Canvas);
+  --color-paper-2:  var(--host-surface, Canvas);
+  --color-ink:      var(--host-text, CanvasText);
+  --color-hairline: var(--host-border, color-mix(in oklch, CanvasText 14%, transparent));
+
+  /* identity never defers — flat clay is the one mark that always holds */
+  --color-accent:   oklch(66% 0.105 42);
+  --color-accent-2: oklch(56% 0.115 38);
+  --color-struct:   oklch(52% 0.13 264);
+}
+
+/* ── standalone tier · Vite viewer / docs — full chroma-0 instrument ──────── */
+.genie-standalone {
+  font-family: var(--font-body);
+  font-weight: var(--weight-body);
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+.genie-standalone :is(h1, h2, h3, .display) {
+  font-family: var(--font-display);   /* same family — weight carries hierarchy */
+  font-weight: var(--weight-display);
+  letter-spacing: var(--tracking-display);
+  text-wrap: balance;
+}
+.genie-standalone :is(code, pre, .mono) {
+  font-family: var(--font-mono);
+}
+
+/* ── reduced motion · generate = instant clay fill, no tick animation ─────── */
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 1ms; --dur-base: 1ms; --dur-slow: 1ms; }
+}

@@ -27,9 +27,10 @@ generation against your own UI kit, no separate app to open.
 
 ## Repo map
 
-- `docs/design/` — SVG mockups (warm-editorial; Newsreader/Inter/JetBrains Mono; clay accent
-  `#c87c5e`), `design.md` (locked design system), `tokens.css` (source of truth for tokens).
-  `_*.html` files are local scratch tooling (gitignored).
+- `docs/designs/design-1/` — **canonical** SVG mockups (warm-editorial; Newsreader/Inter/JetBrains
+  Mono; clay accent `#c87c5e`), `design.md` (locked design system), `tokens.css` (source of truth
+  for tokens). `_*.html` files are local scratch tooling. `docs/designs/design-2|3|4/` are
+  alternate variants (Copilot-generated) kept for A/B comparison — not canonical until chosen.
 - `docs/plan/` — product vision, BRD, PRD, tech-design RFC, GTM, ops runbook (the formal spec).
 - `docs/github/` — M0–M5 issue backlog, labels, milestones (the build plan).
 - `docs/resources/` — external evaluations (e.g. Skybridge framework verdict).

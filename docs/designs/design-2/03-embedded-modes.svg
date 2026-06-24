@@ -1,0 +1,210 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1080" viewBox="0 0 1440 1080" font-family="'Space Grotesk','Inter',sans-serif">
+<!-- Hallmark · genie (Drafting Room) · genre: engineering-title-block · pre-emit critique: P5 H5 E5 S5 R5 V5
+     Surface 3 (embedded tier · 3 display modes) — title-block archetype. The same ui://genie/grid iframe
+     is drawn as THREE ORTHOGRAPHIC VIEWS of one assembly (inline / fullscreen / pip), each a measured
+     viewport on one drafting sheet, with a GENERAL NOTES cell carrying the CSP constraint and a master
+     TITLE BLOCK carrying the RFC G-5 byte-identical spec. The embedded mocks render in system-ui (the CSP
+     point); the explainer chrome stays in brand Space Grotesk. Cool-grey paper · ink-blue lead · crisp clay. -->
+  <defs>
+    <linearGradient id="clay0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#cf8265"/><stop offset="1" stop-color="#bd6a4c"/></linearGradient>
+    <linearGradient id="mark2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#cf8265"/><stop offset="1" stop-color="#ac5a40"/></linearGradient>
+    <filter id="soft2" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="6" flood-color="#1b2a44" flood-opacity="0.10"/></filter>
+    <filter id="lift2" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="8" stdDeviation="22" flood-color="#1b2a44" flood-opacity="0.16"/></filter>
+    <pattern id="grid2" width="16" height="16" patternUnits="userSpaceOnUse"><path d="M16 0H0V16" fill="none" stroke="#dde3eb" stroke-width="1"/></pattern>
+    <clipPath id="sheetClip"><rect x="40" y="80" width="1360" height="942"/></clipPath>
+  </defs>
+
+  <rect width="1440" height="1080" fill="#e6eaf0"/>
+
+  <!-- top bar (genie chrome) -->
+  <rect width="1440" height="52" fill="#ebeef3"/>
+  <line x1="0" y1="52" x2="1440" y2="52" stroke="#d3dae3"/>
+  <g transform="translate(24,11)">
+    <rect width="30" height="30" rx="6" fill="url(#mark2)" filter="url(#soft2)"/>
+    <path d="M10 25 L10 11 L24 11" fill="none" stroke="#fbe7dd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M10 11 L24 25" fill="none" stroke="#fbe7dd" stroke-width="2" stroke-linecap="round"/>
+    <text x="44" y="14" font-size="17" font-weight="600" letter-spacing="-0.01em" fill="#14171f">genie</text>
+    <text x="44" y="34" font-family="'JetBrains Mono',monospace" font-size="11" fill="#697384">embedded tier · three display modes</text>
+  </g>
+  <text x="1416" y="22" text-anchor="end" font-family="'JetBrains Mono',monospace" font-size="11" fill="#697384">MCP Apps spec · 2026-01-26</text>
+  <text x="1416" y="38" text-anchor="end" font-family="'JetBrains Mono',monospace" font-size="11" fill="#8a93a1">ui://genie/grid · one iframe, three framings</text>
+
+  <!-- the drafting sheet -->
+  <rect x="24" y="64" width="1392" height="974" rx="4" fill="#f4f6f9" filter="url(#lift2)"/>
+  <rect x="40" y="80" width="1360" height="942" fill="url(#grid2)" clip-path="url(#sheetClip)"/>
+  <rect x="40" y="80" width="1360" height="942" rx="2" fill="none" stroke="#345197" stroke-width="1.5"/>
+  <g stroke="#345197" stroke-width="1.5" fill="none">
+    <path d="M40 96 L40 80 L56 80"/><path d="M1384 80 L1400 80 L1400 96"/>
+    <path d="M40 1006 L40 1022 L56 1022"/><path d="M1384 1022 L1400 1022 L1400 1006"/>
+  </g>
+
+  <!-- sheet label row -->
+  <text x="56" y="116" font-family="'JetBrains Mono',monospace" font-size="11" letter-spacing="0.04em" fill="#697384">EMBEDDED TIER · ui://genie/grid · THREE DISPLAY MODES</text>
+  <text x="1384" y="116" text-anchor="end" font-family="'JetBrains Mono',monospace" font-size="11" fill="#8a93a1">ASSEMBLY · SHEET E-03 · REV C</text>
+  <line x1="56" y1="128" x2="1384" y2="128" stroke="#e2e7ee"/>
+
+  <!-- ── GENERAL NOTES · the CSP constraint ── -->
+  <g transform="translate(56,144)">
+    <rect width="1328" height="74" rx="3" fill="#ffffff" stroke="#345197" stroke-width="1.5"/>
+    <rect width="200" height="74" fill="#e7ecf4"/><line x1="200" y1="0" x2="200" y2="74" stroke="#345197" stroke-width="1.5"/>
+    <text x="16" y="30" font-family="'JetBrains Mono',monospace" font-size="12" letter-spacing="0.04em" fill="#27407a">GENERAL</text>
+    <text x="16" y="48" font-family="'JetBrains Mono',monospace" font-size="12" letter-spacing="0.04em" fill="#27407a">NOTES</text>
+    <text x="222" y="30" font-size="13.5" fill="#14171f">Under the MCP-App CSP (<tspan font-family="'JetBrains Mono',monospace" font-size="12" fill="#c5403a">default-src 'none'</tspan>): <tspan font-weight="600">system fonts only</tspan> — web fonts are blocked. The surface defers to the host theme; ink-blue structure + crisp clay carry identity.</text>
+    <text x="222" y="54" font-size="13.5" fill="#39414f">genie declares <tspan font-family="'JetBrains Mono',monospace" font-size="12" fill="#345197">availableDisplayModes</tspan> at <tspan font-family="'JetBrains Mono',monospace" font-size="12" fill="#345197">ui/initialize</tspan>; the host chooses the framing; genie calls <tspan font-family="'JetBrains Mono',monospace" font-size="12" fill="#345197">ui/request-display-mode</tspan> to switch.</text>
+  </g>
+
+  <!-- ════ VIEW A · INLINE ════ -->
+  <text x="56" y="250" font-family="'JetBrains Mono',monospace" font-size="12" font-weight="600" fill="#27407a">VIEW A · INLINE</text>
+  <text x="180" y="250" font-size="12" fill="#697384">default · embedded in the host's content flow</text>
+  <g transform="translate(56,266)">
+    <rect width="396" height="486" rx="4" fill="#ffffff" stroke="#bcc5d2" filter="url(#soft2)"/>
+    <!-- host chrome -->
+    <rect width="396" height="34" fill="#ebeef3"/><line x1="0" y1="34" x2="396" y2="34" stroke="#d3dae3"/>
+    <text x="14" y="22" font-family="system-ui,sans-serif" font-size="13" font-weight="600" fill="#14171f">Claude Desktop</text>
+    <text x="382" y="22" text-anchor="end" font-family="system-ui,sans-serif" font-size="10.5" fill="#8a93a1">host chrome</text>
+    <!-- user msg -->
+    <g transform="translate(14,48)"><rect width="368" height="36" rx="6" fill="#e2e9f5"/><text x="13" y="23" font-family="system-ui,sans-serif" font-size="12.5" fill="#14171f">show me the button component</text></g>
+    <!-- claude via genie -->
+    <g transform="translate(14,96)"><circle cx="9" cy="9" r="9" fill="url(#mark2)"/><text x="26" y="13" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#14171f">Claude · via genie</text></g>
+    <!-- the INLINE genie card (system font, compact) -->
+    <g transform="translate(14,120)">
+      <rect width="368" height="196" rx="6" fill="#f4f6f9" stroke="#ecb6a0"/><line x1="10" y1="1" x2="358" y2="1" stroke="#ffffff"/>
+      <text x="14" y="24" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#ac5a40">✦ genie · Button</text>
+      <text x="354" y="24" text-anchor="end" font-family="ui-monospace,monospace" font-size="10" fill="#8a93a1">inline</text>
+      <rect x="14" y="36" width="340" height="92" rx="5" fill="#eef1f5"/>
+      <g transform="translate(122,68)" filter="url(#soft2)"><rect width="120" height="38" rx="5" fill="url(#clay0)"/><line x1="8" y1="1.2" x2="112" y2="1.2" stroke="#ecb6a0" stroke-width="1.2"/><text x="60" y="25" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" font-weight="700" fill="#1a0f0a">Primary</text></g>
+      <text x="14" y="152" font-family="system-ui,sans-serif" font-size="13" font-weight="600" fill="#14171f">Button / Primary</text>
+      <g transform="translate(14,160)"><rect width="74" height="18" rx="4" fill="#e2e9f5"/><text x="9" y="13" font-family="ui-monospace,monospace" font-size="9.5" fill="#27407a">primitives</text></g>
+      <text x="98" y="173" font-family="ui-monospace,monospace" font-size="10" fill="#226b40">✓ validated</text>
+      <g transform="translate(258,158)"><rect width="96" height="22" rx="4" fill="#14171f"/><text x="48" y="15" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10.5" fill="#f4f6f9">⤢ Fullscreen</text></g>
+    </g>
+    <text x="14" y="346" font-family="system-ui,sans-serif" font-size="12.5" fill="#39414f">Tweak it, or ask me to refine — I'll regenerate.</text>
+    <!-- host input -->
+    <g transform="translate(14,438)"><rect width="368" height="34" rx="6" fill="#ebeef3" stroke="#d3dae3"/><text x="13" y="22" font-family="system-ui,sans-serif" font-size="12" fill="#8a93a1">Message Claude…</text></g>
+  </g>
+  <!-- dimension line A -->
+  <g stroke="#8ba0c9" stroke-width="1"><line x1="56" y1="770" x2="56" y2="762"/><line x1="452" y1="770" x2="452" y2="762"/><line x1="56" y1="766" x2="232" y2="766"/><line x1="276" y1="766" x2="452" y2="766"/></g>
+  <path d="M56 766 l8 -3 l0 6 z" fill="#8ba0c9"/><path d="M452 766 l-8 -3 l0 6 z" fill="#8ba0c9"/>
+  <text x="254" y="770" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#27407a">inline · compact card</text>
+
+  <!-- ════ VIEW B · FULLSCREEN ════ -->
+  <text x="484" y="250" font-family="'JetBrains Mono',monospace" font-size="12" font-weight="600" fill="#27407a">VIEW B · FULLSCREEN</text>
+  <text x="640" y="250" font-size="12" fill="#697384">view takes over the window — genie owns the grid</text>
+  <g transform="translate(484,266)">
+    <rect width="540" height="486" rx="4" fill="#f4f6f9" stroke="#bcc5d2" filter="url(#lift2)"/>
+    <!-- thin host bar (receded, dark) -->
+    <rect width="540" height="24" fill="#14171f"/>
+    <text x="14" y="16" font-family="system-ui,sans-serif" font-size="11" fill="#9aa3b1">Claude Desktop</text>
+    <g transform="translate(424,4)"><rect width="104" height="16" rx="4" fill="#39414f"/><text x="10" y="12" font-family="ui-monospace,monospace" font-size="9" fill="#ecb6a0">✦ genie · fullscreen</text></g>
+    <!-- genie owns the screen -->
+    <g transform="translate(0,24)">
+      <rect width="540" height="38" fill="#ebeef3"/><line x1="0" y1="38" x2="540" y2="38" stroke="#d3dae3"/>
+      <g transform="translate(14,6)"><rect width="26" height="26" rx="5" fill="url(#mark2)"/><path d="M9 21 L9 9 L21 9" fill="none" stroke="#fbe7dd" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 9 L21 21" fill="none" stroke="#fbe7dd" stroke-width="1.7" stroke-linecap="round"/></g>
+      <text x="48" y="24" font-family="system-ui,sans-serif" font-size="14" font-weight="700" fill="#14171f">genie</text>
+      <text x="96" y="24" font-family="ui-monospace,monospace" font-size="10" fill="#697384">Quanta · 30 components</text>
+      <g transform="translate(396,7)"><rect width="86" height="24" rx="5" fill="url(#clay0)"/><line x1="8" y1="1.2" x2="78" y2="1.2" stroke="#ecb6a0" stroke-width="1.2"/><text x="43" y="16" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="#1a0f0a">✦ Generate</text></g>
+      <g transform="translate(490,7)"><rect width="42" height="24" rx="5" fill="#ffffff" stroke="#bcc5d2"/><text x="21" y="16" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10.5" fill="#39414f">⤡ Min</text></g>
+      <!-- group header -->
+      <text x="16" y="72" font-family="ui-monospace,monospace" font-size="11" font-weight="600" fill="#27407a">primitives · 8</text>
+      <line x1="116" y1="68" x2="524" y2="68" stroke="#e2e7ee"/>
+      <!-- grid 3×2 -->
+      <g transform="translate(16,84)">
+        <!-- Button / Primary (clay) -->
+        <g><rect width="160" height="116" rx="6" fill="#ffffff" stroke="#d3dae3"/><line x1="10" y1="1" x2="150" y2="1" stroke="#ffffff"/><rect x="12" y="12" width="136" height="60" rx="5" fill="#eef1f5"/><g transform="translate(48,28)" filter="url(#soft2)"><rect width="64" height="28" rx="5" fill="url(#clay0)"/><text x="32" y="19" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="#1a0f0a">Primary</text></g><text x="12" y="94" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#14171f">Button</text><text x="148" y="106" text-anchor="end" font-family="ui-monospace,monospace" font-size="9" fill="#226b40">✓</text></g>
+        <!-- Button Secondary (white) -->
+        <g transform="translate(172,0)"><rect width="160" height="116" rx="6" fill="#ffffff" stroke="#d3dae3"/><line x1="10" y1="1" x2="150" y2="1" stroke="#ffffff"/><rect x="12" y="12" width="136" height="60" rx="5" fill="#eef1f5"/><g transform="translate(42,28)"><rect width="76" height="28" rx="5" fill="#ffffff" stroke="#bcc5d2"/><text x="38" y="19" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11" font-weight="600" fill="#14171f">Secondary</text></g><text x="12" y="94" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#14171f">Button · 2</text><text x="148" y="106" text-anchor="end" font-family="ui-monospace,monospace" font-size="9" fill="#226b40">✓</text></g>
+        <!-- Badge (ink-blue) -->
+        <g transform="translate(344,0)"><rect width="160" height="116" rx="6" fill="#ffffff" stroke="#d3dae3"/><line x1="10" y1="1" x2="150" y2="1" stroke="#ffffff"/><rect x="12" y="12" width="136" height="60" rx="5" fill="#eef1f5"/><g transform="translate(54,30)"><rect width="52" height="24" rx="4" fill="#ffffff" stroke="#bcc5d2"/><rect x="12" y="8" width="28" height="8" rx="4" fill="#345197"/></g><text x="12" y="94" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#14171f">Badge</text><text x="148" y="106" text-anchor="end" font-family="ui-monospace,monospace" font-size="9" fill="#226b40">✓</text></g>
+        <!-- Input -->
+        <g transform="translate(0,128)"><rect width="160" height="116" rx="6" fill="#ffffff" stroke="#d3dae3"/><line x1="10" y1="1" x2="150" y2="1" stroke="#ffffff"/><rect x="12" y="12" width="136" height="60" rx="5" fill="#eef1f5"/><g transform="translate(28,30)"><rect width="104" height="24" rx="4" fill="#ffffff" stroke="#bcc5d2"/><text x="10" y="16" font-family="system-ui,sans-serif" font-size="9.5" fill="#8a93a1">email@…</text></g><text x="12" y="94" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#14171f">Input</text><text x="148" y="106" text-anchor="end" font-family="ui-monospace,monospace" font-size="9" fill="#226b40">✓</text></g>
+        <!-- generating (clay) -->
+        <g transform="translate(172,128)"><rect x="-2" y="-2" width="164" height="120" rx="7" fill="#c87c5e" opacity="0.12"/><rect width="160" height="116" rx="6" fill="#f3ddd2" stroke="#ecb6a0"/><rect x="12" y="12" width="136" height="60" rx="5" fill="#f6e2d8"/><text x="80" y="46" text-anchor="middle" font-family="system-ui,sans-serif" font-size="12" font-weight="700" fill="#ac5a40">✦ Conjuring…</text><text x="12" y="94" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#14171f">Card</text></g>
+        <!-- toast (green) -->
+        <g transform="translate(344,128)"><rect width="160" height="116" rx="6" fill="#ffffff" stroke="#d3dae3"/><line x1="10" y1="1" x2="150" y2="1" stroke="#ffffff"/><rect x="12" y="12" width="136" height="60" rx="5" fill="#eef1f5"/><g transform="translate(44,32)"><rect width="72" height="20" rx="4" fill="#d7eede"/><text x="10" y="14" font-family="ui-monospace,monospace" font-size="9" fill="#226b40">✓ toast</text></g><text x="12" y="94" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#14171f">Toast</text><text x="148" y="106" text-anchor="end" font-family="ui-monospace,monospace" font-size="9" fill="#226b40">✓</text></g>
+      </g>
+      <!-- status bar -->
+      <line x1="0" y1="404" x2="540" y2="404" stroke="#d3dae3"/>
+      <text x="16" y="424" font-family="ui-monospace,monospace" font-size="10" fill="#697384">✓ 28 validated · ✦ 1 generating · system-ui · host-light</text>
+    </g>
+  </g>
+  <!-- dimension line B -->
+  <g stroke="#8ba0c9" stroke-width="1"><line x1="484" y1="770" x2="484" y2="762"/><line x1="1024" y1="770" x2="1024" y2="762"/><line x1="484" y1="766" x2="708" y2="766"/><line x1="800" y1="766" x2="1024" y2="766"/></g>
+  <path d="M484 766 l8 -3 l0 6 z" fill="#8ba0c9"/><path d="M1024 766 l-8 -3 l0 6 z" fill="#8ba0c9"/>
+  <text x="754" y="770" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#27407a">fullscreen · full-window grid</text>
+
+  <!-- ════ VIEW C · PIP ════ -->
+  <text x="1056" y="250" font-family="'JetBrains Mono',monospace" font-size="12" font-weight="600" fill="#27407a">VIEW C · PIP</text>
+  <text x="1150" y="250" font-size="12" fill="#697384">floating overlay · persists while you work</text>
+  <g transform="translate(1056,266)">
+    <rect width="328" height="486" rx="4" fill="#eef1f5" stroke="#bcc5d2"/>
+    <text x="16" y="28" font-family="ui-monospace,monospace" font-size="10" fill="#9aa3b1">(working in the editor…)</text>
+    <g opacity="0.5" font-family="ui-monospace,monospace" font-size="10.5" fill="#697384">
+      <text x="16" y="58">function Button() {</text><text x="16" y="78">  return &lt;button</text><text x="16" y="98">    className="ds-btn" /&gt;</text><text x="16" y="118">}</text>
+      <text x="16" y="150">export const tokens = {</text><text x="16" y="170">  radius: { md: 6 },</text><text x="16" y="190">}</text>
+    </g>
+    <!-- the floating PIP genie mini-preview -->
+    <g transform="translate(64,300)" filter="url(#lift2)">
+      <rect width="200" height="156" rx="6" fill="#f4f6f9" stroke="#ecb6a0"/><line x1="10" y1="1" x2="190" y2="1" stroke="#ffffff"/>
+      <rect width="200" height="26" rx="6" fill="#f3ddd2"/><rect y="13" width="200" height="13" fill="#f3ddd2"/>
+      <g transform="translate(12,5)"><rect width="16" height="16" rx="4" fill="url(#mark2)"/><path d="M5.5 13 L5.5 5.5 L13 5.5" fill="none" stroke="#fbe7dd" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 5.5 L13 13" fill="none" stroke="#fbe7dd" stroke-width="1.2" stroke-linecap="round"/></g>
+      <text x="34" y="18" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="#ac5a40">genie</text>
+      <text x="166" y="18" font-family="ui-monospace,monospace" font-size="9" fill="#ac5a40">pip</text>
+      <circle cx="188" cy="13" r="2.4" fill="#8a93a1"/>
+      <rect x="14" y="36" width="172" height="68" rx="5" fill="#eef1f5"/>
+      <g transform="translate(58,56)" filter="url(#soft2)"><rect width="84" height="30" rx="5" fill="url(#clay0)"/><line x1="8" y1="1.2" x2="76" y2="1.2" stroke="#ecb6a0" stroke-width="1.2"/><text x="42" y="20" text-anchor="middle" font-family="system-ui,sans-serif" font-size="11.5" font-weight="700" fill="#1a0f0a">Primary</text></g>
+      <text x="14" y="126" font-family="system-ui,sans-serif" font-size="11.5" font-weight="600" fill="#14171f">Button / Primary</text>
+      <text x="14" y="144" font-family="ui-monospace,monospace" font-size="9" fill="#226b40">✓ validated · live</text>
+      <g transform="translate(160,130)"><rect width="26" height="18" rx="4" fill="#14171f"/><text x="13" y="13" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" fill="#f4f6f9">⤢</text></g>
+    </g>
+  </g>
+  <!-- dimension line C -->
+  <g stroke="#8ba0c9" stroke-width="1"><line x1="1056" y1="770" x2="1056" y2="762"/><line x1="1384" y1="770" x2="1384" y2="762"/><line x1="1056" y1="766" x2="1162" y2="766"/><line x1="1278" y1="766" x2="1384" y2="766"/></g>
+  <path d="M1056 766 l8 -3 l0 6 z" fill="#8ba0c9"/><path d="M1384 766 l-8 -3 l0 6 z" fill="#8ba0c9"/>
+  <text x="1220" y="770" text-anchor="middle" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#27407a">pip · floating mini-preview</text>
+
+  <!-- ── bottom band · notes (left) + master title block (right) ── -->
+  <g transform="translate(56,800)">
+    <rect width="716" height="206" rx="3" fill="#ffffff" stroke="#bcc5d2"/>
+    <rect width="716" height="34" fill="#eef1f5"/><line x1="0" y1="34" x2="716" y2="34" stroke="#d3dae3"/>
+    <text x="16" y="22" font-family="'JetBrains Mono',monospace" font-size="11" letter-spacing="0.04em" fill="#697384">NOTES</text>
+    <text x="20" y="76" font-size="26" font-weight="600" letter-spacing="-0.01em" fill="#14171f">Same artifact, three framings.</text>
+    <text x="20" y="108" font-size="14" fill="#39414f">The card markup is <tspan font-weight="600" fill="#14171f">byte-identical</tspan> across inline / fullscreen / pip —</text>
+    <text x="20" y="130" font-size="14" fill="#39414f">RFC G-5. Only the host's framing changes. genie must read right at all</text>
+    <text x="20" y="152" font-size="14" fill="#39414f">three scales — a compact chat card, a full-window grid, a floating mini-</text>
+    <text x="20" y="174" font-size="14" fill="#39414f">preview — on system fonts, deferring to the host theme, ink-blue + clay</text>
+    <text x="20" y="196" font-size="14" fill="#39414f">holding identity throughout.</text>
+  </g>
+
+  <!-- master TITLE BLOCK -->
+  <g transform="translate(800,800)">
+    <rect width="584" height="206" rx="3" fill="#ffffff" stroke="#345197" stroke-width="1.5"/>
+    <rect width="584" height="34" fill="#e7ecf4"/><line x1="0" y1="34" x2="584" y2="34" stroke="#345197" stroke-width="1.5"/>
+    <text x="16" y="22" font-family="'JetBrains Mono',monospace" font-size="12" letter-spacing="0.06em" fill="#27407a">TITLE BLOCK · ASSEMBLY</text>
+    <text x="568" y="22" text-anchor="end" font-family="'JetBrains Mono',monospace" font-size="10" fill="#8a93a1">ui://genie/grid</text>
+    <!-- cell grid: 3 cols × 2 rows of spec cells + footer -->
+    <g font-family="'JetBrains Mono',monospace">
+      <line x1="0" y1="92" x2="584" y2="92" stroke="#e2e7ee"/>
+      <line x1="0" y1="150" x2="584" y2="150" stroke="#e2e7ee"/>
+      <line x1="195" y1="34" x2="195" y2="150" stroke="#e2e7ee"/>
+      <line x1="389" y1="34" x2="389" y2="150" stroke="#e2e7ee"/>
+      <!-- row 1 -->
+      <g transform="translate(14,52)"><text font-size="9.5" letter-spacing="0.04em" fill="#8a93a1">DISPLAY MODES</text><text y="22" font-family="'Space Grotesk',sans-serif" font-size="14" font-weight="600" fill="#14171f">inline · fullscreen</text><text y="40" font-family="'Space Grotesk',sans-serif" font-size="14" font-weight="600" fill="#14171f">· pip</text></g>
+      <g transform="translate(209,52)"><text font-size="9.5" letter-spacing="0.04em" fill="#8a93a1">CSP</text><text y="22" font-size="12.5" fill="#c5403a">default-src</text><text y="40" font-size="12.5" fill="#c5403a">'none'</text></g>
+      <g transform="translate(403,52)"><text font-size="9.5" letter-spacing="0.04em" fill="#8a93a1">FONTS</text><text y="22" font-family="'Space Grotesk',sans-serif" font-size="14" font-weight="600" fill="#14171f">system-ui</text><text y="40" font-size="11" fill="#697384">web fonts blocked</text></g>
+      <!-- row 2 -->
+      <g transform="translate(14,110)"><text font-size="9.5" letter-spacing="0.04em" fill="#8a93a1">DEFERS TO</text><text y="22" font-family="'Space Grotesk',sans-serif" font-size="14" font-weight="600" fill="#14171f">host theme</text></g>
+      <g transform="translate(209,110)"><text font-size="9.5" letter-spacing="0.04em" fill="#8a93a1">IFRAME</text><text y="22" font-family="'Space Grotesk',sans-serif" font-size="13" font-weight="600" fill="#14171f">one source</text></g>
+      <g transform="translate(403,110)"><text font-size="9.5" letter-spacing="0.04em" fill="#8a93a1">G-5</text><text y="22" font-size="12.5" fill="#27407a">byte-identical</text></g>
+    </g>
+    <!-- validated footer cell -->
+    <g transform="translate(0,150)">
+      <rect width="584" height="56" rx="0" fill="#f1f4f8"/>
+      <g transform="translate(14,16)"><rect width="220" height="26" rx="4" fill="#d7eede" stroke="#aed4bd"/><text x="12" y="17" font-family="'JetBrains Mono',monospace" font-size="11" fill="#226b40">✓ 28 validated · 1 generating</text></g>
+      <text x="568" y="33" text-anchor="end" font-family="'JetBrains Mono',monospace" font-size="10.5" fill="#697384">declares availableDisplayModes · ui/initialize</text>
+    </g>
+  </g>
+
+  <!-- footer caption -->
+  <text x="24" y="1062" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#697384">genie · embedded modes · three measured views of one iframe · surface 3 / 4</text>
+  <text x="1416" y="1062" font-family="'JetBrains Mono',monospace" font-size="11.5" fill="#8a93a1" text-anchor="end">Drafting Room · title-block layout</text>
+</svg>

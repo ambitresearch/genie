@@ -1,0 +1,6 @@
+packages:
+  - "packages/server"
+  - "packages/viewer"
+  - "packages/e2e"
+allowBuilds:
+  esbuild: true

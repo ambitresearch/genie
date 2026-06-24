@@ -2,6 +2,11 @@
 node_modules/
 package-lock.json
 
+# ── Build output ──────────────────────────────────────────
+dist/
+*.tsbuildinfo
+coverage/
+
 # ── Private session memory (not part of the project) ──────
 .remember/
 
@@ -9,7 +14,7 @@ package-lock.json
 .claude/
 
 # ── Scratch / lab files (kept locally for reference, not shipped) ──
-docs/design/_*.html
+docs/designs/**/_*.html
 
 # ── Deliverables junk drawer (unrelated homelab/plugin work) ──
 # NOTE: this folder is NOT genie content — it's staging cruft from

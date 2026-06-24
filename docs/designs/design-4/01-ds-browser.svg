@@ -1,0 +1,337 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="980" viewBox="0 0 1440 980" font-family="'Archivo', system-ui, sans-serif">
+<!-- Hallmark · genie (instrument) · genre: swiss-functional · pre-emit critique: P5 H5 E5 S5 R5 V5
+     surface 1 / 4 — UI KIT BROWSER. LAYOUT ARCHETYPE = devtools console: NO left nav tree, NO right showcase pane.
+     The kit is a FULL-WIDTH columnar DATA TABLE (every component a record: marker · name · group · variants ·
+     status · selector), driven by the command bar. The selected component opens a BOTTOM-DOCKED inspector
+     (overview / variants / code / files), a horizontal top/bottom split like browser devtools — decisively not
+     D1's tree-left / detail-right. Off-white #fbfbfb; Archivo + JetBrains Mono; FLAT clay only on Refine; ink-blue
+     demoted to selection/syntax; structure = hairlines + air. -->
+
+<rect width="1440" height="980" fill="#fbfbfb"/>
+
+<!-- ===== masthead (universal furniture) ===== -->
+<rect width="1440" height="52" fill="#f4f4f5"/>
+<line x1="0" y1="52" x2="1440" y2="52" stroke="#e2e2e4" stroke-width="1"/>
+<g transform="translate(64,11)">
+  <rect width="30" height="30" rx="5" fill="#c87c5e"/>
+  <path d="M8 20 q7 -11 14 0" fill="none" stroke="#fbfbfb" stroke-width="2.1" stroke-linecap="round"/>
+  <path d="M15 4 l1 3 3 1 -3 1 -1 3 -1 -3 -3 -1 3 -1 z" fill="#fbfbfb"/>
+  <text x="44" y="15" font-size="19" font-weight="700" fill="#16171a" letter-spacing="-0.02em">genie</text>
+  <text x="93" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">· in Claude Code</text>
+</g>
+<g transform="translate(1180,13)">
+  <rect width="196" height="26" rx="6" fill="#16171a"/>
+  <circle cx="16" cy="13" r="4.5" fill="#2f8f57"/>
+  <text x="30" y="17" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#fbfbfb">harness-native · no app to open</text>
+</g>
+
+<!-- ===== command bar (the query that produced this view) ===== -->
+<g transform="translate(64,84)">
+  <rect width="1312" height="48" rx="7" fill="#f4f4f5" stroke="#e2e2e4"/>
+  <text x="20" y="30" font-family="'JetBrains Mono', monospace" font-size="14" fill="#ac5a40">genie ❯</text>
+  <text x="86" y="30" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b" letter-spacing="0.04em">kit</text>
+  <text x="110" y="30" font-size="14" font-weight="600" fill="#16171a">Quanta ▾</text>
+  <text x="192" y="30" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b" letter-spacing="0.04em">inspect</text>
+  <text x="250" y="30" font-size="14" font-weight="600" fill="#16171a">Button</text>
+  <text x="1040" y="30" font-size="13" fill="#454649">group: all ▾</text>
+  <text x="1292" y="30" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">30 components · 4 groups · ✓ synced</text>
+</g>
+
+<!-- ===== component table (full width, columnar — this is the kit) ===== -->
+<g transform="translate(64,140)">
+  <!-- column header -->
+  <text x="26" y="13" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#86878b" letter-spacing="0.12em">NAME</text>
+  <text x="340" y="13" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#86878b" letter-spacing="0.12em">GROUP</text>
+  <text x="470" y="13" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#86878b" letter-spacing="0.12em">VAR</text>
+  <text x="560" y="13" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#86878b" letter-spacing="0.12em">STATUS</text>
+  <text x="720" y="13" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#86878b" letter-spacing="0.12em">SELECTOR</text>
+  <line x1="0" y1="20" x2="1312" y2="20" stroke="#c9c9cc"/>
+
+  <!-- group · brand -->
+  <text x="0" y="41" font-family="'JetBrains Mono', monospace" font-size="10.5" font-weight="600" fill="#454649" letter-spacing="0.12em">brand · 3</text>
+  <g transform="translate(0,48)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="#16171a"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">BrandMark</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">brand</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">1</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-brandmark</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,71)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">QGrid</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">brand</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">1</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-qgrid</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,94)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="#16171a"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">QMonogram</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">brand</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">1</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-qmono</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+
+  <!-- group · dataviz -->
+  <text x="0" y="132" font-family="'JetBrains Mono', monospace" font-size="10.5" font-weight="600" fill="#454649" letter-spacing="0.12em">dataviz · 4</text>
+  <g transform="translate(0,139)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">AgentCard</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">dataviz</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">2</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-agentcard</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,162)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">BarMeter</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">dataviz</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">2</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-barmeter</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,185)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">DonutChart</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">dataviz</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">1</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">· draft</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-donut</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,208)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">StatCell</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">dataviz</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">1</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-statcell</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+
+  <!-- group · nav -->
+  <text x="0" y="246" font-family="'JetBrains Mono', monospace" font-size="10.5" font-weight="600" fill="#454649" letter-spacing="0.12em">nav · 3</text>
+  <g transform="translate(0,253)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="#16171a"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">NavItem</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">nav</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">2</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-navitem</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,276)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">SidebarToggle</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">nav</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">1</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">· draft</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-sidebartoggle</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,299)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">WorkspaceSwitcher</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">nav</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">1</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-workspaceswitcher</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+
+  <!-- group · primitives -->
+  <text x="0" y="337" font-family="'JetBrains Mono', monospace" font-size="10.5" font-weight="600" fill="#454649" letter-spacing="0.12em">primitives · 8</text>
+  <g transform="translate(0,344)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">Badge</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">primitives</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">3</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-badge</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <!-- Button · SELECTED (focus band, ink-blue selection — functional, not decorative stripe) -->
+  <g transform="translate(0,367)">
+    <rect x="-12" y="-1" width="1332" height="23" fill="#eef1f8"/>
+    <rect x="-12" y="-1" width="1332" height="23" fill="none" stroke="#4f6fc6" stroke-opacity="0.45"/>
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="#c87c5e"/>
+    <text x="26" y="15" font-size="14" font-weight="600" fill="#16171a">Button</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#454649">primitives</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#454649">4</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-btn</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#4f6fc6">▾ inspecting</text>
+  </g>
+  <g transform="translate(0,390)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">Card</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">primitives</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">2</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-card</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,413)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="#16171a"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">FormField</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">primitives</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">3</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-formfield</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,436)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">Pill</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">primitives</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">2</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-pill</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,459)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">SearchInput</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">primitives</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">1</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-search</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,482)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <circle cx="8" cy="11" r="3.5" fill="#2f8f57"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">StatusDot</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">primitives</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">4</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-statusdot</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+  <g transform="translate(0,505)">
+    <rect x="0" y="3" width="16" height="16" rx="3" fill="none" stroke="#c9c9cc"/>
+    <text x="26" y="15" font-size="14" fill="#16171a">Table</text>
+    <text x="340" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">primitives</text>
+    <text x="470" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#86878b">2</text>
+    <text x="560" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#2f8f57">✓ validated</text>
+    <text x="720" y="15" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#454649">.ds-table</text>
+    <text x="1312" y="15" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">inspect ⟶</text>
+    <line x1="0" y1="22" x2="1312" y2="22" stroke="#e2e2e4"/>
+  </g>
+</g>
+
+<!-- ===== bottom-docked inspector (devtools-style horizontal split — NOT a right detail pane) ===== -->
+<g transform="translate(64,684)">
+  <line x1="0" y1="0" x2="1312" y2="0" stroke="#c9c9cc"/>
+  <!-- dock header: identity + tabs + Refine (clay = generate affordance) -->
+  <text x="0" y="22" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#86878b" letter-spacing="0.12em">INSPECTOR</text>
+  <text x="92" y="23" font-size="15" font-weight="700" fill="#16171a" letter-spacing="-0.01em">Button</text>
+  <g font-family="'JetBrains Mono', monospace" font-size="11.5">
+    <text x="180" y="22" fill="#16171a">overview</text>
+    <line x1="180" y1="29" x2="238" y2="29" stroke="#16171a" stroke-width="1.5"/>
+    <text x="262" y="22" fill="#86878b">variants</text>
+    <text x="338" y="22" fill="#86878b">code</text>
+    <text x="392" y="22" fill="#86878b">files</text>
+  </g>
+  <g transform="translate(1176,4)">
+    <rect width="136" height="26" rx="5" fill="#c87c5e"/>
+    <text x="18" y="18" font-size="12.5" font-weight="700" fill="#fbfbfb">Refine</text>
+    <path d="M104 13 h12 M111 7 v12" stroke="#fbfbfb" stroke-width="1.3" stroke-linecap="round"/>
+  </g>
+  <line x1="0" y1="38" x2="1312" y2="38" stroke="#e2e2e4"/>
+
+  <!-- column dividers -->
+  <line x1="360" y1="52" x2="360" y2="252" stroke="#e2e2e4"/>
+  <line x1="844" y1="52" x2="844" y2="252" stroke="#e2e2e4"/>
+
+  <!-- Col A · identity property sheet -->
+  <g transform="translate(0,52)" font-family="'JetBrains Mono', monospace" font-size="12">
+    <text x="0" y="14" font-size="10.5" fill="#86878b" letter-spacing="0.12em">IDENTITY</text>
+    <g transform="translate(0,30)">
+      <text x="0" y="12" fill="#86878b">path</text><text x="120" y="12" fill="#16171a">primitives / Button</text>
+      <text x="0" y="38" fill="#86878b">selector</text><text x="120" y="38" fill="#16171a">.ds-btn</text>
+      <text x="0" y="64" fill="#86878b">variants</text><text x="120" y="64" fill="#16171a">4 · 8 states each</text>
+      <text x="0" y="90" fill="#86878b">source</text><text x="120" y="90" fill="#16171a">@quanta/dashboard-ui</text>
+      <text x="0" y="116" fill="#86878b">marker</text><text x="120" y="116" fill="#16171a">@dsCard ✓</text>
+      <text x="0" y="142" fill="#86878b">sync</text><text x="120" y="142" fill="#2f8f57">✓ DesignSync · 4h ago</text>
+    </g>
+  </g>
+
+  <!-- Col B · variants, flat render (no glow, no lift) -->
+  <g transform="translate(384,52)">
+    <text x="0" y="14" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#86878b" letter-spacing="0.12em">VARIANTS · LIVE RENDER</text>
+    <text x="436" y="14" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="10" fill="#86878b">sandboxed · 180×56</text>
+    <!-- primary (flat clay) -->
+    <g transform="translate(0,30)">
+      <rect width="206" height="44" rx="7" fill="#c87c5e"/>
+      <text x="103" y="27" text-anchor="middle" font-size="14" font-weight="700" fill="#fbfbfb">Primary</text>
+    </g>
+    <text x="0" y="92" font-family="'JetBrains Mono', monospace" font-size="10" fill="#86878b">primary</text>
+    <!-- secondary -->
+    <g transform="translate(230,30)">
+      <rect width="206" height="44" rx="7" fill="#fbfbfb" stroke="#c9c9cc"/>
+      <text x="103" y="27" text-anchor="middle" font-size="14" font-weight="600" fill="#16171a">Secondary</text>
+    </g>
+    <text x="230" y="92" font-family="'JetBrains Mono', monospace" font-size="10" fill="#86878b">secondary</text>
+    <!-- ghost -->
+    <g transform="translate(0,104)">
+      <rect width="206" height="44" rx="7" fill="none" stroke="#e2e2e4" stroke-dasharray="3 3"/>
+      <text x="103" y="27" text-anchor="middle" font-size="14" font-weight="600" fill="#454649">Ghost</text>
+    </g>
+    <text x="0" y="166" font-family="'JetBrains Mono', monospace" font-size="10" fill="#86878b">ghost</text>
+    <!-- danger (flat) -->
+    <g transform="translate(230,104)">
+      <rect width="206" height="44" rx="7" fill="#c5372f"/>
+      <text x="103" y="27" text-anchor="middle" font-size="14" font-weight="600" fill="#fbfbfb">Delete</text>
+    </g>
+    <text x="230" y="166" font-family="'JetBrains Mono', monospace" font-size="10" fill="#86878b">danger</text>
+  </g>
+
+  <!-- Col C · @dsCard marker + files -->
+  <g transform="translate(868,52)">
+    <text x="0" y="14" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#86878b" letter-spacing="0.12em">THE @dsCard MARKER</text>
+    <g transform="translate(0,26)">
+      <rect width="444" height="64" rx="5" fill="#f7f7f7" stroke="#e2e2e4"/>
+      <g font-family="'JetBrains Mono', monospace" font-size="11.5">
+        <text x="16" y="26"><tspan fill="#86878b">&lt;!-- </tspan><tspan fill="#4064b9" font-weight="700">@dsCard</tspan><tspan fill="#16171a"> group=</tspan><tspan fill="#2f8f57">"primitives"</tspan></text>
+        <text x="16" y="46"><tspan fill="#16171a">          viewport=</tspan><tspan fill="#2f8f57">"180x56"</tspan><tspan fill="#86878b"> --&gt;</tspan></text>
+      </g>
+    </g>
+    <text x="0" y="116" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#ac5a40">✓ genie's regex matches — this preview becomes a card</text>
+    <!-- files -->
+    <text x="0" y="146" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#86878b" letter-spacing="0.12em">FILES</text>
+    <g transform="translate(0,156)" font-family="'JetBrains Mono', monospace" font-size="11.5">
+      <text x="0" y="14" fill="#454649">▸ Button.prompt.md</text><text x="444" y="14" text-anchor="end" fill="#86878b">example + variants</text>
+      <text x="0" y="34" fill="#454649">▸ Button.d.ts</text><text x="444" y="34" text-anchor="end" fill="#86878b">API contract</text>
+      <text x="0" y="54" fill="#ac5a40">▾ Button.html</text><text x="444" y="54" text-anchor="end" fill="#ac5a40">open · @dsCard ✓</text>
+    </g>
+  </g>
+</g>
+
+<!-- ===== footer ===== -->
+<text x="64" y="962" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">genie · UI kit browser (Quanta / Button) · console + docked inspector · surface 1 / 4</text>
+<text x="1376" y="962" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#86878b">Instrument · console layout</text>
+</svg>
