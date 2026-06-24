@@ -14,7 +14,7 @@
 
 1. **Read the issue fully** — Summary, Acceptance Criteria (AC), Design Reference, DoD.
 2. **Read `CLAUDE.md`** (repo root) for project context + the hard rules below.
-3. **Read the linked design/plan docs** the issue references (`docs/plan/`, `docs/design/`).
+3. **Read the linked design/plan docs** the issue references (`docs/plan/`, `docs/designs/design-1/`).
 4. **Restate the task** in your PR-to-be description: what you're building, which ACs
    you'll satisfy, what's explicitly out of scope.
 5. If the issue is **ambiguous, contradicts existing patterns, or the data model is
@@ -45,7 +45,7 @@ If the issue has a **## Design Reference** section, it produces visible output:
 
 1. Run the thing. Render the surface (browser, viewer, or `ui://` host).
 2. **Screenshot your build.** Use the Playwright/Chrome MCP or `mcp__Claude_Preview`.
-3. **Diff against the mock** named in the Design Reference (an SVG in `docs/design/`).
+3. **Diff against the mock** named in the Design Reference (an SVG in `docs/designs/design-1/`).
    Compare layout, hierarchy, spacing, and — critically — the **genie identity rules**
    (clay/gilt accent ONLY on generate/refine moments; structure stays ink/neutral).
 4. Note any deliberate deviation from the mock in the PR description with a reason.
@@ -152,5 +152,5 @@ satisfied with evidence, docs updated if behavior changed. Anything less stays o
 | npm scope | `@genie/*` (e.g. `@genie/viewer`) |
 | Issue backlog | `docs/github/issues/` |
 | Mock map | `docs/github/MOCK-MAP.md` |
-| Design mocks | `docs/design/*.svg` |
+| Design mocks | `docs/designs/design-1/*.svg` |
 | Co-author trailer | `Co-Authored-By: Claude <noreply@anthropic.com>` |

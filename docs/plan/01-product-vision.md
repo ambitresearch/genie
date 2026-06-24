@@ -1,8 +1,9 @@
 # Product Vision — genie
 
-> Document owner: the maintainer (solo) · Status: working draft · Last revised: 2026-06-21
+> Document owner: the maintainer (solo) · Status: working draft · Last revised: 2026-06-24
 > Source-of-truth: this document supersedes any prior pitch or slide. All
 > downstream docs (BRD, PRD, RFC, GTM, Runbook) inherit from it.
+> Revision note (2026-06-24): Raised minimum Node.js from 18 to 22 (Node 18 & 20 reached EOL; Node 22 is the current Active LTS).
 
 ---
 
@@ -341,7 +342,7 @@ we merely make it legible to an LLM.
 ### 5.4 Pillar 4 — Open by default, MIT-licensed, plain TypeScript
 
 **What it means.** The repository at `roshangautam/genie` is
-MIT-licensed. The primary language is TypeScript (Node ≥ 18, ESM). The MCP
+MIT-licensed. The primary language is TypeScript (Node ≥ 22, ESM). The MCP
 implementation uses `@modelcontextprotocol/sdk` only — no proprietary forks, no
 private extensions. The protocol is the boundary; everything inside is open
 source. No telemetry beacons. No "free tier vs paid tier." If a feature exists

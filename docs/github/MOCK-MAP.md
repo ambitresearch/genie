@@ -5,9 +5,9 @@
 > and compare to the mock) and **reference** (the issue's output is shaped by a surface
 > but isn't a direct visual diff — use the mock for context + identity rules).
 >
-> Mocks live in `docs/design/*.svg`. On GitHub they render at:
-> `https://github.com/roshangautam/genie/blob/main/docs/design/<file>.svg`
-> In a clone: open `docs/design/<file>.svg` directly.
+> Mocks live in `docs/designs/design-1/*.svg`. On GitHub they render at:
+> `https://github.com/roshangautam/genie/blob/main/docs/designs/design-1/<file>.svg`
+> In a clone: open `docs/designs/design-1/<file>.svg` directly.
 >
 > **Validation protocol** for any issue with a Design Reference: see `AGENTS.md` §3.
 

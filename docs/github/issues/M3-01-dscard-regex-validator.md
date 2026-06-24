@@ -61,7 +61,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`ref-dscard.svg`](https://github.com/roshangautam/genie/blob/main/docs/design/ref-dscard.svg) — the @dsCard marker the card detail depends on.
+**Primary mock:** [`ref-dscard.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-1/ref-dscard.svg) — the @dsCard marker the card detail depends on.
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 

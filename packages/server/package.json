@@ -1,0 +1,28 @@
+{
+  "name": "@genie/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "genie MCP server — harness-agnostic AI UI-component generation.",
+  "bin": {
+    "genie": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "dev": "tsx watch src/cli.ts",
+    "start": "node dist/cli.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "author": "Roshan Gautam"
+}

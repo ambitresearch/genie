@@ -8,7 +8,7 @@ estimate: "5h"
 
 ## Summary
 Ship `.github/workflows/ci.yml` that runs lint + typecheck + unit tests on
-every PR across Node 18/20/22 on Ubuntu/macOS. Add `release-please` (or
+every PR across Node 22/24 on Ubuntu/macOS. Add `release-please` (or
 Changesets) to manage versioning automatically. Reserve the npm package name
 `genie`.
 
@@ -19,7 +19,7 @@ Changesets) to manage versioning automatically. Reserve the npm package name
 
 ## Acceptance Criteria
 - [ ] AC1 — `.github/workflows/ci.yml` runs on `push` + `pull_request`, jobs:
-      `lint`, `typecheck`, `test`, `build` — matrix `{ node: [18, 20, 22], os:
+      `lint`, `typecheck`, `test`, `build` — matrix `{ node: [22, 24], os:
       [ubuntu-latest, macos-latest] }`.
 - [ ] AC2 — Cache `~/.pnpm-store` keyed on `pnpm-lock.yaml`.
 - [ ] AC3 — Build job produces `packages/server/dist/` and uploads as an

@@ -21,7 +21,7 @@ six-phase split in INDEX.md.
 
 - **Window:** week 0–1 (≈4 working days)
 - **Scope summary:** sign off the research report, stand up
-  `roshangautam/genie` (MIT, TypeScript, ESM, Node ≥ 18), add
+  `roshangautam/genie` (MIT, TypeScript, ESM, Node ≥ 22), add
   CONTRIBUTING / CODE_OF_CONDUCT / SECURITY / governance, wire CI, freeze the
   dev environment.
 - **Exit criteria:**

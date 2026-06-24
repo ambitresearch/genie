@@ -10,7 +10,7 @@
 | **Author** | Roshan Gautam (`roshangautam`) |
 | **Reviewers** | TBD — slot proposed: 1× MCP/protocol reviewer, 1× security reviewer, 1× front-end/preview reviewer, 1× ops reviewer |
 | **Created** | 2026-06-21 |
-| **Last revised** | 2026-06-21 |
+| **Last revised** | 2026-06-24 |
 | **Supersedes** | — (none) |
 | **Superseded by** | — (none) |
 | **Related RFCs** | DS-RFC-0002 *(planned)* — Adherence rule generator; DS-RFC-0003 *(planned)* — Storybook adapter |
@@ -18,11 +18,18 @@
 | **Source-of-truth research** | `.deliverables/research-report.json` (46-agent custom workflow, 19/20 claims confirmed) |
 | **Implementation tracker** | `github/milestones.md` (M0–M5) |
 | **License** | MIT |
-| **Primary language** | TypeScript (Node ≥ 18, ESM) |
+| **Primary language** | TypeScript (Node ≥ 22, ESM) |
 | **Distribution** | npm · `.mcpb` bundle · Docker image |
 | **Repository** | `github.com/roshangautam/genie` (private at draft) |
 
 > **Authority note.** This RFC is the engineering source-of-truth. Where it disagrees with the PRD on a technical detail (file paths, schema shapes, transports, retry policy, etc.), this RFC wins; raise a PRD amendment. Where it disagrees with the PRD on a *user-visible* behaviour (which surfaces exist, what the user can do), the PRD wins; raise an RFC revision.
+
+### 1.1 Revision history
+
+| Date | Author | Change |
+|---|---|---|
+| 2026-06-21 | Roshan Gautam | Initial draft (DS-RFC-0001). |
+| 2026-06-24 | Roshan Gautam | Raised minimum Node.js from 18 to 22 (Node 18 & 20 reached EOL; Node 22 is the current Active LTS). Toolchain (pnpm 10.34, Vitest 4) requires Node ≥ 20+; 22 is the safe LTS floor. |
 
 ---
 
@@ -98,7 +105,7 @@ This RFC's job is to convert that high-level substitution into a buildable, depl
       │ (`npx genie` / `.mcpb` bundle)           │  + OAuth 2.0 DCR
       ▼                                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│  MCP SERVER  —  genie  (Node 18 ESM, @modelcontextprotocol/sdk)   │
+│  MCP SERVER  —  genie  (Node 22 ESM, @modelcontextprotocol/sdk)   │
 │  ┌───────────────────────────────────────────────────────────────────────────┐  │
 │  │ Transport multiplexer                                                      │  │
 │  │   stdio  (StreamableServerTransport over process.stdin/stdout)             │  │
@@ -212,7 +219,7 @@ The sequence is duplicated in §8 with a per-component zoom (8.1 generate_compon
 
 #### 6.1.1 Runtime
 
-- **Node.js ≥ 18 LTS**, ESM modules only. `package.json` declares `"type": "module"`, `"engines": { "node": ">=18" }`. CommonJS interop is forbidden — any dep that ships CJS-only is rebuilt or replaced.
+- **Node.js ≥ 22 LTS**, ESM modules only. `package.json` declares `"type": "module"`, `"engines": { "node": ">=22" }`. CommonJS interop is forbidden — any dep that ships CJS-only is rebuilt or replaced.
 - **TypeScript ≥ 5.4** with `strict: true`, `noUncheckedIndexedAccess: true`, `verbatimModuleSyntax: true`.
 - **Single process, single event loop.** No worker threads in v1 (the LiteLLM call and the file-system writes are all I/O-bound; a single libuv loop saturates 1 Gbps on the homelab tailnet long before CPU does).
 - **PID-1-safe.** When run as the container entrypoint, the binary calls `process.on('SIGTERM', gracefulShutdown)` to drain in-flight tool calls before exiting (deadline 30 s; `SIGKILL` if exceeded).
@@ -1052,7 +1059,7 @@ For multi-host shared deployments (Scenario C), the plan lock moves into Redis (
 - **Build.** `tsc --noEmit` for type-checking, `tsup` for bundling (single ESM output), `vitest` for tests. Output: `dist/main.js` + `dist/main.js.map` + ambient types in `dist/index.d.ts`.
 - **Package.** `npm pack --provenance` for the npm artifact; `npx @modelcontextprotocol/mcpb pack` for the `.mcpb` bundle; `docker buildx bake` for multi-arch images (linux/amd64, linux/arm64).
 - **Release.** GitHub Actions `release.yml`: on `push` of tag `v*.*.*`, runs build + tests + sigstore-sign + publish to npm + push to GHCR + create GitHub Release with `.mcpb` artifact attached.
-- **Reproducible builds.** Pin Node version in `.nvmrc` (`18.20`); pin npm version in `package.json` `"packageManager"`; vendor `pnpm-lock.yaml`. CI verifies the produced tarball's hash matches the release notes.
+- **Reproducible builds.** Pin Node version in `.nvmrc` (`22.20`); pin npm version in `package.json` `"packageManager"`; vendor `pnpm-lock.yaml`. CI verifies the produced tarball's hash matches the release notes.
 
 ---
 

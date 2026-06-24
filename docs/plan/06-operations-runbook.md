@@ -5,19 +5,20 @@
 | Field | Value |
 |---|---|
 | Document | `06-operations-runbook.md` |
-| Version | **v0.1 DRAFT** |
+| Version | **v0.1.1 DRAFT** |
 | Status | DRAFT — awaiting first on-call shadow shift |
 | Owner | Roshan Gautam (`@roshangautam`) |
 | Reviewers | TBD (Primary on-call TBD, Backup on-call TBD, SRE reviewer TBD) |
 | Audience | The maintainer (and any future self-hosting operator running their own genie instance) |
 | Source-of-truth files | `INDEX.md`, `docs/04-tech-design-rfc.md`, `.deliverables/research-report.json` |
-| Last updated | 2026-06-21 |
+| Last updated | 2026-06-24 |
 | Cadence | Re-read on every on-call shift handover; full review quarterly; emergency patch when an incident exposes a gap |
 
 ### Changelog
 
 | Date | Version | Author | Notes |
 |---|---|---|---|
+| 2026-06-24 | v0.1.1 | Roshan Gautam | Raised minimum Node.js from 18 to 22 (Node 18 & 20 reached EOL; Node 22 is the current Active LTS). |
 | 2026-06-21 | v0.1 | Roshan Gautam | Initial draft of ops + runbook + on-call guide; placeholders for dashboard URLs and TBD personnel slots. |
 | 2026-06-14 | v0.0.2 | Roshan Gautam | Outline only — captured section list from the doc plan. |
 | 2026-06-07 | v0.0.1 | Roshan Gautam | Stub created during M0 scaffolding. |
@@ -886,7 +887,7 @@ gh auth status
 npm whoami
 docker --version
 docker compose version
-node --version | grep -E '^v(18|20|22)\.'
+node --version | grep -E '^v(22|24)\.'
 
 # Client
 which claude
@@ -1839,7 +1840,7 @@ The first day on the rotation. Walk this checklist top to bottom; no skipping.
 
 ### 20.2 Local tooling
 
-- [ ] `node --version` ≥ 18.
+- [ ] `node --version` ≥ 22.
 - [ ] `docker compose version` ≥ 2.20.
 - [ ] `gh auth status` green.
 - [ ] `npm whoami` green.

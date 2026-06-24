@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1080" viewBox="0 0 1440 1080" font-family="Inter, sans-serif">
+<!-- Hallmark · genie (lamplight) · genre: atmospheric-editorial · pre-emit critique: P5 H5 E5 S5 R5 V5
+     Surface 3 — EMBEDDED MODES, LAMPLIGHT direction.
+     LAYOUT ARCHETYPE: cinematic single-column SPOTLIGHT — NOT three equal mode panels side by side.
+     The MCP-Apps spec/handshake is a dim band up top. Then ONE framing is pulled into the light:
+     FULLSCREEN, rendered as a bright LIGHT-HOST window glowing inside genie's dark room — proof the
+     lamp travels (genie defers to the host's daylight theme + system fonts, yet stays itself via clay
+     and the validated marker). The other two framings — inline & pip — wait DIM in the wings below.
+     Same ui://genie/grid iframe, byte-identical cards (RFC G-5); only the framing changes. -->
+  <defs>
+    <linearGradient id="flame0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f0b483"/><stop offset="0.5" stop-color="#c87c5e"/><stop offset="1" stop-color="#ac5a40"/></linearGradient>
+    <linearGradient id="lamp0" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0b483"/><stop offset="1" stop-color="#ac5a40"/></linearGradient>
+    <radialGradient id="glowH" cx="0.5" cy="0.42" r="0.7"><stop offset="0" stop-color="#ffcf9e" stop-opacity="0.22"/><stop offset="0.55" stop-color="#f0b483" stop-opacity="0.06"/><stop offset="1" stop-color="#ffcf9e" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glowP" cx="0.5" cy="0.5" r="0.6"><stop offset="0" stop-color="#f0b483" stop-opacity="0.20"/><stop offset="1" stop-color="#f0b483" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glowS" cx="0.5" cy="0.5" r="0.6"><stop offset="0" stop-color="#ffcf9e" stop-opacity="0.16"/><stop offset="1" stop-color="#ffcf9e" stop-opacity="0"/></radialGradient>
+    <radialGradient id="vign" cx="0.5" cy="0.40" r="0.82"><stop offset="0" stop-color="#160b09" stop-opacity="0"/><stop offset="0.66" stop-color="#160b09" stop-opacity="0"/><stop offset="1" stop-color="#0e0605" stop-opacity="0.66"/></radialGradient>
+    <linearGradient id="smoke0" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ffcf9e" stop-opacity="0.34"/><stop offset="0.5" stop-color="#f0b483" stop-opacity="0.12"/><stop offset="1" stop-color="#f0b483" stop-opacity="0"/></linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffcf9e" stop-opacity="0.20"/><stop offset="1" stop-color="#ffcf9e" stop-opacity="0"/></linearGradient>
+    <filter id="softD" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="3" stdDeviation="10" flood-color="#0b0504" flood-opacity="0.55"/></filter>
+    <filter id="liftD" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="0" dy="18" stdDeviation="40" flood-color="#080403" flood-opacity="0.62"/></filter>
+    <filter id="glowf" x="-80%" y="-80%" width="260%" height="260%"><feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#f0a96f" flood-opacity="0.6"/></filter>
+  </defs>
+
+  <rect width="1440" height="1080" fill="#241310"/>
+  <!-- stage bloom — the daylight window glows in the dark room -->
+  <ellipse cx="720" cy="420" rx="600" ry="252" fill="url(#glowH)"/>
+  <ellipse cx="720" cy="430" rx="430" ry="186" fill="url(#glowP)"/>
+  <rect width="1440" height="1080" fill="url(#vign)"/>
+
+  <!-- ── top bar — masthead, sits in shadow ── -->
+  <rect width="1440" height="56" fill="#1d100d"/>
+  <line x1="0" y1="56" x2="1440" y2="56" stroke="#46342b"/>
+  <line x1="0" y1="55" x2="1440" y2="55" stroke="#6b4f40" stroke-opacity="0.35"/>
+  <g transform="translate(28,13)">
+    <rect width="30" height="30" rx="9" fill="url(#lamp0)" filter="url(#glowf)"/>
+    <path d="M7.5 19.5 q7.5 -11 15 0" fill="none" stroke="#fbe7dd" stroke-width="2.1" stroke-linecap="round"/>
+    <path d="M15 4 l1 3 3 1 -3 1 -1 3 -1 -3 -3 -1 3 -1 z" fill="#fbe7dd"/>
+    <text x="44" y="15" font-family="Fraunces, Georgia, serif" font-size="19" font-weight="600" fill="#f4ece3">genie</text>
+    <text x="92" y="15" font-family="'JetBrains Mono', monospace" font-size="11" fill="#9a8579">· in Claude Code</text>
+  </g>
+  <g transform="translate(1188,15)"><rect width="224" height="26" rx="13" fill="#1a0d0a" stroke="#5c4538"/><circle cx="18" cy="13" r="5" fill="#5cc47a"/><text x="32" y="17" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#cbb9ac">harness-native · no app to open</text></g>
+
+  <!-- ════ SPEC + HANDSHAKE — the protocol, ghosted in the dark ════ -->
+  <g opacity="0.76">
+    <rect x="64" y="72" width="1312" height="104" rx="13" fill="#1d100d" stroke="#3a2820"/>
+    <text x="84" y="96" font-family="'JetBrains Mono', monospace" font-size="10.5" letter-spacing="0.06em" fill="#6e5b4f">MCP APPS SPEC · 2026-01-26 · resource ui://genie/grid — one iframe, three framings</text>
+    <text x="84" y="125" font-family="Inter, sans-serif" font-size="13" fill="#cbb9ac">CSP <tspan font-family="'JetBrains Mono', monospace" font-size="12" fill="#e8645a">default-src 'none'</tspan> → no web fonts · system-ui only · genie defers to the host's own theme</text>
+    <text x="84" y="152" font-family="'JetBrains Mono', monospace" font-size="11" fill="#9a8579">genie declares availableDisplayModes at ui/initialize → the host picks the framing → genie calls ui/request-display-mode</text>
+  </g>
+
+  <!-- ── the SEAM — the host frames genie; genie fills the frame ── -->
+  <line x1="64" y1="194" x2="1376" y2="194" stroke="#f0b483" stroke-width="1.3" stroke-dasharray="6 5" opacity="0.72"/>
+  <g transform="translate(548,184)"><rect width="344" height="21" rx="10.5" fill="#1a0d0a" stroke="#5c4538"/><text x="172" y="15" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#9a8579">⌁ the seam · the host frames genie · genie fills the frame</text></g>
+
+  <!-- beam: the lamp rakes onto the lit framing -->
+  <polygon points="680,196 760,196 1100,300 340,300" fill="url(#beam)" opacity="0.5"/>
+
+  <!-- ════ LIT STAGE — the FULLSCREEN framing, a bright host window in the dark ════ -->
+  <text x="720" y="218" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#cbb9ac"><tspan fill="#f0b483">▣ FULLSCREEN</tspan> — genie owns the screen, in the host's daylight</text>
+
+  <!-- warm rim + the light-host panel floating above the oxblood -->
+  <ellipse cx="720" cy="430" rx="450" ry="210" fill="url(#glowS)"/>
+  <rect x="296" y="232" width="848" height="412" rx="18" fill="none" stroke="#f0b483" stroke-opacity="0.5" stroke-width="1.4"/>
+  <g transform="translate(300,236)">
+    <rect width="840" height="404" rx="16" fill="#f4f0e9" stroke="#d8cfc2" filter="url(#liftD)"/>
+    <!-- thin receded host chrome -->
+    <rect width="840" height="24" rx="16" fill="#ece6db"/><rect y="12" width="840" height="12" fill="#ece6db"/>
+    <circle cx="18" cy="12" r="3.5" fill="#cdbfae"/><circle cx="32" cy="12" r="3.5" fill="#cdbfae"/><circle cx="46" cy="12" r="3.5" fill="#cdbfae"/>
+    <text x="64" y="16" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#9a897a">Claude Desktop · genie embedded · display-mode: fullscreen</text>
+    <!-- genie's own bar, now in SYSTEM fonts on the host's light surface -->
+    <text x="20" y="48" font-family="Inter, sans-serif" font-size="15" font-weight="700" fill="#2a1f1a">genie</text>
+    <text x="62" y="48" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#6f6155">Quanta · UI kit</text>
+    <g transform="translate(636,33)"><rect width="184" height="22" rx="11" fill="#ece6db" stroke="#d8cfc2"/><text x="92" y="15" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#6f6155">system-ui · defers to host-light</text></g>
+    <line x1="20" y1="64" x2="820" y2="64" stroke="#e6ded2"/>
+    <text x="20" y="86" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="#2a1f1a">primitives <tspan fill="#9b8f80" font-weight="400">· 8 components</tspan></text>
+
+    <!-- 3 × 2 card grid, light-host, byte-identical to standalone -->
+    <g>
+      <!-- 1 · Button (clay Primary) -->
+      <g transform="translate(20,100)"><rect width="248" height="120" rx="12" fill="#ffffff" stroke="#e6ded2"/><rect x="64" y="30" width="120" height="38" rx="10" fill="#c87c5e"/><text x="124" y="54" text-anchor="middle" font-family="Inter, sans-serif" font-size="12.5" font-weight="700" fill="#fff7f0">Get started</text><text x="16" y="104" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2a1f1a">Button</text><circle cx="214" cy="100" r="4" fill="#3a9d63"/><text x="226" y="104" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#3a9d63">✓</text></g>
+      <!-- 2 · Button secondary -->
+      <g transform="translate(296,100)"><rect width="248" height="120" rx="12" fill="#ffffff" stroke="#e6ded2"/><rect x="64" y="30" width="120" height="38" rx="10" fill="#ffffff" stroke="#c9bfb0"/><text x="124" y="54" text-anchor="middle" font-family="Inter, sans-serif" font-size="12.5" font-weight="700" fill="#2a1f1a">Get started</text><text x="16" y="104" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2a1f1a">Button <tspan fill="#9b8f80" font-weight="400">· secondary</tspan></text></g>
+      <!-- 3 · Badge (ink-blue) -->
+      <g transform="translate(572,100)"><rect width="248" height="120" rx="12" fill="#ffffff" stroke="#e6ded2"/><rect x="78" y="38" width="92" height="24" rx="12" fill="#345197"/><text x="124" y="54" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#dde6f5">primitives</text><text x="16" y="104" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2a1f1a">Badge</text></g>
+      <!-- 4 · Input -->
+      <g transform="translate(20,232)"><rect width="248" height="120" rx="12" fill="#ffffff" stroke="#e6ded2"/><rect x="44" y="34" width="160" height="34" rx="8" fill="#ffffff" stroke="#c9bfb0"/><text x="56" y="56" font-family="Inter, sans-serif" font-size="11.5" fill="#9b8f80">you@studio.com</text><text x="16" y="104" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2a1f1a">Input</text></g>
+      <!-- 5 · Card · the ONE conjuring (clay accent) -->
+      <g transform="translate(296,232)"><rect width="248" height="120" rx="12" fill="#faf3ee" stroke="#e3b79f"/><rect x="40" y="28" width="168" height="46" rx="10" fill="#ffffff" stroke="#edcdb9"/><text x="56" y="48" font-family="Inter, sans-serif" font-size="11.5" font-weight="600" fill="#ac5a40">✦ conjuring…</text><rect x="56" y="58" width="120" height="4" rx="2" fill="#eedacb"/><rect x="56" y="58" width="72" height="4" rx="2" fill="#c87c5e"/><text x="16" y="104" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2a1f1a">Card <tspan fill="#ac5a40" font-weight="400">· ✦ generating</tspan></text></g>
+      <!-- 6 · Toast -->
+      <g transform="translate(572,232)"><rect width="248" height="120" rx="12" fill="#ffffff" stroke="#e6ded2"/><rect x="40" y="32" width="168" height="40" rx="10" fill="#2a1f1a"/><circle cx="62" cy="52" r="7" fill="#3a9d63"/><text x="58.5" y="55.5" font-family="Inter, sans-serif" font-size="9" fill="#fff">✓</text><text x="80" y="56" font-family="Inter, sans-serif" font-size="11.5" fill="#f4f0e9">Saved to Quanta</text><text x="16" y="104" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2a1f1a">Toast</text></g>
+    </g>
+    <!-- status bar -->
+    <text x="20" y="384" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#3a9d63">✓ 28 validated<tspan fill="#ac5a40">  · ✦ 1 generating</tspan><tspan fill="#9b8f80">  · system-ui · host-light · ui://genie/grid</tspan></text>
+  </g>
+
+  <!-- ════ THE WINGS — inline & pip, the same iframe waiting in shadow ════ -->
+  <text x="720" y="678" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10.5" letter-spacing="0.08em" fill="#6e5b4f">THE OTHER TWO FRAMINGS · same iframe, dimmer in the wings</text>
+
+  <g opacity="0.6">
+    <!-- INLINE — genie answers inside the host's chat -->
+    <g transform="translate(300,694)">
+      <rect width="400" height="232" rx="14" fill="#f4f0e9" stroke="#d8cfc2" filter="url(#softD)"/>
+      <rect width="400" height="22" rx="14" fill="#ece6db"/><rect y="10" width="400" height="12" fill="#ece6db"/>
+      <circle cx="16" cy="11" r="3" fill="#cdbfae"/><circle cx="28" cy="11" r="3" fill="#cdbfae"/><circle cx="40" cy="11" r="3" fill="#cdbfae"/>
+      <text x="58" y="15" font-family="'JetBrains Mono', monospace" font-size="9" fill="#9a897a">Claude Desktop</text>
+      <!-- user message -->
+      <g transform="translate(214,38)"><rect width="170" height="26" rx="13" fill="#e7e0d4"/><text x="155" y="17" text-anchor="end" font-family="Inter, sans-serif" font-size="11.5" fill="#3a2f27">show me the button component</text></g>
+      <text x="16" y="86" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#9b8f80">Claude · via genie</text>
+      <!-- genie inline card -->
+      <g transform="translate(16,94)">
+        <rect width="368" height="86" rx="11" fill="#ffffff" stroke="#e6ded2"/>
+        <rect x="16" y="18" width="96" height="32" rx="8" fill="#c87c5e"/><text x="64" y="38" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#fff7f0">Get started</text>
+        <text x="128" y="30" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#2a1f1a">Button / Primary</text>
+        <g transform="translate(128,40)"><rect width="68" height="18" rx="9" fill="#e8edf6"/><text x="34" y="13" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#345197">primitives</text><rect x="74" width="74" height="18" rx="9" fill="#e4efe8"/><text x="111" y="13" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#3a9d63">✓ validated</text></g>
+        <g transform="translate(252,58)"><rect width="100" height="22" rx="11" fill="#2a1f1a"/><text x="50" y="15" text-anchor="middle" font-family="Inter, sans-serif" font-size="10.5" fill="#f4f0e9">⤢ Fullscreen</text></g>
+      </g>
+      <!-- host input -->
+      <rect x="16" y="194" width="368" height="26" rx="13" fill="#ffffff" stroke="#d8cfc2"/><text x="30" y="211" font-family="Inter, sans-serif" font-size="11" fill="#9b8f80">Message Claude…</text>
+    </g>
+    <text x="500" y="946" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#9a8579">inline · genie answers inside the chat</text>
+
+    <!-- PIP — genie floats over the host editor -->
+    <g transform="translate(740,694)">
+      <rect width="400" height="232" rx="14" fill="#f4f0e9" stroke="#d8cfc2" filter="url(#softD)"/>
+      <rect width="400" height="22" rx="14" fill="#ece6db"/><rect y="10" width="400" height="12" fill="#ece6db"/>
+      <circle cx="16" cy="11" r="3" fill="#cdbfae"/><circle cx="28" cy="11" r="3" fill="#cdbfae"/><circle cx="40" cy="11" r="3" fill="#cdbfae"/>
+      <text x="58" y="15" font-family="'JetBrains Mono', monospace" font-size="9" fill="#9a897a">host editor · genie not focused</text>
+      <!-- dimmed host code (greyed bars) -->
+      <g fill="#ddd5c8">
+        <rect x="20" y="40" width="150" height="8" rx="4"/><rect x="20" y="58" width="220" height="8" rx="4"/><rect x="40" y="76" width="180" height="8" rx="4"/><rect x="40" y="94" width="120" height="8" rx="4"/><rect x="20" y="112" width="200" height="8" rx="4"/><rect x="20" y="130" width="90" height="8" rx="4"/><rect x="40" y="148" width="160" height="8" rx="4"/><rect x="20" y="176" width="140" height="8" rx="4"/><rect x="20" y="194" width="210" height="8" rx="4"/>
+      </g>
+      <!-- floating genie mini-preview -->
+      <g transform="translate(214,58)" filter="url(#liftD)">
+        <rect width="170" height="120" rx="11" fill="#ffffff" stroke="#e6ded2"/>
+        <rect width="170" height="20" rx="11" fill="#f4f0e9"/><rect y="9" width="170" height="11" fill="#f4f0e9"/>
+        <circle cx="14" cy="10" r="2.6" fill="#cdbfae"/><circle cx="23" cy="10" r="2.6" fill="#cdbfae"/>
+        <text x="150" y="14" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="8.5" fill="#9b8f80">genie ⤢</text>
+        <rect x="30" y="36" width="110" height="34" rx="9" fill="#c87c5e"/><text x="85" y="58" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="#fff7f0">Get started</text>
+        <text x="14" y="98" font-family="'JetBrains Mono', monospace" font-size="9.5" fill="#3a9d63">✓ validated · live</text>
+      </g>
+    </g>
+    <text x="940" y="946" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#9a8579">picture-in-picture · floats over the host</text>
+  </g>
+
+  <!-- the punchline, lit -->
+  <g transform="translate(430,978)"><rect width="580" height="26" rx="13" fill="#1a0d0a" stroke="#5c4538"/><text x="290" y="17.5" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="11" fill="#cbb9ac"><tspan fill="#f0b483">RFC G-5</tspan> · card bytes identical across file:// · localhost · ui:// — only the framing changes</text></g>
+
+  <!-- footer -->
+  <text x="64" y="1060" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#9a8579">genie · embedded modes · one iframe, three framings, one lit · surface 3 / 4</text>
+  <text x="1376" y="1060" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#7a675b">Lamplight · spotlight layout</text>
+</svg>
