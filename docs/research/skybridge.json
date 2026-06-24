@@ -1,0 +1,255 @@
+{
+  "question": "Should \"genie\" — a harness-agnostic MCP App that clones Anthropic's Claude Design (an AI UI-component generator that renders a live preview + design-system/UI-kit browser inside AI coding harnesses like Claude Code, Cursor, VS Code via MCP) — adopt the Skybridge open-source React framework (https://www.skybridge.tech/, \"the full-stack React framework for MCP apps and MCP servers\", MIT-licensed, by MCP Apps spec contributors)? Research these angles: (1) Skybridge's actual technical architecture and capabilities — how it builds MCP Apps, its type-safe tRPC-style server-tool-to-React-view binding, devtools (local emulator, HMR, public tunnel, server audit), Skills/CLI/agent APIs, and what an MCP App built with it actually looks like in code. (2) Does its \"write once, run everywhere\" cross-harness claim actually deliver — real parity and limitations across Claude Desktop, ChatGPT, Cursor, VS Code, Goose, and the MCP Apps display-modes (inline/fullscreen/pip)? (3) Skybridge vs the hand-rolled alternative (raw MCP SDK + Vite + ui:// resources + iframe, or mcp-ui) — tradeoffs, lock-in, the Alpic deployment dependency, and whether the embedded-tier CSP constraints (default-src none, no web fonts) are handled. (4) Maturity and risk — verify the \"powering 10% of MCP apps\", 100K monthly npm downloads, 1K+ GitHub stars claims; production-readiness; governance; how tied it is to the still-draft MCP Apps extension. (5) Concrete fit for genie specifically — would a two-surface app (live component preview grid + UI-kit file browser) with refine/generate flows benefit, and what would genie gain or lose vs its current plan. Conclude with a clear adopt / partially-adopt / don't-adopt recommendation with reasoning.",
+  "summary": "Recommendation: PARTIALLY ADOPT (adopt-with-guardrails). Skybridge is a genuine MIT-licensed full-stack React/TypeScript framework — not a thin SDK wrapper — offering tRPC-style type-safe binding from MCP server tool definitions to React views, plus real local DevTools (localhost:3000), instant HMR, and a `--tunnel` public URL + live LLM playground; its core npm package draws ~97K downloads/30d (≈53K genuine project scaffolds), and Alpic hosting is optional (self-host on any Node.js platform). The decisive structural fact for genie is that Skybridge is *syntactic sugar over a standard genie could implement directly*: the MCP Apps extension (SEP-1865) standardizes UI as predeclared `ui://` resources (mimeType `text/html+mcp`) referenced by tool metadata, rendered in sandboxed iframes, communicating via JSON-RPC over postMessage — buildable with the raw `@modelcontextprotocol/sdk`, and equally served by the vendor-neutral, now-same-lineage `mcp-ui` SDK. This means lock-in risk is low (you can eject to raw `ui://` later) while the velocity gains (type-safe binding, devtools, tunnel testing) are real and directly useful for genie's refine/generate flows. The main reasons to only *partially* commit: the \"write once, run everywhere\" cross-harness promise is an ecosystem aspiration the spec explicitly refuses to guarantee (hosts adopt at their own pace; text fallback recommended), Skybridge's own docs name only ChatGPT/Claude/VSCode (not Cursor or Goose), and several question-critical items — embedded-tier CSP handling (`default-src none`, no web fonts), inline/fullscreen/pip display-mode parity, the \"~10% of MCP apps\" and \"1K+ stars\" marketing claims — went unverified. Prototype genie on Skybridge for speed, but keep the `ui://`+iframe escape hatch open and independently validate cross-harness parity and CSP constraints before betting genie's harness-agnostic identity on it.",
+  "findings": [
+    {
+      "claim": "Skybridge is an MIT-licensed full-stack TypeScript/React framework providing tRPC-style type inference that binds MCP server tool definitions to React views (typed hooks like useToolInfo<\"searchFlights\">(), declarative view config), plus a real local dev experience: in-browser DevTools at localhost:3000 to test tools/preview views/switch themes+locales, instant hot-reload, and a --tunnel flag yielding a public URL + live LLM playground for real MCP clients. No 'server audit' feature is documented.",
+      "confidence": "high",
+      "vote": "[12] 3-0, [0] 2-1",
+      "sources": [
+        "https://github.com/alpic-ai/skybridge",
+        "https://www.skybridge.tech/",
+        "https://docs.skybridge.tech/"
+      ],
+      "evidence": "Two primary sources (GitHub repo + skybridge.tech) confirm MIT license and verbatim 'tRPC-style inference from MCP server tool definition to React view for type safety from server to frontend,' with concrete API evidence (typed hooks, view:{component:...} registration, server schema changes surfacing instantly as widget typecheck errors) — establishing it is more than a raw SDK wrapper. Primary docs confirm DevTools(:3000), HMR ('View changes hot-reload instantly'), and `npm run dev -- --tunnel` → 'a live LLM playground and a public URL for ChatGPT, Claude, or any MCP client.' The negative ('no server audit') was checked against the full /llms.txt docs index where 'audit' appears nowhere; the question explicitly asked about a server-audit devtool, so its documented absence is material. Caveat: WebSearch was degraded during verification, so corroboration rests on the (authoritative) primary docs."
+    },
+    {
+      "claim": "The cross-harness 'write once, run everywhere' premise is real as a standard direction but parity is NOT guaranteed: ChatGPT implements the open MCP Apps standard so you can 'build once and run across MCP Apps-compatible hosts,' yet this is qualified (window.openai is a ChatGPT-only compatibility/extension layer, not baseline; broad compatibility also requires setting _meta.ui.resourceUri), and the MCP Apps spec itself makes no write-once guarantee — its motivation is to reduce divergence/fragmentation, with hosts adopting UI support at their own pace and text-only fallback recommended.",
+      "confidence": "high",
+      "vote": "[1] 3-0, [5] 3-0",
+      "sources": [
+        "https://developers.openai.com/apps-sdk/build/custom-ux",
+        "https://blog.modelcontextprotocol.io/posts/2025-11-21-mcp-apps/"
+      ],
+      "evidence": "OpenAI's first-party Apps SDK docs verbatim: 'build once and run your UI across MCP Apps-compatible hosts,' while explicitly labeling window.openai an 'Apps SDK compatibility layer' you 'shouldn't depend on for baseline MCP Apps compatibility,' and instructing 'also set _meta.ui.resourceUri on the render tool.' The official MCP Apps announcement never asserts uniform behavior; it frames the goal as preventing 'a real risk of ecosystem fragmentation,' notes 'hosts can gradually adopt UI support at their own pace,' and that servers 'should provide text-only fallback.' Together these temper any vendor parity marketing: the standard enables portability but does not promise identical rendering/behavior across harnesses."
+    },
+    {
+      "claim": "Skybridge is syntactic sugar over a standard genie could implement directly, so deployment/lock-in risk is low. The hand-rolled stack (iframe + predeclared ui:// resources + postMessage bridge) is exactly what ChatGPT's host and the MCP Apps spec expect: UI is modeled as ui:// resources (mimeType text/html+mcp) referenced by tool metadata, run in sandboxed iframes, communicating via JSON-RPC 2.0 over postMessage, and buildable with the standard @modelcontextprotocol/sdk. Skybridge's Alpic hosting is optional — apps self-host on any Node.js-compatible platform.",
+      "confidence": "high",
+      "vote": "[3] 3-0, [10] 3-0, [2] 2-1, [13] 2-1",
+      "sources": [
+        "https://developers.openai.com/apps-sdk/build/custom-ux",
+        "https://blog.modelcontextprotocol.io/posts/2025-11-21-mcp-apps/",
+        "https://github.com/modelcontextprotocol/modelcontextprotocol",
+        "https://github.com/alpic-ai/skybridge"
+      ],
+      "evidence": "OpenAI docs: components 'run inside an iframe,' 'talk to the host via the MCP Apps bridge (JSON-RPC over postMessage),' templates are 'MCP resources referenced by ui:// URIs.' The official MCP Apps spec/SEP confirms 'UI templates are resources with the ui:// URI scheme,' example mimeType 'text/html+mcp,' 'All UI content runs in sandboxed iframes,' and 'developers can use the standard @modelcontextprotocol/sdk.' Skybridge's own README states 'You can also self-host on any Node.js-compatible platform,' framing Alpic as one option not a requirement. Implication: the underlying primitives are standardized, so genie retains a low-cost ejection path from Skybridge to raw ui://. Medium-confidence sub-point: self-host steps are deferred to an external guide (practical completeness unverified)."
+    },
+    {
+      "claim": "mcp-ui is a viable vendor-neutral alternative to Skybridge with no managed-deployment dependency, and it is now the SAME lineage as the official standard rather than a competitor. It is an MIT-licensed SDK (@mcp-ui/server + @mcp-ui/client + standard @modelcontextprotocol/sdk) that binds tools to UI via ui:// resources and _meta.ui.resourceUri, self-positions as production-ready, and was standardized/absorbed into MCP Apps (SEP-1865 authored by mcp-ui creator Ido Salomon).",
+      "confidence": "high",
+      "vote": "[7] 3-0, [8] 2-1, [6] 2-1",
+      "sources": [
+        "https://github.com/idosal/mcp-ui",
+        "https://mcpui.dev",
+        "https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1865"
+      ],
+      "evidence": "mcp-ui README: 'SDK implementing the MCP Apps standard for UI over MCP,' 'fully compliant... ready for production use,' host-agnostic adapters that 'work seamlessly regardless of host,' library packages with no hosted-platform requirement. mcpui.dev: 'MCP-UI is now standardized into MCP Apps!' and 'The MCP-UI packages implement the spec'; binding shown via createUIResource + _meta.ui.resourceUri, ui:// scheme, sandboxed iframes. SEP-1865 (merged Final, Jan 28 2026) was authored by idosal himself and unifies the MCP-UI and Apps SDK approaches — confirming same lineage. Caveats: 'production-ready' is self-asserted (README carries a 'use at your own risk' disclaimer; mcpui.dev omits the production claim), and mcp-ui is a superset/reference implementation that also keeps a legacy postMessage path."
+    },
+    {
+      "claim": "MCP Apps (the standard Skybridge depends on) is now finalized but young: it was announced 2025-11-21 as an intentionally-lean, OPTIONAL extension with only an 'early access SDK,' and SEP-1865 is now marked Status 'Final' on the Extensions Track (created 2025-11-21, merged Jan 28 2026). The research question's 'still-draft' framing is outdated, but the extension remains lean and recently-finalized — a maturity risk any dependent framework inherits.",
+      "confidence": "high",
+      "vote": "[9] 3-0, [4] 2-1",
+      "sources": [
+        "https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1865",
+        "https://blog.modelcontextprotocol.io/posts/2025-11-21-mcp-apps/"
+      ],
+      "evidence": "PR #1865 metadata (authoritative spec repo): 'SEP-1865: MCP Apps,' Track: Extensions, Status: Final, Created: 2025-11-21, merged 2026-01-28 with labels extension/final/SEP — so it is NOT a draft. The Nov-21 announcement candidly self-describes the proposal as 'intentionally lean, starting with core patterns that we plan on expanding over time,' 'an optional extension,' with 'an early access SDK to demonstrate the patterns.' Reconciliation: it was early/lean at announcement and is now Final-status but still a young, deliberately-minimal optional extension expected to expand — i.e. finalized core, evolving surface."
+    },
+    {
+      "claim": "Adoption metrics partially substantiate Skybridge's marketing but warrant skepticism. The core 'skybridge' npm package recorded 97,332 downloads in the last 30 days (2026-05-23 to 2026-06-21), matching the '~100K monthly downloads' claim within ~3%; however that headline belongs to the core package (inflated by CI/transitive pulls — 90-day core:scaffolder ratio ~2:1), while the better proxy for genuinely new projects is the create-skybridge scaffolder at 52,929/30d (~53K). The separately-marketed '~10% of all MCP apps' and '1K+ GitHub stars' claims were not verified.",
+      "confidence": "high",
+      "vote": "[11] 3-0, [14] 3-0, [15] 3-0",
+      "sources": [
+        "https://api.npmjs.org/downloads/point/last-month/skybridge",
+        "https://www.npmjs.com/package/create-skybridge"
+      ],
+      "evidence": "npm's authoritative downloads API returned verbatim {downloads:97332, ...package:'skybridge'} and {downloads:52929, ...package:'create-skybridge'} for the identical window. Package identity confirmed as the Alpic framework (skybridge@1.1.2 homepage github.com/alpic-ai/skybridge, depends on @modelcontextprotocol/ext-apps + react). 52,929 = 52.9% of 100K ('roughly half'); 100,000−97,332 = 2.67% gap ('within ~3%'). Skeptical reading: 90-day totals (skybridge 296,955 vs create-skybridge 146,675) and weekday/weekend seasonality indicate CI/transitive inflation, so the scaffolder count is the stronger adoption signal. Single 30-day snapshot, not a sustained average. The '10% of MCP apps' and 'stars' marketing figures were explicitly outside the verified set."
+    },
+    {
+      "claim": "Concrete fit for genie: a two-surface app (live component preview grid + UI-kit file browser) with refine/generate flows would benefit materially from Skybridge — but adoption should be partial and guarded. Gains: type-safe tool→view binding maps cleanly onto generate/refine round-trips; DevTools + --tunnel let genie test the preview/browser surfaces against real MCP clients before shipping; MIT license + optional self-hosting avoid hard lock-in; and because Skybridge sits atop the standardized ui://+iframe primitives, genie keeps a low-cost ejection path to raw SDK or mcp-ui. Risks/losses: genie's 'harness-agnostic' identity leans on cross-harness parity that no party guarantees and that Skybridge's docs do not demonstrate beyond ChatGPT/Claude/VSCode; embedded-tier CSP handling and inline/fullscreen/pip parity are unproven in the evidence.",
+      "confidence": "medium",
+      "vote": "synthesized inference from [0],[2],[3],[10],[12],[13] (cross-cutting)",
+      "sources": [
+        "https://github.com/alpic-ai/skybridge",
+        "https://docs.skybridge.tech/",
+        "https://developers.openai.com/apps-sdk/build/custom-ux",
+        "https://blog.modelcontextprotocol.io/posts/2025-11-21-mcp-apps/",
+        "https://github.com/idosal/mcp-ui"
+      ],
+      "evidence": "This finding is an inferential synthesis, not a single sourced claim. It rests on confirmed facts: Skybridge's type-safe binding + devtools/tunnel (Finding 1), low lock-in because it is sugar over a standard (Finding 3), the unguaranteed cross-harness parity (Finding 2), and the vendor-neutral mcp-ui fallback (Finding 4). The recommendation — prototype genie on Skybridge for velocity while preserving the ui://+iframe escape hatch and independently validating Cursor/VS Code/Goose parity and embedded-tier CSP — follows directly. Marked medium confidence because the genie-specific payoff is reasoned from the architecture, not measured, and key constraints (CSP, display modes, real multi-harness parity) remain unverified."
+    }
+  ],
+  "caveats": "Source quality was high overall — nearly every confirmed claim rests on primary sources (official MCP spec blog/repo PR #1865, OpenAI Apps SDK docs, Skybridge's own docs/GitHub, npm's downloads API, mcp-ui repo/site). Key weaknesses and time-sensitivity: (1) The WebSearch tool was degraded/non-functional across most verifications, so independent external corroboration is thin; conclusions lean on (authoritative) primary fetches and self-descriptions. (2) Several question-critical items are UNADDRESSED by any confirmed claim and must be treated as unknown, not negative: embedded-tier CSP handling (`default-src none`, no web fonts), and whether Skybridge supports all MCP Apps display modes (inline/fullscreen/pip) — refuted/eliminated claims suggest its docs name only 'inline'/'fullscreen' examples. (3) Cross-harness reach is weaker than marketing implies: refuted claims show Skybridge's docs name only ChatGPT, Claude, and VSCode (plus 'any MCP client') — Cursor and Goose are not named. (4) Marketing figures '~10% of MCP apps' and '1K+ GitHub stars' were NOT verified (claim [12] explicitly excluded them). (5) npm figures are a single 30-day snapshot (ends 2026-06-21) inflated by CI/transitive installs, not a sustained or human-only adoption measure. (6) Time-sensitivity: MCP Apps reached 'Final' status only Jan 28 2026 and is intentionally lean/expanding; mcp-ui's 'production-ready' is self-asserted with a use-at-your-own-risk disclaimer; Skybridge self-host steps are deferred to an external guide and were not independently exercised.",
+  "openQuestions": [
+    "Does Skybridge actually deliver working parity inside Cursor, VS Code, and Goose? Its docs name only ChatGPT/Claude/VSCode, and the MCP Apps spec guarantees no parity — genie's harness-agnostic claim needs hands-on validation per harness.",
+    "How does Skybridge handle the embedded-tier CSP constraints (default-src none, no web fonts) and the inline/fullscreen/pip display modes? No confirmed evidence addresses these, yet they are central to genie's preview-grid + file-browser surfaces.",
+    "Are the marketing claims 'powering ~10% of MCP apps' and '1K+ GitHub stars' accurate? Neither survived verification; the substantiated signal is ~53K scaffolder runs/month, not app-share or stars.",
+    "What is the practical completeness and operational cost of self-hosting Skybridge off Alpic? The README asserts Node.js self-hosting but defers steps to an external guide, and Alpic's premium add-ons (analytics, tunneling, app-store compliance) may carry hidden feature/ops caveats."
+  ],
+  "refuted": [
+    {
+      "claim": "Skybridge binds an MCP server tool to a React view declaratively (e.g. `view: { component: \"greeting\" }`), and the view reads the tool's typed output via a generated hook `useToolInfo<\"greeting\">()` whose helpers are auto-generated from the server schema — but the docs never describe this as 'tRPC' or tRPC-style.",
+      "vote": "1-2",
+      "source": "https://docs.skybridge.tech/"
+    },
+    {
+      "claim": "Alpic-hosted deployment is NOT mandatory: `npm run deploy` can target Alpic Cloud, Cloudflare Workers, or any Node.js-compatible/self-hosted infrastructure.",
+      "vote": "0-3",
+      "source": "https://docs.skybridge.tech/"
+    },
+    {
+      "claim": "The documentation's cross-harness coverage is narrow: it names only ChatGPT and Claude (plus 'any MCP client'), with no mention of Cursor, VS Code, or Goose, and contains no explicit 'write once, run everywhere' claim; only 'inline' rendering is named, with fullscreen/pip display modes unspecified.",
+      "vote": "0-3",
+      "source": "https://docs.skybridge.tech/"
+    },
+    {
+      "claim": "OpenAI's official Apps SDK docs reference Skybridge by name as the interop layer for host-backed navigation, confirming Skybridge actually works inside ChatGPT's MCP Apps host (not just Claude/self-hosted).",
+      "vote": "0-3",
+      "source": "https://developers.openai.com/apps-sdk/build/custom-ux"
+    },
+    {
+      "claim": "mcp-ui's architecture is the same hand-rolled primitive genie's current plan considers: ui:// resources rendered inside a sandboxed iframe, which addresses the embedded-tier isolation/CSP concern at the renderer level.",
+      "vote": "0-3",
+      "source": "https://github.com/idosal/mcp-ui"
+    },
+    {
+      "claim": "MCP Apps is an optional, backward-compatible extension to the core MCP protocol that must be explicitly negotiated between client and server, so building on it does not break existing implementations — a maturity/risk signal for any framework (e.g. Skybridge) that depends on it.",
+      "vote": "1-2",
+      "source": "https://github.com/modelcontextprotocol/modelcontextprotocol"
+    },
+    {
+      "claim": "Skybridge's npm package is published under the ISC license, not MIT as asserted in the research question's framing.",
+      "vote": "0-3",
+      "source": "https://registry.npmjs.org/skybridge"
+    },
+    {
+      "claim": "On npm, Skybridge self-describes as a framework for building ChatGPT apps rather than a general MCP/cross-harness framework, and 'mcp' does not appear in its keywords (which are chatgpt, app, ai, skybridge).",
+      "vote": "0-3",
+      "source": "https://registry.npmjs.org/skybridge"
+    },
+    {
+      "claim": "Skybridge's cross-harness claim explicitly names only Claude, ChatGPT, and VSCode plus a generic 'compatible client' catch-all; Cursor and Goose (which the research question asks about) are not named, and there is no description of inline/pip MCP Apps display modes — only fullscreen appears in examples.",
+      "vote": "0-3",
+      "source": "https://github.com/alpic-ai/skybridge"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://docs.skybridge.tech/",
+      "quality": "primary",
+      "angle": "Architecture & developer API",
+      "claimCount": 5
+    },
+    {
+      "url": "https://developers.openai.com/apps-sdk/build/custom-ux",
+      "quality": "primary",
+      "angle": "Cross-harness parity (write once, run everywhere)",
+      "claimCount": 5
+    },
+    {
+      "url": "https://blog.modelcontextprotocol.io/posts/2025-11-21-mcp-apps/",
+      "quality": "primary",
+      "angle": "Cross-harness parity (write once, run everywhere)",
+      "claimCount": 5
+    },
+    {
+      "url": "https://github.com/idosal/mcp-ui",
+      "quality": "primary",
+      "angle": "Alternatives & lock-in tradeoffs",
+      "claimCount": 5
+    },
+    {
+      "url": "https://mcpui.dev",
+      "quality": "primary",
+      "angle": "Alternatives & lock-in tradeoffs",
+      "claimCount": 5
+    },
+    {
+      "url": "https://github.com/modelcontextprotocol/modelcontextprotocol",
+      "quality": "primary",
+      "angle": "Alternatives & lock-in tradeoffs",
+      "claimCount": 5
+    },
+    {
+      "url": "https://www.skybridge.tech/",
+      "quality": "blog",
+      "angle": "Adoption & maturity (skeptical verification)",
+      "claimCount": 5
+    },
+    {
+      "url": "https://api.npmjs.org/downloads/point/last-month/skybridge",
+      "quality": "primary",
+      "angle": "Adoption & maturity (skeptical verification)",
+      "claimCount": 3
+    },
+    {
+      "url": "https://registry.npmjs.org/skybridge",
+      "quality": "primary",
+      "angle": "Adoption & maturity (skeptical verification)",
+      "claimCount": 5
+    },
+    {
+      "url": "https://github.com/alpic-ai/skybridge",
+      "quality": "primary",
+      "angle": "Adoption & maturity (skeptical verification)",
+      "claimCount": 5
+    },
+    {
+      "url": "https://www.npmjs.com/package/create-skybridge",
+      "quality": "primary",
+      "angle": "Adoption & maturity (skeptical verification)",
+      "claimCount": 5
+    },
+    {
+      "url": "https://www.alpic.ai/",
+      "quality": "primary",
+      "angle": "Adoption & maturity (skeptical verification)",
+      "claimCount": 5
+    },
+    {
+      "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1865",
+      "quality": "primary",
+      "angle": "Spec risk & deployment/CSP constraints",
+      "claimCount": 5
+    },
+    {
+      "url": "https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx",
+      "quality": "primary",
+      "angle": "Spec risk & deployment/CSP constraints",
+      "claimCount": 5
+    },
+    {
+      "url": "https://github.com/modelcontextprotocol/ext-apps",
+      "quality": "primary",
+      "angle": "Spec risk & deployment/CSP constraints",
+      "claimCount": 5
+    },
+    {
+      "url": "https://github.com/modelcontextprotocol/ext-apps/blob/main/SECURITY.md",
+      "quality": "primary",
+      "angle": "Spec risk & deployment/CSP constraints",
+      "claimCount": 2
+    }
+  ],
+  "stats": {
+    "angles": 5,
+    "sourcesFetched": 16,
+    "claimsExtracted": 75,
+    "claimsVerified": 25,
+    "confirmed": 16,
+    "killed": 9,
+    "afterSynthesis": 7,
+    "urlDupes": 8,
+    "budgetDropped": 2,
+    "agentCalls": 98
+  },
+  "_run": {
+    "runId": "wf_52ec2ef2-9d1",
+    "status": "completed",
+    "agentCount": 98,
+    "durationMs": 1680717,
+    "totalTokens": 248556,
+    "timestamp": "2026-06-23T07:20:09.652Z"
+  }
+}

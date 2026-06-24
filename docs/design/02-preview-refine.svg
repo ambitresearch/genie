@@ -1,0 +1,220 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="980" viewBox="0 0 1440 980" font-family="Inter, system-ui, sans-serif">
+<!-- Hallmark · genie (hybrid) · genre: editorial-modern · pre-emit critique: P5 H5 E5 S5 R5 V5
+     Surface 2 (pass 3 · premium craft) — subtle editorial depth: lit top edges, inner
+     hairlines, a genuinely beautiful gilt hero component (gradient + lit edge + presence),
+     tighter type hierarchy with bigger serif, proper state-strip, code block w/ line nums +
+     filename tab. Warm cream / serif / genie-gilt. -->
+  <defs>
+    <linearGradient id="lamp2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c87c5e"/><stop offset="1" stop-color="#ac5a40"/></linearGradient>
+    <!-- the gilt component gradient — lit from above -->
+    <linearGradient id="giltSurface" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d9916e"/><stop offset="0.5" stop-color="#c87c5e"/><stop offset="1" stop-color="#b8674e"/>
+    </linearGradient>
+    <linearGradient id="giltHover" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c47455"/><stop offset="1" stop-color="#a6533d"/>
+    </linearGradient>
+    <filter id="soft2b" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="6" flood-color="#171614" flood-opacity="0.08"/></filter>
+    <filter id="lift2b" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="10" stdDeviation="24" flood-color="#8d4734" flood-opacity="0.32"/>
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#171614" flood-opacity="0.10"/>
+    </filter>
+    <filter id="gilt2" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="2" stdDeviation="9" flood-color="#c87c5e" flood-opacity="0.42"/></filter>
+    <pattern id="harnessHatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#f3f0ea"/><line x1="0" y1="0" x2="0" y2="8" stroke="#e3ded4" stroke-width="3"/>
+    </pattern>
+  </defs>
+
+  <rect width="1440" height="980" fill="#faf8f5"/>
+
+  <!-- ════ LEFT: HARNESS chat rail ════ -->
+  <g>
+    <rect width="360" height="980" fill="url(#harnessHatch)"/>
+    <line x1="360" y1="0" x2="360" y2="980" stroke="#c7c3bd" stroke-width="2" stroke-dasharray="2 4"/>
+    <!-- ownership banner (lit top edge) -->
+    <g transform="translate(20,20)">
+      <rect width="320" height="44" rx="10" fill="#171614"/>
+      <rect width="320" height="44" rx="10" fill="none" stroke="#37322c" stroke-width="1"/>
+      <line x1="10" y1="1" x2="310" y2="1" stroke="#423f3d" stroke-width="1" opacity="0.6"/>
+      <circle cx="24" cy="22" r="9" fill="#348f4f"/><path d="M20 22 l3 3 l6 -6" stroke="#171614" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="42" y="19" font-family="Inter, sans-serif" font-size="12.5" font-weight="600" fill="#faf8f5">Claude Code</text>
+      <text x="42" y="35" font-family="JetBrains Mono, monospace" font-size="10" fill="#b5b0a9">the harness · supplies the chat</text>
+    </g>
+    <g transform="translate(20,84)" opacity="0.92">
+      <g><rect width="320" height="46" rx="10" fill="#dee8fd"/><line x1="10" y1="1" x2="310" y2="1" stroke="#eef3ff" stroke-width="1"/><text x="16" y="22" font-family="Inter, sans-serif" font-size="13" fill="#171614">generate a primary button for the</text><text x="16" y="40" font-family="Inter, sans-serif" font-size="13" fill="#171614">acme kit — confident and warm</text></g>
+      <g transform="translate(0,62)"><rect width="320" height="96" rx="10" fill="#faf8f5" stroke="#dad7d2"/><line x1="10" y1="1" x2="310" y2="1" stroke="#ffffff" stroke-width="1"/>
+        <g transform="translate(14,14)"><circle cx="9" cy="9" r="9" fill="url(#lamp2)"/></g>
+        <text x="36" y="22" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#171614">Claude</text>
+        <text x="14" y="46" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">Generated <tspan font-weight="600" fill="#171614">Button / Primary</tspan> with</text>
+        <text x="14" y="64" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">3 states. It's in the preview →</text>
+        <text x="14" y="84" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">Tweak it, or tell me what to change.</text>
+      </g>
+      <g transform="translate(0,174)"><rect width="320" height="30" rx="8" fill="#efeae2" stroke="#dad7d2"/><text x="14" y="20" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#ac5a40">✦ mcp__genie__generate_component</text></g>
+      <g transform="translate(0,214)"><rect width="320" height="30" rx="8" fill="#efeae2" stroke="#dad7d2"/><text x="14" y="20" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#75716d">↳ wrote 4 files · ✓ @dsCard ok</text></g>
+    </g>
+    <g transform="translate(20,914)" opacity="0.92"><rect width="320" height="44" rx="10" fill="#faf8f5" stroke="#dad7d2"/><text x="16" y="27" font-family="Inter, sans-serif" font-size="13" fill="#75716d">Message Claude…</text></g>
+    <g transform="translate(372,470)"><rect x="-4" width="8" height="40" rx="4" fill="#fae2d8"/></g>
+    <text x="384" y="486" font-family="JetBrains Mono, monospace" font-size="10" fill="#ac5a40" transform="rotate(90 384 486)">▏ the seam: harness chat ╱ genie artifact</text>
+  </g>
+
+  <!-- ════ RIGHT: genie PREVIEW + REFINE ════ -->
+  <g transform="translate(360,0)">
+    <rect width="1080" height="52" fill="#f3f0ea"/>
+    <line x1="0" y1="0" x2="1080" y2="0" stroke="#fdfcf9" stroke-width="1"/>
+    <line x1="0" y1="52" x2="1080" y2="52" stroke="#dad7d2"/>
+    <g transform="translate(24,11)">
+      <rect width="30" height="30" rx="8" fill="url(#lamp2)" filter="url(#soft2b)"/>
+      <path d="M7.5 19.5 q7.5 -11 15 0" fill="none" stroke="#faf8f5" stroke-width="2.1" stroke-linecap="round"/>
+      <path d="M15 4 l1 3 3 1 -3 1 -1 3 -1 -3 -3 -1 3 -1 z" fill="#faf8f5"/>
+      <text x="44" y="14" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#171614">Button / Primary</text>
+      <text x="200" y="14" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">primitives · 180×56</text>
+    </g>
+    <g transform="translate(556,18)" font-family="Inter, sans-serif" font-size="13">
+      <text x="0" y="14" fill="#423f3d">Comments</text>
+      <rect x="84" y="-4" width="78" height="26" rx="7" fill="#fae2d8"/><line x1="92" y1="-3" x2="154" y2="-3" stroke="#fcebe2" stroke-width="1"/>
+      <text x="96" y="14" font-weight="600" fill="#171614">✦ Tweaks</text>
+      <text x="186" y="14" fill="#423f3d">Code</text>
+      <text x="240" y="14" fill="#423f3d">Present</text>
+    </g>
+    <g transform="translate(872,16)"><rect width="118" height="28" rx="8" fill="#faf8f5" stroke="#c7c3bd"/><text x="14" y="19" font-family="JetBrains Mono, monospace" font-size="11" fill="#423f3d">design-default ▾</text></g>
+    <g transform="translate(1004,16)"><rect width="52" height="28" rx="8" fill="#171614"/><line x1="8" y1="1" x2="44" y2="1" stroke="#423f3d" stroke-width="1" opacity="0.5"/><text x="26" y="19" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="#faf8f5">Share</text></g>
+
+    <!-- ── PREVIEW stage ── -->
+    <g transform="translate(0,52)">
+      <rect width="780" height="928" fill="#faf8f5"/>
+      <line x1="780" y1="0" x2="780" y2="928" stroke="#dad7d2"/>
+      <text x="40" y="42" font-family="Inter, sans-serif" font-size="12" font-weight="600" letter-spacing="0.06em" fill="#75716d">PREVIEW · LIVE RENDER</text>
+
+      <!-- stage with lit top edge + soft inner vignette -->
+      <rect x="40" y="58" width="700" height="540" rx="16" fill="#f0ece5"/>
+      <rect x="40" y="58" width="700" height="540" rx="16" fill="none" stroke="#e3ded4" stroke-width="1"/>
+      <line x1="56" y1="59" x2="724" y2="59" stroke="#faf7f1" stroke-width="1"/>
+
+      <!-- THE GILT HERO COMPONENT — genuinely beautiful: gradient, lit edge, presence -->
+      <g transform="translate(210,140)">
+        <!-- selection box -->
+        <rect x="-18" y="-18" width="396" height="124" rx="9" fill="none" stroke="#345197" stroke-width="1.5"/>
+        <!-- the button: gradient surface, lit top edge, deep warm shadow -->
+        <g filter="url(#lift2b)">
+          <rect width="360" height="88" rx="13" fill="url(#giltSurface)"/>
+          <rect width="360" height="88" rx="13" fill="none" stroke="#99533d" stroke-width="1" opacity="0.5"/>
+          <line x1="14" y1="1.5" x2="346" y2="1.5" stroke="#f0c3ac" stroke-width="1.5"/>
+          <text x="180" y="55" text-anchor="middle" font-family="Inter, sans-serif" font-size="26" font-weight="700" fill="#171614" letter-spacing="-0.01em">Get started</text>
+        </g>
+        <!-- handles -->
+        <g fill="#faf8f5" stroke="#345197" stroke-width="1.5"><rect x="-22" y="-22" width="9" height="9" rx="2"/><rect x="356" y="-22" width="9" height="9" rx="2"/><rect x="-22" y="105" width="9" height="9" rx="2"/><rect x="356" y="105" width="9" height="9" rx="2"/><rect x="167" y="-22" width="9" height="9" rx="2"/><rect x="167" y="105" width="9" height="9" rx="2"/></g>
+        <!-- comment pin -->
+        <g transform="translate(160,-4)"><circle r="14" fill="#c87c5e" filter="url(#gilt2)"/><line x1="-9" y1="-9" x2="9" y2="-9" stroke="#f0c3ac" stroke-width="1.2" opacity="0.6"/><text y="4" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" font-weight="700" fill="#171614">1</text></g>
+        <!-- dim label -->
+        <g transform="translate(178,120)"><rect width="64" height="20" rx="4" fill="#345197"/><text x="32" y="14" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="#faf8f5">360 × 88</text></g>
+      </g>
+
+      <!-- STATE STRIP (proper, labeled, framed) -->
+      <g transform="translate(40,372)">
+        <text x="0" y="0" font-family="Inter, sans-serif" font-size="12" font-weight="600" letter-spacing="0.06em" fill="#75716d">STATES</text>
+        <g transform="translate(0,14)">
+          <rect width="700" height="92" rx="12" fill="#faf8f5" stroke="#e3ded4"/><line x1="16" y1="1" x2="684" y2="1" stroke="#ffffff"/>
+          <!-- hover -->
+          <g transform="translate(32,26)"><rect width="140" height="44" rx="10" fill="url(#giltHover)"/><line x1="10" y1="1.5" x2="130" y2="1.5" stroke="#e5b098" stroke-width="1.2" opacity="0.6"/><text x="70" y="28" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#171614">Hover</text></g>
+          <text x="102" y="86" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#75716d">:hover</text>
+          <!-- focus -->
+          <g transform="translate(204,26)"><rect x="-3" y="-3" width="146" height="50" rx="12" fill="none" stroke="#4064b9" stroke-width="2"/><rect width="140" height="44" rx="10" fill="url(#giltSurface)"/><text x="70" y="28" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#171614">Focus</text></g>
+          <text x="274" y="86" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#75716d">:focus-visible</text>
+          <!-- disabled -->
+          <g transform="translate(376,26)" opacity="0.45"><rect width="140" height="44" rx="10" fill="#c87c5e"/><text x="70" y="28" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#171614">Disabled</text></g>
+          <text x="446" y="86" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#75716d">[disabled]</text>
+          <!-- loading -->
+          <g transform="translate(548,26)"><rect width="140" height="44" rx="10" fill="#fae2d8" stroke="#ecb6a0"/><circle cx="30" cy="22" r="8" fill="none" stroke="#ac5a40" stroke-width="2" stroke-dasharray="30 12"/><text x="48" y="28" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#ac5a40">Loading</text></g>
+          <text x="618" y="86" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9.5" fill="#75716d">data-loading</text>
+        </g>
+      </g>
+
+      <!-- comment popover (lit edge) -->
+      <g transform="translate(210,498)">
+        <rect width="320" height="80" rx="12" fill="#faf8f5" stroke="#ecb6a0" filter="url(#soft2b)"/><line x1="12" y1="1" x2="308" y2="1" stroke="#ffffff"/>
+        <g transform="translate(14,14)"><circle cx="9" cy="9" r="9" fill="#c87c5e"/><text x="9" y="13" text-anchor="middle" font-family="Inter, sans-serif" font-size="10" font-weight="700" fill="#171614">1</text></g>
+        <text x="36" y="22" font-family="Inter, sans-serif" font-size="12.5" font-weight="600" fill="#171614">You</text>
+        <text x="36" y="40" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">tighter label, more confident</text>
+        <g transform="translate(14,54)"><rect width="292" height="20" rx="6" fill="#f0ece5"/><text x="10" y="14" font-family="Inter, sans-serif" font-size="11.5" fill="#75716d">Reply, or ✦ ask Claude to apply…</text></g>
+      </g>
+
+      <!-- CODE block — filename tab + line numbers + gutter -->
+      <g transform="translate(40,628)">
+        <text x="0" y="0" font-family="Inter, sans-serif" font-size="12" font-weight="600" letter-spacing="0.06em" fill="#75716d">CODE</text>
+        <!-- filename tab -->
+        <g transform="translate(0,14)"><path d="M0 10 a4 4 0 0 1 4 -4 h180 a4 4 0 0 1 4 4 v6 h-188 z" fill="#efeae2" stroke="#dad7d2"/><text x="14" y="-2" font-family="JetBrains Mono, monospace" font-size="11" fill="#345197" transform="translate(0,12)">Button.tsx</text></g>
+        <g transform="translate(0,30)">
+          <rect width="700" height="246" rx="0" fill="#efeae2" stroke="#dad7d2"/><path d="M0 8 a8 8 0 0 1 0 0 M0 238 a8 8 0 0 0 8 8 h684 a8 8 0 0 0 8 -8" fill="none"/>
+          <rect y="240" width="700" height="6" rx="3" fill="#efeae2"/>
+          <!-- gutter -->
+          <rect width="40" height="246" fill="#eae6df"/><line x1="40" y1="0" x2="40" y2="246" stroke="#dad7d2"/>
+          <g font-family="JetBrains Mono, monospace" font-size="11" fill="#a39c92" text-anchor="end">
+            <text x="30" y="30">1</text><text x="30" y="52">2</text><text x="30" y="74">3</text><text x="30" y="96">4</text><text x="30" y="118">5</text><text x="30" y="140">6</text><text x="30" y="162">7</text>
+          </g>
+          <g font-family="JetBrains Mono, monospace" font-size="12.5">
+            <text x="56" y="30"><tspan fill="#75716d">// primitives/Button/Button.tsx</tspan></text>
+            <text x="56" y="52"><tspan fill="#345197">import</tspan> <tspan fill="#171614">{ tokens }</tspan> <tspan fill="#345197">from</tspan> <tspan fill="#2b7440">"../../tokens"</tspan>;</text>
+            <text x="56" y="96"><tspan fill="#345197">export function</tspan> <tspan fill="#171614">Button</tspan>(<tspan fill="#423f3d">{ variant = </tspan><tspan fill="#2b7440">"primary"</tspan><tspan fill="#423f3d">, ...p }</tspan>) {</text>
+            <text x="56" y="118"><tspan fill="#345197">  return</tspan> <tspan fill="#423f3d">&lt;button</tspan> <tspan fill="#ac5a40">className</tspan><tspan fill="#423f3d">={</tspan><tspan fill="#2b7440">`ds-btn ds-btn--${variant}`</tspan><tspan fill="#423f3d">}</tspan></text>
+            <text x="56" y="140"><tspan fill="#423f3d">    style={{ borderRadius: </tspan><tspan fill="#ac5a40">"var(--radius-md)"</tspan> <tspan fill="#423f3d">}} {...p} /&gt;;</tspan></text>
+            <text x="56" y="162"><tspan fill="#423f3d">}</tspan></text>
+          </g>
+          <line x1="40" y1="200" x2="700" y2="200" stroke="#dad7d2"/>
+          <text x="56" y="224" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">every value references a token — never an inline hex</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- ── ADJUST rail ── -->
+    <g transform="translate(780,52)">
+      <rect width="300" height="928" fill="#f3f0ea"/>
+      <line x1="0" y1="0" x2="0" y2="928" stroke="#fdfcf9" stroke-width="1"/>
+      <text x="24" y="42" font-family="Newsreader, Georgia, serif" font-size="22" font-weight="600" fill="#171614">Adjust</text>
+      <text x="24" y="62" font-family="JetBrains Mono, monospace" font-size="10" fill="#75716d">sliders genie generated for this element</text>
+
+      <g transform="translate(24,88)">
+        <text y="0" font-family="Inter, sans-serif" font-size="13" font-weight="500" fill="#171614">Corner radius</text>
+        <text x="252" y="0" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="12" fill="#ac5a40">10</text>
+        <rect y="12" width="252" height="6" rx="3" fill="#e3ded4"/><rect y="12" width="112" height="6" rx="3" fill="url(#giltHover)"/>
+        <circle cx="112" cy="15" r="9" fill="#faf8f5" stroke="#c87c5e" stroke-width="2.5" filter="url(#gilt2)"/>
+      </g>
+      <g transform="translate(24,140)">
+        <text y="0" font-family="Inter, sans-serif" font-size="13" font-weight="500" fill="#171614">Padding · horizontal</text>
+        <text x="252" y="0" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="12" fill="#423f3d">32</text>
+        <rect y="12" width="252" height="6" rx="3" fill="#e3ded4"/><rect y="12" width="150" height="6" rx="3" fill="#345197"/>
+        <circle cx="150" cy="15" r="9" fill="#faf8f5" stroke="#345197" stroke-width="2.5"/>
+      </g>
+      <g transform="translate(24,192)">
+        <text y="0" font-family="Inter, sans-serif" font-size="13" font-weight="500" fill="#171614">Label weight</text>
+        <text x="252" y="0" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="12" fill="#423f3d">700</text>
+        <rect y="12" width="252" height="6" rx="3" fill="#e3ded4"/><rect y="12" width="196" height="6" rx="3" fill="#345197"/>
+        <circle cx="196" cy="15" r="9" fill="#faf8f5" stroke="#345197" stroke-width="2.5"/>
+      </g>
+      <g transform="translate(24,244)">
+        <text y="0" font-family="Inter, sans-serif" font-size="13" font-weight="500" fill="#171614">Surface</text>
+        <g transform="translate(0,12)">
+          <rect width="28" height="28" rx="7" fill="url(#giltSurface)" stroke="#171614" stroke-width="2"/>
+          <rect x="36" width="28" height="28" rx="7" fill="#ac5a40"/>
+          <rect x="72" width="28" height="28" rx="7" fill="#345197"/>
+          <rect x="108" width="28" height="28" rx="7" fill="#171614"/>
+          <rect x="144" width="28" height="28" rx="7" fill="#faf8f5" stroke="#c7c3bd"/>
+        </g>
+      </g>
+      <line x1="24" y1="316" x2="276" y2="316" stroke="#dad7d2"/>
+
+      <text x="24" y="350" font-family="Newsreader, Georgia, serif" font-size="22" font-weight="600" fill="#171614">Claude's suggestion</text>
+      <g transform="translate(24,368)">
+        <rect width="252" height="68" rx="10" fill="#faf8f5" stroke="#dad7d2"/><line x1="10" y1="1" x2="242" y2="1" stroke="#ffffff"/>
+        <text x="14" y="26" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">For "tighter, more confident":</text>
+        <text x="14" y="46" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#ac5a40">weight 600→700 · tracking −0.01</text>
+      </g>
+      <g transform="translate(24,452)">
+        <g filter="url(#gilt2)"><rect width="142" height="36" rx="8" fill="url(#giltSurface)"/><line x1="10" y1="1.5" x2="132" y2="1.5" stroke="#f0c3ac" stroke-width="1.2" opacity="0.7"/><text x="18" y="23" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="#171614">✦ Apply change</text></g>
+        <g transform="translate(154,0)"><rect width="80" height="36" rx="8" fill="#faf8f5" stroke="#c7c3bd"/><text x="16" y="23" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="#423f3d">Discard</text></g>
+      </g>
+
+      <g transform="translate(24,872)"><rect width="252" height="40" rx="10" fill="#d4f1d8"/><line x1="10" y1="1" x2="242" y2="1" stroke="#e8faea"/><text x="16" y="25" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#2a7a42">✓ validated · @dsCard ok · 1 pending</text></g>
+    </g>
+  </g>
+
+  <text x="384" y="968" font-family="JetBrains Mono, monospace" font-size="10" fill="#75716d">genie · preview + refine · pass 3 craft · lit edges · gilt hero · state-strip · code block · surface 2 / 2</text>
+</svg>

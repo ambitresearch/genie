@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1340" viewBox="0 0 1280 1340" font-family="Inter, system-ui, sans-serif">
+<!-- Hallmark · genie (hybrid) · genre: editorial-modern · pre-emit critique: P5 H5 E5 S5 R5 V4
+     Foundations — the warm/serif/gilt system at a glance. The reference both surfaces match. -->
+  <defs>
+    <linearGradient id="lampF" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c87c5e"/><stop offset="1" stop-color="#ac5a40"/></linearGradient>
+    <filter id="softF" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="#171614" flood-opacity="0.10"/></filter>
+  </defs>
+
+  <rect width="1280" height="1340" fill="#faf8f5"/>
+
+  <!-- masthead -->
+  <g transform="translate(64,56)">
+    <circle cx="20" cy="20" r="20" fill="url(#lampF)"/>
+    <path d="M11 24 q9 -12 18 0 M20 11 v-5" stroke="#faf8f5" stroke-width="2.2" fill="none" stroke-linecap="round"/><circle cx="20" cy="8.5" r="2.1" fill="#faf8f5"/>
+    <text x="56" y="20" font-family="Newsreader, Georgia, serif" font-size="32" font-weight="600" letter-spacing="-0.015em" fill="#171614">genie</text>
+    <text x="56" y="42" font-family="JetBrains Mono, monospace" font-size="13" fill="#75716d">design system · foundations · v1.0 (hybrid)</text>
+  </g>
+  <text x="1216" y="58" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="12" fill="#75716d">warm cream · serif · genie-gilt</text>
+  <text x="1216" y="78" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="12" fill="#75716d">Anthropic-sibling, own accent</text>
+  <line x1="64" y1="116" x2="1216" y2="116" stroke="#dad7d2"/>
+
+  <!-- ── the two-hue story ── -->
+  <g transform="translate(64,156)">
+    <text font-family="Inter, sans-serif" font-size="13" font-weight="600" letter-spacing="0.04em" fill="#75716d">THE GENIE PALETTE — GILT LEADS, INK-BLUE STRUCTURES</text>
+    <g transform="translate(0,28)">
+      <rect width="560" height="116" rx="14" fill="#c87c5e"/>
+      <text x="28" y="46" font-family="Newsreader, Georgia, serif" font-size="24" font-weight="600" fill="#171614">Genie-gilt · the spark</text>
+      <text x="28" y="72" font-family="Inter, sans-serif" font-size="14" fill="#171614" opacity="0.82">Generation, emphasis, the "magic." Gold on cream.</text>
+      <text x="28" y="96" font-family="JetBrains Mono, monospace" font-size="12" fill="#423f3d">oklch(70% 0.135 72) · #c87c5e</text>
+    </g>
+    <g transform="translate(592,28)">
+      <rect width="560" height="116" rx="14" fill="#345197"/>
+      <text x="28" y="46" font-family="Newsreader, Georgia, serif" font-size="24" font-weight="600" fill="#faf8f5">Ink-blue · structure</text>
+      <text x="28" y="72" font-family="Inter, sans-serif" font-size="14" fill="#dee8fd" opacity="0.92">Links, focus, selection. Quiet, never the star.</text>
+      <text x="28" y="96" font-family="JetBrains Mono, monospace" font-size="12" fill="#dee8fd">oklch(45% 0.12 265) · #345197</text>
+    </g>
+  </g>
+
+  <!-- ── color tokens ── -->
+  <g transform="translate(64,340)">
+    <text font-family="Inter, sans-serif" font-size="13" font-weight="600" letter-spacing="0.04em" fill="#75716d">COLOR TOKENS</text>
+    <g transform="translate(0,28)" font-family="JetBrains Mono, monospace" font-size="10">
+      <!-- paper + ink row -->
+      <g><rect width="128" height="60" rx="8" fill="#faf8f5" stroke="#dad7d2"/><text x="8" y="76" fill="#423f3d">paper</text><text x="8" y="90" fill="#75716d">#faf8f5</text></g>
+      <g transform="translate(144,0)"><rect width="128" height="60" rx="8" fill="#f3f0ea" stroke="#dad7d2"/><text x="8" y="76" fill="#423f3d">paper-2</text><text x="8" y="90" fill="#75716d">#f3f0ea</text></g>
+      <g transform="translate(288,0)"><rect width="128" height="60" rx="8" fill="#eae6df" stroke="#dad7d2"/><text x="8" y="76" fill="#423f3d">paper-3</text><text x="8" y="90" fill="#75716d">#eae6df</text></g>
+      <g transform="translate(432,0)"><rect width="128" height="60" rx="8" fill="#171614"/><text x="8" y="76" fill="#423f3d">ink</text><text x="8" y="90" fill="#75716d">#171614</text></g>
+      <g transform="translate(576,0)"><rect width="128" height="60" rx="8" fill="#423f3d"/><text x="8" y="76" fill="#423f3d">ink-2</text><text x="8" y="90" fill="#75716d">#423f3d</text></g>
+      <g transform="translate(720,0)"><rect width="128" height="60" rx="8" fill="#75716d"/><text x="8" y="76" fill="#423f3d">ink-3</text><text x="8" y="90" fill="#75716d">#75716d</text></g>
+      <g transform="translate(864,0)"><rect width="128" height="60" rx="8" fill="#dad7d2"/><text x="8" y="76" fill="#423f3d">hairline</text><text x="8" y="90" fill="#75716d">#dad7d2</text></g>
+      <g transform="translate(1008,0)"><rect width="128" height="60" rx="8" fill="#c7c3bd"/><text x="8" y="76" fill="#423f3d">hairline-2</text><text x="8" y="90" fill="#75716d">#c7c3bd</text></g>
+    </g>
+    <g transform="translate(0,128)" font-family="JetBrains Mono, monospace" font-size="10">
+      <!-- gilt + struct + semantic -->
+      <g><rect width="128" height="60" rx="8" fill="#c87c5e"/><text x="8" y="76" fill="#423f3d">accent</text><text x="8" y="90" fill="#75716d">#c87c5e</text></g>
+      <g transform="translate(144,0)"><rect width="128" height="60" rx="8" fill="#ac5a40"/><text x="8" y="76" fill="#423f3d">accent-2</text><text x="8" y="90" fill="#75716d">#ac5a40</text></g>
+      <g transform="translate(288,0)"><rect width="128" height="60" rx="8" fill="#fae2d8" stroke="#ecb6a0"/><text x="8" y="76" fill="#423f3d">accent-tint</text><text x="8" y="90" fill="#75716d">#fae2d8</text></g>
+      <g transform="translate(432,0)"><rect width="128" height="60" rx="8" fill="#345197"/><text x="8" y="76" fill="#423f3d">struct</text><text x="8" y="90" fill="#75716d">#345197</text></g>
+      <g transform="translate(576,0)"><rect width="128" height="60" rx="8" fill="#348f4f"/><text x="8" y="76" fill="#423f3d">success</text><text x="8" y="90" fill="#75716d">#348f4f</text></g>
+      <g transform="translate(720,0)"><rect width="128" height="60" rx="8" fill="#dd9231"/><text x="8" y="76" fill="#423f3d">warning</text><text x="8" y="90" fill="#75716d">#dd9231</text></g>
+      <g transform="translate(864,0)"><rect width="128" height="60" rx="8" fill="#c5372f"/><text x="8" y="76" fill="#423f3d">danger</text><text x="8" y="90" fill="#75716d">#c5372f</text></g>
+      <g transform="translate(1008,0)"><rect width="128" height="60" rx="8" fill="#4064b9"/><text x="8" y="76" fill="#423f3d">focus</text><text x="8" y="90" fill="#75716d">#4064b9</text></g>
+    </g>
+  </g>
+
+  <!-- ── type ── -->
+  <g transform="translate(64,628)">
+    <text font-family="Inter, sans-serif" font-size="13" font-weight="600" letter-spacing="0.04em" fill="#75716d">TYPE — NEWSREADER (SERIF) · INTER · JETBRAINS MONO</text>
+    <text y="64" font-family="Newsreader, Georgia, serif" font-size="64" font-weight="500" letter-spacing="-0.015em" fill="#171614">Components, conjured.</text>
+    <text y="96" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d" transform="translate(720,-58)">display · 64 / Newsreader 500</text>
+    <g transform="translate(0,118)">
+      <text font-family="Newsreader, Georgia, serif" font-size="32" font-weight="600" fill="#171614">Section heading</text>
+      <text font-family="Newsreader, Georgia, serif" font-size="22" font-weight="600" fill="#171614" transform="translate(360,0)">Card title</text>
+      <text font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d" transform="translate(680,0)">2xl 32 · lg 22 / serif 600</text>
+    </g>
+    <text y="186" font-family="Inter, sans-serif" font-size="16" fill="#423f3d">Body copy in Inter at 16px / 1.55. Calm, premium, lots of air — the warm-editorial voice. Measured ~66ch for comfortable reading.</text>
+    <text y="222" font-family="JetBrains Mono, monospace" font-size="14" fill="#345197">&lt;!-- @dsCard group=<tspan fill="#2b7440">"primitives"</tspan> --&gt;</text>
+    <text y="244" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">mono 14 · the @dsCard marker genie validates · JetBrains Mono</text>
+  </g>
+
+  <!-- ── spacing + radii ── -->
+  <g transform="translate(64,944)">
+    <text font-family="Inter, sans-serif" font-size="13" font-weight="600" letter-spacing="0.04em" fill="#75716d">SPACING · 4PT</text>
+    <g transform="translate(0,28)" font-family="JetBrains Mono, monospace" font-size="11">
+      <g><rect width="8" height="40" fill="#345197"/><text y="56" fill="#75716d">xs 8</text></g>
+      <g transform="translate(80,0)"><rect width="16" height="40" fill="#345197"/><text y="56" fill="#75716d">md 16</text></g>
+      <g transform="translate(176,0)"><rect width="24" height="40" fill="#345197"/><text y="56" fill="#75716d">lg 24</text></g>
+      <g transform="translate(280,0)"><rect width="32" height="40" fill="#345197"/><text y="56" fill="#75716d">xl 32</text></g>
+      <g transform="translate(392,0)"><rect width="48" height="40" fill="#345197"/><text y="56" fill="#75716d">2xl 48</text></g>
+    </g>
+    <text font-family="Inter, sans-serif" font-size="13" font-weight="600" letter-spacing="0.04em" fill="#75716d" transform="translate(560,0)">RADII · ELEVATION</text>
+    <g transform="translate(560,28)" font-family="JetBrains Mono, monospace" font-size="10">
+      <g><rect width="48" height="48" rx="6" fill="#f3f0ea" stroke="#dad7d2"/><text y="64" fill="#75716d">sm 6</text></g>
+      <g transform="translate(72,0)"><rect width="48" height="48" rx="10" fill="#f3f0ea" stroke="#dad7d2"/><text y="64" fill="#75716d">md 10</text></g>
+      <g transform="translate(144,0)"><rect width="48" height="48" rx="14" fill="#f3f0ea" stroke="#dad7d2"/><text y="64" fill="#75716d">lg 14</text></g>
+      <g transform="translate(232,0)"><rect width="48" height="48" rx="10" fill="#faf8f5" filter="url(#softF)"/><text x="-4" y="64" fill="#75716d">shadow-md</text></g>
+      <g transform="translate(336,0)"><rect x="-3" y="-3" width="54" height="54" rx="12" fill="#c87c5e" opacity="0.20"/><rect width="48" height="48" rx="10" fill="#c87c5e"/><text x="-8" y="64" fill="#75716d">shadow-gilt</text></g>
+    </g>
+  </g>
+
+  <!-- ── the restraint rule ── -->
+  <g transform="translate(64,1080)">
+    <rect width="1152" height="76" rx="12" fill="#fae2d8" stroke="#ecb6a0"/>
+    <text x="24" y="32" font-family="Newsreader, Georgia, serif" font-size="18" font-weight="600" fill="#171614">The one rule that carries the brand</text>
+    <text x="24" y="56" font-family="Inter, sans-serif" font-size="14" fill="#423f3d">Genie-gilt appears ONLY on generation + refine moments — the Generate button, the active slider, the comment-in-focus, Apply. Everything structural is ink, ink-blue, or warm neutral. Scarcity is what makes the gold read as magic.</text>
+  </g>
+
+  <line x1="64" y1="1252" x2="1216" y2="1252" stroke="#dad7d2"/>
+  <text x="64" y="1280" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">genie · foundations · warm cream · serif display · genie-gilt · matches tokens.css + both surfaces</text>
+  <text x="1216" y="1280" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">foundations</text>
+</svg>

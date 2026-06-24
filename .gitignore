@@ -1,0 +1,31 @@
+# ── Dependencies ──────────────────────────────────────────
+node_modules/
+package-lock.json
+
+# ── Private session memory (not part of the project) ──────
+.remember/
+
+# ── Claude Code local config (machine-specific) ───────────
+.claude/
+
+# ── Scratch / lab files (kept locally for reference, not shipped) ──
+docs/design/_*.html
+
+# ── Deliverables junk drawer (unrelated homelab/plugin work) ──
+# NOTE: this folder is NOT genie content — it's staging cruft from
+# other tasks. The one genie artifact (skybridge research) has been
+# moved to docs/research-artifacts/. Keep the whole folder ignored.
+docs/.deliverables/
+
+# ── OS / editor noise ─────────────────────────────────────
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# ── Secrets (belt-and-suspenders; none currently in repo) ──
+.env
+.env.*
+*.local
+**/shellprivatevars
