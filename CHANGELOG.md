@@ -31,8 +31,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/) from 1
   - pnpm workspace (`server` / `viewer` / `e2e`), TypeScript strict/ESM/NodeNext,
     ESLint flat config, Prettier, Vitest. `pnpm i / dev / build / test / lint /
     typecheck` all green.
-  - CI (GitHub Actions): lint/typecheck/test/build matrix + CodeQL static
-    analysis + release-please.
+  - CI (GitHub Actions): lint/typecheck/test/build matrix + release-please.
   - Governance: LICENSE (MIT), NOTICE, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT,
     root README.
   - `docs/traceability.md` — research claims → milestones matrix (M0-01).
