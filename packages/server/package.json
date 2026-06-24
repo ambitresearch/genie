@@ -21,7 +21,7 @@
     "zod": "^4.4.3"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "license": "MIT",
   "author": "Roshan Gautam"

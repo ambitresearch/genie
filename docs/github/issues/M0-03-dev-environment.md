@@ -1,5 +1,5 @@
 ---
-title: "[M0-03] Bootstrap TypeScript dev environment (Node ≥18, ESM, pnpm)"
+title: "[M0-03] Bootstrap TypeScript dev environment (Node ≥22, ESM, pnpm)"
 milestone: "M0 — Discovery & Scaffold"
 labels: ["type:infra", "area:ci", "priority:P0-critical", "size:M"]
 assignees: []
@@ -15,13 +15,13 @@ this, a contributor can clone, `pnpm i`, and run `pnpm dev` to get an empty
 MCP server on stdio.
 
 ## Context
-- INDEX.md: "Primary language: TypeScript (Node ≥ 18, ESM)".
+- INDEX.md: "Primary language: TypeScript (Node ≥ 22, ESM)".
 - Research report §7 step 1: "Scaffold MCP server — npm init, add
   @modelcontextprotocol/sdk, fork GLips/Figma-Context-MCP for transport/CLI
   scaffolding".
 
 ## Acceptance Criteria
-- [ ] AC1 — `pnpm i` on a fresh clone succeeds on Node 18, 20, 22.
+- [ ] AC1 — `pnpm i` on a fresh clone succeeds on Node 22 and 24.
 - [ ] AC2 — `tsconfig.json` has `"module": "NodeNext"`, `"strict": true`,
       `"target": "ES2022"`, `"moduleResolution": "NodeNext"`.
 - [ ] AC3 — `pnpm-workspace.yaml` lists `packages/server`, `packages/viewer`,
@@ -30,7 +30,7 @@ MCP server on stdio.
 - [ ] AC5 — `pnpm test` runs Vitest against a placeholder
       `expect(true).toBe(true)` test and passes.
 - [ ] AC6 — `pnpm lint` and `pnpm typecheck` both pass on the empty scaffold.
-- [ ] AC7 — `.nvmrc` pins Node `20.x`.
+- [ ] AC7 — `.nvmrc` pins Node `22`.
 
 ## Implementation Notes
 - Use `@modelcontextprotocol/sdk` at the latest stable.

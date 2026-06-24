@@ -8,7 +8,7 @@
 | Version          | 0.9 (review draft)                                                                                     |
 | Status           | DRAFT — pending engineering sign-off                                                                    |
 | Created          | 2026-06-21                                                                                              |
-| Last updated     | 2026-06-21                                                                                              |
+| Last updated     | 2026-06-24                                                                                              |
 | Owner            | Product (Roshan Gautam)                                                                                 |
 | Engineering lead | TBD                                                                                                     |
 | Design lead      | TBD                                                                                                     |
@@ -25,6 +25,7 @@ Change log:
 |---------|------------|----------------|---------------------------------------------------------|
 | 0.1     | 2026-06-21 | Product (auto) | Initial scaffold derived from BRD + research report     |
 | 1.0     | 2026-06-21 | Product (auto) | Full draft for engineering review                       |
+| 1.1     | 2026-06-24 | Product (auto) | Raised minimum Node.js from 18 to 22 (Node 18 & 20 reached EOL; Node 22 is the current Active LTS). Modern toolchain (pnpm 10.34, Vitest 4) requires Node ≥ 20+. |
 
 ## 2. Product summary
 
@@ -167,11 +168,11 @@ Epics map to milestones M0–M5 from the research report §7.
 #### DS-001 — Initialize TypeScript MCP server scaffold
 
 - **Persona:** D
-- **Narrative:** As an OSS Plugin Author, I want a clean `npm init` + `@modelcontextprotocol/sdk` scaffold with ESM, Node ≥ 18, and strict TS, so the project is forkable on day one.
+- **Narrative:** As an OSS Plugin Author, I want a clean `npm init` + `@modelcontextprotocol/sdk` scaffold with ESM, Node ≥ 22, and strict TS, so the project is forkable on day one.
 - **Acceptance criteria:**
   - Given a clean checkout, When I run `npm ci && npm run build`, Then `dist/server.js` is emitted with no `any` warnings under `tsc --strict`.
   - Given a clean checkout, When I run `npm test`, Then the unit-test runner executes a smoke test confirming the server registers ≥ 1 tool.
-  - Given `package.json`, Then `engines.node >= 18`, `type: module`, and the `bin` entry `genie` resolves.
+  - Given `package.json`, Then `engines.node >= 22`, `type: module`, and the `bin` entry `genie` resolves.
   - Given the repo, Then `LICENSE` is MIT and `README.md` opens with the one-liner from the BRD.
 - **Priority:** P0 · **Estimate:** S · **Milestone:** M0
 
@@ -1039,7 +1040,7 @@ pointing to the viewer entry. `peerDependencies`: none.
 double-click install on Claude Desktop works without npm.
 
 **FR-092 — Docker image.** `ghcr.io/roshangautam/genie:1.0`.
-Multi-arch (amd64, arm64). Non-root UID 1000. Base: distroless node 18.
+Multi-arch (amd64, arm64). Non-root UID 1000. Base: distroless node 22.
 Exposes 8780/tcp.
 
 **FR-093 — Smithery listing.** `smithery.yaml` at repo root declares
@@ -1132,7 +1133,7 @@ Numbered `NFR-NNN`. Targets are P50 unless otherwise noted.
 
 | NFR-ID  | Requirement                                                                                                                                                            |
 |---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| NFR-070 | Node.js ≥ 18 (LTS); ESM-only; no CommonJS interop                                                                                                                       |
+| NFR-070 | Node.js ≥ 22 (LTS); ESM-only; no CommonJS interop                                                                                                                       |
 | NFR-071 | macOS 13+, Linux (Debian 11+, Ubuntu 22.04+), Windows 11 with PowerShell ≥ 7 for stdio transport                                                                        |
 | NFR-072 | Remote HTTP transport universal across OSes via Docker                                                                                                                  |
 | NFR-073 | *Version floors are current-stable estimates as of 2026-06-21; verify in CI matrix before GA.* Harness compatibility: Claude Code ≥ 2.0, Claude Desktop ≥ 1.20, Codex CLI ≥ 0.10, VS Code ≥ 1.102 (Copilot agent mode GA), Cursor ≥ 0.45, Cline ≥ 3.0, Continue ≥ 1.0 |

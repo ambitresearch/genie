@@ -34,7 +34,7 @@ pnpm dev                       # boots the MCP server on stdio
 pnpm test                      # run the suite
 ```
 
-Requires Node ≥ 18 (CI tests 18/20/22). `.nvmrc` pins 20.
+Requires Node ≥ 22 (current Active LTS; CI tests 22/24). `.nvmrc` pins 22.
 
 ### Useful scripts
 

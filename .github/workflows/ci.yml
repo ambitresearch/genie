@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [18, 20, 22]
+        node: [22, 24]
         os: [ubuntu-latest, macos-latest]
         task: [lint, typecheck, test, build]
     steps:
@@ -28,7 +28,7 @@ jobs:
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
-        # Version is read from package.json "packageManager" (pnpm@11.9.0).
+        # Version is read from package.json "packageManager" (pnpm@10.34.4).
         # Do not also set `version:` here — action-setup@v4 rejects the conflict.
 
       - name: Setup Node ${{ matrix.node }}

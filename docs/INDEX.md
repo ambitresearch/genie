@@ -18,7 +18,7 @@ Generated 2026-06-21. All docs derive from the validated research report
 - Project name: **genie**
 - Repository: **roshangautam/genie** — **private**, to be created
 - License: **MIT**
-- Primary language: **TypeScript** (Node ≥ 18 LTS, ESM)
+- Primary language: **TypeScript** (Node ≥ 22 LTS, ESM)
 - MCP SDK: **@modelcontextprotocol/sdk**
 - Distribution: npm + `.mcpb` bundle + Docker
 - LLM backend: **LiteLLM gateway** at `https://litellm.roshangautam.com` (tailnet: `http://100.81.124.86:4000`)

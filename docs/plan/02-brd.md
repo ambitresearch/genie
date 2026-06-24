@@ -46,6 +46,7 @@ The reviewer roster is intentionally **TBD-heavy** because genie begins life as 
 | Date | Version | Author | Change |
 |---|---|---|---|
 | 2026-06-21 | v0.1 DRAFT | Roshan Gautam | Initial issue, derived from validated research report. |
+| 2026-06-24 | v0.1 DRAFT | Roshan Gautam | Repositioned as a solo, unmonetized experiment (no funding/team/revenue). Raised minimum Node.js 18 → 22 (18 & 20 EOL; 22 is current Active LTS). |
 | _TBD_ | _v0.2_ | _TBD_ | _Placeholder — sponsor-comment integration._ |
 | _TBD_ | _v1.0_ | _TBD_ | _Placeholder — Go-decision freeze (locks scope for M0-M5)._ |
 
@@ -192,7 +193,7 @@ The scope statement is the most consequential paragraph in this BRD — it draws
 
 ### §6.1 In scope — M0-M5 deliverables
 
-1. A **TypeScript MCP server** built on `@modelcontextprotocol/sdk`, Node ≥ 18, ESM-only, distributed as: (a) npm package `genie`, (b) Docker image, (c) `.mcpb` Claude Desktop bundle.
+1. A **TypeScript MCP server** built on `@modelcontextprotocol/sdk`, Node ≥ 22, ESM-only, distributed as: (a) npm package `genie`, (b) Docker image, (c) `.mcpb` Claude Desktop bundle.
 2. The **12-method DesignSync verb surface verbatim**: `list_projects`, `get_project`, `list_files`, `get_file`, `create_project`, `finalize_plan`, `write_files`, `delete_files`, `register_assets` (legacy), `unregister_assets` (legacy), `report_validate`, `list_components`, plus the genie-specific `generate_component`, `refine_component`, `render_preview`, `validate_design_system`.
 3. *Aliases below are placeholders — confirm against https://litellm.roshangautam.com/v1/models before merging. Marketed Opus 4.7 resolves to anthropic/claude-opus-4-8.* **LiteLLM integration** using the existing OpenAI-compatible gateway at `https://litellm.roshangautam.com`; default model alias `design-default` → `anthropic/claude-sonnet-4-6`; environment-tunable to `design-best` (Opus 4.x — marketed 4.7; resolves to claude-opus-4-8) or `design-local` (Ollama Qwen3-Coder).
 4. **Git-backed component store** with two backends: local FS for solo developers (default), and Gitea on TrueNAS for shared teams. Project ↔ repo, planId ↔ branch, write ↔ commit, merge ↔ publish.
