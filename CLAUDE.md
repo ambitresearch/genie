@@ -13,10 +13,12 @@ local). The formal, committed plan lives in `docs/plan/` and the issue backlog i
 
 ## What genie is
 
-A **harness-agnostic MCP server that clones Anthropic's Claude Design** — an AI UI-component
-generator with a live preview + UI-kit browser that lives *inside* AI coding harnesses
-(Claude Code, Cursor, VS Code, ChatGPT, etc.) via MCP. The wedge: harness-native component
-generation against your own UI kit, no separate app to open.
+A **harness-agnostic MCP server for AI UI-component generation, inspired by Anthropic's
+Claude Design** — an AI UI-component generator with a live preview + UI-kit browser that
+lives *inside* AI coding harnesses (Claude Code, Cursor, VS Code, ChatGPT, etc.) via MCP.
+An independent, open-source take on the same idea, not a reproduction of Anthropic's hosted
+product. The wedge: harness-native component generation against your own UI kit, no separate
+app to open.
 
 - **Two product surfaces:** (1) live component-preview grid + refine pane, (2) UI-kit file browser.
 - **Two design tiers:** *embedded* (renders in a host iframe; system fonts; strict CSP

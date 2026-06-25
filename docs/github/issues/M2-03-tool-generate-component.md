@@ -7,9 +7,9 @@ estimate: "12h"
 ---
 
 ## Summary
-Implement `generate_component` — the clone's headline verb. Takes a natural-
+Implement `generate_component` — genie's headline verb. Takes a natural-
 language prompt + optional reference image/URL, returns the file set defined
-by `COMPONENT_SCHEMA`. The full clone of canvas-side generation lives here.
+by `COMPONENT_SCHEMA`. genie's take on canvas-side generation lives here.
 
 ## Context
 - Research report §3.1: `generate_component({ projectId, kit, prompt, group?,
