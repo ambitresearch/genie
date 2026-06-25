@@ -66,14 +66,14 @@ The reviewer roster is intentionally **TBD-heavy** because genie begins life as 
 
 Anthropic's **Claude Design** — launched **2026-04-17** alongside the Claude Opus 4.7 model and surfaced at `claude.ai/design`, with companion slash-commands `/design` and `/design-sync` inside Claude Code (verified: `anthropic.com/news/claude-design-anthropic-labs`; `claude.com/product/design`) — has set a new bar for AI-assisted design-system collaboration. It generates real, on-brand UI components against a code-defined design system, lets users adjust elements through inline comments, and round-trips back into a developer's local repository. The marketing language is bold and the experience reportedly excellent, but Claude Design is hosted-only, Pro/Max/Team/Enterprise-gated, browser-bound to a single vendor's chat UI, and exposes no public API. Anthropic has published none of the canvas-side generation prompt, none of the manifest format used to drive its Design System pane, and none of the per-card edit protocol. The richest part of Claude Design is, by deliberate design, opaque to non-Anthropic clients.
 
-That opacity is **also an opening**. The research report concludes that the developer-facing half — an MCP tool surface of 12 file-flow verbs, the `<!-- @dsCard group="…" -->` first-line marker, the `_ds_needs_recompile` sentinel, the atomic upload sequence — is fully recoverable from public protocol surfaces and the bundled skill that ships inside Claude Code, and that the preview surface itself can be reproduced with a Vite-backed local viewer plus an MCP-Apps `ui://` resource for hosts that render it. The blocker is **non-technical**: there is no shortcut for designing a generation prompt and per-element artifact format from scratch. Everything else is reachable from the open ecosystem.
+That opacity is **also an opening**. The research report establishes the *concepts and techniques* that make the developer-facing half work — a permission-gated plan→write capability flow, a first-line card marker that lets the server compile a component manifest, a verification-anchor sentinel, an atomic upload sequence — and that the preview surface can be reproduced with a local viewer plus an MCP-Apps `ui://` resource for hosts that render it. genie takes those *ideas* and implements them with **its own conventions** — its own marker syntax, its own tool names, its own on-disk formats — designed from scratch and improved where possible, not copied from Anthropic's. The blocker is **non-technical**: there is no shortcut for designing a good generation prompt and per-element artifact format. Everything else is reachable from the open ecosystem.
 
 **genie** is an independent, open-source build of that developer-facing experience. It will:
 
-1. Ship a single, MIT-licensed **TypeScript MCP server** mirroring DesignSync's 12-method tool catalog verbatim (the 11 file-flow verbs plus `list_components`), validated against the Tier-0 universal harness set (Claude Code · Claude Desktop · Codex CLI · GitHub Copilot in VS Code agent mode · Cursor · Cline · Continue.dev).
-2. Route all model traffic through our existing **LiteLLM gateway** (`https://litellm.roshangautam.com`, tailnet `http://100.81.124.86:4000`) — so the same per-key budgets, observability, and model-choice flexibility that already protect the rest of the homelab apply here. Default model: `anthropic/claude-sonnet-4-6` via the LiteLLM alias `design-default`.
+1. Ship a single, MIT-licensed **TypeScript MCP server** providing a file-flow tool surface (a permission-gated plan→write capability model plus read/list/validate verbs) built with genie's own naming and schemas, validated against the Tier-0 universal harness set (Claude Code · Claude Desktop · Codex CLI · GitHub Copilot in VS Code agent mode · Cursor · Cline · Continue.dev).
+2. Route all model traffic through a configurable **OpenAI-compatible LLM endpoint** — so operators get per-key budgets, observability, and full model-choice flexibility. This can be a direct provider (Anthropic, OpenAI, Google, a local Ollama install) or a gateway/proxy in front of several (LiteLLM, OpenRouter, or similar). genie itself is provider-agnostic; it only requires an OpenAI-compatible `chat/completions` surface and a configurable base URL + key.
 3. Distribute the preview pane in three formats from a single artifact set: `file://` (works for everyone), `http://localhost:5173` (Vite-backed live viewer, HMR-enabled), and `ui://genie/grid` (MCP-Apps payload for Claude · VS Code Stable Jan 2026 · ChatGPT · Cursor).
-4. Operate against a **git-backed component store** (local FS for solo developers, Gitea on the TrueNAS `aether` pool for teams), turning what Anthropic calls a "project" into a real git repo where `planId == branch`, `write_files == commit`, and `merge == publish`.
+4. Operate against a **git-backed component store** — local filesystem for solo developers, any git host (self-hosted or cloud — GitHub, GitLab, Gitea/Forgejo, etc.) for shared teams. A "project" becomes a real git repo where `planId == branch`, a write == a commit, and merge == publish.
 
 **Three outcomes that would tell us the experiment worked, over a 12-month horizon:**
 
@@ -108,7 +108,7 @@ Claude Design is the most credible exemplar of the next-generation design tool. 
 - The Design System pane's card index is **server-compiled** from each preview HTML's first-line marker `<!-- @dsCard group="…" -->`, validated by a regex confirmed in the on-disk skill source: `/^<!--\s*@dsCard\s+group="[^"]*"[^>]*-->/`. A missing marker raises `[DSCARD_MISSING]` and fails the build.
 - The "atomic" upload sequence is non-trivial and load-bearing: write the `_ds_needs_recompile` sentinel first to fence the server's manifest/copy machinery, chunk content writes ≤ 256 files per call, perform deletes, re-arm the sentinel, write `_ds_sync.json` last as the verification anchor.
 
-What this benchmark gives genie is a precise specification for **the developer-facing half** — every verb, every path, every byte-cap, every retry semantic. What it withholds is the **canvas-side generation half**: the prompt shape, the per-element artifact format, the inline-comment edit round-trip, the per-knob adjustment protocol. The research report concludes (with the only "killed" claim across 20 — which on review was a verification-process artifact, not a substantive disconfirmation — see §8.7 of the report's claim ledger) that this canvas half is undocumented anywhere public and would have to be designed from scratch. genie accepts that constraint: M0-M5 covers the developer-facing half plus the preview pane plus enough generation tooling to be useful; the canvas-side reimagining is deferred to a post-M5 workstream.
+What this benchmark gives genie is a **reference for the techniques** that make the developer-facing half work — the shape of a permission-gated plan→write flow, the idea of a server-compiled manifest driven by an in-file marker, the atomic-upload ordering that keeps a verification anchor honest. What it withholds is the **canvas-side generation half**: the prompt shape, the per-element artifact format, the inline-comment edit round-trip, the per-knob adjustment protocol. The research report concludes (with the only "killed" claim across 20 — which on review was a verification-process artifact, not a substantive disconfirmation — see §8.7 of the report's claim ledger) that this canvas half is undocumented anywhere public and would have to be designed from scratch. genie reimplements the techniques with its own conventions: M0-M5 covers a developer-facing tool surface plus the preview pane plus enough generation tooling to be useful; the canvas-side reimagining is deferred to a post-M5 workstream.
 
 ### §3.3 The multi-harness fragmentation problem
 
@@ -126,7 +126,7 @@ genie targets all three profiles from one server binary with progressive enhance
 
 Buyers with regulatory, residency, or sovereignty constraints — public-sector, healthcare, defense-adjacent, fintech, EU data-residency teams — face an additional pinch: hosted SaaS design tools cannot promise their data stays on-premises. Claude Design's data flow is hosted-only by definition (the canvas surface is `claude.ai/design`). Figma's Dev Mode MCP Server is hosted at `mcp.figma.com/mcp` with a desktop fallback only on Dev or Full seats on paid plans (verified). Open-WebUI, Cline, Continue.dev, and the local stdio paths through Claude Desktop demonstrate there is real demand for "AI tooling that runs on hardware I control."
 
-genie's posture is **self-hostable by default, hosted only when convenient**. The same TypeScript MCP server binary that runs on a developer's laptop also runs on a TrueNAS Docker app, an EC2/Hetzner VM, a Kubernetes Deployment, an air-gapped server with a local Ollama backend. The LiteLLM gateway already supports routing to local Ollama, hosted Anthropic, hosted OpenAI, hosted Google — the buyer chooses. The viewer is a vanilla Vite dev server that can serve under `file://`, `http://localhost`, or behind an internal reverse proxy. The component store is git, so existing self-hosted Git infrastructure (Gitea, Forgejo, GitLab CE, GitHub Enterprise) covers it. There are no telemetry calls home unless the operator opts in. There is no SaaS dependency the operator has not signed off on.
+genie's posture is **self-hostable by default, hosted only when convenient**. The same TypeScript MCP server binary that runs on a developer's laptop also runs on a TrueNAS Docker app, an EC2/Hetzner VM, a Kubernetes Deployment, an air-gapped server with a local Ollama backend. Because genie speaks to any OpenAI-compatible endpoint, the operator can point it at local Ollama, hosted Anthropic/OpenAI/Google, or a gateway like LiteLLM or OpenRouter — their choice. The viewer is a vanilla Vite dev server that can serve under `file://`, `http://localhost`, or behind an internal reverse proxy. The component store is git, so existing self-hosted Git infrastructure (Gitea, Forgejo, GitLab CE, GitHub Enterprise) covers it. There are no telemetry calls home unless the operator opts in. There is no SaaS dependency the operator has not signed off on.
 
 ### §3.5 Why now
 
@@ -165,7 +165,7 @@ The KPI grid is split into leading indicators (predict eventual outcome health) 
 
 | # | KPI | Definition | Formula / source | Baseline | 90-day target | 1-year target | Owner | Data source |
 |---|---|---|---|---|---|---|---|---|
-| K-01 | Verb implementation coverage | % of 12 DesignSync verbs implemented and integration-tested | implemented / 12 × 100 | 0 % | 100 % | 100 % | Maintainer | CI matrix |
+| K-01 | Tool-surface coverage | % of planned file-flow tools implemented and integration-tested | implemented / planned × 100 | 0 % | 100 % | 100 % | Maintainer | CI matrix |
 | K-02 | Harness pass rate | % of 7 Tier-0 harnesses with green smoke test in CI | green / 7 × 100 | 0 % | 100 % | 100 % | Maintainer | CI artifact, GitHub Actions |
 | K-03 | Tier-2 host coverage | Count of MCP-Apps hosts where `ui://genie/grid` renders inline | manual probe matrix | 0 | 4 (Claude, VS Code Stable, ChatGPT, Cursor) | 6+ (add Goose, Postman, MCPJam) | Maintainer | Manual quarterly verification |
 | K-04 | Component-authoring speedup (n=1 case study) | Maintainer's authoring time per accepted component, unaided vs with genie | git log + maintainer time-tracking | maintainer's unaided baseline | measurable speedup | speedup sustained across a real kit | Maintainer | Case-study log |
@@ -176,14 +176,14 @@ The KPI grid is split into leading indicators (predict eventual outcome health) 
 | K-09 | Real-user signal | Distinct people who installed + reported back (issue, mention, message) | informal | 0 | a handful | a small active circle | Maintainer | GitHub / informal |
 | K-10 | Time-to-first-component-on-fresh-install | Median seconds from `npx genie init` to first `generate_component` returning HTML | telemetry opt-in | n/a | < 180 s | < 90 s | Maintainer | Opt-in telemetry |
 | K-11 | P50 / P95 `generate_component` latency | Median and 95th-percentile end-to-end ms | LiteLLM trace + server log | n/a | P50 < 8 s, P95 < 20 s | P50 < 5 s, P95 < 12 s | Maintainer | LiteLLM + server telemetry |
-| K-12 | `@dsCard` validator pass rate | % of generated previews passing the first-line marker regex | server log | n/a | 99.5 % | 99.9 % | Maintainer | CI + production log |
+| K-12 | Card-marker validator pass rate | % of generated previews passing genie's first-line marker check | server log | n/a | 99.5 % | 99.9 % | Maintainer | CI + production log |
 | K-13 | Documentation-completeness score | (sections-complete / sections-required) × 100, per doc-checklist | manual review | 30 % (this BRD draft only) | 90 % | 100 % | Maintainer | Doc audit |
 | K-14 | Security incident count | Distinct security incidents requiring an advisory or patch | issue tracker label `security` | 0 | 0 | ≤ 1 (with clean resolution) | Maintainer | GHSA |
 | K-15 | Would-recommend signal | Informal: do real users say they'd recommend genie? | informal feedback | n/a | net-positive informal feedback | net-positive | Maintainer | Informal |
 
 K-01, K-02, K-12 are **leading** indicators of build health; K-05, K-06, K-10, K-11 are **leading** indicators of usefulness; K-04, K-07, K-08, K-09, K-15 are **lagging** signals of whether anyone finds it useful (the core experiment question); K-13, K-14 are project hygiene. K-03 sits between — Tier-2 host coverage tells us whether the rich-rendering bet is paying off but only confirms after launch. Targets are deliberately soft: this is a personal experiment measuring *signal*, not a funded product hitting committed numbers.
 
-A KPI dashboard auto-aggregated from LiteLLM Prometheus + GitHub API + manual survey CSVs will live alongside the Grafana stack already operating on the TrueNAS server; the BRD owner will refresh it monthly until M5 and quarterly thereafter.
+A lightweight KPI dashboard (aggregated from the LLM endpoint's usage metrics + GitHub API + manual notes) is maintained by the owner — monthly until M5, quarterly thereafter. The specific stack is the maintainer's own; genie does not require any particular metrics backend.
 
 ---
 
@@ -194,10 +194,10 @@ The scope statement is the most consequential paragraph in this BRD — it draws
 ### §6.1 In scope — M0-M5 deliverables
 
 1. A **TypeScript MCP server** built on `@modelcontextprotocol/sdk`, Node ≥ 22, ESM-only, distributed as: (a) npm package `genie`, (b) Docker image, (c) `.mcpb` Claude Desktop bundle.
-2. The **12-method DesignSync verb surface verbatim**: `list_projects`, `get_project`, `list_files`, `get_file`, `create_project`, `finalize_plan`, `write_files`, `delete_files`, `register_assets` (legacy), `unregister_assets` (legacy), `report_validate`, `list_components`, plus the genie-specific `generate_component`, `refine_component`, `render_preview`, `validate_design_system`.
-3. *Aliases below are placeholders — confirm against https://litellm.roshangautam.com/v1/models before merging. Marketed Opus 4.7 resolves to anthropic/claude-opus-4-8.* **LiteLLM integration** using the existing OpenAI-compatible gateway at `https://litellm.roshangautam.com`; default model alias `design-default` → `anthropic/claude-sonnet-4-6`; environment-tunable to `design-best` (Opus 4.x — marketed 4.7; resolves to claude-opus-4-8) or `design-local` (Ollama Qwen3-Coder).
-4. **Git-backed component store** with two backends: local FS for solo developers (default), and Gitea on TrueNAS for shared teams. Project ↔ repo, planId ↔ branch, write ↔ commit, merge ↔ publish.
-5. **`@dsCard` validator and manifest compiler** enforcing the regex `/^<!--\s*@dsCard\s+group="[^"]*"[^>]*-->/` on the first line of every preview HTML, compiling `manifest.json` on every write that touches `.html`.
+2. A **file-flow tool surface** built with genie's own naming and JSON schemas: a permission-gated plan→write capability model (one user-visible grant before any write; writes scoped to the granted set), plus read/list/get/validate verbs and the genie-specific `generate_component`, `refine_component`, `render_preview`, `validate_design_system`. Exact tool names and shapes are settled in the PRD/RFC, not inherited from any other product.
+3. **Configurable OpenAI-compatible LLM integration** via a base-URL + key the operator sets. Works against a direct provider (Anthropic, OpenAI, Google, local Ollama) or a gateway/proxy (LiteLLM, OpenRouter, etc.). Ships with a sensible default model and named aliases the operator can remap. No specific provider or gateway is required.
+4. **Git-backed component store** with two backends: local FS for solo developers (default), and any git host (GitHub, GitLab, Gitea/Forgejo — self-hosted or cloud) for shared teams. Project ↔ repo, planId ↔ branch, write ↔ commit, merge ↔ publish.
+5. **Card-marker validator and manifest compiler** — genie defines its own first-line marker convention (syntax settled in the RFC); the server compiles a component `manifest.json` on every write that touches a preview file, rejecting files missing the marker.
 6. **Vite-backed preview viewer** (`@genie/viewer`) shipping as `npx genie-viewer <kit-path>`, with chokidar HMR, iframe grid layout, viewport buttons, `file://` fallback.
 7. **MCP-Apps `ui://genie/grid` resource** registered with MIME `text/html;profile=mcp-app`, manifest inlined as `<script type="application/json">` for sandboxed-iframe compatibility, surfaced via `_meta.ui.resourceUri` on `render_preview`.
 8. **Auth surface**: OAuth 2.0 with Dynamic Client Registration (for Claude Code, Codex CLI, Cursor), static `Authorization: Bearer` header fallback (for VS Code, Cline, Continue.dev), local stdio (for Claude Desktop).
@@ -214,11 +214,11 @@ The scope statement is the most consequential paragraph in this BRD — it draws
 5. **A standalone IDE plugin** for any harness (we ship a server; the harness's existing MCP client connects to it). No VS Code extension, no Cursor extension, no Cline extension.
 6. **Native mobile clients**. Mobile is not a target harness in M0-M5.
 7. **Real-time multi-user collaboration**. Git's merge model is the conflict-resolution mechanism; we do not ship a CRDT.
-8. **Direct interop with `claude.ai/design` projects** (round-tripping a genie-built design system into Anthropic's hosted canvas). The `<!-- @dsCard -->` marker convention is mirrored verbatim, which gives free *forward* compatibility if Anthropic exposes the relevant ingest API, but we do not ship an importer/exporter.
-9. **Storage backends beyond local FS + Gitea** (S3, Postgres, custom blobstores, MinIO). These are post-M5 community contributions.
+8. **Round-trip interop with other design tools.** genie uses its own conventions and does not target compatibility with `claude.ai/design`, Google Stitch, or any other product's on-disk format in M0-M5. Interop adapters are a possible *future add-on* (§6.3), not a design constraint now — genie is free to design the best conventions for itself.
+9. **Storage backends beyond local FS + git** (S3, Postgres, custom blobstores, MinIO). These are post-M5 community contributions.
 10. **Telemetry-by-default**. Opt-in only, and only K-10/K-11 latency anonymous metrics.
-11. **Model fine-tuning or hosted training pipelines**. genie uses off-the-shelf models via LiteLLM; we do not train.
-12. **Anthropic-IP-verbatim reuse**. We do not embed Anthropic's documentation, system prompts, or other proprietary text. The DesignSync verb names are mirrored as a clean-room reimplementation, and the `@dsCard` regex is observable wire convention.
+11. **Model fine-tuning or hosted training pipelines**. genie uses off-the-shelf models via whatever OpenAI-compatible endpoint the operator configures; we do not train.
+12. **Anthropic-IP-verbatim reuse**. We do not embed Anthropic's documentation, system prompts, tool schemas, marker syntax, or other proprietary text. genie's tool names, marker convention, and on-disk formats are its own design — informed by the observable *techniques*, not copied.
 
 ### §6.3 Future scope — candidates for post-M5
 
@@ -230,7 +230,7 @@ The scope statement is the most consequential paragraph in this BRD — it draws
 6. **Canvas-side generation prototype** — the open R&D workstream parked from M0-M5.
 7. **Per-component diff visualization** in the viewer (split-pane before/after).
 8. **MCP-Apps interactive widgets** beyond the static grid (controls inside the iframe to mutate components live).
-9. **Direct claude.ai/design importer** if Anthropic publishes the ingest API.
+9. **Interop adapters** — optional import/export bridges to other design tools' formats (e.g. Claude Design round-trip if Anthropic publishes an ingest API, or Google Stitch), built as add-ons on top of genie's own conventions. Only if a real user need emerges; genie's native format stays primary.
 10. **Enterprise SCIM/SSO integration** for orgs running their own genie instance behind Authelia/Authentik/Keycloak.
 11. **CRDT-based real-time co-editing** in the viewer (likely Yjs- or Automerge-backed).
 12. **A11y audit tool** that runs axe-core against each `preview.html` and surfaces findings as a card-level badge.
@@ -267,7 +267,7 @@ Since one human (plus AI agents) holds every hat, a full RACI matrix would be th
 |---|---|---|---|
 | BRD / PRD / RFC | ✔ R | drafting help | Maintainer owns the thinking; agents help draft. |
 | MCP server core (M0-M2) | ✔ | R | Agents implement per-issue under review (`AGENTS.md`). |
-| `@dsCard` validator + manifest compiler (M3) | ✔ | R | Same. |
+| Card-marker validator + manifest compiler (M3) | ✔ | R | Same. |
 | Preview viewer (M4) | ✔ | R | Maintainer owns the design-identity calls; agents build. |
 | Auth + OAuth + distribution (M5) | ✔ R | partial | The judgment-heavy swamp; maintainer leads, agents assist. |
 | `.mcpb` / npm / Docker packaging | ✔ | R | Mechanical; agent-friendly. |
@@ -289,9 +289,9 @@ The build plan rests on the assumptions below. Each carries a severity (**critic
 | # | Assumption | Severity | What falsifies it |
 |---|---|---|---|
 | AS-1 | The MCP spec remains stable enough through 2026 that a server built in Q3 2026 will still validate against the harness MCP clients shipped through Q2 2027 without breaking changes. | **Critical** | Any of the 7 Tier-0 harnesses ships a breaking-change MCP client update that requires server-side rework beyond patch-level adjustments. |
-| AS-2 | LiteLLM at `https://litellm.roshangautam.com` remains operational, OpenAI-compatible, and configurable with budgets per key. | **Critical** | LiteLLM is sunset, the gateway's API breaks, or budgets stop working as documented. |
+| AS-2 | A configurable OpenAI-compatible LLM endpoint (direct provider or gateway) is available to the operator and exposes a stable `chat/completions` API. | **Critical** | No OpenAI-compatible endpoint is reachable, or the contract changes such that generation breaks. |
 | AS-3 | Anthropic does not pursue trademark or copyright action against a clean-room MIT-licensed clone whose name does not include "Claude," "Anthropic," "DesignSync," "Claude Design," or similar protected marks. | **Critical** | Cease-and-desist letter, takedown demand, or DMCA strike. |
-| AS-4 | The `@dsCard` regex `/^<!--\s*@dsCard\s+group="[^"]*"[^>]*-->/` and the 12-method DesignSync verb shape are observable wire conventions, not protected IP. | **Critical** | Legal counsel determines either is a protected work and we must redesign. |
+| AS-4 | genie's own marker convention, tool names, and on-disk formats (designed from scratch, informed by observable *techniques* only) are not derivative of any other product's protected IP. | Minor | Legal counsel finds a specific element too close to a protected work; we adjust that element. |
 | AS-5 | A solo maintainer working spare-time with AI coding agents can deliver M0-M5 on the research-report build plan. The "12 days focused work" figure is an **engineering-hours floor (best case)**, not a schedule; the calendar is elastic and the project ships when it ships. | **Major** | The work stalls for a sustained stretch (weeks) with no progress, or a milestone reveals the scope is materially larger than the floor estimate assumed. |
 | AS-6 | The TrueNAS server hosting LiteLLM, Gitea, the Vite test viewer, and the smoke-test harnesses stays operational with marginal cost effectively zero. | Major | TrueNAS hardware failure, ISP outage > 1 week, or unanticipated infrastructure spend. |
 | AS-7 | The Tier-0 universal harness set will not contract — i.e., none of Claude Code, Claude Desktop, Codex CLI, GitHub Copilot (VS Code agent mode), Cursor, Cline, or Continue.dev will shut down inside the 12-week build window. | Minor | Any single harness is discontinued; we drop it from the matrix and continue. |
@@ -302,7 +302,7 @@ The build plan rests on the assumptions below. Each carries a severity (**critic
 | AS-12 | The open MCP ecosystem will continue to standardize on `@modelcontextprotocol/sdk` as the canonical TypeScript SDK, with no major vendor forking. | Major | A material vendor (Anthropic, OpenAI, Microsoft) ships an incompatible TypeScript SDK; we maintain compatibility shims. |
 | AS-13 | The seven-harness config-snippet shapes documented in the research report (`.codex/config.toml`, `~/.claude.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `~/.cline/mcp.json`, `.continue/mcpServers/*.yaml`, `claude_desktop_config.json`) remain valid through Q4 2026. | Minor | Per-harness schema change; we update the README snippets within one release cycle. |
 | AS-14 | The MIT license remains acceptable to all current and future sponsors / contributors; no requirement emerges for a copyleft license. | Minor | Sponsor or major contributor requires AGPL/LGPL; we relicense forward-only with consent. |
-| AS-15 | The Gitea backend on TrueNAS (Aether pool) is sufficient as the "shared" store for early adopters who want team mode; teams wanting GitHub or GitLab as the backend will accept a Q1 2027 community contribution as the timeline. | Minor | Early adopter blocks on GitHub-as-backend; we accept the PR or prioritize the integration. |
+| AS-15 | A git host (the maintainer tests against a self-hosted instance; any git backend works) is sufficient as the "shared" store for early adopters who want team mode. | Minor | An early adopter needs a backend genie's git layer doesn't yet support; we add it or accept a PR. |
 
 These assumptions are revisited at the end of each milestone and at every quarterly review. Falsification of a **critical** assumption triggers an immediate stop-and-rethink; falsification of a **major** assumption triggers a scope review; a **minor** one is handled at the maintainer's discretion.
 
@@ -325,7 +325,7 @@ The MCP server is forbidden from persisting personally identifiable information 
 
 ### §9.3 No Anthropic IP verbatim
 
-We do not embed Anthropic's documentation, system prompts, internal tool catalog descriptions, or any other proprietary text into genie's source. The verb names (`finalize_plan`, `write_files`, etc.) are **clean-room mirrored** — we treat the names themselves as descriptive vocabulary the way any REST API uses `GET` and `POST`. The `@dsCard` regex is an observable wire convention, recoverable from the bundled skill's source-of-truth `package-validate.mjs`. The `_ds_sync.json` schema is **reconstructed** from the bundled skill's logic in `lib/sync-hashes.mjs` and `lib/remote-diff.mjs`, not copied. Any reviewer who finds verbatim Anthropic-IP text in the codebase has authority to file a `legal:must-redact` issue and it is treated as a must-fix.
+We do not embed Anthropic's documentation, system prompts, internal tool catalog descriptions, marker syntax, file formats, or any other proprietary text into genie's source. genie's **tool names, marker convention, and on-disk formats are its own design** — informed by the observable *techniques* (a permission-gated plan→write flow, a server-compiled manifest, a verification anchor), not copied from any other product's specific names or schemas. genie deliberately does **not** mirror another tool's verbs or marker syntax verbatim; it picks its own, and improves on them where it can. Any reviewer who finds verbatim third-party-IP text in the codebase has authority to file a `legal:must-redact` issue and it is treated as a must-fix.
 
 ### §9.4 No Anthropic API key required
 
@@ -333,7 +333,7 @@ genie must not require an Anthropic API key to operate. The LiteLLM gateway prov
 
 ### §9.5 Offline operability for local FS mode
 
-When operating in local FS solo-dev mode, the entire happy path must work **fully offline** except for the model call itself. That means: scaffold a new project, run `finalize_plan`, `write_files`, `delete_files`, render previews, validate `@dsCard` markers, open the viewer at `file://`, all without an Internet connection. The model call (`generate_component`, `refine_component`) is the single forced network round-trip, and that round-trip points at whatever LiteLLM-routed endpoint the operator configured — which can itself be an offline Ollama install on the same machine.
+When operating in local FS solo-dev mode, the entire happy path must work **fully offline** except for the model call itself. That means: scaffold a new project, run the plan→write flow, render previews, validate genie's card markers, open the viewer at `file://`, all without an Internet connection. The model call (`generate_component`, `refine_component`) is the single forced network round-trip, and it points at whatever OpenAI-compatible endpoint the operator configured — which can itself be an offline Ollama install on the same machine.
 
 ### §9.6 MCP spec compliance — Draft 7 JSON Schema only
 
@@ -357,8 +357,8 @@ Dependencies split cleanly between **internal** (we own or operate the resource)
 
 | # | Type | Name | Version | Owner | Status | Risk |
 |---|---|---|---|---|---|---|
-| D-I-01 | Service | LiteLLM gateway at `https://litellm.roshangautam.com` (tailnet: `http://100.81.124.86:4000`) | LiteLLM latest stable | Maintainer | ✅ Live | Low — already running for months; budget keys provisioned |
-| D-I-02 | Service | Gitea on TrueNAS (Aether pool) | Latest stable | Maintainer | ⚠️ Not yet provisioned; in M0 scope | Low — well-trodden install path |
+| D-I-01 | Service | An OpenAI-compatible LLM endpoint for dev/test (the maintainer uses a self-hosted LiteLLM gateway; any provider or gateway works) | any OpenAI-compatible | Maintainer | ✅ Available | Low — genie is endpoint-agnostic; swappable |
+| D-I-02 | Service | A git host for team-mode dev/test (the maintainer uses a self-hosted instance; GitHub/GitLab/Gitea all work) | any git backend | Maintainer | ⚠️ Provisioned during dev | Low — genie's git layer is host-agnostic |
 | D-I-03 | Infrastructure | TrueNAS SCALE 24.10.2.2 (Aether + Applications pools) | Current | Maintainer | ✅ Live, healthy | Low — uptime weeks+ |
 | D-I-04 | Service | Docker engine on TrueNAS for app hosting | TrueNAS-bundled | Maintainer | ✅ Live | Low |
 | D-I-05 | Network | Tailnet `cheetah-algol.ts.net` for off-LAN gateway access | Tailscale current | Maintainer | ✅ Live | Low |
@@ -404,7 +404,7 @@ Each risk carries a Likelihood × Impact = Score (each on a 1-5 scale), a mitiga
 | R-03 | T | MCP spec or MCP-Apps spec ships a breaking revision before Q4 2026. | 3 | 4 | **12** | Pin SDK versions in package.json; subscribe to `modelcontextprotocol/specification` releases; budget 1 week per quarter for spec-tracking. | Pin to last-known-good version; compatibility shim if needed. | Maintainer | Monthly |
 | R-04 | T | One of the 7 Tier-0 harnesses ships a breaking MCP client change. | 4 | 3 | **12** | Per-harness smoke test in CI; subscribe to release notes; document per-harness config snippet versions. | Mark harness as degraded in matrix until fix; ship workaround within 1 week. | Maintainer | Weekly (CI signal) |
 | R-07 | O | Solo-maintainer stall — life, day-job crunch, illness, or a hard bug halts the single-threaded critical path with no one to pick it up. **This is the project's defining risk.** | 3 | 4 | **12** | Accept it explicitly: "ships when it ships," no committed launch date (§16, AS-5). AI coding agents provide the *parallelism* a solo dev otherwise lacks — multiple issues can progress under review at once (`AGENTS.md`). Milestones sized in independently-shippable chunks so a stall never loses more than one unit of work. | Park the project at the last-completed milestone; it's an experiment, not an obligation. Resume when there's appetite, or declare it answered (§15.3 GR-3). | Maintainer | Monthly self-check |
-| R-01 | L | Anthropic asserts trademark or copyright claim against the clone (name, verb mirroring, `@dsCard` regex, or `_ds_sync.json` schema). | 2 | 5 | **10** | Choose project name without Anthropic marks; treat verb names as descriptive vocabulary; document clean-room reasoning; obtain pre-launch legal memo. | Rename project, rebrand within 30 days; redact specific items per legal direction; engage counsel for response. | Maintainer | Quarterly + ad-hoc on any communication from Anthropic |
+| R-01 | L | Anthropic asserts a trademark or copyright claim against genie (name, or some convention alleged to be derivative). | 1 | 5 | **5** | Generic-word name with no Anthropic marks; genie's tool names / marker / formats are its own design (no verbatim mirroring); document the independent-design reasoning; optional pre-launch legal memo. | Adjust the specific element flagged; rename only if the name itself is challenged; engage counsel if needed. | Maintainer | Quarterly + ad-hoc on any communication from Anthropic |
 | R-05 | M | Anthropic ships a first-party self-hostable version of the Claude Design developer surface, undercutting the open project's positioning. | 2 | 5 | **10** | Lean into MIT + harness-agnostic + self-host as differentiators a hosted vendor structurally won't prioritize; cultivate community moats (contributors, exemplar libraries). | Pivot positioning to "the open one"; offer migration tooling; accept that some attention goes to first-party. | Maintainer | Quarterly |
 | R-11 | F | Maintainer loses motivation or runs out of spare time mid-project. | 3 | 3 | **9** | No external funding to lose; deliverables sized in independently-shippable chunks so any stopping point is a real artifact. The §15.3 reality gate makes "park it" an honest, planned outcome. | Ship at last-completed milestone, archive, declare the experiment answered. | Maintainer | Per milestone |
 | R-13 | R | Negative review from a high-reach Twitter/HN account citing missing canvas surface as a deal-breaker. | 3 | 3 | **9** | Lead with honest scope statement; pre-emptively address in launch post; recruit balanced reviewers. | Respond publicly; address specific feedback; iterate. | Maintainer | Weekly post-launch |
@@ -457,16 +457,15 @@ The project name **genie** is a strong position by construction:
 
 A pre-launch legal memo (see §15 Go/No-Go criterion G-7) will document the clean-room engineering of the developer-facing surface, the absence of any verbatim Anthropic IP, and the descriptive use of a generic name.
 
-### §12.6 DesignSync verb mirroring justification
+### §12.6 Own-conventions posture (not verbatim mirroring)
 
-The 12 DesignSync verb names (`list_projects`, `get_project`, `list_files`, `get_file`, `create_project`, `finalize_plan`, `write_files`, `delete_files`, `register_assets`, `unregister_assets`, `report_validate`, `list_components`) are mirrored verbatim because:
+genie deliberately does **not** mirror another product's verb names, marker syntax, or file formats verbatim. It designs its own — informed only by the observable *techniques* (the patterns that make the developer-facing flow work), not by any specific names or schemas. This is both a product choice (freedom to design better conventions, and to improve on the inspiration) and the **strongest possible legal posture**:
 
-1. **They are observable wire convention.** The verb names appear in the bundled `design-sync` skill's `package-build.mjs` source on every disk Claude Code is installed on. They are not branding; they are API endpoints exposed to clients.
-2. **API verb names are not, in general, protectable IP.** REST APIs across the industry use `GET`, `POST`, `PUT`, `DELETE`; tool catalogs across MCP servers use `list_*`, `get_*`, `create_*`. These are functional descriptors.
-3. **Mirroring is a deliberate compatibility move** — a Claude Code user who has learned the DesignSync vocabulary should be able to use genie without relearning. This is the same logic that lets `cp`, `mv`, `ls` reimplementations use the same names as the GNU coreutils.
-4. **A clean-room implementation** rebuilds the *behavior* the names describe from scratch, without copying the underlying logic. Our `finalize_plan` is reimplemented from scratch in TypeScript against the documented capability model (read → finalize_plan → write/delete with planId enforcement), not transliterated from Anthropic's source.
+1. **Nothing is copied.** genie's tool names, marker convention, and on-disk formats are original. There is no transliteration of another vendor's API surface, so the "is this a derivative work?" question barely arises.
+2. **The underlying techniques are not protectable.** A permission-gated plan→write flow, a server-compiled manifest, an in-file marker, an atomic write sequence — these are general engineering patterns (like REST verbs, or POSIX file semantics), free for anyone to implement.
+3. **Independent, not interoperable-by-default.** genie does not claim or target round-trip compatibility with `claude.ai/design`. Any future interop (Claude Design, Google Stitch, etc.) would be an *optional adapter* built on top of genie's own format (§6.3), not a verbatim shared protocol.
 
-The legal memo (§15 G-7) will document this reasoning. If Anthropic's counsel later asserts a different position, we will renegotiate; until then the clean-room mirror posture is our default.
+The optional legal memo (§15 G-7) documents this reasoning. Because genie copies nothing and claims no compatibility, the trademark/IP exposure is minimal by construction.
 
 ---
 
@@ -551,7 +550,7 @@ Eight to ten gates that must be true at T+0 to start the build, and at T+12 week
 
 | # | Gate | Threshold | Status |
 |---|---|---|---|
-| GL-1 | 12 DesignSync verbs implemented and CI-tested (11 file-flow verbs plus `list_components`) | 12/12 | TBD |
+| GL-1 | The planned file-flow tool surface implemented and CI-tested | 100% | TBD |
 | GL-2 | 7 Tier-0 harness smoke tests green in CI | 7/7 | TBD |
 | GL-3 | ≥ 4 Tier-2 hosts render `ui://genie/grid` inline | 4 minimum (Claude, VS Code Stable, ChatGPT, Cursor) | TBD |
 | GL-4 | npm + Docker + `.mcpb` artifacts published | 3/3 | TBD |
@@ -593,8 +592,8 @@ Seven milestones, M0 through M6, from the research report's build plan (§7 of t
 - **Target date.** T+2 weeks.
 
 **M1 — Tier-0 file verbs (weeks 3-4)**
-- **Business description.** Implement the 12-method DesignSync mirror: `list_projects`, `get_project`, `list_files`, `get_file`, `create_project`, `finalize_plan`, `write_files`, `delete_files`, `register_assets`, `unregister_assets`, `report_validate`, `list_components`. Enforce plan-vs-write boundary verbatim per the research report. Wire local FS backend; integration-test against a synthetic component library.
-- **Business outcome.** A Claude Code user can connect, scaffold, and walk through the DesignSync flow against genie with no changes to their muscle memory.
+- **Business description.** Implement genie's file-flow tool surface: a permission-gated plan→write capability model (one user-visible grant; writes scoped to the granted set) plus read/list/get/validate verbs. Tool names and schemas are genie's own (settled in the PRD/RFC). Wire the local-FS backend; integration-test against a synthetic component library.
+- **Business outcome.** A user in any Tier-0 harness can connect, scaffold, and walk through the plan→write flow against genie. The model is familiar to anyone who has used a permission-gated tool flow, but the conventions are genie's own.
 - **Dependencies.** M0 complete.
 - **Target date.** T+4 weeks.
 
