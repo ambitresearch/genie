@@ -58,3 +58,12 @@ The genie accent rule is the #1 visual-validation check: **clay/gilt
 chrome, browser, grid, layout — stays ink/ink-blue/neutral. An agent screenshotting
 its build must confirm it didn't bleed accent into structural chrome. See `AGENTS.md`
 §3 + the hard rules.
+
+## Notes on issue numbering
+
+The M1 backlog skips **M1-10** and **M1-11** — this gap is intentional, not a
+missing file. Both numbers were retired in the projects-as-peer restructure (the
+shift from a kit-only surface to genie's 19-tool kit + project surface). The
+numbers were **not recycled** so that every surviving `M1-NN` reference — in
+issues, plan docs, and this map — stays stable. Treat the sequence as a set of
+stable IDs, not a contiguous range.
