@@ -22,9 +22,9 @@ Three facts shape everything:
 2. **The harness supplies the chat.** Claude Design builds its own conversation
    panel because it's a standalone destination. genie lives inside Claude Code /
    Cursor / VS Code — the harness IS the chat. genie owns only the **preview +
-   refine pane** and the **design-system browser**. This is the wedge no
+   refine pane** and the **UI-kit browser**. This is the wedge no
    competitor can copy.
-3. **Two product surfaces, not a Figma canvas.** genie is (a) a design-system
+3. **Two product surfaces, not a Figma canvas.** genie is (a) a UI-kit
    file-browser (groups → components, readme, Published/Default) and (b) a
    preview+refine pane (rendered component, Tweaks/Comments toolbar, sliders
    genie generates). It is NOT a draggable-canvas tool in v1 (RFC NG-1).
@@ -66,8 +66,8 @@ Three facts shape everything:
 | Struct (ink-blue) | `--color-struct` | `45% 0.12 265` | `#345197` | links, selection, focus base |
 | Focus ring | `--color-focus` | `52% 0.14 265` | `#4064b9` | `:focus-visible`, ≥3:1 |
 | Success | `--color-success` | `58% 0.13 150` | `#348f4f` | validated, saved |
-| Warning | `--color-warning` | `72% 0.14 68` | `#dd9231` | thin / dscard-warn |
-| Danger | `--color-danger` | `55% 0.18 28` | `#c5372f` | error, missing @dsCard |
+| Warning | `--color-warning` | `72% 0.14 68` | `#dd9231` | thin / marker-warn |
+| Danger | `--color-danger` | `55% 0.18 28` | `#c5372f` | error, missing @genie |
 
 Dark mode = warm charcoal (`#161310` paper), clay + ink-blue brighten, never cold.
 See `tokens.css` `:root[data-scheme="dark"]`.
@@ -80,7 +80,7 @@ See `tokens.css` `:root[data-scheme="dark"]`.
 |---|---|---|
 | Display | **Newsreader** (free Google serif, Tiempos/Times feel) | headings, wordmark; weight 500–600; tracking −0.015em; **roman always** |
 | Body | **Inter** | descriptions, prose; 16px / 1.55 |
-| Mono | **JetBrains Mono** | `@dsCard` markers, tokens, file paths, counts |
+| Mono | **JetBrains Mono** | `@genie` markers, tokens, file paths, counts |
 
 Scale (1.250 major-third, 16px base): xs 12 · sm 14 · base 16 · md 18 · lg 22 ·
 xl 28 · 2xl 36 · 3xl 48 · display 72 / 56 (long copy).
@@ -149,12 +149,12 @@ three framings.
 | File | Surface | Models |
 |---|---|---|
 | `00-front-door.svg` | empty / generate state — "Your wish is my command." prompt box (UI-kit + model + Conjure), starter blueprints (5 categories), recent kits + `/genie-sync` callout, the harness-native pitch | Claude Design "What will you design today?" + v0 prompt |
-| `01-ds-browser.svg` | UI-kit file-browser → component-detail view (variants grid, `@dsCard` marker, files, Published/Default, `✓ synced` status) | Claude Design DS view |
+| `01-ui-kit-browser.svg` | UI-kit file-browser → component-detail view (variants grid, `@genie` marker, files, Published/Default, `✓ synced` status) | Claude Design UI-kit view |
 | `02-preview-refine.svg` | rendered component + Tweaks/Comments toolbar + genie-generated sliders + state-strip + code block + Apply; harness chat shown ghosted | Claude Design artifact view |
 | `03-embedded-modes.svg` | the embedded tier in all 3 MCP-App display modes — inline (chat card) / fullscreen (window takeover) / pip (floating overlay); system fonts, host-deferred | MCP Apps spec 2026-01-26 |
 | `ref-foundations.svg` | reference — system at a glance (palette, type, spacing, the two-hue story) | — |
 | `ref-primitives.svg` | reference — buttons (8 states), inputs, badges, model selector, code chips | — |
-| `ref-dscard.svg` | reference — the @dsCard component dissected: anatomy + marker + 4 validation states + light/dark | — |
+| `ref-genie-card.svg` | reference — the @genie component dissected: anatomy + marker + 4 validation states + light/dark | — |
 
 All four product screens (00–03) are 3 craft passes deep: structure → content
 depth → premium polish (lit edges, clay gradient). Reference sheet documents the

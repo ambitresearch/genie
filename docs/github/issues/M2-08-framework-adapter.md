@@ -1,13 +1,13 @@
 ---
 title: "[M2-08] Multi-framework adapter (React first, Vue/HTML stubbed)"
-milestone: "M2 — LiteLLM Generation Surface"
-labels: ["type:feature", "area:litellm", "priority:P2-medium", "size:M"]
+milestone: "M2 — LLM Generation Surface"
+labels: ["type:feature", "area:llm", "priority:P2-medium", "size:M"]
 assignees: []
 estimate: "6h"
 ---
 
 ## Summary
-Abstract the framework-specific bits of `generate_component` into a small
+Abstract the framework-specific bits of `conjure` into a small
 adapter interface so React lands in v1 and Vue / vanilla HTML can be added
 without refactoring the generation pipeline. Crib the staged IR pattern from
 `Kinglions/ui-design-to-code-mcp` (research §5 prior art #3).
@@ -26,7 +26,7 @@ without refactoring the generation pipeline. Crib the staged IR pattern from
 - [ ] AC3 — `VueAdapter` and `HtmlAdapter` ship as stubs that return a
       structured `NotYetImplementedError` with a link to the tracking issue
       (v2 milestone).
-- [ ] AC4 — `generate_component` picks the adapter based on the `framework`
+- [ ] AC4 — `conjure` picks the adapter based on the `framework`
       input.
 - [ ] AC5 — Adapter contract is independently testable
       (`adapter-conformance.test.ts`).

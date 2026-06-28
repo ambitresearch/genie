@@ -23,7 +23,7 @@ the manifest inlined** as `<script type="application/json" id="manifest">…
 - [ ] AC1 — Resource registered via `server.registerResource({uri:
       "ui://genie/grid", mimeType: "text/html;profile=mcp-app"})`.
 - [ ] AC2 — Resource handler reads the kit identified by query-string
-      `projectId`, compiles the manifest (M3-03), and inlines it into the
+      `kitId`, compiles the manifest (M3-03), and inlines it into the
       HTML.
 - [ ] AC3 — HTML uses RELATIVE paths for `viewer.js` / `viewer.css` (so
       they're loaded from the resource handler too).
@@ -62,7 +62,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`03-embedded-modes.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-1/03-embedded-modes.svg) — inline / fullscreen / pip framings.
+**Primary mock:** [`03-embedded-modes.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — inline / fullscreen / pip framings.
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 

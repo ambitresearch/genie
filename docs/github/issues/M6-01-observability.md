@@ -8,13 +8,13 @@ estimate: "6h"
 
 ## Summary
 Expose Prometheus metrics from the MCP server (`/metrics` endpoint) and ship
-a Grafana dashboard JSON for the homelab Grafana (per CLAUDE.md). Metrics
-cover the four golden signals plus per-tool latency / count / error rate.
+a Grafana dashboard JSON. Metrics cover the four golden signals plus per-tool
+latency / count / error rate.
 
 ## Context
-- CLAUDE.md homelab context: Grafana already runs on TrueNAS.
-- Research report §6: "LiteLLM's per-key/per-team budget + rate-limit
-  middleware. Gained: real Prometheus metrics on your homelab Grafana."
+- Operators bring their own Prometheus/Grafana stack.
+- Research report §6: model gateways can provide per-key/per-team budget +
+  rate-limit middleware; expose those signals when the configured endpoint has them.
 
 ## Acceptance Criteria
 - [ ] AC1 — `/metrics` endpoint serves Prometheus text format with at
@@ -26,7 +26,7 @@ cover the four golden signals plus per-tool latency / count / error rate.
       with `scope: metrics`.
 - [ ] AC3 — `deploy/grafana/dashboard.json` defines panels: tool latency
       p50/p95/p99 by verb, error rate, plan lifecycle, LLM token usage,
-      LiteLLM cost estimate.
+      LLM cost estimate when the configured endpoint exposes cost data.
 - [ ] AC4 — Dashboard imports cleanly into Grafana 11+; documented in
       `docs/06-operations-runbook.md`.
 - [ ] AC5 — Scrape config sample in `deploy/prometheus/scrape.yml`.

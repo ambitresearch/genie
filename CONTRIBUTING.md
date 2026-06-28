@@ -58,7 +58,7 @@ determines the release bump via release-please:
 - `feat!:` / `fix!:` / `BREAKING CHANGE:` → major bump
 - `chore:` / `docs:` / `test:` / `refactor:` / `ci:` → no release
 
-Scope is optional but nice: `feat(server): add list_projects tool`.
+Scope is optional but nice: `feat(server): add list_kits tool`.
 
 ## Code style
 

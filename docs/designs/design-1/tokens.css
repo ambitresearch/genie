@@ -5,11 +5,11 @@
  *
  * Direction (from reviewing the real Claude Design UI, 2026-06):
  *   Claude Design is warm-editorial (cream / near-black serif / terracotta-clay accent),
- *   chat + rendered artifact, with a file-tree design-system browser. genie is its
+ *   chat + rendered artifact, with a file-tree UI-kit browser. genie is its
  *   harness-native sibling: same warm-premium feel, but its OWN accent (genie-clay
  *   clay-coral, NOT terracotta) so it reads as sibling, not clone. The harness
  *   (Claude Code / Cursor / VS Code) supplies the chat panel; genie owns the
- *   preview + the design-system browser.
+ *   preview + the UI-kit browser.
  *
  * ── TWO TIERS (the MCP App constraint, unchanged) ──────────────────────
  *   EMBEDDED (ui://genie/grid): system fonts, defers to host theme, identity via

@@ -74,8 +74,8 @@
       <text font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d" transform="translate(680,0)">2xl 32 · lg 22 / serif 600</text>
     </g>
     <text y="186" font-family="Inter, sans-serif" font-size="16" fill="#423f3d">Body copy in Inter at 16px / 1.55. Calm, premium, lots of air — the warm-editorial voice. Measured ~66ch for comfortable reading.</text>
-    <text y="222" font-family="JetBrains Mono, monospace" font-size="14" fill="#345197">&lt;!-- @dsCard group=<tspan fill="#2b7440">"primitives"</tspan> --&gt;</text>
-    <text y="244" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">mono 14 · the @dsCard marker genie validates · JetBrains Mono</text>
+    <text y="222" font-family="JetBrains Mono, monospace" font-size="14" fill="#345197">&lt;!-- @genie group=<tspan fill="#2b7440">"primitives"</tspan> --&gt;</text>
+    <text y="244" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">mono 14 · the @genie marker genie validates · JetBrains Mono</text>
   </g>
 
   <!-- ── spacing + radii ── -->

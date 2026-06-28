@@ -15,7 +15,7 @@ release. Includes a `docker-compose.yml` reference for self-hosters.
 - INDEX.md: distribution includes Docker.
 
 ## Acceptance Criteria
-- [ ] AC1 — `Dockerfile` uses `node:20-alpine` base, multi-stage
+- [ ] AC1 — `Dockerfile` uses `node:22-alpine` base, multi-stage
       (build + runtime).
 - [ ] AC2 — Runtime image < 200 MB.
 - [ ] AC3 — Runs as UID 1000, not root.
@@ -23,7 +23,7 @@ release. Includes a `docker-compose.yml` reference for self-hosters.
 - [ ] AC5 — `docker buildx build --platform linux/amd64,linux/arm64`
       succeeds and pushes to both registries.
 - [ ] AC6 — `deploy/docker-compose.yml` includes the MCP server +
-      a Gitea sidecar (commented out — opt-in).
+      commented kit-root volume/env examples; no git host sidecar by default.
 - [ ] AC7 — Image signed via sigstore cosign (keyless).
 
 ## Implementation Notes

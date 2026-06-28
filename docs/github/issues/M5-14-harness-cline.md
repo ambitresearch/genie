@@ -23,7 +23,7 @@ four-verb chain works and the `ui://` resource degrades to text.
 - [ ] AC2 — Warns against adding a `type` key (silently ignored or
       breaks).
 - [ ] AC3 — Documents `autoApprove: ["list_components",
-      "render_preview", "list_files"]` as the recommended baseline.
+      "preview", "list_files"]` as the recommended baseline.
 - [ ] AC4 — Empirically locates and documents the IDE-extension settings
       path (open question 12 from research) and notes the date of the probe.
 - [ ] AC5 — Smoke test runs the four-verb chain via Cline; asserts

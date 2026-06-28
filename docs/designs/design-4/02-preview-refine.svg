@@ -202,7 +202,7 @@
     <text x="0" y="438" fill="#86878b">min-size</text>
     <text x="170" y="438" fill="#16171a">160 × 56</text>
     <text x="0" y="460" fill="#86878b">marker</text>
-    <text x="170" y="460" fill="#ac5a40">@dsCard ✓</text>
+    <text x="170" y="460" fill="#ac5a40">@genie ✓</text>
   </g>
   <line x1="0" y1="474" x2="504" y2="474" stroke="#e2e2e4"/>
 
@@ -221,7 +221,7 @@
   <g transform="translate(0,614)">
     <rect width="340" height="30" rx="7" fill="#fbfbfb" stroke="#e2e2e4"/>
     <circle cx="18" cy="15" r="4.5" fill="#2f8f57"/>
-    <text x="32" y="19" font-family="'JetBrains Mono', monospace" font-size="11" fill="#454649">validated · @dsCard ok</text>
+    <text x="32" y="19" font-family="'JetBrains Mono', monospace" font-size="11" fill="#454649">validated · @genie ok</text>
     <text x="324" y="19" text-anchor="end" font-family="'JetBrains Mono', monospace" font-size="11" fill="#ac5a40">1 change staged</text>
   </g>
 </g>

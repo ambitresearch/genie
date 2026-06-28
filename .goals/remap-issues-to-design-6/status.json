@@ -1,0 +1,16 @@
+{
+  "goal_id": "remap-issues-to-design-6",
+  "status": "completed",
+  "iteration": 1,
+  "builder_model": "Claude:Sonnet-4.6",
+  "inspector_model": "Claude:Haiku-4.5",
+  "initial_sha": "16d99a069ed1f26515bb3e04a683f7902f4a0095",
+  "created_at": "2026-06-27T05:31:48Z",
+  "history": [
+    {
+      "iteration": 1,
+      "verdict": "PASS",
+      "summary": "Issues, mock map, and current-facing guidance now reference design-6; missing reference mocks were created and validated."
+    }
+  ]
+}

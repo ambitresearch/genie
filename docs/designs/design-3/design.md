@@ -1,7 +1,7 @@
 # genie — Design 3: "Lamplight" (`design.md`)
 
-> Alternative direction for review, alongside Design 1 (`docs/design/`),
-> Design 2 (`docs/design-2/`), Design 4 (`docs/design-4/`).
+> Alternative direction for review, alongside Design 1 (`docs/designs/design-1/`),
+> Design 2 (`docs/designs/design-2/`), Design 4 (`docs/designs/design-4/`).
 > Hallmark-managed candidate. v0.1 (lamplight direction). 2026-06.
 >
 > **Same product, different material.** Identical surfaces, content, and hard
@@ -81,8 +81,8 @@ Three facts shape everything:
 | Struct tint | `--color-struct-2` | `72% 0.10 263` | `#8fa6d6` | hover/selection |
 | Focus ring | `--color-focus` | `70% 0.12 264` | `#7e9cdc` | `:focus-visible`, ≥3:1 on dark |
 | Success | `--color-success` | `72% 0.15 152` | `#5cc47a` | validated |
-| Warning | `--color-warning` | `78% 0.13 72` | `#e6ad55` | thin / dscard-warn |
-| Danger | `--color-danger` | `66% 0.17 26` | `#e8645a` | error, missing @dsCard |
+| Warning | `--color-warning` | `78% 0.13 72` | `#e6ad55` | thin / marker-warn |
+| Danger | `--color-danger` | `66% 0.17 26` | `#e8645a` | error, missing @genie |
 
 There is no separate light mode here — Lamplight *is* the dark. A light fallback
 (`:root[data-scheme="light"]`) is provided for accessibility/host-deference parity;
@@ -96,7 +96,7 @@ it warms toward Design-1 territory but keeps Fraunces + the glow language.
 |---|---|---|
 | Display | **Fraunces** (free Google high-contrast old-style serif) | headings, wordmark; opsz high, weight 400–600; tracking −0.015em; warm literary character (distinct from Design 1's Newsreader) |
 | Body | **Inter** | descriptions, prose; 16px / 1.55 — calm sans clarity against the serif |
-| Mono | **JetBrains Mono** | `@dsCard` markers, tokens, paths, counts |
+| Mono | **JetBrains Mono** | `@genie` markers, tokens, paths, counts |
 
 Pairing axis: **high-contrast serif display + neutral sans body** — same axis family
 as Design 1 but a *different serif* (Fraunces' sharper contrast + optical sizing reads
@@ -159,7 +159,7 @@ per spec — identical negotiation to Design 1.
 | File | Surface |
 |---|---|
 | `00-front-door.svg` | empty / generate state — "Your wish is my command." prompt box glowing in the dark, starter blueprints, recent kits + `/genie-sync`. The lamp lit. |
-| `01-ds-browser.svg` | UI-kit browser → component detail; live render stage lit by lamplight, `@dsCard` marker, ✓ validated. |
+| `01-ui-kit-browser.svg` | UI-kit browser → component detail; live render stage lit by lamplight, `@genie` marker, ✓ validated. |
 | `02-preview-refine.svg` | rendered component + Tweaks/Comments + sliders + state strip + code + Apply; harness rail in shadow (the lit/unlit seam). |
 | `03-embedded-modes.svg` | embedded tier in 3 MCP-App modes; **shown deferring to a light host** to prove the lamp travels (system fonts, host-deferred). |
 

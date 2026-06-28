@@ -1,0 +1,497 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 4470" font-family="Inter, system-ui, sans-serif">
+<defs>
+  <linearGradient id="clayG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c87c5e"/><stop offset="1" stop-color="#ac5a40"/></linearGradient>
+  <linearGradient id="inkG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a2826"/><stop offset="1" stop-color="#171614"/></linearGradient>
+  <linearGradient id="blueG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3d5ba9"/><stop offset="1" stop-color="#2c4178"/></linearGradient>
+  <linearGradient id="warmBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fdf8f3"/><stop offset="1" stop-color="#f3f0ea"/></linearGradient>
+  <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="8" flood-color="#7a3c28" flood-opacity="0.13"/></filter>
+  <filter id="softInk" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="9" flood-color="#171614" flood-opacity="0.20"/></filter>
+  <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0 0 L7 3 L0 6 Z" fill="#ac5a40"/></marker>
+  <marker id="arrowInk" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0 0 L7 3 L0 6 Z" fill="#423f3d"/></marker>
+  <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0 0 L7 3 L0 6 Z" fill="#345197"/></marker>
+</defs>
+
+<rect width="1400" height="4470" fill="url(#warmBg)"/>
+
+<!-- ══════════════ TITLE ══════════════ -->
+<text x="60" y="74" font-family="Newsreader, Georgia, serif" font-size="40" font-weight="600" fill="#171614">How genie works</text>
+<text x="60" y="108" font-family="Inter, sans-serif" font-size="16" fill="#75716d">Our design, end to end — and the conventions we're <tspan font-style="italic">inventing</tspan> instead of inheriting. React to this; once it's right, it cascades into the docs.</text>
+<rect x="60" y="126" width="120" height="4" rx="2" fill="url(#clayG)"/>
+<text x="1340" y="74" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#ac5a40">proposal v0.2 · based on docs/plan + design-1</text>
+<text x="1340" y="92" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="10" fill="#9b9690">decisions A–E flagged in clay → your call</text>
+
+<!-- ══════════════ PANEL 1 — WHERE genie LIVES ══════════════ -->
+<g transform="translate(60,175)">
+  <text x="0" y="0" font-family="JetBrains Mono, monospace" font-size="12" font-weight="500" letter-spacing="0.08em" fill="#ac5a40">① WHERE genie LIVES — INSIDE YOUR HARNESS, NOT A DESTINATION</text>
+  <text x="0" y="26" font-family="Newsreader, Georgia, serif" font-size="22" fill="#423f3d">Claude Design is a place you open. genie is a teammate that shows up <tspan font-weight="600" fill="#171614">wherever you already work</tspan>.</text>
+
+  <g transform="translate(0,52)">
+    <!-- harness column -->
+    <rect x="0" y="20" width="300" height="252" rx="14" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="20" y="48" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="0.06em" fill="#75716d">7 TIER-0 HARNESSES</text>
+    <g font-family="JetBrains Mono, monospace" font-size="12" fill="#345197">
+      <rect x="20" y="62" width="125" height="28" rx="7" fill="#e4ecfb"/><text x="32" y="80">Claude Code</text>
+      <rect x="155" y="62" width="125" height="28" rx="7" fill="#e4ecfb"/><text x="167" y="80">Cursor</text>
+      <rect x="20" y="98" width="125" height="28" rx="7" fill="#e4ecfb"/><text x="32" y="116">Codex CLI</text>
+      <rect x="155" y="98" width="125" height="28" rx="7" fill="#e4ecfb"/><text x="167" y="116">Copilot</text>
+      <rect x="20" y="134" width="125" height="28" rx="7" fill="#e4ecfb"/><text x="32" y="152">Cline</text>
+      <rect x="155" y="134" width="125" height="28" rx="7" fill="#e4ecfb"/><text x="167" y="152">Continue</text>
+      <rect x="20" y="170" width="260" height="28" rx="7" fill="#e4ecfb"/><text x="32" y="188">Claude Desktop</text>
+    </g>
+    <text x="20" y="226" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">Each one supplies the chat.</text>
+    <text x="20" y="246" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">genie never builds a chat panel.</text>
+
+    <!-- arrow to genie -->
+    <line x1="308" y1="146" x2="366" y2="146" stroke="#345197" stroke-width="2" marker-end="url(#arrowBlue)"/>
+
+    <!-- genie node -->
+    <rect x="374" y="80" width="250" height="132" rx="14" fill="url(#inkG)" filter="url(#softInk)"/>
+    <text x="499" y="116" text-anchor="middle" font-family="Newsreader, Georgia, serif" font-size="26" font-weight="600" fill="#faf8f5">genie</text>
+    <text x="499" y="142" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#ecb6a0">one MCP server binary</text>
+    <text x="499" y="172" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" fill="#a8a4a0">speaks the Model Context</text>
+    <text x="499" y="190" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" fill="#a8a4a0">Protocol — nothing host-specific</text>
+
+    <!-- arrow to surfaces -->
+    <line x1="632" y1="146" x2="690" y2="146" stroke="#ac5a40" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- two surfaces -->
+    <rect x="698" y="20" width="582" height="252" rx="14" fill="#faf8f5" stroke="#ecb6a0" stroke-width="1.5" filter="url(#soft)"/>
+    <rect x="698" y="20" width="582" height="252" rx="14" fill="url(#clayG)" opacity="0.05"/>
+    <text x="722" y="48" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="0.06em" fill="#ac5a40">TWO SURFACES genie OWNS</text>
+    <g>
+      <rect x="722" y="62" width="262" height="150" rx="11" fill="#ffffff" stroke="#dad7d2" stroke-width="1.2"/>
+      <text x="742" y="90" font-family="Newsreader, Georgia, serif" font-size="18" font-weight="600" fill="#171614">Browser</text>
+      <text x="742" y="116" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">groups → components / screens,</text>
+      <text x="742" y="134" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">readme, Published / Default, sync</text>
+      <text x="742" y="170" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">your work, made legible to an LLM</text>
+      <rect x="742" y="184" width="100" height="10" rx="3" fill="#eae6df"/><rect x="742" y="184" width="58" height="10" rx="3" fill="#345197"/>
+
+      <rect x="996" y="62" width="262" height="150" rx="11" fill="#ffffff" stroke="#ecb6a0" stroke-width="1.2"/>
+      <text x="1016" y="90" font-family="Newsreader, Georgia, serif" font-size="18" font-weight="600" fill="#171614">Preview + refine</text>
+      <text x="1016" y="116" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">rendered card, comment-pins,</text>
+      <text x="1016" y="134" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">genie-generated sliders, Apply</text>
+      <text x="1016" y="170" font-family="JetBrains Mono, monospace" font-size="11" fill="#ac5a40">the clay accent lives only here</text>
+      <rect x="1016" y="184" width="120" height="22" rx="6" fill="url(#clayG)"/><text x="1076" y="199" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="#fff">Conjure</text>
+    </g>
+  </g>
+  <text x="0" y="340" font-family="Inter, sans-serif" font-size="13.5" fill="#75716d">The wedge: <tspan fill="#423f3d">genie owns the </tspan><tspan font-weight="600" fill="#171614">browser + preview</tspan><tspan fill="#423f3d">; the harness owns the chat. That seam is the thing no canvas-first competitor can copy.</tspan></text>
+</g>
+
+<!-- ══════════════ PANEL 2 — TWO THINGS genie OPERATES ON ══════════════ -->
+<g transform="translate(60,600)">
+  <text x="0" y="0" font-family="JetBrains Mono, monospace" font-size="12" font-weight="500" letter-spacing="0.08em" fill="#ac5a40">② TWO THINGS genie OPERATES ON — KITS, AND PROJECTS THAT USE THEM</text>
+  <text x="0" y="26" font-family="Newsreader, Georgia, serif" font-size="22" fill="#423f3d">A <tspan font-weight="600" fill="#171614">kit</tspan> is the library. A <tspan font-weight="600" fill="#171614">project</tspan> is the web / app / mobile screens you build <tspan font-style="italic">with</tspan> that kit.</text>
+
+  <g transform="translate(0,52)">
+    <!-- KIT card -->
+    <rect x="0" y="20" width="560" height="216" rx="14" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="24" y="48" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="0.06em" fill="#345197">UI KIT — the library</text>
+    <text x="24" y="80" font-family="Newsreader, Georgia, serif" font-size="22" font-weight="600" fill="#171614">components</text>
+    <text x="24" y="104" font-family="Inter, sans-serif" font-size="13" fill="#75716d">Button · Card · Input · tokens · the design language</text>
+    <g font-family="JetBrains Mono, monospace" font-size="12" fill="#345197">
+      <rect x="24" y="122" width="120" height="26" rx="6" fill="#e4ecfb"/><text x="36" y="139">Button</text>
+      <rect x="154" y="122" width="120" height="26" rx="6" fill="#e4ecfb"/><text x="166" y="139">Card</text>
+      <rect x="284" y="122" width="120" height="26" rx="6" fill="#e4ecfb"/><text x="296" y="139">Input</text>
+      <rect x="414" y="122" width="122" height="26" rx="6" fill="#e4ecfb"/><text x="426" y="139">tokens/</text>
+    </g>
+    <text x="24" y="180" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">produces → <tspan fill="#423f3d">a card in the grid · the unit of generation today</tspan></text>
+    <text x="24" y="208" font-family="JetBrains Mono, monospace" font-size="11" fill="#348f4f">✓ M1–M3 — built first</text>
+
+    <!-- binding arrow -->
+    <line x1="568" y1="128" x2="636" y2="128" stroke="#ac5a40" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="602" y="116" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#ac5a40">binds</text>
+
+    <!-- PROJECT card -->
+    <rect x="644" y="20" width="560" height="216" rx="14" fill="#fdf4ee" stroke="#ecb6a0" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="668" y="48" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="0.06em" fill="#ac5a40">DESIGN PROJECT — the screens</text>
+    <text x="668" y="80" font-family="Newsreader, Georgia, serif" font-size="22" font-weight="600" fill="#171614">web · app · mobile</text>
+    <text x="668" y="104" font-family="Inter, sans-serif" font-size="13" fill="#75716d">landing pages, flows, full screens — built from kit parts</text>
+    <g font-family="JetBrains Mono, monospace" font-size="12" fill="#ac5a40">
+      <rect x="668" y="122" width="160" height="26" rx="6" fill="#fae2d8"/><text x="680" y="139">Pricing page</text>
+      <rect x="838" y="122" width="160" height="26" rx="6" fill="#fae2d8"/><text x="850" y="139">Onboarding</text>
+      <rect x="1008" y="122" width="172" height="26" rx="6" fill="#fae2d8"/><text x="1020" y="139">Checkout flow</text>
+    </g>
+    <text x="668" y="180" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">produces → <tspan fill="#423f3d">a full-page preview · constrained to the bound kit</tspan></text>
+    <text x="668" y="208" font-family="JetBrains Mono, monospace" font-size="11" fill="#dd9231">→ M1 project foundation — seam designed now</text>
+  </g>
+
+  <!-- default resolution -->
+  <g transform="translate(0,292)">
+    <rect x="0" y="0" width="1204" height="118" rx="12" fill="#ffffff" stroke="#dad7d2" stroke-width="1.4"/>
+    <text x="24" y="30" font-family="JetBrains Mono, monospace" font-size="11" fill="#ac5a40">WHICH KIT? — genie resolves a default, and flags if it can't</text>
+    <g font-family="Inter, sans-serif" font-size="13">
+      <text x="24" y="62" font-family="JetBrains Mono, monospace" font-size="12" fill="#345197">1 explicit</text><text x="150" y="62" fill="#423f3d">you named a kit in the request → use it</text>
+      <text x="24" y="86" font-family="JetBrains Mono, monospace" font-size="12" fill="#345197">2 default</text><text x="150" y="86" fill="#423f3d">the project's bound default (<tspan font-family="JetBrains Mono, monospace" font-size="11.5" fill="#ac5a40">.genie/project.json</tspan>) → use it</text>
+      <text x="24" y="110" font-family="JetBrains Mono, monospace" font-size="12" fill="#345197">3 sole</text><text x="150" y="110" fill="#423f3d">exactly one kit reachable → use it, name which</text>
+      <text x="640" y="62" font-family="JetBrains Mono, monospace" font-size="12" fill="#c5372f">✗ none / many</text><text x="800" y="62" fill="#423f3d">→ <tspan font-weight="600" fill="#171614">stop and ask</tspan> — never guess, never</text>
+      <text x="800" y="86" fill="#423f3d">fall back to generic AI components</text>
+      <text x="640" y="110" font-family="Inter, sans-serif" font-size="12" fill="#75716d">"No kit bound to marketing-site. Bind one, or pick: acme-ui, icons-kit."</text>
+    </g>
+  </g>
+</g>
+
+<!-- ══════════════ PANEL 3 — THE ARCHITECTURE ══════════════ -->
+<g transform="translate(60,1100)">
+  <text x="0" y="0" font-family="JetBrains Mono, monospace" font-size="12" font-weight="500" letter-spacing="0.08em" fill="#ac5a40">③ THE ARCHITECTURE — ONE BINARY, EVERYTHING ELSE SWAPPABLE</text>
+  <text x="0" y="26" font-family="Newsreader, Georgia, serif" font-size="22" fill="#423f3d">genie is thin on purpose. It owns the protocol and the preview; <tspan font-weight="600" fill="#171614">storage, models, and auth are yours</tspan>.</text>
+
+  <g transform="translate(0,52)">
+    <!-- center genie -->
+    <rect x="500" y="92" width="280" height="96" rx="14" fill="url(#inkG)" filter="url(#softInk)"/>
+    <text x="640" y="128" text-anchor="middle" font-family="Newsreader, Georgia, serif" font-size="22" font-weight="600" fill="#faf8f5">genie MCP server</text>
+    <text x="640" y="154" text-anchor="middle" font-family="Inter, sans-serif" font-size="12" fill="#a8a4a0">protocol · validation · manifest · preview</text>
+    <text x="640" y="172" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="#ecb6a0">stdio &#38; Streamable HTTP</text>
+
+    <!-- STORAGE backend (left) -->
+    <rect x="0" y="40" width="360" height="92" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="20" y="66" font-family="JetBrains Mono, monospace" font-size="11" fill="#348f4f">STORAGE — any git host</text>
+    <text x="20" y="90" font-family="Inter, sans-serif" font-size="13" fill="#423f3d">local FS · GitHub · Gitea · GitLab · …</text>
+    <text x="20" y="114" font-family="Inter, sans-serif" font-size="12" fill="#75716d">a kit/project is a git-tracked tree (see ④)</text>
+    <line x1="360" y1="120" x2="498" y2="134" stroke="#423f3d" stroke-width="1.6" marker-end="url(#arrowInk)"/>
+
+    <!-- GENERATION backend (right) -->
+    <rect x="920" y="40" width="360" height="92" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="940" y="66" font-family="JetBrains Mono, monospace" font-size="11" fill="#ac5a40">GENERATION — any OpenAI-compatible endpoint</text>
+    <text x="940" y="90" font-family="Inter, sans-serif" font-size="13" fill="#423f3d">LiteLLM · Ollama · OpenAI · vLLM · …</text>
+    <text x="940" y="114" font-family="Inter, sans-serif" font-size="12" fill="#75716d">you own the model, the budget, the rate limits</text>
+    <line x1="920" y1="120" x2="782" y2="134" stroke="#423f3d" stroke-width="1.6" marker-end="url(#arrowInk)"/>
+
+    <!-- PREVIEW backend (bottom) -->
+    <rect x="380" y="208" width="520" height="76" rx="12" fill="#fdf4ee" stroke="#ecb6a0" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="404" y="234" font-family="JetBrains Mono, monospace" font-size="11" fill="#ac5a40">PREVIEW — three byte-identical vehicles</text>
+    <text x="404" y="262" font-family="JetBrains Mono, monospace" font-size="13" fill="#423f3d">file://&#160;&#160;·&#160;&#160;localhost:5173&#160;&#160;·&#160;&#160;ui://genie/grid</text>
+    <line x1="640" y1="190" x2="640" y2="206" stroke="#ac5a40" stroke-width="1.6" marker-end="url(#arrow)"/>
+  </g>
+  <text x="0" y="356" font-family="Inter, sans-serif" font-size="13.5" fill="#75716d"><tspan font-weight="600" fill="#171614">No database for content</tspan> — the git log IS the audit log. sqlite is used only for throwaway server scratch (in-flight plan TTLs). genie ships no model, no storage, no lock-in.</text>
+</g>
+
+<!-- ══════════════ PANEL 4 — WHERE YOUR KIT LIVES (git shapes) ══════════════ -->
+<g transform="translate(60,1500)">
+  <text x="0" y="0" font-family="JetBrains Mono, monospace" font-size="12" font-weight="500" letter-spacing="0.08em" fill="#ac5a40">④ WHERE YOUR WORK LIVES — A TREE genie IS JAILED TO, NEVER A REPO-IN-A-REPO</text>
+  <text x="0" y="26" font-family="Newsreader, Georgia, serif" font-size="22" fill="#423f3d">A kit/project is <tspan font-weight="600" fill="#171614">its own repo</tspan>, or a <tspan font-weight="600" fill="#171614">subtree of yours</tspan>, or a <tspan font-weight="600" fill="#171614">plain folder</tspan>. genie writes only inside that root.</text>
+
+  <g transform="translate(0,52)">
+    <!-- Shape A -->
+    <rect x="0" y="0" width="394" height="210" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="22" y="30" font-family="JetBrains Mono, monospace" font-size="11" fill="#345197">A · STANDALONE — team default</text>
+    <g font-family="JetBrains Mono, monospace" font-size="12.5" fill="#423f3d">
+      <text x="22" y="58" fill="#171614" font-weight="600">acme-ui/</text><text x="120" y="58" fill="#75716d">← genie owns fully</text>
+      <text x="38" y="80" fill="#ac5a40">.genie/</text>
+      <text x="38" y="100">components/…</text>
+      <text x="22" y="128" fill="#171614" font-weight="600">checkout-app/</text><text x="160" y="128" fill="#75716d">← your app</text>
+      <text x="38" y="150" fill="#9b9690">package.json</text>
+    </g>
+    <text x="22" y="180" font-family="Inter, sans-serif" font-size="12" fill="#75716d">two repos, separate dirs. They meet at</text>
+    <text x="22" y="197" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#345197">"@acme/ui": "^4.2.0"</text>
+
+    <!-- Shape B -->
+    <rect x="416" y="0" width="394" height="210" rx="12" fill="#fdf4ee" stroke="#ecb6a0" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="438" y="30" font-family="JetBrains Mono, monospace" font-size="11" fill="#ac5a40">B · MONOREPO SUBTREE</text>
+    <g font-family="JetBrains Mono, monospace" font-size="12.5" fill="#423f3d">
+      <text x="438" y="58" fill="#171614" font-weight="600">my-monorepo/</text><text x="592" y="58" fill="#75716d">← ONE repo, yours</text>
+      <text x="454" y="80">apps/web/</text>
+      <text x="454" y="102">packages/ui/</text><text x="592" y="102" fill="#ac5a40">← genie jailed here</text>
+      <text x="470" y="124" fill="#ac5a40">.genie/</text>
+      <text x="470" y="146">components/…</text>
+    </g>
+    <text x="438" y="180" font-family="Inter, sans-serif" font-size="12" fill="#75716d">no second repo. genie writes files;</text>
+    <text x="438" y="197" font-family="Inter, sans-serif" font-size="12" fill="#171614" font-weight="600">you commit, your flow</text>
+
+    <!-- Shape C -->
+    <rect x="832" y="0" width="372" height="210" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="854" y="30" font-family="JetBrains Mono, monospace" font-size="11" fill="#345197">C · LOCAL FOLDER — solo</text>
+    <g font-family="JetBrains Mono, monospace" font-size="12.5" fill="#423f3d">
+      <text x="854" y="58" fill="#171614" font-weight="600">~/code/shared-ui/</text>
+      <text x="870" y="80" fill="#ac5a40">.genie/</text>
+      <text x="870" y="100">components/…</text>
+    </g>
+    <text x="854" y="132" font-family="Inter, sans-serif" font-size="12" fill="#75716d">just a directory genie writes to.</text>
+    <text x="854" y="150" font-family="Inter, sans-serif" font-size="12" fill="#75716d"><tspan font-family="JetBrains Mono, monospace" font-size="11.5" fill="#345197">git init</tspan> it for history — or don't.</text>
+    <text x="854" y="186" font-family="Inter, sans-serif" font-size="12" fill="#75716d">history &#38; rollback become optional,</text>
+    <text x="854" y="203" font-family="Inter, sans-serif" font-size="12" fill="#75716d">everything else still works.</text>
+  </g>
+
+  <!-- the git mapping + caveat -->
+  <g transform="translate(0,282)">
+    <rect x="0" y="0" width="1204" height="96" rx="12" fill="#171614"/>
+    <text x="24" y="30" font-family="JetBrains Mono, monospace" font-size="11" fill="#f0a884">WHEN genie OWNS THE REPO (shape A) — the verbs map straight onto git</text>
+    <g font-family="JetBrains Mono, monospace" font-size="12.5" fill="#ece9e4">
+      <text x="24" y="58"><tspan fill="#f0a884">plan</tspan> → branch</text>
+      <text x="200" y="58"><tspan fill="#f0a884">write_files</tspan> → commits</text>
+      <text x="420" y="58"><tspan fill="#f0a884">finalize</tspan> → PR</text>
+      <text x="580" y="58"><tspan fill="#f0a884">merge</tspan> → publish</text>
+      <text x="780" y="58"><tspan fill="#f0a884">rollback</tspan> → git revert</text>
+      <text x="1010" y="58"><tspan fill="#f0a884">git log</tspan> → audit</text>
+    </g>
+    <text x="24" y="82" font-family="Inter, sans-serif" font-size="12" fill="#a8a4a0">As a guest in your repo (B), this degrades gracefully: <tspan fill="#ece9e4">plan still scopes &#38; validates the write — but the commit is yours, no PRs opened behind your back.</tspan></text>
+  </g>
+</g>
+
+<!-- ══════════════ PANEL 5 — THE CORE LOOP ══════════════ -->
+<g transform="translate(60,1980)">
+  <text x="0" y="0" font-family="JetBrains Mono, monospace" font-size="12" font-weight="500" letter-spacing="0.08em" fill="#ac5a40">⑤ THE CORE LOOP — DESCRIBE → CONJURE → PREVIEW → REFINE → COMMIT</text>
+  <text x="0" y="26" font-family="Newsreader, Georgia, serif" font-size="22" fill="#423f3d">The whole product is one tight loop. The <tspan font-weight="600" fill="#ac5a40">clay accent</tspan> marks the two moments that are genie's magic.</text>
+
+  <g transform="translate(0,56)">
+    <!-- step 1 -->
+    <rect x="0" y="0" width="218" height="150" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <circle cx="32" cy="34" r="16" fill="url(#inkG)"/><text x="32" y="40" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="15" fill="#fff">1</text>
+    <text x="58" y="40" font-family="Newsreader, Georgia, serif" font-size="17" font-weight="600" fill="#171614">Describe</text>
+    <text x="20" y="72" font-size="12.5" fill="#423f3d" font-family="Inter, sans-serif">In the harness chat —</text>
+    <text x="20" y="92" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#345197">"a primary button,</text>
+    <text x="20" y="110" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#345197">&#160;3 sizes, disabled"</text>
+    <text x="20" y="134" font-size="12" fill="#75716d" font-family="Inter, sans-serif">plain words, your harness</text>
+
+    <!-- step 2 CLAY -->
+    <rect x="248" y="0" width="218" height="150" rx="12" fill="#fdf4ee" stroke="#ecb6a0" stroke-width="1.5" filter="url(#soft)"/>
+    <circle cx="280" cy="34" r="16" fill="url(#clayG)"/><text x="280" y="40" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="15" fill="#fff">2</text>
+    <text x="306" y="40" font-family="Newsreader, Georgia, serif" font-size="17" font-weight="600" fill="#ac5a40">Conjure</text>
+    <text x="268" y="72" font-size="12.5" fill="#423f3d" font-family="Inter, sans-serif">genie generates the full</text>
+    <text x="268" y="92" font-size="12.5" fill="#423f3d" font-family="Inter, sans-serif">artifact set against</text>
+    <text x="268" y="111" font-size="12.5" fill="#171614" font-weight="600" font-family="Inter, sans-serif">YOUR kit's tokens</text>
+    <text x="268" y="134" font-size="12" fill="#ac5a40" font-family="Inter, sans-serif">✦ clay moment one</text>
+
+    <!-- step 3 -->
+    <rect x="496" y="0" width="218" height="150" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <circle cx="528" cy="34" r="16" fill="url(#inkG)"/><text x="528" y="40" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="15" fill="#fff">3</text>
+    <text x="554" y="40" font-family="Newsreader, Georgia, serif" font-size="17" font-weight="600" fill="#171614">Preview</text>
+    <text x="516" y="72" font-size="12.5" fill="#423f3d" font-family="Inter, sans-serif">the card renders in the</text>
+    <text x="516" y="92" font-size="12.5" fill="#423f3d" font-family="Inter, sans-serif">grid — same HTML in</text>
+    <text x="516" y="112" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">file / local / ui://</text>
+    <text x="516" y="134" font-size="12" fill="#75716d" font-family="Inter, sans-serif">isolated sandboxed iframe</text>
+
+    <!-- step 4 CLAY -->
+    <rect x="744" y="0" width="218" height="150" rx="12" fill="#fdf4ee" stroke="#ecb6a0" stroke-width="1.5" filter="url(#soft)"/>
+    <circle cx="776" cy="34" r="16" fill="url(#clayG)"/><text x="776" y="40" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="15" fill="#fff">4</text>
+    <text x="802" y="40" font-family="Newsreader, Georgia, serif" font-size="17" font-weight="600" fill="#ac5a40">Refine</text>
+    <text x="764" y="72" font-size="12.5" fill="#423f3d" font-family="Inter, sans-serif">comment-pins + sliders</text>
+    <text x="764" y="92" font-size="12.5" fill="#423f3d" font-family="Inter, sans-serif">genie generates, scoped</text>
+    <text x="764" y="111" font-size="12.5" fill="#423f3d" font-family="Inter, sans-serif">to a region you pick</text>
+    <text x="764" y="134" font-size="12" fill="#ac5a40" font-family="Inter, sans-serif">✦ clay moment two</text>
+
+    <!-- step 5 -->
+    <rect x="992" y="0" width="218" height="150" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <circle cx="1024" cy="34" r="16" fill="url(#inkG)"/><text x="1024" y="40" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="15" fill="#fff">5</text>
+    <text x="1050" y="40" font-family="Newsreader, Georgia, serif" font-size="17" font-weight="600" fill="#171614">Commit</text>
+    <text x="1012" y="72" font-size="12.5" fill="#423f3d" font-family="Inter, sans-serif">lands in your tree as a</text>
+    <text x="1012" y="92" font-size="12.5" fill="#423f3d" font-family="Inter, sans-serif">git commit, validated —</text>
+    <text x="1012" y="112" font-family="JetBrains Mono, monospace" font-size="11" fill="#348f4f">marker ✓ · manifest ✓</text>
+    <text x="1012" y="134" font-size="12" fill="#75716d" font-family="Inter, sans-serif">diff / PR / rollback free</text>
+
+    <line x1="218" y1="75" x2="246" y2="75" stroke="#ac5a40" stroke-width="2" marker-end="url(#arrow)"/>
+    <line x1="466" y1="75" x2="494" y2="75" stroke="#ac5a40" stroke-width="2" marker-end="url(#arrow)"/>
+    <line x1="714" y1="75" x2="742" y2="75" stroke="#ac5a40" stroke-width="2" marker-end="url(#arrow)"/>
+    <line x1="962" y1="75" x2="990" y2="75" stroke="#ac5a40" stroke-width="2" marker-end="url(#arrow)"/>
+  </g>
+  <text x="0" y="246" font-family="Inter, sans-serif" font-size="13.5" fill="#75716d">The clay accent appears on <tspan font-weight="600" fill="#ac5a40">Conjure</tspan> and <tspan font-weight="600" fill="#ac5a40">Refine</tspan> only — the design system's one rule. Structure stays ink; generation glows clay. <tspan font-style="italic">(Projects run the same loop, one step up: a screen instead of a component.)</tspan></text>
+</g>
+
+<!-- ══════════════ PANEL 6 — genie's OWN VERBS ══════════════ -->
+<g transform="translate(60,2360)">
+  <text x="0" y="0" font-family="JetBrains Mono, monospace" font-size="12" font-weight="500" letter-spacing="0.08em" fill="#ac5a40">⑥ genie's OWN PROTOCOL — DECISION A (your call)</text>
+  <text x="0" y="26" font-family="Newsreader, Georgia, serif" font-size="22" fill="#423f3d">Same shape as DesignSync — read freely, ask once, write scoped — but <tspan font-weight="600" fill="#171614">our own names</tspan>.</text>
+
+  <g transform="translate(0,46)">
+    <text x="20" y="14" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="0.04em" fill="#9b9690">CLAUDE DESIGN CALLS IT</text>
+    <text x="430" y="14" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="0.04em" fill="#ac5a40">genie CALLS IT</text>
+    <text x="760" y="14" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="0.04em" fill="#9b9690">WHY</text>
+
+    <!-- READ + SETUP group -->
+    <rect x="0" y="26" width="1280" height="152" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.4"/>
+    <rect x="0" y="26" width="6" height="152" rx="3" fill="#348f4f"/>
+    <text x="20" y="48" font-family="JetBrains Mono, monospace" font-size="11.5" font-weight="500" fill="#348f4f">READ + SETUP — no permission needed</text>
+    <g font-family="JetBrains Mono, monospace" font-size="13.5">
+      <text x="20" y="76" fill="#9b9690">list_projects</text><text x="430" y="76" fill="#171614" font-weight="600">list_kits</text><text x="760" y="76" fill="#75716d" font-family="Inter, sans-serif" font-size="12.5">"kit", not "project" — project now means screens</text>
+      <text x="20" y="102" fill="#9b9690">get_project</text><text x="430" y="102" fill="#171614" font-weight="600">get_kit</text><text x="760" y="102" fill="#75716d" font-family="Inter, sans-serif" font-size="12.5">one kit's metadata + canEdit</text>
+      <text x="20" y="128" fill="#9b9690">get_file</text><text x="430" y="128" fill="#171614" font-weight="600">read_file</text><text x="760" y="128" fill="#75716d" font-family="Inter, sans-serif" font-size="12.5">verb-first reads better than get_; list_files kept</text>
+      <text x="20" y="158" fill="#9b9690">create_project · list_components</text><text x="430" y="158" fill="#171614" font-weight="600">create_kit · list_components</text><text x="760" y="158" fill="#75716d" font-family="Inter, sans-serif" font-size="12.5">scaffold a kit · enumerate cards</text>
+    </g>
+
+    <!-- GATE group -->
+    <rect x="0" y="190" width="1280" height="58" rx="12" fill="#fdf4ee" stroke="#ecb6a0" stroke-width="1.4"/>
+    <rect x="0" y="190" width="6" height="58" rx="3" fill="#ac5a40"/>
+    <text x="20" y="212" font-family="JetBrains Mono, monospace" font-size="11.5" font-weight="500" fill="#ac5a40">THE GATE — the one permission boundary</text>
+    <text x="20" y="236" font-family="JetBrains Mono, monospace" font-size="13.5" fill="#9b9690">finalize_plan</text><text x="430" y="236" font-family="JetBrains Mono, monospace" font-size="13.5" fill="#171614" font-weight="600">plan</text><text x="760" y="236" fill="#75716d" font-family="Inter, sans-serif" font-size="12.5">approve a scoped set of write globs → planId</text>
+
+    <!-- WRITE group -->
+    <rect x="0" y="260" width="1280" height="152" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.4"/>
+    <rect x="0" y="260" width="6" height="152" rx="3" fill="#ac5a40"/>
+    <text x="20" y="282" font-family="JetBrains Mono, monospace" font-size="11.5" font-weight="500" fill="#ac5a40">WRITE — only within the granted plan</text>
+    <g font-family="JetBrains Mono, monospace" font-size="13.5">
+      <text x="20" y="310" fill="#9b9690">write_files · delete_files</text><text x="430" y="310" fill="#171614" font-weight="600">write_files · delete_files</text><text x="760" y="310" fill="#75716d" font-family="Inter, sans-serif" font-size="12.5">kept — cite planId, ≤256/call</text>
+      <text x="20" y="336" fill="#9b9690">report_validate + validate_design_system</text><text x="430" y="336" fill="#171614" font-weight="600">validate</text><text x="760" y="336" fill="#75716d" font-family="Inter, sans-serif" font-size="12.5">two verbs merged into one</text>
+      <text x="20" y="362" fill="#9b9690" text-decoration="line-through">register_assets</text><text x="430" y="362" fill="#c5372f" font-weight="600">✕ dropped</text><text x="760" y="362" fill="#75716d" font-family="Inter, sans-serif" font-size="12.5">the marker IS the registration (panel ⑦)</text>
+      <text x="20" y="388" fill="#9b9690" text-decoration="line-through">unregister_assets</text><text x="430" y="388" fill="#c5372f" font-weight="600">✕ dropped</text><text x="760" y="388" fill="#75716d" font-family="Inter, sans-serif" font-size="12.5">delete the file instead</text>
+    </g>
+
+    <!-- CONJURE group -->
+    <rect x="0" y="424" width="1280" height="124" rx="12" fill="url(#clayG)"/>
+    <text x="20" y="446" font-family="JetBrains Mono, monospace" font-size="11.5" font-weight="500" fill="#fce9e0">GENERATE — genie's identity verbs</text>
+    <g font-family="JetBrains Mono, monospace" font-size="13.5">
+      <text x="20" y="474" fill="#fae2d8">generate_component</text><text x="430" y="474" fill="#ffffff" font-weight="600">conjure</text><text x="760" y="474" fill="#fce9e0" font-family="Inter, sans-serif" font-size="12.5">the front-door CTA already says "Conjure"</text>
+      <text x="20" y="500" fill="#fae2d8">refine_component</text><text x="430" y="500" fill="#ffffff" font-weight="600">refine</text><text x="760" y="500" fill="#fce9e0" font-family="Inter, sans-serif" font-size="12.5">comment-pins + region-scoped sliders</text>
+      <text x="20" y="526" fill="#fae2d8">render_preview</text><text x="430" y="526" fill="#ffffff" font-weight="600">preview</text><text x="760" y="526" fill="#fce9e0" font-family="Inter, sans-serif" font-size="12.5">returns the ui:// grid for MCP-App hosts</text>
+    </g>
+  </g>
+  <text x="0" y="652" font-family="Inter, sans-serif" font-size="13.5" fill="#75716d"><tspan font-weight="600" fill="#171614">Kit core: 16 verbs → 13.</tspan> Drop 2 (register/unregister), merge 2 (the validators). The namespace <tspan font-family="JetBrains Mono, monospace" font-size="12.5" fill="#ac5a40">mcp__genie__&#42;</tspan> is what every harness sees. <tspan font-style="italic">(M1 also ships project verbs — list_projects/bind_kit/conjure_screen.)</tspan></text>
+</g>
+
+<!-- ══════════════ PANEL 7 — genie's OWN CONVENTIONS ══════════════ -->
+<g transform="translate(60,3110)">
+  <text x="0" y="0" font-family="JetBrains Mono, monospace" font-size="12" font-weight="500" letter-spacing="0.08em" fill="#ac5a40">⑦ genie's OWN CONVENTIONS — DECISIONS B · C · D · E</text>
+  <text x="0" y="26" font-family="Newsreader, Georgia, serif" font-size="22" fill="#423f3d">Four more inherited details, four fresh choices. <tspan font-weight="600" fill="#171614">Each is a proposal — change any of them.</tspan></text>
+
+  <g transform="translate(0,48)">
+    <!-- B marker -->
+    <rect x="0" y="0" width="628" height="118" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="22" y="28" font-family="JetBrains Mono, monospace" font-size="11" fill="#ac5a40">B · THE CARD MARKER</text>
+    <text x="22" y="56" font-family="JetBrains Mono, monospace" font-size="13" fill="#9b9690">&lt;!-- @dsCard group="…" --&gt;</text>
+    <text x="22" y="80" font-family="JetBrains Mono, monospace" font-size="13.5" fill="#171614">&lt;!-- <tspan fill="#ac5a40" font-weight="600">@genie</tspan> group="…" --&gt;</text>
+    <text x="22" y="104" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">first line still registers the card — just our name</text>
+
+    <!-- C bookkeeping -->
+    <rect x="652" y="0" width="628" height="118" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="674" y="28" font-family="JetBrains Mono, monospace" font-size="11" fill="#ac5a40">C · BOOKKEEPING FILES</text>
+    <text x="674" y="56" font-family="JetBrains Mono, monospace" font-size="12.5" fill="#9b9690">_ds_sync.json · _ds_needs_recompile  (root litter)</text>
+    <text x="674" y="80" font-family="JetBrains Mono, monospace" font-size="13.5" fill="#171614"><tspan fill="#ac5a40" font-weight="600">.genie/</tspan> sync.json · recompile · manifest.json · plans</text>
+    <text x="674" y="104" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">our improvement: one tidy dir, not files at the root</text>
+
+    <!-- D manifest -->
+    <rect x="0" y="138" width="628" height="118" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="22" y="166" font-family="JetBrains Mono, monospace" font-size="11" fill="#ac5a40">D · THE MANIFEST</text>
+    <text x="22" y="194" font-family="JetBrains Mono, monospace" font-size="13" fill="#9b9690">manifest.json  (kit root)</text>
+    <text x="22" y="218" font-family="JetBrains Mono, monospace" font-size="13.5" fill="#171614"><tspan fill="#ac5a40" font-weight="600">.genie/manifest.json</tspan></text>
+    <text x="22" y="242" font-family="Inter, sans-serif" font-size="12.5" fill="#75716d">compiled from markers; the viewer reads it</text>
+
+    <!-- E uri -->
+    <rect x="652" y="138" width="628" height="118" rx="12" fill="#faf8f5" stroke="#dad7d2" stroke-width="1.5" filter="url(#soft)"/>
+    <text x="674" y="166" font-family="JetBrains Mono, monospace" font-size="11" fill="#ac5a40">E · RESOURCE URI SCHEME</text>
+    <text x="674" y="194" font-family="JetBrains Mono, monospace" font-size="13" fill="#9b9690">genie://components/actions/Button</text>
+    <text x="674" y="218" font-family="JetBrains Mono, monospace" font-size="13.5" fill="#171614"><tspan fill="#ac5a40" font-weight="600">genie://</tspan>components/actions/Button</text>
+    <text x="674" y="242" font-family="Inter, sans-serif" font-size="12" fill="#75716d">MCP-App stays ui://genie/grid — that prefix is spec-fixed</text>
+  </g>
+</g>
+
+<!-- ══════════════ PANEL 8 — INSIDE THE TWO CLAY MOMENTS ══════════════ -->
+<g transform="translate(60,3490)">
+  <text x="0" y="0" font-family="JetBrains Mono, monospace" font-size="12" font-weight="500" letter-spacing="0.08em" fill="#ac5a40">⑧ INSIDE THE TWO CLAY MOMENTS — GROUNDING IN, VALIDATION OUT</text>
+  <text x="0" y="26" font-family="Newsreader, Georgia, serif" font-size="22" fill="#423f3d">The model writes the code. genie's job is to make it <tspan font-weight="600" fill="#171614">provably yours</tspan> — that conjunction is the moat, not the LLM.</text>
+
+  <!-- CONJURE column -->
+  <g transform="translate(0,52)">
+    <rect x="0" y="0" width="620" height="470" rx="14" fill="#faf8f5" stroke="#ecb6a0" stroke-width="1.5" filter="url(#soft)"/>
+    <rect x="0" y="0" width="620" height="46" rx="14" fill="#fdf4ee"/><rect x="0" y="24" width="620" height="22" fill="#fdf4ee"/>
+    <text x="22" y="29" font-family="JetBrains Mono, monospace" font-size="12.5" font-weight="500" fill="#ac5a40">CONJURE — sentence → kit-conformant component</text>
+
+    <!-- 1 -->
+    <circle cx="34" cy="74" r="13" fill="url(#inkG)"/><text x="34" y="79" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="13" fill="#fff">1</text>
+    <text x="56" y="71" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#171614">Assemble context <tspan font-style="italic" font-weight="400" fill="#ac5a40">— the grounding</tspan></text>
+    <text x="56" y="90" font-family="Inter, sans-serif" font-size="12" fill="#75716d">your tokens · existing primitives' .d.ts contracts · adherence rules · few-shot examples</text>
+
+    <!-- 2 -->
+    <circle cx="34" cy="122" r="13" fill="url(#inkG)"/><text x="34" y="127" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="13" fill="#fff">2</text>
+    <text x="56" y="119" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#171614">Build the system prompt</text>
+    <text x="56" y="138" font-family="Inter, sans-serif" font-size="12" fill="#75716d">inject grounding + the 5-file artifact contract + marker requirement + framework</text>
+
+    <!-- 3 -->
+    <circle cx="34" cy="170" r="13" fill="url(#clayG)"/><text x="34" y="175" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="13" fill="#fff">3</text>
+    <text x="56" y="167" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#ac5a40">Constrained generation — the one model call</text>
+    <text x="56" y="186" font-family="Inter, sans-serif" font-size="12" fill="#75716d">your endpoint · <tspan font-family="JetBrains Mono, monospace" font-size="11">response_format: json_schema</tspan> forces 5 well-formed files · streamed</text>
+
+    <!-- 4 the gauntlet -->
+    <rect x="22" y="204" width="576" height="148" rx="10" fill="#fbf2ec" stroke="#ecb6a0" stroke-width="1.2"/>
+    <circle cx="44" cy="228" r="13" fill="url(#inkG)"/><text x="44" y="233" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="13" fill="#fff">4</text>
+    <text x="66" y="225" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#171614">The validation gauntlet <tspan font-style="italic" font-weight="400" fill="#ac5a40">— this is where "yours" is enforced</tspan></text>
+    <g font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">
+      <text x="40" y="256">✓ marker present on line 1?</text>
+      <text x="320" y="256">✓ imports tokens · <tspan fill="#c5372f">no hardcoded #hex?</tspan></text>
+      <text x="40" y="280">✓ passes the adherence lint?</text>
+      <text x="320" y="280">✓ actually <tspan font-weight="600" fill="#171614">renders</tspan>? (Playwright)</text>
+    </g>
+    <rect x="40" y="298" width="540" height="38" rx="8" fill="#fae2d8"/>
+    <text x="56" y="322" font-family="Inter, sans-serif" font-size="12.5" fill="#ac5a40">any check fails → <tspan font-weight="600">one self-repair retry</tspan>, feeding the validator's error back to the model</text>
+
+    <!-- 5 -->
+    <circle cx="34" cy="378" r="13" fill="url(#inkG)"/><text x="34" y="383" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="13" fill="#fff">5</text>
+    <text x="56" y="375" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#171614">Extract the contract</text>
+    <text x="56" y="394" font-family="Inter, sans-serif" font-size="12" fill="#75716d">ts-morph reads the .tsx → emits .d.ts — the grounding the <tspan font-style="italic">next</tspan> generation reads</text>
+
+    <!-- 6 -->
+    <circle cx="34" cy="426" r="13" fill="url(#inkG)"/><text x="34" y="431" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="13" fill="#fff">6</text>
+    <text x="56" y="423" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#171614">Seal</text>
+    <text x="56" y="442" font-family="Inter, sans-serif" font-size="12" fill="#75716d">plan → write → anchor — it lands as a real, validated git commit</text>
+  </g>
+
+  <!-- REFINE column -->
+  <g transform="translate(660,52)">
+    <rect x="0" y="0" width="620" height="470" rx="14" fill="#faf8f5" stroke="#ecb6a0" stroke-width="1.5" filter="url(#soft)"/>
+    <rect x="0" y="0" width="620" height="46" rx="14" fill="#fdf4ee"/><rect x="0" y="24" width="620" height="22" fill="#fdf4ee"/>
+    <text x="22" y="29" font-family="JetBrains Mono, monospace" font-size="12.5" font-weight="500" fill="#ac5a40">REFINE — mutate one thing, provably freeze the rest</text>
+
+    <!-- mech 1 -->
+    <g transform="translate(22,68)">
+      <rect width="576" height="108" rx="10" fill="#f4f8f4" stroke="#bcd9c2" stroke-width="1.2"/>
+      <text x="18" y="28" font-family="Inter, sans-serif" font-size="15" font-weight="600" fill="#171614">Diff, not rewrite</text>
+      <rect x="470" y="13" width="92" height="22" rx="11" fill="#dcefe0"/><text x="516" y="28" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#2c6b3f">SOLID</text>
+      <text x="18" y="54" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">current files + instruction → the model returns a <tspan font-weight="600">unified diff</tspan>, applied with patch,</text>
+      <text x="18" y="73" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">then re-validated through the same gauntlet.</text>
+      <text x="18" y="96" font-family="Inter, sans-serif" font-size="12" fill="#75716d">asking for a diff is what makes "the rest is untouched" <tspan font-style="italic" fill="#2c6b3f">provable</tspan> — it can't restate what it didn't change</text>
+    </g>
+
+    <!-- mech 2 -->
+    <g transform="translate(22,184)">
+      <rect width="576" height="108" rx="10" fill="#f4f8f4" stroke="#bcd9c2" stroke-width="1.2"/>
+      <text x="18" y="28" font-family="Inter, sans-serif" font-size="15" font-weight="600" fill="#171614">Sliders = re-parameterization</text>
+      <rect x="470" y="13" width="92" height="22" rx="11" fill="#dcefe0"/><text x="516" y="28" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#2c6b3f">SOLID</text>
+      <text x="18" y="54" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">at generation, genie detects the component's axes — size, radius, shadow, accent —</text>
+      <text x="18" y="73" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">and surfaces them as knobs mapped to token values.</text>
+      <text x="18" y="96" font-family="Inter, sans-serif" font-size="12" fill="#75716d">dragging a slider makes <tspan font-weight="600" fill="#171614">no model call</tspan> — instant &#38; free. only a <tspan font-style="italic">structural</tspan> change hits the LLM</text>
+    </g>
+
+    <!-- mech 3 -->
+    <g transform="translate(22,300)">
+      <rect width="576" height="108" rx="10" fill="#fdf6ef" stroke="#e9c89a" stroke-width="1.2"/>
+      <text x="18" y="28" font-family="Inter, sans-serif" font-size="15" font-weight="600" fill="#171614">Region-scoped refine</text>
+      <rect x="450" y="13" width="112" height="22" rx="11" fill="#f6e4c4"/><text x="506" y="28" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#9a6a1a">R&#38;D EDGE</text>
+      <text x="18" y="54" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">a comment-pin gives a rect; genie annotates the prompt with it</text>
+      <text x="18" y="73" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">("limit changes to this region") and scopes the diff where it can.</text>
+      <text x="18" y="96" font-family="Inter, sans-serif" font-size="12" fill="#75716d">mapping a <tspan font-style="italic">pixel rect → source lines</tspan> is the hard part — in v1 it's a <tspan font-weight="600" fill="#9a6a1a">hint, not a hard constraint</tspan></text>
+    </g>
+  </g>
+
+  <!-- honesty strip -->
+  <g transform="translate(0,538)">
+    <rect x="0" y="0" width="1280" height="74" rx="12" fill="#171614"/>
+    <text x="24" y="30" font-family="JetBrains Mono, monospace" font-size="11" fill="#f0a884">THE HONEST LINE — WHAT genie CAN AND CANNOT VERIFY</text>
+    <text x="24" y="56" font-family="Inter, sans-serif" font-size="13.5" fill="#ece9e4">genie mechanically verifies <tspan font-weight="600" fill="#fff">"it's your code"</tspan> — imports tokens, no raw hex, passes adherence, renders. It <tspan font-style="italic">cannot</tspan> verify <tspan font-weight="600" fill="#fff">"it's beautiful."</tspan> Taste scales with whatever model you point it at; <tspan fill="#f0a884">genie is the harness, not the brain.</tspan></text>
+  </g>
+</g>
+
+<!-- ══════════════ PANEL 9 — NOT BUILDING + INTEROP ══════════════ -->
+<g transform="translate(60,4200)">
+  <rect x="-20" y="-10" width="1340" height="180" rx="18" fill="#171614"/>
+  <text x="20" y="34" font-family="JetBrains Mono, monospace" font-size="12" font-weight="500" letter-spacing="0.08em" fill="#f0a884">⑨ WHAT genie IS NOT — AND HOW INTEROP FITS</text>
+
+  <g transform="translate(20,52)">
+    <rect width="640" height="100" rx="14" fill="#26231f"/>
+    <text x="24" y="32" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="0.04em" fill="#8fa6d6">NOT BUILDING</text>
+    <g font-family="Inter, sans-serif" font-size="13.5" fill="#ece9e4">
+      <text x="24" y="58">✕ a hosted SaaS&#160;&#160;&#160;✕ a drag-to-reflow canvas&#160;&#160;&#160;✕ a Figma rival</text>
+      <text x="24" y="84">✕ a token/color tool&#160;&#160;&#160;✕ a content database&#160;&#160;&#160;✕ our own LLM&#160;&#160;&#160;✕ locked file formats</text>
+    </g>
+  </g>
+
+  <g transform="translate(680,52)">
+    <rect width="620" height="100" rx="14" fill="url(#clayG)"/>
+    <text x="24" y="32" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="0.04em" fill="#fce9e0">INTEROP IS A FUTURE BRIDGE, NOT THE FOUNDATION</text>
+    <g font-family="Inter, sans-serif" font-size="13.5" fill="#ffffff">
+      <text x="24" y="58">genie speaks its own conventions natively. An <tspan font-weight="600">opt-in</tspan> mode can later</text>
+      <text x="24" y="84">read/write @dsCard to round-trip Claude Design — and import Google Stitch.</text>
+    </g>
+  </g>
+</g>
+
+<!-- footer -->
+<text x="60" y="4422" font-family="JetBrains Mono, monospace" font-size="11" fill="#9b9690">genie · explainer · how genie works · a proposal to react to · decisions A–E in clay → own conventions first, bridges later</text>
+<text x="1340" y="4422" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#c7c3bd">docs/research/how-genie-works.svg</text>
+</svg>

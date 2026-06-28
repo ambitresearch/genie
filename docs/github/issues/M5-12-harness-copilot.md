@@ -23,7 +23,7 @@ rendering in the Insiders build (Stable in Jan 2026 per microsoft/vscode#260218)
 - [ ] AC1 — `docs/harness/copilot.md` includes the canonical snippet:
       ```json
       { "servers": { "genie": { "type": "http",
-          "url": "https://genie.${DOMAIN}/mcp" } } }
+          "url": "https://genie.<operator-domain>/mcp" } } }
       ```
 - [ ] AC2 — Warns about the `servers` (not `mcpServers`) gotcha.
 - [ ] AC3 — Documents `sandbox.network.allowedDomains` config for stdio

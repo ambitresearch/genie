@@ -23,11 +23,11 @@
 | # | Claim (abbreviated) | Status | Backs | Source |
 |---|---|---|---|---|
 | C1 | Claude Design is powered by Claude Opus 4.x, in research preview for Pro/Max/Team/Enterprise | ✅ confirmed | M2 (model routing — `design-best` alias resolves to Opus); positioning (§2 BRD) | support.claude.com release notes |
-| C2 | `/design-sync` and `/design` slash-commands are publicly named by Anthropic | ✅ confirmed | M1 (the verb surface genie mirrors); naming/interop posture | claude.com/product/design |
-| C3 | Every preview file requires a first-line `<!-- @dsCard group="…" -->` HTML comment | ✅ confirmed | **M3** (`@dsCard` regex validator + manifest compiler) | bundled-skill source |
-| C4 | The Design System pane manifest is regenerated server-side from the `@dsCard` markers | ✅ confirmed | **M3** (manifest compiler); **M4** (viewer consumes manifest) | claude.ai/design behavior |
+| C2 | `/design-sync` and `/design` slash-commands are publicly named by Anthropic | ✅ confirmed | M1 (genie's own verb surface, inspired by this); naming/interop posture | claude.com/product/design |
+| C3 | Every preview file requires a first-line `<!-- @dsCard group="…" -->` HTML comment | ✅ confirmed | **M3** (genie's `@genie` regex validator + manifest compiler; `@dsCard` is interop-only) | bundled-skill source |
+| C4 | The Design System pane manifest is regenerated server-side from the `@dsCard` markers | ✅ confirmed | **M3** (genie's manifest compiler reads `@genie` markers); **M4** (viewer consumes manifest) | claude.ai/design behavior |
 | C5 | Claude Code supports MCP over stdio, HTTP (streamable-http), SSE (deprecated) | ✅ confirmed | **M0** (transport multiplexer — stdio + HTTP shipped); M5 (harness smoke) | MCP spec + Claude Code docs |
-| C6 | Claude Code surfaces MCP resources via `@server:protocol://resource/path` | ✅ confirmed | M4 (`ds://` + `ui://` resource layer); M5 (Claude Code smoke) | Claude Code docs |
+| C6 | Claude Code surfaces MCP resources via `@server:protocol://resource/path` | ✅ confirmed | M4 (`genie://` + `ui://` resource layer); M5 (Claude Code smoke) | Claude Code docs |
 | C7 | Codex CLI declares MCP servers in `~/.codex/config.toml` under `[mcp_servers]` | ✅ confirmed | M5 (Codex harness config snippet + smoke) | Codex CLI docs |
 | C8 | Codex CLI supports OAuth via `codex mcp login <server>` | ✅ confirmed | **M5** (OAuth DCR auth path) | Codex CLI docs |
 | C9 | MCP Apps stable spec (2026-01-26) defines `ui://` scheme + `text/html;profile=mcp-app` MIME | ✅ confirmed | **M4** (`ui://genie/grid` MCP-Apps resource) | apps.extensions.modelcontextprotocol.io |
@@ -59,9 +59,9 @@ needs an empirical step before the milestone that depends on it ships.
 
 | # | Uncertainty | Settle-step | Gates |
 |---|---|---|---|
-| U1 | Canvas-side generation prompt is undocumented — genie invents it | Design + eval the generation prompt against real kits | M2 (`generate_component`); canvas R&D parked post-M5 |
-| U2 | `_ds_sync.json` schema reconstructed from `lib/sync-hashes.mjs`, not a public spec | Diff genie's writer output against a real Claude Design sync; freeze at last-observed shape | M3 (`_ds_sync.json` writer) |
-| U3 | `ui://` inline rendering in Claude Code unverified | Empirical render test in Claude Code pre-launch | M4 (render_preview); M5 (Claude Code smoke) |
+| U1 | Canvas-side generation prompt is undocumented — genie invents it | Design + eval the generation prompt against real kits | M2 (`conjure`); canvas R&D parked post-M5 |
+| U2 | genie's `.genie/sync.json` anchor schema is its own; interop mapping to Anthropic's `_ds_sync.json` is a post-v1 bridge | Freeze genie's anchor schema; defer interop diffing to the bridge | M3 (`.genie/sync.json` writer) |
+| U3 | `ui://` inline rendering in Claude Code unverified | Empirical render test in Claude Code pre-launch | M4 (`preview`); M5 (Claude Code smoke) |
 | U4 | VS Code MCP Apps Stable on schedule (Jan 2026) | Re-verify #260218 shipped before relying on it | M4/M5 |
 | U5 | Cursor's 40-tool cap is historical, not in current docs | Empirical test with 50+ tools in Cursor pre-launch | M5 (Cursor smoke); tool-sharding fallback |
 | U6 | Skybridge spike must prove embedded CSP + display-mode parity + Cursor/VS Code rendering | Run the time-boxed spike (RFC §15.8) **before M4 hand-build** | **M4** (pre-build gate) |

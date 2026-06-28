@@ -1,0 +1,1493 @@
+<!doctype html>
+<!--
+  Warm Instrument · design-6 · Genie prototype
+  Dependency-free. Navigable via file://.
+  System fonts only so CSP embedded-tier works offline.
+  Three views: front-door → workbench → review
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Genie · Warm Instrument · Design 6</title>
+    <style>
+      /* ── Design tokens (inline; mirrors tokens.css) ──────────────────── */
+      :root {
+        /* Paper */
+        --paper: #faf8f5;
+        --paper-2: #f3f0ea;
+        --paper-3: #eae6df;
+        /* Ink */
+        --ink: #171614;
+        --ink-2: #423f3d;
+        --ink-3: #75716d;
+        /* Hairline */
+        --hair: #dad7d2;
+        --hair-2: #c7c3bd;
+        /* Clay (accent — generation moments only) */
+        --clay: #c87c5e;
+        --clay-dk: #ac5a40;
+        --clay-t: #fae2d8;
+        --clay-e: #ecb6a0;
+        /* Structural blue (links / focus only) */
+        --struct: #345197;
+        --struct-t: #dee8fd;
+        /* Radii */
+        --r-xs: 3px;
+        --r-sm: 5px;
+        --r-md: 8px;
+        --r-lg: 12px;
+        --r-xl: 16px;
+        --r-pill: 999px;
+        /* Shadows */
+        --shadow-sm: 0 1px 3px rgba(40, 30, 20, 0.06), 0 1px 2px rgba(40, 30, 20, 0.04);
+        --shadow-md: 0 4px 12px rgba(40, 30, 20, 0.08), 0 2px 4px rgba(40, 30, 20, 0.05);
+        /* Typography (system stacks — file:// safe) */
+        --font-serif: Georgia, "Times New Roman", ui-serif, serif;
+        --font-sans: -apple-system, "Segoe UI", system-ui, ui-sans-serif, sans-serif;
+        --font-mono: ui-monospace, "SF Mono", Menlo, "Consolas", monospace;
+      }
+      /* ── Reset ────────────────────────────────────────────────────────── */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--font-sans);
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+        min-height: 100vh;
+      }
+
+      /* ── Top bar ──────────────────────────────────────────────────────── */
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        height: 56px;
+        background: var(--paper);
+        border-bottom: 1px solid var(--hair);
+        display: flex;
+        align-items: center;
+        padding: 0 24px;
+        gap: 24px;
+      }
+      .wordmark {
+        font-family: var(--font-serif);
+        font-size: 19px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--ink);
+        text-decoration: none;
+        margin-right: 16px;
+      }
+      .nav-tab {
+        font-size: 14px;
+        color: var(--ink-3);
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0 2px 2px;
+        font-family: inherit;
+        position: relative;
+        transition: color 0.15s;
+      }
+      .nav-tab:hover {
+        color: var(--ink-2);
+      }
+      .nav-tab.active {
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .nav-tab.active::after {
+        content: "";
+        position: absolute;
+        bottom: -19px;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: var(--ink);
+        border-radius: 1px;
+      }
+      .topbar-right {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--paper-3);
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--ink-3);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      /* ── Utility ──────────────────────────────────────────────────────── */
+      .view {
+        display: none;
+      }
+      .view.active {
+        display: block;
+      }
+      /* Grid views must not be overridden by the display:block above */
+      .workbench.active {
+        display: grid;
+      }
+      .review-layout.active {
+        display: grid;
+      }
+      .hairline {
+        border: none;
+        border-top: 1px solid var(--hair);
+        margin: 0;
+      }
+      .label {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.07em;
+        color: var(--ink-3);
+        text-transform: uppercase;
+      }
+      .mono {
+        font-family: var(--font-mono);
+      }
+      .genie-marker {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--clay); /* CLAY — generation identity, NEVER deferred */
+      }
+
+      /* ── Buttons ──────────────────────────────────────────────────────── */
+      /* Clay buttons — ONLY on Conjure / Refine / Apply / Approve */
+      .btn-clay {
+        background: var(--clay);
+        color: #fff;
+        border: none;
+        border-radius: var(--r-sm);
+        padding: 8px 18px;
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.15s;
+        white-space: nowrap;
+      }
+      .btn-clay:hover {
+        background: var(--clay-dk);
+      }
+      .btn-clay:focus-visible {
+        outline: 2px solid var(--struct);
+        outline-offset: 2px;
+      }
+      /* Clay outline — secondary generation action */
+      .btn-clay-outline {
+        background: transparent;
+        color: var(--clay);
+        border: 1.5px solid var(--clay);
+        border-radius: var(--r-sm);
+        padding: 7px 18px;
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.12s;
+        white-space: nowrap;
+      }
+      .btn-clay-outline:hover {
+        background: var(--clay-t);
+      }
+      /* Neutral button */
+      .btn-neutral {
+        background: transparent;
+        color: var(--ink-2);
+        border: 1.5px solid var(--hair);
+        border-radius: var(--r-sm);
+        padding: 7px 18px;
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: border-color 0.12s;
+        white-space: nowrap;
+      }
+      .btn-neutral:hover {
+        border-color: var(--hair-2);
+      }
+
+      /* ──────────────────────────────────────────────────────────────────
+   VIEW 0: FRONT DOOR
+────────────────────────────────────────────────────────────────── */
+      .front-door {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 72px 24px 48px;
+      }
+      .hero-heading {
+        font-family: var(--font-serif);
+        font-size: 48px;
+        font-weight: 500;
+        letter-spacing: -0.015em;
+        line-height: 1.15;
+        color: var(--ink);
+        text-align: center;
+        margin-bottom: 16px;
+      }
+      .hero-sub {
+        font-size: 16px;
+        color: var(--ink-3);
+        text-align: center;
+        margin-bottom: 40px;
+      }
+
+      /* Prompt card */
+      .prompt-card {
+        background: #fff;
+        border: 1px solid var(--hair);
+        border-radius: var(--r-md);
+        box-shadow: var(--shadow-md);
+        overflow: hidden;
+        margin-bottom: 40px;
+      }
+      .prompt-field {
+        padding: 18px 20px 12px;
+        font-size: 15px;
+        color: var(--ink);
+        min-height: 64px;
+        outline: none;
+        width: 100%;
+        border: none;
+        background: transparent;
+        font-family: inherit;
+        resize: none;
+      }
+      .prompt-field::placeholder {
+        color: var(--ink-3);
+      }
+      .prompt-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 16px;
+        border-top: 1px solid var(--hair);
+        background: var(--paper);
+      }
+      .selector-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+      }
+      .selector-group .sel-label {
+        color: var(--ink-3);
+      }
+      .selector-group select {
+        border: none;
+        background: transparent;
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--ink-2);
+        cursor: pointer;
+        outline: none;
+      }
+      .prompt-bar-sep {
+        width: 1px;
+        height: 20px;
+        background: var(--hair);
+        flex-shrink: 0;
+      }
+      .prompt-bar-right {
+        margin-left: auto;
+      }
+
+      /* Blueprints table */
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      .blueprint-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      .blueprint-table th {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--ink-3);
+        text-align: left;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--hair);
+      }
+      .blueprint-table td {
+        padding: 10px 0;
+        color: var(--ink-2);
+        border-bottom: 1px solid rgba(218, 215, 210, 0.5);
+      }
+      .blueprint-table td:first-child {
+        color: var(--ink);
+      }
+      .blueprint-table tr:last-child td {
+        border-bottom: none;
+      }
+
+      /* Kit cards */
+      .kit-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 12px;
+      }
+      .kit-card {
+        background: var(--paper-2);
+        border: 1px solid var(--hair);
+        border-radius: var(--r-md);
+        padding: 16px;
+      }
+      .kit-card-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+        margin-bottom: 4px;
+      }
+      .kit-card-sub {
+        font-size: 11px;
+        color: var(--ink-3);
+        margin-bottom: 10px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: var(--r-pill);
+        font-size: 9px;
+        font-weight: 700;
+      }
+      .badge-clay {
+        background: var(--clay-t);
+        color: var(--clay);
+      }
+      .badge-neutral {
+        background: var(--paper-2);
+        color: var(--ink-3);
+        border: 1px solid var(--hair);
+      }
+
+      /* ──────────────────────────────────────────────────────────────────
+   VIEW 1: WORKBENCH (UI KIT BROWSER)
+────────────────────────────────────────────────────────────────── */
+      .workbench {
+        grid-template-columns: 240px 1fr;
+        height: calc(100vh - 56px);
+      }
+      .tree-sidebar {
+        background: var(--paper);
+        border-right: 1px solid var(--hair);
+        overflow-y: auto;
+      }
+      .tree-kit-header {
+        background: var(--paper-2);
+        padding: 12px 16px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+        border-bottom: 1px solid var(--hair);
+      }
+      .tree-section {
+        padding: 10px 16px 2px;
+      }
+      .tree-section-label {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.07em;
+        color: var(--ink-3);
+        text-transform: uppercase;
+        margin-bottom: 4px;
+      }
+      .tree-item {
+        padding: 5px 8px 5px 20px;
+        font-size: 13px;
+        color: var(--ink-3);
+        cursor: pointer;
+        border-radius: var(--r-xs);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: background 0.1s;
+      }
+      .tree-item:hover {
+        background: var(--paper-2);
+        color: var(--ink-2);
+      }
+      .tree-item.active {
+        background: var(--paper-2);
+        color: var(--ink);
+        font-weight: 600;
+        border-left: 2px solid var(--ink);
+        padding-left: 18px;
+      }
+      .tree-divider {
+        border-top: 1px solid rgba(218, 215, 210, 0.5);
+        margin: 6px 16px;
+      }
+
+      /* Component detail panel */
+      .detail-panel {
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+      }
+      .detail-breadcrumb {
+        padding: 10px 24px;
+        font-size: 12px;
+        color: var(--ink-3);
+        border-bottom: 1px solid var(--hair);
+        background: var(--paper);
+      }
+      .detail-breadcrumb span {
+        color: var(--hair-2);
+        margin: 0 4px;
+      }
+      .detail-heading {
+        padding: 20px 24px 16px;
+        border-bottom: 1px solid var(--hair);
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+      }
+      .detail-title {
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--ink);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .detail-meta {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .variants-bar {
+        padding: 8px 24px;
+        display: flex;
+        gap: 4px;
+        border-bottom: 1px solid var(--hair);
+        background: var(--paper);
+      }
+      .variant-tab {
+        padding: 5px 12px;
+        border-radius: var(--r-sm);
+        font-size: 12px;
+        cursor: pointer;
+        background: none;
+        border: none;
+        font-family: inherit;
+        color: var(--ink-3);
+        transition: background 0.1s;
+      }
+      .variant-tab:hover {
+        background: var(--paper-2);
+        color: var(--ink-2);
+      }
+      .variant-tab.active {
+        background: var(--paper-3);
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .preview-stage {
+        background: var(--paper-2);
+        min-height: 280px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 16px;
+        position: relative;
+      }
+      .stage-label {
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--ink-3);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      .preview-button-demo {
+        background: var(--clay);
+        color: #fff;
+        border: none;
+        border-radius: var(--r-sm);
+        padding: 10px 24px;
+        font-size: 14px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: default;
+        box-shadow: var(--shadow-sm);
+      }
+      .selector-row {
+        padding: 12px 24px;
+        display: flex;
+        gap: 32px;
+        border-bottom: 1px solid var(--hair);
+        border-top: 1px solid var(--hair);
+        background: var(--paper);
+      }
+      .selector-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .selector-cell-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--ink-3);
+      }
+      .selector-cell-val {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--ink);
+      }
+      .code-box {
+        margin: 20px 24px;
+        background: var(--paper-2);
+        border: 1px solid var(--hair);
+        border-radius: var(--r-sm);
+        padding: 16px 18px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: 1.6;
+        color: var(--ink-2);
+      }
+      .code-comment {
+        color: var(--ink-3);
+      }
+      .code-kw {
+        color: var(--struct);
+      }
+      .code-str {
+        color: #2a7a42;
+      }
+      .code-box-footer {
+        padding: 0 24px 20px;
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      /* ──────────────────────────────────────────────────────────────────
+   VIEW 2: REVIEW (PREVIEW + REFINE)
+────────────────────────────────────────────────────────────────── */
+      .review-layout {
+        grid-template-columns: 280px 1fr 320px;
+        height: calc(100vh - 56px);
+      }
+
+      /* Left: ghosted conversation */
+      .convo-pane {
+        border-right: 1px solid var(--hair);
+        overflow-y: auto;
+        opacity: 0.75;
+        display: flex;
+        flex-direction: column;
+      }
+      .pane-header {
+        padding: 12px 16px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink-3);
+        border-bottom: 1px solid rgba(218, 215, 210, 0.5);
+      }
+      .bubble-user {
+        margin: 12px 16px 8px 40px;
+        background: var(--paper-3);
+        border-radius: var(--r-md);
+        padding: 10px 12px;
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .bubble-genie {
+        margin: 4px 40px 12px 16px;
+        background: #fff;
+        border: 1px solid var(--hair);
+        border-radius: var(--r-md);
+        padding: 10px 12px;
+        font-size: 12px;
+        color: var(--ink);
+      }
+      .bubble-ts {
+        font-size: 10px;
+        color: var(--ink-3);
+        margin-top: 4px;
+      }
+      .convo-compose {
+        margin-top: auto;
+        padding: 12px 16px;
+        border-top: 1px solid rgba(218, 215, 210, 0.5);
+      }
+      .convo-input {
+        width: 100%;
+        border: 1px solid var(--hair);
+        border-radius: var(--r-sm);
+        padding: 8px 12px;
+        font-size: 12px;
+        font-family: inherit;
+        background: var(--paper-2);
+        color: var(--ink-3);
+        outline: none;
+      }
+
+      /* Centre: preview stage */
+      .preview-pane {
+        background: var(--paper-2);
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+      }
+      .preview-pane-label {
+        padding: 10px 16px;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--ink-3);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        border-bottom: 1px solid var(--hair-2);
+        text-align: center;
+      }
+      .preview-content {
+        flex: 1;
+        padding: 40px 24px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 16px;
+      }
+
+      /* Pricing card demo */
+      .pricing-grid {
+        display: grid;
+        grid-template-columns: 1fr 1.2fr 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+      .pricing-card {
+        background: #fff;
+        border: 1px solid var(--hair);
+        border-radius: var(--r-md);
+        padding: 24px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+      }
+      .pricing-card.featured {
+        border-color: var(--hair-2);
+        box-shadow: var(--shadow-md);
+        position: relative;
+      }
+      .pricing-card.featured::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: var(--clay);
+        border-radius: var(--r-md) var(--r-md) 0 0;
+      }
+      .plan-badge {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        color: var(--clay);
+        text-transform: uppercase;
+        margin-bottom: 8px;
+        display: block;
+      }
+      .plan-name {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--ink);
+        margin-bottom: 4px;
+      }
+      .plan-price {
+        font-size: 28px;
+        font-weight: 600;
+        color: var(--ink);
+        line-height: 1.1;
+      }
+      .plan-per {
+        font-size: 12px;
+        color: var(--ink-3);
+        margin-bottom: 16px;
+      }
+      .plan-divider {
+        border: none;
+        border-top: 1px solid var(--hair);
+        margin: 12px 0;
+      }
+      .plan-feature {
+        font-size: 12px;
+        color: var(--ink-2);
+        padding: 3px 0;
+      }
+      .plan-feature.muted {
+        color: var(--ink-3);
+      }
+      .plan-cta {
+        margin-top: 20px;
+      }
+
+      /* Diff annotation */
+      .diff-annotation {
+        background: var(--paper-2);
+        border: 1px solid var(--hair);
+        border-radius: var(--r-xs);
+        padding: 4px 10px;
+        font-size: 10px;
+        color: var(--ink-3);
+        margin-top: -8px;
+        align-self: flex-start;
+        margin-bottom: 8px;
+      }
+
+      /* Right: refine panel */
+      .refine-pane {
+        border-left: 1px solid var(--hair);
+        overflow-y: auto;
+        background: var(--paper);
+      }
+      .refine-section {
+        padding: 16px;
+        border-bottom: 1px solid rgba(218, 215, 210, 0.5);
+      }
+      .refine-section-label {
+        margin-bottom: 8px;
+      }
+      .refine-meta-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ink);
+        margin-bottom: 4px;
+      }
+      .refine-meta-sub {
+        font-size: 11px;
+        color: var(--ink-3);
+      }
+      .change-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .change-item {
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .change-item.muted {
+        color: var(--ink-3);
+      }
+      .stat-row {
+        display: flex;
+        gap: 16px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+      }
+      .stat-add {
+        color: #2a7a42;
+      }
+      .stat-rm {
+        color: #b5503a;
+      }
+      .check-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .check-item {
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .check-item.pass {
+        color: #2a7a42;
+      }
+      .check-item.todo {
+        color: var(--ink-3);
+      }
+      .refine-textarea {
+        width: 100%;
+        border: 1px solid var(--hair);
+        border-radius: var(--r-sm);
+        padding: 8px 12px;
+        font-size: 12px;
+        font-family: inherit;
+        background: #fff;
+        color: var(--ink-3);
+        outline: none;
+        resize: vertical;
+        min-height: 72px;
+        margin-top: 8px;
+      }
+      .decision-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+
+      /* ── Embedded-tier demo section ───────────────────────────────────── */
+      .embedded-section {
+        padding: 40px 24px;
+        max-width: 800px;
+        margin: 0 auto;
+      }
+      .embedded-section-title {
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--ink);
+        margin-bottom: 6px;
+      }
+      .embedded-section-sub {
+        font-size: 14px;
+        color: var(--ink-3);
+        margin-bottom: 32px;
+      }
+
+      /* .genie-embedded — defers surface/ink to host; clay NEVER defers */
+      .genie-embedded {
+        /* Inline widget look */
+        background: #fff;
+        border: 1px solid var(--hair);
+        border-radius: var(--r-md);
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+        max-width: 420px;
+      }
+      .embedded-header {
+        background: var(--paper);
+        padding: 10px 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-bottom: 1px solid var(--hair);
+      }
+      .embedded-body {
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .embedded-input {
+        width: 100%;
+        border: 1px solid var(--hair);
+        border-radius: var(--r-sm);
+        padding: 7px 12px;
+        font-family: inherit;
+        font-size: 13px;
+        background: var(--paper-2);
+        color: var(--ink);
+        outline: none;
+      }
+      .embedded-footer {
+        padding: 10px 16px;
+        border-top: 1px solid var(--hair);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--paper);
+      }
+      .csp-note {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: var(--ink-3);
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ── Top bar ──────────────────────────────────────────────────────── -->
+    <header class="topbar" role="banner">
+      <a href="#" class="wordmark" aria-label="Genie home">genie</a>
+
+      <button
+        class="nav-tab active"
+        id="tab-fd"
+        onclick="showView('front-door')"
+        aria-selected="true"
+        role="tab"
+      >
+        Generate
+      </button>
+      <button
+        class="nav-tab"
+        id="tab-wb"
+        onclick="showView('workbench')"
+        aria-selected="false"
+        role="tab"
+      >
+        Browse
+      </button>
+      <button
+        class="nav-tab"
+        id="tab-rv"
+        onclick="showView('review')"
+        aria-selected="false"
+        role="tab"
+      >
+        Review
+      </button>
+
+      <div class="topbar-right">
+        <div class="avatar" aria-label="User avatar">RG</div>
+      </div>
+    </header>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+     VIEW 0: FRONT DOOR
+═══════════════════════════════════════════════════════════════════ -->
+    <main id="view-front-door" class="view active" role="main" aria-label="Generate view">
+      <div class="front-door">
+        <h1 class="hero-heading">Your wish is my command.</h1>
+        <p class="hero-sub">Describe a component or UI pattern. Genie builds it for your kit.</p>
+
+        <!-- Prompt card -->
+        <div class="prompt-card" role="search" aria-label="Component prompt">
+          <textarea
+            class="prompt-field"
+            id="prompt-input"
+            rows="2"
+            placeholder="a pricing card with three tiers — free / pro / enterprise"
+            aria-label="Describe a component"
+          ></textarea>
+          <div class="prompt-bar">
+            <div class="selector-group">
+              <span class="sel-label">UI Kit</span>
+              <select aria-label="Select UI kit">
+                <option>Quanta</option>
+                <option>Nova System</option>
+                <option>Base DS</option>
+              </select>
+            </div>
+            <div class="prompt-bar-sep" role="separator" aria-hidden="true"></div>
+            <div class="selector-group">
+              <span class="sel-label">Model</span>
+              <select aria-label="Select model">
+                <option>claude-opus-4</option>
+                <option>claude-sonnet-4</option>
+              </select>
+            </div>
+            <div class="prompt-bar-right">
+              <!-- CLAY — Conjure is the generation moment -->
+              <button
+                class="btn-clay"
+                onclick="showView('workbench')"
+                aria-label="Conjure component"
+              >
+                Conjure
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Blueprints section -->
+        <hr class="hairline" />
+        <div class="section-head" style="margin-top: 20px">
+          <span class="label">Blueprints</span>
+        </div>
+        <table class="blueprint-table" aria-label="Blueprint starters">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Components</th>
+              <th>Last used</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Pricing Card</td>
+              <td style="color: var(--ink-3); font-family: var(--font-mono); font-size: 11px">
+                PATTERN
+              </td>
+              <td style="color: var(--ink-3)">Card · Badge · Button</td>
+              <td style="color: var(--ink-3)">2 days ago</td>
+            </tr>
+            <tr>
+              <td>Navigation Bar</td>
+              <td style="color: var(--ink-3); font-family: var(--font-mono); font-size: 11px">
+                COMPONENT
+              </td>
+              <td style="color: var(--ink-3)">Link · Icon · Divider</td>
+              <td style="color: var(--ink-3)">5 days ago</td>
+            </tr>
+            <tr>
+              <td>Data Table</td>
+              <td style="color: var(--ink-3); font-family: var(--font-mono); font-size: 11px">
+                PATTERN
+              </td>
+              <td style="color: var(--ink-3)">Table · Pagination · Filter</td>
+              <td style="color: var(--ink-3)">1 week ago</td>
+            </tr>
+            <tr>
+              <td>Auth Form</td>
+              <td style="color: var(--ink-3); font-family: var(--font-mono); font-size: 11px">
+                PATTERN
+              </td>
+              <td style="color: var(--ink-3)">Input · Button · Link</td>
+              <td style="color: var(--ink-3)">2 weeks ago</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Recent kits -->
+        <div class="section-head" style="margin-top: 28px">
+          <span class="label">Recent Kits</span>
+        </div>
+        <div class="kit-grid" aria-label="Recent kits">
+          <div class="kit-card">
+            <div class="kit-card-title">Quanta UI Kit</div>
+            <div class="kit-card-sub">68 components · design-sync active</div>
+            <span class="badge badge-clay">synced</span>
+          </div>
+          <div class="kit-card">
+            <div class="kit-card-title">Nova System</div>
+            <div class="kit-card-sub">42 components · last sync: 3 days ago</div>
+            <span class="badge badge-neutral">idle</span>
+          </div>
+          <div class="kit-card">
+            <div class="kit-card-title">Base DS</div>
+            <div class="kit-card-sub">24 primitives · tokens only</div>
+            <span class="badge badge-neutral">idle</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+     VIEW 1: WORKBENCH (UI KIT BROWSER)
+═══════════════════════════════════════════════════════════════════ -->
+    <div id="view-workbench" class="view workbench" role="main" aria-label="Browse view">
+      <!-- Tree sidebar -->
+      <nav class="tree-sidebar" aria-label="Kit tree navigation">
+        <div class="tree-kit-header">Quanta UI Kit</div>
+
+        <div class="tree-section">
+          <div class="tree-section-label">Brand · 3</div>
+          <div class="tree-item" tabindex="0" role="treeitem">BrandMark</div>
+          <div class="tree-item" tabindex="0" role="treeitem">QGrid</div>
+          <div class="tree-item" tabindex="0" role="treeitem">QMonogram</div>
+        </div>
+        <div class="tree-divider" role="separator" aria-hidden="true"></div>
+
+        <div class="tree-section">
+          <div class="tree-section-label">Primitives · 6</div>
+          <!-- Selected item — @genie marker indicates synced -->
+          <div class="tree-item active" tabindex="0" role="treeitem" aria-selected="true">
+            <span class="genie-marker" aria-label="Genie synced">@genie</span>
+            Button
+          </div>
+          <div class="tree-item" tabindex="0" role="treeitem">Icon</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Input</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Badge</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Divider</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Link</div>
+        </div>
+        <div class="tree-divider" role="separator" aria-hidden="true"></div>
+
+        <div class="tree-section">
+          <div class="tree-section-label">Components · 14</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Card</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Dialog</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Dropdown</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Form</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Table</div>
+        </div>
+        <div class="tree-divider" role="separator" aria-hidden="true"></div>
+
+        <div class="tree-section">
+          <div class="tree-section-label">Patterns · 7</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Auth Form</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Pricing Table</div>
+          <div class="tree-item" tabindex="0" role="treeitem">Data Grid</div>
+        </div>
+      </nav>
+
+      <!-- Component detail panel -->
+      <div class="detail-panel">
+        <div class="detail-breadcrumb">
+          Quanta <span>/</span> primitives <span>/</span>
+          <strong style="color: var(--ink)">Button</strong>
+        </div>
+
+        <div class="detail-heading">
+          <div>
+            <div class="detail-title">
+              <span class="genie-marker" aria-label="Genie synced">@genie</span>
+              Button · Primary
+            </div>
+            <div class="detail-meta">
+              <span
+                class="badge badge-neutral"
+                style="background: #f3faf6; color: #2a7a42; border-color: #a7dab7"
+              >
+                ✓ validated
+              </span>
+              <span class="badge badge-clay">@genie synced</span>
+            </div>
+          </div>
+          <!-- CLAY — Refine is a generation moment -->
+          <button class="btn-clay" onclick="showView('review')" style="align-self: center">
+            Refine →
+          </button>
+        </div>
+
+        <div class="variants-bar" role="tablist" aria-label="Variants">
+          <button class="variant-tab active" role="tab" aria-selected="true">Default</button>
+          <button class="variant-tab" role="tab" aria-selected="false">Hover</button>
+          <button class="variant-tab" role="tab" aria-selected="false">Focus</button>
+          <button class="variant-tab" role="tab" aria-selected="false">Disabled</button>
+        </div>
+
+        <div class="preview-stage" role="img" aria-label="Button preview">
+          <span class="stage-label">Preview · Default · @2x</span>
+          <!-- Exact replica of the live button token -->
+          <button class="preview-button-demo" aria-label="Example button (not interactive)">
+            Button
+          </button>
+        </div>
+
+        <div class="selector-row">
+          <div class="selector-cell">
+            <span class="selector-cell-label">Selector</span>
+            <span class="selector-cell-val">.ds-button[data-variant=primary]</span>
+          </div>
+          <div class="selector-cell">
+            <span class="selector-cell-label">Status</span>
+            <span style="font-size: 12px; color: #2a7a42">active</span>
+          </div>
+          <div class="selector-cell">
+            <span class="selector-cell-label">Type</span>
+            <span class="selector-cell-val">ButtonHTMLElement</span>
+          </div>
+        </div>
+
+        <div class="code-box" aria-label="Generated code snippet">
+          <div class="code-comment">// generated by @genie · DesignSync v3</div>
+          <div>
+            <span class="code-kw">import</span>
+            <span> { Button } </span>
+            <span class="code-kw">from</span>
+            <span> </span>
+            <span class="code-str">'@quanta/primitives'</span>
+          </div>
+          <div>
+            <span class="code-kw">&lt;Button</span>
+            <span> variant=</span>
+            <span class="code-str">"primary"</span>
+            <span class="code-kw">&gt;</span>
+            <span>Label</span>
+            <span class="code-kw">&lt;/Button&gt;</span>
+          </div>
+        </div>
+
+        <div class="code-box-footer">
+          <button class="btn-clay" onclick="showView('review')">Refine →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+     VIEW 2: REVIEW
+═══════════════════════════════════════════════════════════════════ -->
+    <div id="view-review" class="view review-layout" role="main" aria-label="Review view">
+      <!-- Left: conversation history (ghosted) -->
+      <div class="convo-pane" aria-label="Conversation history">
+        <div class="pane-header">Conversation</div>
+
+        <div class="bubble-user">
+          a pricing card with three tiers — free / pro / enterprise
+          <div class="bubble-ts">You · 3m ago</div>
+        </div>
+        <div class="bubble-genie">
+          Generated PricingCard v1 with Quanta tokens applied.
+          <div class="bubble-ts">genie · 3m ago</div>
+        </div>
+        <div class="bubble-user">
+          Make the pro tier card taller, emphasise the CTA row
+          <div class="bubble-ts">You · 1m ago</div>
+        </div>
+        <div class="bubble-genie">
+          Updated. Pro card height +40px, CTA row contrast raised.
+          <div class="bubble-ts">genie · just now</div>
+        </div>
+
+        <div class="convo-compose">
+          <input
+            type="text"
+            class="convo-input"
+            placeholder="Refine further…"
+            aria-label="Continue refinement"
+          />
+        </div>
+      </div>
+
+      <!-- Centre: preview stage -->
+      <div class="preview-pane">
+        <div class="preview-pane-label">Draft #2 · Live Preview</div>
+
+        <div class="preview-content">
+          <div style="width: 100%; max-width: 700px">
+            <!-- diff annotation -->
+            <div class="diff-annotation">↑ Pro card height +40px · CTA: outline → clay fill</div>
+            <div class="pricing-grid" role="list" aria-label="Pricing tiers">
+              <!-- Free -->
+              <div class="pricing-card" role="listitem">
+                <div class="plan-name">Free</div>
+                <div class="plan-price">$0</div>
+                <div class="plan-per">/ month</div>
+                <hr class="plan-divider" />
+                <div class="plan-feature">5 components</div>
+                <div class="plan-feature">Community support</div>
+                <div class="plan-feature">1 kit</div>
+                <div class="plan-feature muted">✗ DesignSync</div>
+                <div class="plan-feature muted">✗ Priority build</div>
+                <div class="plan-cta">
+                  <button class="btn-neutral" style="width: 100%">Get started</button>
+                </div>
+              </div>
+              <!-- Pro (featured) — clay CTA is the generation accent -->
+              <div
+                class="pricing-card featured"
+                role="listitem"
+                aria-label="Pro tier, most popular"
+              >
+                <span class="plan-badge">Popular</span>
+                <div class="plan-name">Pro</div>
+                <div class="plan-price">$29</div>
+                <div class="plan-per">/ month</div>
+                <hr class="plan-divider" />
+                <div class="plan-feature">Unlimited components</div>
+                <div class="plan-feature">DesignSync active</div>
+                <div class="plan-feature">5 kits</div>
+                <div class="plan-feature">Priority build queue</div>
+                <div class="plan-feature muted">✗ Enterprise SSO</div>
+                <div class="plan-cta">
+                  <!-- CLAY — applied to kit is a generation moment -->
+                  <button class="btn-clay" style="width: 100%">Start Pro trial</button>
+                </div>
+              </div>
+              <!-- Enterprise -->
+              <div class="pricing-card" role="listitem">
+                <div class="plan-name">Enterprise</div>
+                <div class="plan-price">Custom</div>
+                <div class="plan-per">/ year</div>
+                <hr class="plan-divider" />
+                <div class="plan-feature">Unlimited everything</div>
+                <div class="plan-feature">SLA + dedicated support</div>
+                <div class="plan-feature">Multi-team kits</div>
+                <div class="plan-feature">DesignSync enterprise</div>
+                <div class="plan-feature">Priority build queue</div>
+                <div class="plan-cta">
+                  <button class="btn-neutral" style="width: 100%">Contact sales</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Embedded-tier demo (bottom of review pane) -->
+        <hr class="hairline" style="margin: 0 24px" />
+        <div class="embedded-section">
+          <div class="embedded-section-title">Embedded Tier Demo</div>
+          <div class="embedded-section-sub">
+            Inline widget running under <code class="mono">.genie-embedded</code>. System fonts only
+            — <code class="mono">default-src 'none'</code>. Clay identity persists regardless of
+            host.
+          </div>
+
+          <div class="genie-embedded" aria-label="Genie embedded widget">
+            <div class="embedded-header">
+              <span class="genie-marker" aria-label="Genie embedded">@genie</span>
+              <span style="font-size: 12px; font-weight: 600; color: var(--ink)"
+                >Inline Widget</span
+              >
+              <span class="badge badge-clay" style="margin-left: auto">.genie-embedded</span>
+            </div>
+            <div class="embedded-body">
+              <div style="font-size: 12px; color: var(--ink-2)">Generate a component:</div>
+              <input
+                type="text"
+                class="embedded-input"
+                placeholder="Describe it…"
+                aria-label="Component description"
+              />
+              <div style="display: flex; align-items: center; gap: 8px">
+                <span style="font-size: 11px; color: var(--ink-3)">Kit</span>
+                <span style="font-size: 11px; font-weight: 500; color: var(--ink-2)">Quanta ▾</span>
+              </div>
+            </div>
+            <div class="embedded-footer">
+              <span class="mono" style="font-size: 10px; color: var(--ink-3)"
+                >// system fonts · default-src 'none'</span
+              >
+              <!-- CLAY — even in embedded tier, clay is fixed -->
+              <button
+                class="btn-clay"
+                style="margin-left: auto; padding: 6px 14px; font-size: 12px"
+              >
+                Conjure
+              </button>
+            </div>
+          </div>
+          <p class="csp-note">
+            EMBEDDED: default-src 'none' · connect-src 'none' · system fonts only
+            <br />Clay #c87c5e never defers to host theming.
+          </p>
+        </div>
+      </div>
+
+      <!-- Right: refine panel -->
+      <div class="refine-pane" aria-label="Refine panel">
+        <div class="refine-section">
+          <div class="pane-header" style="padding: 0; margin-bottom: 8px">Review &amp; Refine</div>
+          <div class="refine-meta-title">PricingCard</div>
+          <div class="refine-meta-sub">Quanta UI Kit · @dsCard · draft #2</div>
+          <div class="detail-meta" style="margin-top: 8px">
+            <span class="badge badge-clay">@genie draft</span>
+            <span class="badge badge-neutral">not committed</span>
+          </div>
+        </div>
+
+        <div class="refine-section">
+          <div class="label refine-section-label">Changes in Draft #2</div>
+          <div class="change-list">
+            <div class="change-item">Pro card height: 520 → 560px</div>
+            <div class="change-item">CTA row: outline → clay fill</div>
+            <div class="change-item muted">Free, Enterprise: unchanged</div>
+          </div>
+        </div>
+
+        <div class="refine-section">
+          <div class="label refine-section-label">Diff Stats</div>
+          <div class="stat-row">
+            <span class="stat-add">+14 lines</span>
+            <span class="stat-rm">–6 lines</span>
+          </div>
+        </div>
+
+        <div class="refine-section">
+          <div class="label refine-section-label">Checklist</div>
+          <div class="check-list" role="list">
+            <div class="check-item pass" role="listitem">✓ Quanta tokens only</div>
+            <div class="check-item pass" role="listitem">✓ WCAG contrast OK</div>
+            <div class="check-item pass" role="listitem">✓ Clay accent constraint</div>
+            <div class="check-item todo" role="listitem">○ Keyboard nav (manual)</div>
+          </div>
+        </div>
+
+        <div class="refine-section">
+          <div class="label refine-section-label">Further Refinement</div>
+          <textarea
+            class="refine-textarea"
+            placeholder="Add annotation if needed…"
+            aria-label="Refinement instruction"
+          ></textarea>
+          <!-- CLAY — Refine is a generation moment -->
+          <div style="margin-top: 8px">
+            <button class="btn-clay" style="width: 100%">Refine →</button>
+          </div>
+        </div>
+
+        <div class="refine-section">
+          <div class="label refine-section-label">Decision</div>
+          <div class="decision-row">
+            <!-- CLAY — Approve is the final generation commit -->
+            <button class="btn-clay">Approve</button>
+            <button class="btn-neutral">Request changes</button>
+          </div>
+          <div style="margin-top: 8px">
+            <!-- CLAY outline — Apply to kit is a generation moment -->
+            <button class="btn-clay-outline" style="width: 100%">Apply to kit →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // ── View navigation ─────────────────────────────────────────────────
+      var views = ["front-door", "workbench", "review"];
+      var tabIds = {
+        "front-door": "tab-fd",
+        workbench: "tab-wb",
+        review: "tab-rv",
+      };
+      var tabLabels = {
+        "front-door": "Generate",
+        workbench: "Browse",
+        review: "Review",
+      };
+
+      function showView(name) {
+        views.forEach(function (v) {
+          var el = document.getElementById("view-" + v);
+          var tab = document.getElementById(tabIds[v]);
+          if (!el || !tab) return;
+          var active = v === name;
+          el.classList.toggle("active", active);
+          tab.classList.toggle("active", active);
+          tab.setAttribute("aria-selected", String(active));
+        });
+        // Scroll to top on nav change
+        window.scrollTo(0, 0);
+      }
+
+      // Keyboard nav: arrow keys move between tabs
+      document.querySelectorAll(".nav-tab").forEach(function (tab, i, all) {
+        tab.addEventListener("keydown", function (e) {
+          if (e.key === "ArrowRight") {
+            all[(i + 1) % all.length].focus();
+            e.preventDefault();
+          }
+          if (e.key === "ArrowLeft") {
+            all[(i - 1 + all.length) % all.length].focus();
+            e.preventDefault();
+          }
+          if (e.key === "Enter" || e.key === " ") {
+            tab.click();
+            e.preventDefault();
+          }
+        });
+      });
+
+      // Variant tabs (workbench)
+      document.querySelectorAll(".variant-tab").forEach(function (tab) {
+        tab.addEventListener("click", function () {
+          document.querySelectorAll(".variant-tab").forEach(function (t) {
+            t.classList.remove("active");
+            t.setAttribute("aria-selected", "false");
+          });
+          tab.classList.add("active");
+          tab.setAttribute("aria-selected", "true");
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -9,7 +9,7 @@ estimate: "5h"
 ## Summary
 Ship the Claude Code config snippet for `~/.claude.json` (or project
 `.mcp.json`) and an automated Playwright smoke that runs
-`generate_component → render_preview → write_files → validate_design_system`
+`conjure → preview → write_files → validate`
 inside Claude Code. Capture screenshots.
 
 ## Context
@@ -21,8 +21,8 @@ inside Claude Code. Capture screenshots.
       `~/.claude.json` snippet (HTTP transport + `apiKeyHelper` pattern).
 - [ ] AC2 — Snippet documents the OAuth flow + `apiKeyHelper` script
       template.
-- [ ] AC3 — Gotcha: callout that OAuth login bypasses the LiteLLM gateway
-      (research CLAUDE.md gotcha — `/logout` to restore gateway routing).
+- [ ] AC3 — Gotcha: callout that OAuth login can bypass the configured LLM endpoint
+      routing in Claude Code (research CLAUDE.md gotcha — `/logout` to restore routing).
 - [ ] AC4 — Smoke test boots Claude Code in a Docker sandbox, installs the
       MCP server, runs the four-verb chain, captures screenshots.
 - [ ] AC5 — Smoke test asserts each tool call returns non-error.

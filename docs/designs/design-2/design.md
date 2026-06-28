@@ -1,7 +1,7 @@
 # genie — Design 2: "Drafting Room" (`design.md`)
 
-> Alternative direction for review, alongside Design 1 (`docs/design/`),
-> Design 3 (`docs/design-3/`), Design 4 (`docs/design-4/`).
+> Alternative direction for review, alongside Design 1 (`docs/designs/design-1/`),
+> Design 3 (`docs/designs/design-3/`), Design 4 (`docs/designs/design-4/`).
 > Hallmark-managed candidate. v0.1 (drafting-room direction). 2026-06.
 >
 > **Same product, different material.** Identical surfaces, content, and hard
@@ -50,7 +50,7 @@ Three facts shape everything:
 - **Genre:** technical-modernist (drafting-table precision).
 - **Voice:** exact, calm, engineered. The **grotesque display** carries technical
   authority; sans body carries clarity; mono carries the protocol *and* the
-  measurements (dimensions, counts, `@dsCard` markers).
+  measurements (dimensions, counts, `@genie` markers).
 - **The one rule that carries the brand:** genie-clay appears ONLY on
   generation + refine moments — Conjure, the active slider, the comment in focus,
   Apply. Everything structural is ink / **ink-blue** / cool neutral. Against the cool
@@ -86,8 +86,8 @@ Three facts shape everything:
 | Accent tint | `--color-accent-tint` | `93% 0.030 46` | `#f7e1d6` | generating fill |
 | Accent edge | `--color-accent-edge` | `82% 0.070 44` | `#ecb6a0` | clay keyline |
 | Success | `--color-success` | `57% 0.13 152` | `#2f8f57` | validated, saved |
-| Warning | `--color-warning` | `70% 0.13 70` | `#cf8a2e` | thin / dscard-warn |
-| Danger | `--color-danger` | `55% 0.18 28` | `#c5372f` | error, missing @dsCard |
+| Warning | `--color-warning` | `70% 0.13 70` | `#cf8a2e` | thin / marker-warn |
+| Danger | `--color-danger` | `55% 0.18 28` | `#c5372f` | error, missing @genie |
 
 Dark mode = cool slate (`#13161c` paper), ink-blue and clay both brighten; the field
 stays cool, never warm. See `tokens.css` `:root[data-scheme="dark"]`.
@@ -100,7 +100,7 @@ stays cool, never warm. See `tokens.css` `:root[data-scheme="dark"]`.
 |---|---|---|
 | Display | **Space Grotesk** (free Google geometric-grotesque) | headings, wordmark; weight 500–700; tracking −0.01em; engineered, measured character |
 | Body | **Inter** | descriptions, prose; 16px / 1.55 — humanist, contrasts the geometric display |
-| Mono | **JetBrains Mono** | `@dsCard` markers, tokens, paths, **dimensions & counts** |
+| Mono | **JetBrains Mono** | `@genie` markers, tokens, paths, **dimensions & counts** |
 
 Pairing axis: **geometric-grotesque display + humanist-sans body** (a real contrast
 axis, not two near-identical sans). Mono is the constant "protocol voice" across all
@@ -166,7 +166,7 @@ the negotiation detail; identical here.
 | File | Surface |
 |---|---|
 | `00-front-door.svg` | empty / generate state — "Your wish is my command." prompt box (UI-kit + model + Conjure), starter blueprints, recent kits + `/genie-sync`. Cool drafting field, ink-blue rules. |
-| `01-ds-browser.svg` | UI-kit file-browser → component detail (variants live render with dimension lines, `@dsCard` marker, files, ✓ validated). |
+| `01-ui-kit-browser.svg` | UI-kit file-browser → component detail (variants live render with dimension lines, `@genie` marker, files, ✓ validated). |
 | `02-preview-refine.svg` | rendered component + Tweaks/Comments + genie sliders + state strip + code + Apply; harness chat ghosted (the seam). |
 | `03-embedded-modes.svg` | the embedded tier in all 3 MCP-App display modes (inline / fullscreen / pip); system fonts, host-deferred. |
 

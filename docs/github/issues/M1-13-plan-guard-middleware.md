@@ -1,6 +1,6 @@
 ---
 title: "[M1-13] Plan-vs-write guard middleware"
-milestone: "M1 — Tier-0 File Verbs"
+milestone: "M1 — Kit + Project Foundation"
 labels: ["type:feature", "area:mcp-server", "priority:P0-critical", "size:M"]
 assignees: []
 estimate: "5h"
@@ -24,7 +24,7 @@ the four verbs reimplement the same checks four times and the contract drifts.
       plan's `writes` (or `deletes` for delete_files).
 - [ ] AC3 — On failure, returns MCP error `-32602` with a structured
       `data.reason` field for client introspection.
-- [ ] AC4 — M1-08, M1-09, M1-10, M1-11 all wrap their handlers with this
+- [ ] AC4 — M1-08, M1-09 all wrap their handlers with this
       middleware (refactor commit).
 - [ ] AC5 — Guard tests live alongside the middleware
       (`plan-guard.test.ts`).
@@ -40,7 +40,7 @@ the four verbs reimplement the same checks four times and the contract drifts.
 
 ## Dependencies
 - Blocks: nothing (refactor).
-- Blocked by: M1-08, M1-09, M1-10, M1-11.
+- Blocked by: M1-08, M1-09.
 
 ## Agent Workflow
 

@@ -1,13 +1,13 @@
 ---
 title: "[M2-02] Define COMPONENT_SCHEMA (JSON Schema for structured output)"
-milestone: "M2 — LiteLLM Generation Surface"
-labels: ["type:feature", "area:litellm", "priority:P0-critical", "size:M"]
+milestone: "M2 — LLM Generation Surface"
+labels: ["type:feature", "area:llm", "priority:P0-critical", "size:M"]
 assignees: []
 estimate: "4h"
 ---
 
 ## Summary
-Codify the JSON Schema that `generate_component` will demand from the model
+Codify the JSON Schema that `conjure` will demand from the model
 (via `response_format: { type: "json_schema", json_schema: COMPONENT_SCHEMA }`).
 Schema must describe the file set the bundled `design-sync` skill expects
 under `components/<group>/<Name>/`: `<Name>.jsx`, `<Name>.tsx`, `<Name>.d.ts`,
@@ -17,7 +17,7 @@ under `components/<group>/<Name>/`: `<Name>.jsx`, `<Name>.tsx`, `<Name>.d.ts`,
 - Research report §3.2 outlines the call shape but leaves
   `COMPONENT_SCHEMA` to us. §3.3 documents the file layout — the schema is
   the machine-readable mirror.
-- §2.2 confirmed regex `/^<!--\s*@dsCard\s+group="[^"]*"[^>]*-->/` — the
+- §2.2 confirmed regex `/^<!--\s*@genie\s+group="[^"]*"[^>]*-->/` — the
   schema must constrain the first line of `<Name>.html`.
 
 ## Acceptance Criteria
@@ -32,7 +32,7 @@ under `components/<group>/<Name>/`: `<Name>.jsx`, `<Name>.tsx`, `<Name>.d.ts`,
       `^components/[a-z0-9-]+/[A-Z][A-Za-z0-9]+/[A-Za-z0-9._-]+$`.
 - [ ] AC5 — At least one file in `files` must be a
       `<Name>.html` whose `content` begins with a string matching the
-      `@dsCard` regex (validated post-hoc by M3-01, not by the schema).
+      `@genie` regex (validated post-hoc by M3-01, not by the schema).
 - [ ] AC6 — `ManifestEntry` includes `viewport: { width: number, height:
       number }`, `subtitle?: string`, `tags?: string[]`.
 - [ ] AC7 — Schema exported as both a TypeScript type (via `json-schema-to-ts`)

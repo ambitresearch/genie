@@ -33,7 +33,7 @@ attached to every GitHub Release.
 ## Implementation Notes
 - File: `mcpb/manifest.json`, `scripts/bundle-mcpb.mjs`.
 - Document the env-var prompts Claude Desktop shows on first run
-  (`LITELLM_MASTER_KEY`, etc.).
+  (`GENIE_LLM_API_KEY`, etc.).
 
 ## Out of Scope
 - Windows / Linux Claude Desktop (Linux not supported by Claude Desktop

@@ -1,0 +1,3959 @@
+Title,Body,Labels,Milestone,Assignees,Status,Priority,Estimate
+[M0-01] Research report sign-off and traceability matrix,"## Summary
+Walk the validated research report (19/20 claims confirmed, 1 killed) and
+produce a one-page traceability matrix mapping each load-bearing claim to the
+roadmap milestone(s) that depend on it. Without this, M1–M5 acceptance criteria
+are unmoored from primary sources.
+
+## Context
+- Research report: `.deliverables/research-report.json` — `result.report` is the
+  authoritative spec; `result.claimVerdicts` is the audit trail.
+- INDEX.md §""Source-of-truth facts"" must not be contradicted by anything
+  downstream.
+
+## Acceptance Criteria
+- [ ] AC1 — Given the report, when I open `docs/traceability.md`, then I see a
+      table with columns: claim · status (confirmed/killed) · source URL ·
+      milestone(s) it backs.
+- [ ] AC2 — Every confirmed claim has at least one downstream milestone or an
+      explicit ""out of scope"" note.
+- [ ] AC3 — The one killed claim (""Anthropic Labs"" framing) is called out with
+      the corrected wording from the verifier vote.
+- [ ] AC4 — The five honest uncertainties from INDEX.md §""Honest uncertainties""
+      are listed with the empirical step needed to settle each.
+- [ ] AC5 — Document is reviewed and signed off by the project owner.
+
+## Implementation Notes
+- Path: `docs/traceability.md` (new).
+- Cross-link every row to the issue number that owns the resulting work item.
+- Format: GitHub-flavoured Markdown, no JS-rendered tables.
+
+## Out of Scope
+- Re-running the research (the 46-agent run is the input, not the deliverable).
+- Updating the report JSON.
+
+## Dependencies
+- Blocks: every other M0 issue.
+- Blocked by: none.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added (unit + integration as relevant) — N/A (doc only).
+- [ ] Docs updated — this issue **is** the doc.
+- [ ] Manual verification step run — owner sign-off comment on the PR.
+- [ ] No new ESLint/TS errors — N/A.
+- [ ] Reviewed by 1 maintainer.","type:docs,area:docs,priority:P0-critical,size:S",M0 — Discovery & Scaffold,,Todo,Urgent,3h
+"[M0-02] Initialize repo, MIT LICENSE, governance docs","## Summary
+Create `roshangautam/genie` on GitHub, ship MIT LICENSE,
+CONTRIBUTING, CODE_OF_CONDUCT, SECURITY.md, CODEOWNERS, and a README that
+points at the docs/ tree. This is the legal and social entry point for the
+project.
+
+## Context
+- INDEX.md: ""License: MIT"", ""Repository: roshangautam/genie"".
+- Open-source comparators (`GLips/Figma-Context-MCP`,
+  `Jpisnice/shadcn-ui-mcp-server`) both ship the same docset.
+
+## Acceptance Criteria
+- [ ] AC1 — Repo exists at `roshangautam/genie`, default branch
+      `main`, branch protection on (1 review + status checks required).
+- [ ] AC2 — `LICENSE` file is the standard MIT text with year 2026 and
+      copyright ""Roshan Gautam"".
+- [ ] AC3 — `CONTRIBUTING.md` describes the issue lifecycle, branch naming
+      (`type/short-slug`), commit message convention (Conventional Commits),
+      and the PR review checklist.
+- [ ] AC4 — `CODE_OF_CONDUCT.md` adopts Contributor Covenant 2.1 verbatim.
+- [ ] AC5 — `SECURITY.md` documents the disclosure address
+      (`security@roshangautam.com`) and the 90-day responsible-disclosure
+      window.
+- [ ] AC6 — `CODEOWNERS` makes `@roshangautam` the global owner.
+- [ ] AC7 — `README.md` includes the one-paragraph elevator pitch, badge row
+      (CI · npm · license), quickstart, and links into `INDEX.md`.
+
+## Implementation Notes
+- Use `gh repo create roshangautam/genie --private` (per
+  INDEX.md §Source-of-truth — repo is **private, to be created**; any future
+  visibility change is a separate decision).
+- Pull templates from `github.com/github/docs` or
+  `github.com/anthropics/skills` for COC.
+- Do NOT enable `Discussions` yet — pre-launch noise.
+
+## Out of Scope
+- Repo settings beyond branch protection (covered by M0-04).
+- npm package reservation (covered by M0-04).
+
+## Dependencies
+- Blocks: every issue that needs to PR into the repo.
+- Blocked by: M0-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — N/A.
+- [ ] Docs updated — yes, the docs themselves.
+- [ ] Manual verification — `gh repo view roshangautam/genie`
+      shows the new repo with all six docs present.
+- [ ] No new ESLint/TS errors — N/A.
+- [ ] Reviewed by 1 maintainer.","type:chore,area:ci,priority:P0-critical,size:S",M0 — Discovery & Scaffold,,Todo,Urgent,2h
+"[M0-03] Bootstrap TypeScript dev environment (Node ≥22, ESM, pnpm)","## Summary
+Stand up the TypeScript build pipeline: `package.json`, `tsconfig.json`
+(strict, ESM), `pnpm-workspace.yaml` (server + viewer + e2e), `.editorconfig`,
+`.prettierrc`, `.eslintrc.cjs` with `@typescript-eslint`, Vitest config, and a
+`scripts/` directory with `dev`, `build`, `test`, `lint`, `typecheck`. After
+this, a contributor can clone, `pnpm i`, and run `pnpm dev` to get an empty
+MCP server on stdio.
+
+## Context
+- INDEX.md: ""Primary language: TypeScript (Node ≥ 22, ESM)"".
+- Research report §7 step 1: ""Scaffold MCP server — npm init, add
+  @modelcontextprotocol/sdk, fork GLips/Figma-Context-MCP for transport/CLI
+  scaffolding"".
+
+## Acceptance Criteria
+- [ ] AC1 — `pnpm i` on a fresh clone succeeds on Node 22 and 24.
+- [ ] AC2 — `tsconfig.json` has `""module"": ""NodeNext""`, `""strict"": true`,
+      `""target"": ""ES2022""`, `""moduleResolution"": ""NodeNext""`.
+- [ ] AC3 — `pnpm-workspace.yaml` lists `packages/server`, `packages/viewer`,
+      `packages/e2e`.
+- [ ] AC4 — `pnpm dev` boots the empty MCP server on stdio without crashing.
+- [ ] AC5 — `pnpm test` runs Vitest against a placeholder
+      `expect(true).toBe(true)` test and passes.
+- [ ] AC6 — `pnpm lint` and `pnpm typecheck` both pass on the empty scaffold.
+- [ ] AC7 — `.nvmrc` pins Node `22`.
+
+## Implementation Notes
+- Use `@modelcontextprotocol/sdk` at the latest stable.
+- Crib the multi-transport bootstrap from `GLips/Figma-Context-MCP` (MIT) —
+  attribute in NOTICE.md.
+- Prefer `tsx` for `pnpm dev` (no compile step in dev).
+
+## Out of Scope
+- CI workflows (M0-04).
+- Tool registration (M1).
+
+## Dependencies
+- Blocks: M0-04 (CI needs the build scripts).
+- Blocked by: M0-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — placeholder test passing.
+- [ ] Docs updated — README quickstart section.
+- [ ] Manual verification — fresh clone + `pnpm i && pnpm dev`.
+- [ ] No new ESLint/TS errors — confirmed.
+- [ ] Reviewed by 1 maintainer.","type:infra,area:ci,priority:P0-critical,size:M",M0 — Discovery & Scaffold,,Todo,Urgent,5h
+"[M0-04] CI scaffolding (GitHub Actions: lint, typecheck, test, build matrix)","## Summary
+Ship `.github/workflows/ci.yml` that runs lint + typecheck + unit tests on
+every PR across Node 22/24 on Ubuntu/macOS. Add `release-please` (or
+Changesets) to manage versioning automatically. Reserve the npm package name
+`genie`.
+
+## Context
+- INDEX.md: distribution = npm + `.mcpb` + Docker.
+- Research report §7 step 11 needs a smoke-test workflow; this issue stops
+  short of that — we only ship plumbing.
+
+## Acceptance Criteria
+- [ ] AC1 — `.github/workflows/ci.yml` runs on `push` + `pull_request`, jobs:
+      `lint`, `typecheck`, `test`, `build` — matrix `{ node: [22, 24], os:
+      [ubuntu-latest, macos-latest] }`.
+- [ ] AC2 — Cache `~/.pnpm-store` keyed on `pnpm-lock.yaml`.
+- [ ] AC3 — Build job produces `packages/server/dist/` and uploads as an
+      artefact named `server-dist-${{ matrix.node }}-${{ matrix.os }}`.
+- [ ] AC4 — `release-please` (or Changesets) PR is opened by the bot whenever
+      Conventional Commits land on `main`.
+- [ ] AC5 — npm name `genie` is registered (publish empty
+      0.0.0-placeholder). **If `genie` is taken** (unverified at issue-write time
+      — `npm view genie` was blocked by a sandbox cert error), fall back in order:
+      `@genie/server` (scoped) → `genie`. Record the chosen name in `CLAUDE.md`
+      and reconcile any docs that assumed bare `genie`.
+- [ ] AC6 — Branch protection requires `lint`, `typecheck`, `test`, `build`
+      checks before merge.
+
+## Implementation Notes
+- Use `pnpm/action-setup@v3` for pnpm install.
+- Run `pnpm exec vitest run --reporter=verbose --coverage`.
+- Coverage gates are deferred to M6 — for now just publish the report as an
+  artefact.
+
+## Out of Scope
+- E2E harness tests (M5).
+- Docker / `.mcpb` publish (M5).
+
+## Dependencies
+- Blocks: every PR that needs CI green.
+- Blocked by: M0-03.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — verify by opening a no-op PR and watching CI.
+- [ ] Docs updated — CONTRIBUTING references CI status.
+- [ ] Manual verification — green CI on M0-03 follow-up PR.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:infra,area:ci,priority:P0-critical,size:M",M0 — Discovery & Scaffold,,Todo,Urgent,5h
+[M1-01] Storage abstraction (local FS + git-host adapters),"## Summary
+Define store interfaces for kits and projects, and ship two adapters:
+`LocalFsStore` (solo dev — a kit/project is a directory) and `GitHostStore`
+(shared — a kit/project is a git-tracked tree, a `planId` is a branch,
+`write_files` is commit, merge is publish). The git-host
+adapter targets **any git host** (GitHub / Gitea / GitLab) via its HTTP API;
+Gitea is the reference instance we test against. All M1 tools (M1-02 … M1-21)
+are implemented against this interface, not against `fs` directly.
+
+## Context
+- D-G (`00-decisions.md`): genie writes to a **git-tracked tree** on any git
+  host, swappable; local FS for solo. A kit is a repo, a `planId` becomes a
+  branch, `plan` opens a PR (full fidelity when genie owns the repo),
+  `write_files` commits, merge = atomic publish.
+- The reference shared deployment runs Gitea, but no git host is privileged in
+  the abstraction and no provider URL is baked into the code.
+
+## Acceptance Criteria
+- [ ] AC1 — `interface KitStore` defines: `listKits`, `getKit`,
+      `listFiles`, `readFile(path, maxBytes)`, `createKit`,
+      `openPlan(writes, deletes, localDir) → planId`,
+      `commitPlan(planId, fileOps)`, `closePlan(planId)`.
+- [ ] AC2 — `interface ProjectStore` defines: `listProjects`, `getProject`,
+      `createProject`, `deleteProject`, `bindKit`, `recordScreen`.
+- [ ] AC3 — `LocalFsStore` stores kits under
+      `${GENIE_HOME ?? ~/.genie}/kits/<kitId>/` and treats
+      each plan as a temp staging directory; projects live under
+      `${GENIE_HOME ?? ~/.genie}/projects/<projectId>/`.
+- [ ] AC4 — `GitHostStore` uses a git-host SDK against an operator-configured
+      base URL, plan = branch `plan/${planId}`, commit on `commitPlan`, no
+      auto-merge.
+- [ ] AC5 — Both adapters pass the same conformance test suite
+      (`packages/server/test/store-conformance.test.ts`).
+- [ ] AC6 — `GitHostStore` honours its token from env (`GENIE_GIT_TOKEN`),
+      fails fast with a clear error if missing.
+- [ ] AC7 — `readFile` enforces the 256 KiB cap and throws
+      `FileTooLargeError` with the actual size in the message.
+
+## Implementation Notes
+- File: `packages/server/src/store/{interface.ts,local.ts,git-host.ts}`.
+- Test fixtures: `packages/server/test/fixtures/sample-kit/` (≈10 components).
+- Git-host base URL + token are env-configured; nothing hardcoded. Gitea is the
+  reference instance for CI/manual testing.
+
+## Out of Scope
+- S3 / Postgres backends (out of scope for v1).
+- Kit sharing / ACLs (the user owns every kit they touch in v1).
+
+## Dependencies
+- Blocks: M1-02 … M1-21.
+- Blocked by: M0-04.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — conformance suite ≥ 90 % branch coverage on both adapters.
+- [ ] Docs updated — `docs/plan/04-tech-design-rfc.md` §3.3 cross-link.
+- [ ] Manual verification — `pnpm dev` against a real git host creates,
+      reads, lists kits end-to-end.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-server,area:storage,priority:P0-critical,size:L",M1 — Kit + Project Foundation,,Todo,Urgent,12h
+[M1-02] Tool: list_kits,"## Summary
+Implement `list_kits` MCP tool — returns the user's writable UI kits.
+Filters to UI kits (genie's own kit type; the interop adapter maps
+this to Anthropic's `PROJECT_TYPE_DESIGN_SYSTEM` when round-tripping).
+
+## Context
+- Research report §3.1 tool surface:
+  `list_kits(): { id, name, owner, updatedAt, canEdit }[]`.
+- Research report §1.4 confirmed claim: ""list_kits — lists writable
+  Claude Design projects (filtered to `type: PROJECT_TYPE_DESIGN_SYSTEM`)"".
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name is `mcp__genie__list_kits` (Claude rewrite
+      rule applied).
+- [ ] AC2 — Description ≤ 2 KB (Claude truncation limit).
+- [ ] AC3 — JSON Schema is Draft 7 only — no `anyOf` / `$ref` chains.
+- [ ] AC4 — Returns an array of
+      `{ id: string, name: string, owner: string, updatedAt: string (ISO 8601),
+      canEdit: boolean }`.
+- [ ] AC5 — Filters out records whose stored `type !== ""GENIE_KIT""`;
+      interop adapters map Anthropic's project type separately.
+- [ ] AC6 — Returns `[]` (not `null`, not error) when the user has no
+      kits.
+- [ ] AC7 — Backed by `KitStore.listKits()`.
+
+## Implementation Notes
+- File: `packages/server/src/tools/list_kits.ts`.
+- Register in `packages/server/src/tools/index.ts`.
+- Description template from research report §3.1 — copy verbatim where ≤ 2 KB.
+
+## Out of Scope
+- Pagination (v1 returns all; revisit in v2 if any user crosses 100 kits).
+- Search/filter (v1 client-side only).
+
+## Dependencies
+- Blocks: M1-03 (clients call `list_kits` to discover IDs).
+- Blocked by: M1-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — unit (mocked store) + integration (real LocalFsStore).
+- [ ] Docs updated — `docs/04-tech-design-rfc.md` §3.1 tool list.
+- [ ] Manual verification — call from `npx @modelcontextprotocol/inspector`.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,priority:P0-critical,size:S",M1 — Kit + Project Foundation,,Todo,Urgent,3h
+[M1-03] Tool: get_kit,"## Summary
+Implement `get_kit` — returns metadata for a single project; confirms the
+`kitId` actually resolves to a UI kit (or to a mapped Claude Design project in interop mode).
+
+## Context
+- Research report §3.1: `get_kit({ kitId }): { id, name, type:
+  ""GENIE_KIT"", canEdit }`.
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__get_kit`.
+- [ ] AC2 — Input schema: `{ kitId: string }` (required).
+- [ ] AC3 — Returns `{ id, name, type, canEdit, createdAt, updatedAt }` with
+      `type` literal `""GENIE_KIT""`.
+- [ ] AC4 — Returns `ProjectNotFoundError` MCP error code `-32602` on unknown
+      `kitId`.
+- [ ] AC5 — Returns `WrongProjectTypeError` if the project exists but is not a
+      UI kit (defensive — `LocalFsStore` only stores UI kits,
+      but `GitHostStore` shares the namespace with the user's other repos).
+
+## Implementation Notes
+- File: `packages/server/src/tools/get_kit.ts`.
+- Reuse `KitStore.getKit()`.
+
+## Out of Scope
+- Editing project metadata (no DesignSync verb for this).
+
+## Dependencies
+- Blocks: M1-04, M1-05, M1-06 (need to verify `kitId` before any other op).
+- Blocked by: M1-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — happy path + both error paths.
+- [ ] Docs updated.
+- [ ] Manual verification via MCP inspector.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,priority:P0-critical,size:S",M1 — Kit + Project Foundation,,Todo,Urgent,2h
+[M1-04] Tool: list_files,"## Summary
+Implement `list_files` — returns the project's file tree with size, hash, and
+mtime. Used by clients to detect empty vs non-empty projects (drives ""atomic
+vs incremental"" upload path) and to confirm post-upload counts.
+
+## Context
+- Research report §3.1: `list_files({ kitId }): { path, size, hash,
+  lastModified }[]`.
+- Research report §1.4 confirmed claim: ""list_files — used to detect empty vs
+  non-empty projects (which drives 'atomic' vs 'incremental' upload path) and
+  to confirm post-upload counts"".
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__list_files`.
+- [ ] AC2 — Input: `{ kitId: string }`.
+- [ ] AC3 — Returns array of
+      `{ path: string, size: number, hash: string (""sha256-...""),
+      lastModified: string }`.
+- [ ] AC4 — Paths are forward-slash-delimited and project-root-relative
+      (never absolute).
+- [ ] AC5 — `hash` uses SHA-256 of file bytes, base64-encoded, prefixed
+      `sha256-` (matches Subresource Integrity format).
+- [ ] AC6 — Hidden files (dot-prefixed) are included — `.genie/recompile`
+      and `.genie/sync.json` must show up.
+- [ ] AC7 — `node_modules`, `.git`, and `dist` are excluded (configurable via
+      `.genieignore`).
+
+## Implementation Notes
+- File: `packages/server/src/tools/list_files.ts`.
+- Hash computation is expensive — for `GitHostStore`, reuse git's blob SHA
+  (translate `sha1-...` → `sha256-` via lookup if needed, or document the
+  difference).
+
+## Out of Scope
+- Glob filtering on input (the schema is just `kitId`).
+- Diff against a previous snapshot (that's `validate`).
+
+## Dependencies
+- Blocks: M1-05 (needs to know what files exist before reading them).
+- Blocked by: M1-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — empty project, non-empty project, ignore-pattern matching.
+- [ ] Docs updated.
+- [ ] Manual verification via MCP inspector.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,priority:P0-critical,size:S",M1 — Kit + Project Foundation,,Todo,Urgent,3h
+[M1-05] Tool: read_file (with 256 KiB cap),"## Summary
+Implement `read_file` — returns the content of a single file. Hard-capped at
+256 KiB per DesignSync's contract. The skill only ever uses it to fetch
+`.genie/sync.json` as the verification anchor, but the verb must be general.
+
+## Context
+- Research report §3.1: `read_file({ kitId, path }): { content: string }
+  // 256 KiB cap`.
+- Research report §1.4 confirmed claim: ""read_file — capped at 256 KiB; the
+  skill only ever uses it to fetch `.genie/sync.json` as the verification
+  anchor"".
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__read_file`.
+- [ ] AC2 — Input: `{ kitId: string, path: string }`.
+- [ ] AC3 — Returns `{ content: string, encoding: ""utf-8"" | ""base64"",
+      mimeType: string }`.
+- [ ] AC4 — Files > 256 KiB return MCP error `-32603` with message
+      `""File exceeds 256 KiB cap (actual: <N> bytes)""`.
+- [ ] AC5 — Binary files (per content-type detection) are returned as base64.
+- [ ] AC6 — Path traversal (`../` segments) raises
+      `InvalidPathError` and rejects the call.
+- [ ] AC7 — Unknown path returns MCP error `-32602`.
+
+## Implementation Notes
+- File: `packages/server/src/tools/read_file.ts`.
+- MIME detection via `mime-types` package.
+- Path traversal check: normalise + assert prefix matches project root.
+
+## Out of Scope
+- Range requests (no DesignSync verb supports this).
+- Server-side decompression (file is returned as-stored).
+
+## Dependencies
+- Blocks: M3-04 (anchor read).
+- Blocked by: M1-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — small file, exactly 256 KiB, over cap, binary, path
+      traversal.
+- [ ] Docs updated.
+- [ ] Manual verification via MCP inspector.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,priority:P0-critical,size:S",M1 — Kit + Project Foundation,,Todo,Urgent,3h
+[M1-06] Tool: create_kit,"## Summary
+Implement `create_kit` — creates a new UI kit owned by the
+caller; returns the `kitId` that `plan` will lock against. This
+is the first permission-prompted verb in the protocol.
+
+## Context
+- Research report §3.1: `create_kit({ name }): { kitId }`.
+- Research report §1.4 confirmed claim: ""create_kit — creates a new
+  UI kit owned by the user; returns the kitId to finalize
+  against"".
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__create_kit`.
+- [ ] AC2 — Input: `{ name: string }` (required); the name is the
+      human-readable display name, not the ID.
+- [ ] AC3 — Output: `{ kitId: string }`.
+- [ ] AC4 — `kitId` is a slug derived from `name` (lowercase, hyphens,
+      ASCII only) plus a 6-char random suffix to dedupe.
+- [ ] AC5 — Stamps `type: ""GENIE_KIT""` immutably.
+- [ ] AC6 — On `LocalFsStore`, creates the directory tree
+      `${GENIE_HOME}/kits/<kitId>/`.
+- [ ] AC7 — On `GitHostStore`, creates a new repo named `<kitId>`
+      under the configured org/owner with `private: true` by default.
+- [ ] AC8 — Returns `KitAlreadyExistsError` on collision (should be
+      impossible with the random suffix, but defensive).
+
+## Implementation Notes
+- File: `packages/server/src/tools/create_kit.ts`.
+- Name validation: max 64 chars, must match `[A-Za-z0-9 _-]+`.
+
+## Out of Scope
+- Importing an existing local directory as a kit (separate `import`
+  verb not in the v1 surface).
+- Kit deletion (no DesignSync verb).
+
+## Dependencies
+- Blocks: M1-07 (need `kitId` before plan).
+- Blocked by: M1-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — happy path, collision, invalid name.
+- [ ] Docs updated.
+- [ ] Manual verification via MCP inspector on both adapters.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,priority:P0-critical,size:S",M1 — Kit + Project Foundation,,Todo,Urgent,3h
+[M1-07] Tool: plan (capability grant boundary),"## Summary
+Implement `plan` — the **single user-visible permission grant** that
+locks `writes` (max 256 glob patterns, ≤ 3 wildcards each), `deletes`, and
+`localDir`. Returns a `planId` that downstream write/delete/register calls
+must present. Without a valid `planId`, those verbs are rejected.
+
+## Context
+- Research report §3.1 + §1.3: ""Plan boundary (the single permission grant) —
+  plan — locks `writes` (max 256 glob patterns, ≤3 wildcards each),
+  `deletes`, `localDir`"".
+- Confirmed claim: ""Calling write, delete, register, or unregister without a
+  valid `planId`, or with paths outside the plan, is rejected.""
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__plan`.
+- [ ] AC2 — Input: `{ kitId: string, writes: string[], deletes?: string[],
+      localDir?: string }`.
+- [ ] AC3 — Validates `writes.length ≤ 256` else
+      `TooManyWritesError`.
+- [ ] AC4 — Validates each glob pattern has ≤ 3 `*`/`**` wildcards else
+      `TooComplexGlobError`.
+- [ ] AC5 — `localDir` defaults to `process.cwd()` if omitted; must be an
+      existing directory; uploads may only read from inside it.
+- [ ] AC6 — Returns `{ planId: string }` (UUIDv4).
+- [ ] AC7 — Plans expire after 1 h of inactivity (configurable via
+      `GENIE_PLAN_TTL`).
+- [ ] AC8 — Plan state is persisted to
+      `${GENIE_HOME}/plans/<planId>.json` so it survives a server
+      restart.
+- [ ] AC9 — Concurrent `plan` calls on the same `kitId` from
+      different sessions are allowed (each gets its own `planId`).
+- [ ] AC10 — Emits a `plan.created` audit log line with `{ kitId, planId,
+      writeCount, deleteCount }` (no path contents).
+
+## Implementation Notes
+- File: `packages/server/src/tools/plan.ts` + `src/plans/`.
+- Globbing: `micromatch` with `dot: true`.
+- Path-inside-localDir check: resolve + assert prefix.
+- Server-side plan registry: `Map<planId, PlanState>` + JSON snapshot per
+  mutation.
+
+## Out of Scope
+- Mid-plan path additions (clients must re-finalize for new paths).
+- Plan revocation API (plans just expire).
+
+## Dependencies
+- Blocks: M1-08, M1-09, M1-12.
+- Blocked by: M1-06.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — happy path, 257-write rejection, 4-wildcard rejection,
+      localDir-escape rejection, TTL expiry, restart-survival.
+- [ ] Docs updated — `docs/04-tech-design-rfc.md` §3.1.
+- [ ] Manual verification via MCP inspector.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,area:mcp-server,priority:P0-critical,size:L",M1 — Kit + Project Foundation,,Todo,Urgent,10h
+"[M1-08] Tool: write_files (≤256 files/call, reads from localPath)","## Summary
+Implement `write_files` — every path must match a glob in the plan's `writes`.
+Max 256 files per call. Reads from `localPath` so file contents never enter
+model context. Also handles `data` (inline) and `encoding` for binary
+payloads. Implements the byte-cap retry pattern: on HTTP 500 halve the chunk
+size and retry.
+
+## Context
+- Research report §3.1: `write_files({ planId, files: { path, localPath?,
+  data?, encoding?, mimeType? }[] }): { writtenPaths: string[] }`.
+- §1.3 confirmed claim: ""write_files — every path must be in the plan's
+  `writes`. Max 256 files per call. The tool reads from `localPath` so
+  contents never enter the model context.""
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__write_files`.
+- [ ] AC2 — Input schema: see Summary.
+- [ ] AC3 — `files.length ≤ 256` enforced; else `TooManyFilesError`.
+- [ ] AC4 — Each `path` must match at least one glob in the plan's `writes`;
+      else `PathOutsidePlanError` with the offending path.
+- [ ] AC5 — `planId` validation: existence + not-expired.
+- [ ] AC6 — `localPath` is resolved against the plan's `localDir`; reads
+      outside are rejected.
+- [ ] AC7 — `data` (base64 or utf-8 per `encoding`) is the alternative input
+      mode; both `localPath` and `data` set ⇒ error.
+- [ ] AC8 — Returns `{ writtenPaths: string[] }` matching input order.
+- [ ] AC9 — On byte-cap overflow, return HTTP-equivalent error code `-32099`
+      with `{ retryWith: { maxFiles: <half> } }` in `data`.
+- [ ] AC10 — Atomic per-call: if any file fails after partial writes, the
+      whole call is rolled back (rename-to-temp + rename-back pattern).
+
+## Implementation Notes
+- File: `packages/server/src/tools/write_files.ts`.
+- Streaming reads (don't load full file into memory; pipe through hash).
+- Per-call transaction = write to `<projectRoot>/.genie-tmp/<callId>/`
+  then atomic rename per file.
+
+## Out of Scope
+- The 5-step atomic sequence (sentinel·chunks·deletes·sentinel·anchor) — that
+  lives in M3-05.
+- Conflict detection vs concurrent writes from another plan — out of scope
+  for v1; document as a known limitation.
+
+## Dependencies
+- Blocks: M3-05 (atomic sequence orchestrator).
+- Blocked by: M1-07.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — happy path, out-of-plan rejection, > 256 files,
+      localPath escape, byte-cap retry path, rollback on partial fail.
+- [ ] Docs updated.
+- [ ] Manual verification via MCP inspector with a 100-file plan.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,priority:P0-critical,size:L",M1 — Kit + Project Foundation,,Todo,Urgent,10h
+[M1-09] Tool: delete_files,"## Summary
+Implement `delete_files` — every path must be in the plan's `deletes`. Skill
+copies these verbatim from a diff file's `upload.deletePaths`. One known-good
+failure to silently retry past: deleting a path that doesn't exist remotely
+(floor-card components have no `_preview/` files).
+
+## Context
+- Research report §3.1: `delete_files({ planId, paths: string[] }):
+  { deletedPaths: string[] }`.
+- §1.3 confirmed claim: ""delete_files — every path must be in the plan's
+  `deletes`. … One known-good failure to retry past: a path that doesn't
+  exist remotely"".
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__delete_files`.
+- [ ] AC2 — Input: `{ planId: string, paths: string[] }`.
+- [ ] AC3 — Each `path` must match a glob in the plan's `deletes`; else
+      `PathOutsidePlanError`.
+- [ ] AC4 — Returns `{ deletedPaths: string[] }` listing what was actually
+      removed (excludes ""did-not-exist"" entries).
+- [ ] AC5 — A missing path is treated as a non-error and recorded in
+      `notFoundPaths` (returned alongside `deletedPaths`).
+- [ ] AC6 — Other errors (permission denied, etc.) fail the whole call.
+
+## Implementation Notes
+- File: `packages/server/src/tools/delete_files.ts`.
+- Sort paths longest-first so we delete files before their containing
+  directories (avoids ENOTEMPTY).
+
+## Out of Scope
+- Recursive directory delete (paths must be files, not directories).
+
+## Dependencies
+- Blocks: M3-05.
+- Blocked by: M1-07.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — happy path, missing path (silent retry), out-of-plan
+      rejection.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,priority:P0-critical,size:S",M1 — Kit + Project Foundation,,Todo,Urgent,3h
+[M1-12] Tool: validate — counter-persistence facet,"## Summary
+Implement the **counter-persistence facet** of genie's single `validate` verb
+(D-A merges the inherited `report_validate` + `validate_design_system` into one
+verb). This facet accepts aggregate counts after an upload and persists them
+for telemetry. The full-scan validator facet is M3-04.
+
+## Context
+- D-A (`00-decisions.md`): `report_validate` + `validate_design_system` →
+  one `validate` verb. This issue is the lightweight counter-push facet;
+  M3-04 is the full validator suite. Both are the same MCP verb.
+- Shape: `validate({ kitId, counts: { total, bad, thin,
+  variantsIdentical, iterations } })` — the advisory, telemetry-shaped path
+  (no `planId` required).
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__validate`.
+- [ ] AC2 — Input: `{ kitId: string, counts: { total: number, bad:
+      number, thin: number, variantsIdentical: number, iterations: number } }`.
+- [ ] AC3 — Persists the report to
+      `<projectRoot>/.genie/reports/<ISO-timestamp>.json`.
+- [ ] AC4 — Emits a Prometheus-shaped metric line per count
+      (`genie_validate_<field>{kitId=""…""} N`).
+- [ ] AC5 — Returns `{}`.
+- [ ] AC6 — Does NOT require a `planId` (read-side telemetry, not write).
+
+## Implementation Notes
+- File: `packages/server/src/tools/validate.ts` (shared with M3-04's facet).
+- Metrics emission via `prom-client` (registry exposed by M6-01).
+
+## Out of Scope
+- Visualisation (Grafana dashboard is M6-01).
+
+## Dependencies
+- Blocks: nothing.
+- Blocked by: M1-06.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`ref-genie-card.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-genie-card.svg) — advisory telemetry on validation states.
+
+**Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
+
+## Definition of Done
+- [ ] Tests added — happy path; metric values increment.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,priority:P1-high,size:S",M1 — Kit + Project Foundation,,Todo,High,3h
+[M1-13] Plan-vs-write guard middleware,"## Summary
+Centralise the plan-vs-write guard into one middleware so every write/delete/
+register/unregister call funnels through identical validation. Without this,
+the four verbs reimplement the same checks four times and the contract drifts.
+
+## Context
+- Research report §1.3 confirmed claim: ""Calling write, delete, register, or
+  unregister without a valid `planId`, or with paths outside the plan, is
+  rejected.""
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/server/src/middleware/plan-guard.ts` exports a
+      `withPlanGuard(handler)` higher-order function.
+- [ ] AC2 — Guard checks: (a) `planId` present, (b) `planId` exists, (c)
+      `planId` not expired, (d) every input `path` matches a glob in the
+      plan's `writes` (or `deletes` for delete_files).
+- [ ] AC3 — On failure, returns MCP error `-32602` with a structured
+      `data.reason` field for client introspection.
+- [ ] AC4 — M1-08, M1-09 all wrap their handlers with this
+      middleware (refactor commit).
+- [ ] AC5 — Guard tests live alongside the middleware
+      (`plan-guard.test.ts`).
+- [ ] AC6 — Logs a structured `plan.guard.reject` event with `{ planId,
+      reason, path? }` on every rejection (no contents leaked).
+
+## Implementation Notes
+- File: `packages/server/src/middleware/plan-guard.ts`.
+- Use the existing plan registry from M1-07.
+
+## Out of Scope
+- Cross-plan deduplication (orthogonal concern).
+
+## Dependencies
+- Blocks: nothing (refactor).
+- Blocked by: M1-08, M1-09.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — guard middleware unit tests cover all rejection paths.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-server,priority:P0-critical,size:M",M1 — Kit + Project Foundation,,Todo,Urgent,5h
+[M1-14] M1 integration test suite (19-tool conformance),"## Summary
+End-to-end conformance test suite that walks genie's kit protocol read → plan
+→ write/delete sequence and the project/blueprint workflow. Runs against both
+`LocalFsStore` and `GitHostStore`.
+
+## Context
+- Research report §1.3 confirmed claim documents the strict ordering: ""Required
+  ordering: list/read → plan → write/delete. Calling write, delete,
+  register, or unregister without a valid `planId`, or with paths outside the
+  plan, is rejected.""
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/e2e/test/m1-conformance.test.ts`.
+- [ ] AC2 — Spins up the MCP server in-process via
+      `@modelcontextprotocol/sdk`'s test transport.
+- [ ] AC3 — Walks the full kit sequence: `create_kit` → `list_files`
+      (empty) → `plan` → `write_files` (5 files) →
+      `list_files` (5 entries) → `read_file` round-trip → `delete_files` →
+      `validate`.
+- [ ] AC4 — Walks the full project sequence: `create_project` with
+      `kind: ""blueprint""` → `create_project` from blueprint → `bind_kit` →
+      `list_projects` → `get_project` → `conjure_screen` with a stubbed model →
+      `delete_project`.
+- [ ] AC5 — Repeats the suite against `GitHostStore` (using a Docker-Compose
+      Gitea instance in CI as the reference git host).
+- [ ] AC6 — Negative path: writing without `planId` returns `-32602`; writing
+      outside plan returns `-32602`.
+- [ ] AC7 — Negative path: `conjure_screen` with no bound kit and a kit-specific
+      prompt returns `ERR_PROJECT_KIT_REQUIRED`.
+- [ ] AC8 — Test report uploaded as CI artefact.
+- [ ] AC9 — Suite runs in < 60 s wall-clock.
+
+## Implementation Notes
+- Use the testcontainers `gitea/gitea:latest` image for the Gitea suite.
+- Mock the LLM endpoint with a stub server (no real model calls in M1).
+- Coverage gate ≥ 85 % on `packages/server/src/tools/`.
+
+## Out of Scope
+- Production LLM / `conjure` quality tests (M2-09).
+- Manifest validator tests (M3-06).
+
+## Dependencies
+- Blocks: M1 milestone close.
+- Blocked by: M1-02 … M1-13, M1-16 … M1-21.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — the suite **is** the deliverable.
+- [ ] Docs updated — CONTRIBUTING describes how to run integration tests
+      locally.
+- [ ] Manual verification — `pnpm e2e` green.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:test,area:mcp-tools,priority:P0-critical,size:L",M1 — Kit + Project Foundation,,Todo,Urgent,10h
+[M1-15] Tool: list_components,"## Summary
+Implement `list_components` MCP tool — one of genie's 13 kit/component core verbs.
+Read-only enumeration of components within a kit, optionally filtered by
+group. Backs every UI that needs to render a component picker, the manifest
+compiler's seed list, and the harness smoke tests that assert ""library X has
+N components"".
+
+## Context
+- D-A (`00-decisions.md`): `list_components` is a kept verb in genie's kit/component
+  file protocol (the read/enumeration family, not the generation family).
+- Research report §3.1 tool surface: `list_components({ kitId, group? }):
+  { name, group, path, viewport, hash, lastModified }[]`.
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name is `mcp__genie__list_components` (Claude
+      rewrite rule applied).
+- [ ] AC2 — Description ≤ 2 KB (Claude truncation limit).
+- [ ] AC3 — JSON Schema is Draft 7 only — no `anyOf` / `$ref` chains.
+- [ ] AC4 — Input: `{ kitId: string, group?: string }`. When `group` is
+      omitted, returns every component across all groups.
+- [ ] AC5 — Returns an array of
+      `{ name: string, group: string, path: string, viewport: string,
+      hash: string, lastModified: string (ISO 8601) }`.
+- [ ] AC6 — **Deterministic ordering**: results sorted by `group` ASC, then
+      `name` ASC; ties broken by `path`.
+- [ ] AC7 — Respects the 256-result pagination cap shared with `list_files` /
+      `list_kits`; cursor returned in `_meta.nextCursor` when truncated.
+- [ ] AC8 — Returns `[]` (not `null`, not error) when the project has no
+      components or the `group` filter matches nothing.
+- [ ] AC9 — Backed by `KitStore.listComponents({ kitId, group })`
+      (shared abstraction; both LocalFsStore and GitHostStore implement).
+- [ ] AC10 — Integration test loads a 50-component fixture spanning 5 groups
+      and asserts: total count, group-filtered count, deterministic
+      ordering, and pagination cursor round-trip.
+
+## Implementation Notes
+- File: `packages/server/src/tools/list_components.ts`.
+- Register in `packages/server/src/tools/index.ts`.
+- Description template from research report §3.1 — copy verbatim where ≤ 2 KB.
+- `hash` is the SHA-256 of the preview HTML; sourced from the same manifest
+  pipeline M3-03 (`.genie/manifest.json`) feeds.
+- `viewport` mirrors the value the @genie regex captures from the first-line
+  marker (M3-01).
+
+## Out of Scope
+- Search/full-text filter (v1 client-side only — UI can grep the returned
+  array).
+- Component metadata beyond the 6-field shape (revisit in v2 if a harness
+  needs renderer hints or asset deps).
+
+## Dependencies
+- Blocks: M3-03 (manifest compiler reuses the same ordering) ·
+  M4-03 (iframe grid renderer reads this for its source list).
+- Blocked by: M1-01 (storage abstraction), M1-02 (shared schema patterns).
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — response feeds the browser grouping.
+
+**Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
+
+## Definition of Done
+- [ ] Tests added — unit (mocked store) + integration (50-component fixture
+      asserting count, group filter, ordering, pagination cursor).
+- [ ] Docs updated — `docs/plan/04-tech-design-rfc.md` §3.1 tool list and §6.2
+      genie verb enumeration both include `list_components`.
+- [ ] Manual verification — call from `npx @modelcontextprotocol/inspector`
+      against a fixture project; verify ordering + pagination.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,priority:P0-critical,size:S",M1 — Kit + Project Foundation,,Todo,Urgent,3h
+[M1-16] Tool: list_projects,"## Summary
+Implement `list_projects`, the read-only project discovery tool for workspaces and reusable blueprint projects.
+
+## Context
+- D-F (`00-decisions.md`): a project is the screen/app workspace that binds one or more kits; a blueprint is a reusable project with `kind: ""blueprint""`.
+- PRD DS-021 defines the M1 behavior.
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name is `mcp__genie__list_projects`.
+- [ ] AC2 — Description ≤ 2 KB and JSON Schema is Draft 7 only.
+- [ ] AC3 — Input is `{}`.
+- [ ] AC4 — Returns `projects[]` with `id`, `name`, `kind`, `defaultKitId`, `kitBindings`, `updatedAt`, and `canEdit`.
+- [ ] AC5 — Includes both `workspace` and `blueprint` projects.
+- [ ] AC6 — Returns `[]` when no projects exist.
+- [ ] AC7 — Local results still return with `_meta.warnings` when a git-host backend is unreachable.
+- [ ] AC8 — Results are deterministically sorted by `kind`, then `name`, then `id`.
+
+## Implementation Notes
+- File: `packages/server/src/tools/list_projects.ts`.
+- Backed by `ProjectStore.listProjects()`.
+- Reuse pagination/warning patterns from `list_kits`.
+
+## Out of Scope
+- Full-text search and project grouping.
+- Hosted preview gallery.
+
+## Dependencies
+- Blocks: M1-17, M1-20, M1-21.
+- Blocked by: M1-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added for empty, local, mixed-kind, and unreachable-backend cases.
+- [ ] Docs updated if the schema changes.
+- [ ] Manual verification — `list_projects` returns a fixture workspace and blueprint.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,area:projects,priority:P0-critical,size:S",M1 — Kit + Project Foundation,,Todo,Urgent,3h
+[M1-17] Tool: get_project,"## Summary
+Implement `get_project`, the metadata read tool for workspace and blueprint project manifests.
+
+## Context
+- Projects persist their own `.genie/project.json`; project state is not nested inside a kit.
+- PRD DS-022 defines the M1 behavior.
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name is `mcp__genie__get_project`.
+- [ ] AC2 — Input: `{ projectId: string }`.
+- [ ] AC3 — Given a valid project, returns `id`, `name`, `kind`, `defaultKitId`, `kitBindings`, `screens`, `canEdit`, and optional `sourceBlueprintId`.
+- [ ] AC4 — Given a blueprint project, returns `kind: ""blueprint""` with no special-case tool family.
+- [ ] AC5 — Given an invalid id, raises `ERR_PROJECT_NOT_FOUND` with the id echoed.
+- [ ] AC6 — Read-only projects return `canEdit: false`.
+
+## Implementation Notes
+- File: `packages/server/src/tools/get_project.ts`.
+- Backed by `ProjectStore.getProject(projectId)`.
+- Share schema helpers with `list_projects`.
+
+## Out of Scope
+- Loading screen file contents; use `read_file` once project-targeted file reads are introduced.
+
+## Dependencies
+- Blocks: M1-20, M1-21.
+- Blocked by: M1-01, M1-16.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added for workspace, blueprint, missing, and read-only manifests.
+- [ ] Docs updated if the schema changes.
+- [ ] Manual verification — `get_project` reads a fixture workspace and blueprint.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,area:projects,priority:P0-critical,size:S",M1 — Kit + Project Foundation,,Todo,Urgent,3h
+[M1-18] Tool: create_project,"## Summary
+Implement `create_project`, which creates blank workspaces, reusable blueprint projects, and workspaces instantiated from blueprints.
+
+## Context
+- D-F: a blueprint is technically a reusable project, modeled as `project.kind = ""blueprint""`.
+- PRD DS-023 defines the M1 behavior.
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name is `mcp__genie__create_project`.
+- [ ] AC2 — Input: `{ name, kind, fromBlueprintId?, kitBindings? }`, where `kind` is `""workspace""` or `""blueprint""`.
+- [ ] AC3 — Blank workspace creation writes `.genie/project.json` with `kind: ""workspace""`.
+- [ ] AC4 — Blank blueprint creation writes `.genie/project.json` with `kind: ""blueprint""`.
+- [ ] AC5 — Workspace-from-blueprint copies starter files and kit bindings, and records `sourceBlueprintId`.
+- [ ] AC6 — Later edits to the source blueprint do not silently mutate derived workspaces.
+- [ ] AC7 — Duplicate names raise `ERR_PROJECT_EXISTS` with a suggested slug.
+- [ ] AC8 — Invalid `fromBlueprintId` raises `ERR_BLUEPRINT_NOT_FOUND`.
+
+## Implementation Notes
+- File: `packages/server/src/tools/create_project.ts`.
+- Backed by `ProjectStore.createProject(args)`.
+- Do not create a separate blueprint store or blueprint tool namespace.
+
+## Out of Scope
+- Syncing future blueprint changes into derived workspaces.
+- Rich preview rendering for full-page screens.
+
+## Dependencies
+- Blocks: M1-20, M1-21.
+- Blocked by: M1-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added for workspace, blueprint, from-blueprint, duplicate, and missing-blueprint cases.
+- [ ] Docs updated if the schema changes.
+- [ ] Manual verification — create a workspace and a blueprint locally.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,area:projects,priority:P0-critical,size:M",M1 — Kit + Project Foundation,,Todo,Urgent,6h
+[M1-19] Tool: delete_project,"## Summary
+Implement `delete_project`, the explicit removal tool for workspace and blueprint project targets.
+
+## Context
+- Projects are first-class targets with their own `.genie/project.json`.
+- Deleting a blueprint must not delete workspaces that were previously instantiated from it.
+- PRD DS-024 defines the M1 behavior.
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name is `mcp__genie__delete_project`.
+- [ ] AC2 — Input: `{ projectId: string }`.
+- [ ] AC3 — Given an editable project, deletes it and returns `{ deletedProjectId }`.
+- [ ] AC4 — Given a missing project, succeeds idempotently and reports the missing id in `_meta.warnings`.
+- [ ] AC5 — Given a read-only project, raises `ERR_PROJECT_READONLY`.
+- [ ] AC6 — Given a blueprint with derived workspaces, only the blueprint is deleted.
+
+## Implementation Notes
+- File: `packages/server/src/tools/delete_project.ts`.
+- Backed by `ProjectStore.deleteProject(projectId)`.
+- Match `delete_files` idempotency style for missing targets.
+
+## Out of Scope
+- Trash/restore UI.
+- Cascade delete of derived workspaces.
+
+## Dependencies
+- Blocks: M1-14.
+- Blocked by: M1-01, M1-18.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added for success, missing, read-only, and blueprint-with-derived-workspaces cases.
+- [ ] Docs updated if the schema changes.
+- [ ] Manual verification — deleting a fixture project leaves unrelated workspaces intact.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,area:projects,priority:P0-critical,size:S",M1 — Kit + Project Foundation,,Todo,Urgent,3h
+[M1-20] Tool: bind_kit,"## Summary
+Implement `bind_kit`, which attaches UI kits to projects and optionally marks one as the default for screen generation.
+
+## Context
+- D-F default-kit resolution: explicit kit, project default, sole reachable kit, then stop and ask before kit-specific generation.
+- PRD DS-025 defines the M1 behavior.
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name is `mcp__genie__bind_kit`.
+- [ ] AC2 — Input: `{ projectId, kitId, default?: boolean }`.
+- [ ] AC3 — Given a valid project and kit, writes the binding to `.genie/project.json`.
+- [ ] AC4 — Given `default: true`, sets `defaultKitId` and clears default status from any previous binding.
+- [ ] AC5 — Given an invalid `projectId`, raises `ERR_PROJECT_NOT_FOUND`.
+- [ ] AC6 — Given an invalid `kitId`, raises `ERR_KIT_NOT_FOUND`.
+- [ ] AC7 — Given a blueprint project, the binding is allowed and copies into derived workspaces.
+- [ ] AC8 — Binding the same kit twice is idempotent.
+
+## Implementation Notes
+- File: `packages/server/src/tools/bind_kit.ts`.
+- Backed by `ProjectStore.bindKit({ projectId, kitId, default })`.
+- Reuse `get_kit` validation before writing the project manifest.
+
+## Out of Scope
+- Per-screen kit overrides beyond the explicit `kitId` request field.
+- ACL and sharing policy.
+
+## Dependencies
+- Blocks: M1-21.
+- Blocked by: M1-01, M1-03, M1-17, M1-18.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added for new binding, default replacement, duplicate binding, invalid project, invalid kit, and blueprint binding.
+- [ ] Docs updated if the schema changes.
+- [ ] Manual verification — bind a kit to a fixture workspace and blueprint.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,area:projects,priority:P0-critical,size:M",M1 — Kit + Project Foundation,,Todo,Urgent,5h
+[M1-21] Tool: conjure_screen,"## Summary
+Implement `conjure_screen`, the M1 project-aware generation contract for screen artifacts.
+
+## Context
+- D-F: screens use a project and resolve kits by explicit request, project default, then sole reachable binding.
+- Blueprints are reusable projects, not a separate tool family.
+- PRD DS-026 defines the M1 behavior.
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name is `mcp__genie__conjure_screen`.
+- [ ] AC2 — Input: `{ projectId, prompt, kitId?, blueprintId?, framework?, model? }`.
+- [ ] AC3 — Resolves kit in order: explicit `kitId`, project `defaultKitId`, then sole reachable binding.
+- [ ] AC4 — Given no bound kit and a prompt that asks for kit-specific components, raises `ERR_PROJECT_KIT_REQUIRED`.
+- [ ] AC5 — Given no bound kit and a prompt for basic structure, may generate framework-neutral screen structure but must not pretend it used a kit.
+- [ ] AC6 — Given `blueprintId`, seeds the screen from that reusable project template.
+- [ ] AC7 — On success, records the screen in `.genie/project.json` and returns `screenId`, `files`, and `usage`.
+- [ ] AC8 — Tests use a stubbed model endpoint; no real model call is required for M1 CI.
+
+## Implementation Notes
+- File: `packages/server/src/tools/conjure_screen.ts`.
+- Backed by `ProjectStore.recordScreen()` and the same generation-client interface later deepened by M2.
+- Keep output as an artifact set; richer full-page preview/review UX is DS-080.
+
+## Out of Scope
+- Production prompt quality evaluation.
+- Region-targeted full-page refinement.
+- Freeform drag-to-reflow canvas.
+
+## Dependencies
+- Blocks: M1-14.
+- Blocked by: M1-01, M1-17, M1-18, M1-20.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added for explicit/default/sole kit resolution, missing-kit failure, kitless basic structure, blueprint seed, and manifest recording.
+- [ ] Docs updated if the schema changes.
+- [ ] Manual verification — `conjure_screen` records a fixture screen with a stubbed model.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,area:projects,area:generation,priority:P0-critical,size:L",M1 — Kit + Project Foundation,,Todo,Urgent,8h
+[M2-01] LLM client wrapper (OpenAI-compatible endpoint),"## Summary
+Add an `openai` SDK client pointed at an operator-configured OpenAI-compatible
+endpoint, wire it up with `GENIE_LLM_BASE_URL` / `GENIE_LLM_API_KEY` env vars,
+and ship a thin `llm.ts` module that exposes `createChatCompletion(input)` with
+retry/backoff. All future generation verbs call through this module. LiteLLM is
+the reference gateway, but Ollama / OpenAI / vLLM / any compatible endpoint work
+the same way (D-H) — no provider URL baked in.
+
+## Context
+- D-H (`00-decisions.md`): genie calls a **configurable OpenAI-compatible
+  chat-completions endpoint**; the operator owns the model, budget, and rate
+  limits. No private URL or IP in the code or docs.
+- Reference implementation:
+  ```ts
+  import OpenAI from ""openai"";
+  const client = new OpenAI({
+    baseURL: process.env.GENIE_LLM_BASE_URL!,
+    apiKey:  process.env.GENIE_LLM_API_KEY!,
+  });
+  ```
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/server/src/llm/client.ts` exports a singleton
+      `llmClient` constructed from env vars.
+- [ ] AC2 — Missing `GENIE_LLM_BASE_URL` or `GENIE_LLM_API_KEY` ⇒ fail fast at
+      startup with `MissingLLMConfigError`.
+- [ ] AC3 — No hardcoded default base URL — the operator MUST set it (there is
+      no universal default endpoint). The error message names both env vars.
+- [ ] AC4 — `createChatCompletion(input)` wraps `client.chat.completions.create`
+      with structured logging (`{ model, promptTokens, completionTokens,
+      latencyMs }`).
+- [ ] AC5 — Reads `GENIE_LLM_REQUEST_TIMEOUT_MS` (default 120 000).
+- [ ] AC6 — Test against a stub server confirms request shape (`model`,
+      `messages`, `response_format`, `Authorization` header).
+
+## Implementation Notes
+- File: `packages/server/src/llm/client.ts`.
+- `openai` v4+ supports `baseURL` override natively.
+- Do NOT hardcode the API key or URL — read both from env at construction time.
+
+## Out of Scope
+- Retry/backoff (M2-06).
+- Structured-output schema validation (M2-07).
+- Per-tool generation logic (M2-03, M2-04).
+
+## Dependencies
+- Blocks: M2-03, M2-04.
+- Blocked by: M0-04.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — stub server, config-missing path.
+- [ ] Docs updated — README env-var section.
+- [ ] Manual verification — `pnpm dev` boots, real chat completion succeeds.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:llm,priority:P0-critical,size:M",M2 — LLM Generation Surface,,Todo,Urgent,5h
+[M2-02] Define COMPONENT_SCHEMA (JSON Schema for structured output),"## Summary
+Codify the JSON Schema that `conjure` will demand from the model
+(via `response_format: { type: ""json_schema"", json_schema: COMPONENT_SCHEMA }`).
+Schema must describe the file set the bundled `design-sync` skill expects
+under `components/<group>/<Name>/`: `<Name>.jsx`, `<Name>.tsx`, `<Name>.d.ts`,
+`<Name>.prompt.md`, `<Name>.html`, `meta.json`.
+
+## Context
+- Research report §3.2 outlines the call shape but leaves
+  `COMPONENT_SCHEMA` to us. §3.3 documents the file layout — the schema is
+  the machine-readable mirror.
+- §2.2 confirmed regex `/^<!--\s*@genie\s+group=""[^""]*""[^>]*-->/` — the
+  schema must constrain the first line of `<Name>.html`.
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/server/src/llm/schema.ts` exports
+      `COMPONENT_SCHEMA: JSONSchema7`.
+- [ ] AC2 — Schema is Draft 7 only (no `anyOf` discriminator pattern, no
+      `$ref` chains beyond a single level).
+- [ ] AC3 — Top-level shape:
+      `{ componentName: string, group: string, files: Array<{ path: string,
+      content: string, mimeType: string }>, manifestEntry: ManifestEntry }`.
+- [ ] AC4 — `path` constrained by pattern
+      `^components/[a-z0-9-]+/[A-Z][A-Za-z0-9]+/[A-Za-z0-9._-]+$`.
+- [ ] AC5 — At least one file in `files` must be a
+      `<Name>.html` whose `content` begins with a string matching the
+      `@genie` regex (validated post-hoc by M3-01, not by the schema).
+- [ ] AC6 — `ManifestEntry` includes `viewport: { width: number, height:
+      number }`, `subtitle?: string`, `tags?: string[]`.
+- [ ] AC7 — Schema exported as both a TypeScript type (via `json-schema-to-ts`)
+      and a JSON file for downstream consumers.
+
+## Implementation Notes
+- File: `packages/server/src/llm/schema.ts` + emitted
+  `packages/server/dist/schemas/component.schema.json`.
+- Keep nesting shallow — LiteLLM's structured-output passthrough to Anthropic
+  via tool-use may not handle deep `$ref` chains.
+
+## Out of Scope
+- Vue / HTML frameworks (v1 = React only; framework switch in M2-08).
+
+## Dependencies
+- Blocks: M2-03, M2-04, M2-07.
+- Blocked by: M2-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — schema validates a known-good fixture; rejects 3
+      known-bad fixtures.
+- [ ] Docs updated — `docs/04-tech-design-rfc.md` §3.2.
+- [ ] Manual verification — `ajv validate` against fixtures.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:llm,priority:P0-critical,size:M",M2 — LLM Generation Surface,,Todo,Urgent,4h
+[M2-03] Tool: conjure,"## Summary
+Implement `conjure` — genie's headline verb. Takes a natural-
+language prompt + optional reference image/URL, returns the file set defined
+by `COMPONENT_SCHEMA`. genie's take on canvas-side generation lives here.
+
+## Context
+- Research report §3.1: `conjure({ kitId, kit, prompt, group?,
+  refImageDataUrl?, refUrl?, framework?: ""react"" | ""vue"" | ""html"", model?:
+  ""anthropic/claude-sonnet-4-6"" | ... }): { componentName, files: { path,
+  content }[], manifestEntry }`.
+- §6 honest uncertainty: ""The canvas-side generation loop … prompt shape,
+  per-element artifact format, tool catalog, inline-comment edit round-trip
+  protocol — is not documented anywhere public. Anthropic publishes no spec.
+  This is the real R&D cost.""
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__conjure`.
+- [ ] AC2 — Input: `{ kitId: string, kit: string, prompt: string, group?:
+      string, refImageDataUrl?: string, refUrl?: string, framework?:
+      ""react"" | ""vue"" | ""html"", model?: string }`.
+- [ ] AC3 — Default `framework` = `""react""`; default `model` =
+      `""design-default""` (resolved by the configured endpoint or gateway).
+- [ ] AC4 — Calls `llmClient.createChatCompletion` with `response_format:
+      { type: ""json_schema"", json_schema: COMPONENT_SCHEMA }` (M2-02).
+- [ ] AC5 — System prompt lives in
+      `packages/server/src/llm/prompts/generate-component.system.md` and is
+      versioned (commit hash logged on every call).
+- [ ] AC6 — If `refImageDataUrl` is set, attach as a
+      vision input (`messages[0].content = [{type: ""image"", ...}]`).
+- [ ] AC7 — If `refUrl` is set, fetch + inline (warn if > 1 MB).
+- [ ] AC8 — Output validated against `COMPONENT_SCHEMA`; on failure, retry
+      once with the validation error appended to the user prompt.
+- [ ] AC9 — Returns `{ componentName, files, manifestEntry }`. Does NOT call
+      `write_files` itself — that's the caller's job (keeps generation pure).
+- [ ] AC10 — Logs `{ model, promptTokens, completionTokens, latencyMs,
+      componentName }` per call.
+
+## Implementation Notes
+- File: `packages/server/src/tools/conjure.ts`.
+- System prompt v1: take from
+  `https://github.com/anthropics/skills/tree/main/canvas-design` if licence
+  allows; otherwise hand-author.
+- 80 % of the engineering effort here is in iterating on the system prompt.
+  Track edits in `prompts/CHANGELOG.md`.
+
+## Out of Scope
+- Refinement / inline-comment edits (M2-04).
+- Storybook-format output (deferred to v2).
+
+## Dependencies
+- Blocks: M2-09, M5 smoke tests.
+- Blocked by: M2-01, M2-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`00-front-door.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/00-front-door.svg) — the GENERATE moment — accent applies here.
+
+**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
+
+**Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
+
+## Definition of Done
+- [ ] Tests added — unit (stub LLM) + integration (real LLM endpoint with $5 cap).
+- [ ] Docs updated.
+- [ ] Manual verification — generate ""primary button"" against design-default.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,area:llm,priority:P0-critical,size:L",M2 — LLM Generation Surface,,Todo,Urgent,12h
+[M2-04] Tool: refine (with optional region rect),"## Summary
+Implement `refine` — the iterate-on-an-existing-component verb.
+Takes an `instruction` (free-form text like ""make the border radius softer"")
+and an optional `region: { x, y, w, h }` rect for canvas-style ""fix this
+specific element"" edits. Returns a unified diff plus the updated files.
+
+## Context
+- Research report §3.1: `refine({ kitId, componentName,
+  instruction, region?: { x, y, w, h } }): { diff: string, files: { path,
+  content }[] }`.
+- §6 substitute for ""canvas-side generation loop"": ""Build your own surface
+  from scratch — start with a single `refine` tool that takes an
+  `instruction` + optional `region` rect, returns a diff.""
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__refine`.
+- [ ] AC2 — Input schema: see Summary.
+- [ ] AC3 — Loads the current files for `componentName` via
+      `KitStore.getFile` (one call per file in the manifestEntry).
+- [ ] AC4 — Builds a prompt that includes: original `<Name>.tsx`, original
+      `<Name>.html`, the `instruction`, and (if `region`) a rendered crop of
+      the preview at those coords.
+- [ ] AC5 — Output: a unified diff in `{ diff }` plus the full updated files
+      in `{ files }`. Diff is informational; files are the source of truth.
+- [ ] AC6 — Validated against `COMPONENT_SCHEMA` (M2-02) — same retry-once
+      pattern as M2-03.
+- [ ] AC7 — Region cropping uses headless Chromium via Playwright (M3-02's
+      validator setup is a peer dependency).
+- [ ] AC8 — Logs `{ componentName, hasRegion, model, promptTokens,
+      completionTokens, latencyMs }`.
+
+## Implementation Notes
+- File: `packages/server/src/tools/refine.ts`.
+- Region crop is implemented as a tiny helper that renders the preview HTML
+  in Playwright, screenshots the rect, and base64-encodes for vision input.
+- Use `diff` package for the unified-diff output.
+
+## Out of Scope
+- Multi-region edits (single region for v1).
+- Voice / sketch inputs.
+
+## Dependencies
+- Blocks: nothing critical.
+- Blocked by: M2-03 (shares the system prompt scaffolding).
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the REFINE moment — sliders + region rect.
+
+**Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
+
+## Definition of Done
+- [ ] Tests added — unit + integration with region.
+- [ ] Docs updated.
+- [ ] Manual verification — refine an existing button's border radius.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,area:llm,priority:P1-high,size:L",M2 — LLM Generation Surface,,Todo,High,10h
+[M2-05] Model alias config (reference: LiteLLM model_list),"## Summary
+Ship a reference `model_list` config (LiteLLM-style — the reference gateway)
+and document it so operators can reproduce or adapt it to their own
+OpenAI-compatible endpoint (D-H). Aliases the generation verbs use:
+`design-default` → a Sonnet-class model, `design-best` → an Opus-class model,
+`design-local` → a local model (e.g. Ollama Qwen). Operators map these aliases
+to whatever their endpoint serves.
+
+## Context
+- D-H (`00-decisions.md`): the LLM endpoint is configurable; LiteLLM is the
+  reference but not required. Aliases are operator-mapped, not hardcoded.
+- Reference YAML (LiteLLM example):
+  ```yaml
+  model_list:
+    - model_name: design-default
+      litellm_params: { model: anthropic/claude-sonnet-4-6, api_key: ... }
+    - model_name: design-best
+      litellm_params: { model: anthropic/claude-opus-4-8, ... }
+    - model_name: design-local
+      litellm_params: { model: ollama/qwen3-coder:32b, api_base: ... }
+  ```
+
+## Acceptance Criteria
+- [ ] AC0 — Confirm the operator's actual model catalog (via the endpoint's
+      `/v1/models`) before configuring aliases — placeholder model IDs below
+      (`claude-opus-4-8`, `qwen3-coder:32b`) must match real catalog entries;
+      substitute the actual current names.
+- [ ] AC1 — File `deploy/litellm/config.yaml` checked into the repo as the
+      reference example (operators adapt it to their endpoint).
+- [ ] AC2 — Three aliases defined; passthrough secret refs use
+      `os.environ/ANTHROPIC_API_KEY` and `os.environ/OLLAMA_API_BASE`.
+- [ ] AC3 — Per-key budget block: each MCP-server caller gets 50 USD / month
+      hard cap (configurable per-deployment).
+- [ ] AC4 — Per-key rate limit: 20 RPM, 200 KTPM (matches
+      `claude-sonnet-4-6` tier defaults).
+- [ ] AC5 — Docs include the `litellm proxy --config
+      deploy/litellm/config.yaml` reload command.
+
+## Implementation Notes
+- Path: `deploy/litellm/config.yaml`.
+- Reference: <https://docs.litellm.ai/docs/proxy/users>.
+
+## Out of Scope
+- Provisioning a gateway itself; this issue only ships the reference alias config.
+
+## Dependencies
+- Blocks: nothing.
+- Blocked by: M2-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — N/A (config file).
+- [ ] Docs updated — `docs/plan/06-operations-runbook.md`.
+- [ ] Manual verification — restart LiteLLM, hit `/v1/models`, see 3 aliases.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:infra,area:llm,priority:P1-high,size:S",M2 — LLM Generation Surface,,Todo,High,3h
+"[M2-06] Retry/backoff for LLM endpoint calls (exponential, jittered)","## Summary
+Add retry/backoff middleware around `llmClient.createChatCompletion` for
+transient failures (429 rate limit, 502/503/504, network ECONNRESET).
+Exponential backoff with jitter, max 3 retries, surface a typed
+`RateLimitedError` so callers can react.
+
+## Context
+- OpenAI-compatible gateways commonly pass through provider 429 responses with
+  `Retry-After` headers; the client must honour them.
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/server/src/llm/retry.ts` exports
+      `withRetry(handler, opts)`.
+- [ ] AC2 — Retries on: HTTP 429, 5xx, network errors (`ECONNRESET`,
+      `ETIMEDOUT`). Does NOT retry on: 4xx (other), schema validation fails.
+- [ ] AC3 — Honours `Retry-After` header when present.
+- [ ] AC4 — Backoff: base 1 s, cap 30 s, jitter ±20 %.
+- [ ] AC5 — Max 3 retries total (configurable via
+      `GENIE_LLM_RETRY_MAX`).
+- [ ] AC6 — On exhaustion, throws typed `RateLimitedError | TransientError`.
+- [ ] AC7 — Each attempt logged with `{ attempt, status, retryAfter }`.
+
+## Implementation Notes
+- File: `packages/server/src/llm/retry.ts`.
+- `M2-01`'s `createChatCompletion` is wrapped: `withRetry(createChatCompletion)`.
+
+## Out of Scope
+- Circuit breaker (out of scope for v1).
+- Cross-model fallback (use `design-best` if `design-default` fails) — defer
+  to v2.
+
+## Dependencies
+- Blocks: nothing critical.
+- Blocked by: M2-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — 429 with Retry-After, transient 5xx, ECONNRESET,
+      exhausted retries.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:llm,priority:P1-high,size:S",M2 — LLM Generation Surface,,Todo,High,3h
+[M2-07] Structured-output validation (Ajv strict mode),"## Summary
+Wrap every LLM completion with strict Ajv validation against
+`COMPONENT_SCHEMA`. On failure, build a structured `SchemaValidationError`
+with the failing path so M2-03 / M2-04 can retry once with the error
+appended to the prompt.
+
+## Context
+- Research report §3.2 says ""LiteLLM passes structured-output through to
+  Anthropic via tool-use and to OpenAI via response_format natively"" — but
+  models still drift. Client-side validation is mandatory.
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/server/src/llm/validate.ts` exports
+      `validateComponent(output: unknown): ValidatedComponent`.
+- [ ] AC2 — Uses Ajv with `{ strict: true, allErrors: true }`.
+- [ ] AC3 — On failure, throws `SchemaValidationError` with `errors:
+      ErrorObject[]` attached.
+- [ ] AC4 — Validates the `@genie` regex against the first line of any
+      `<Name>.html` file in the output (cross-check vs M3-01 regex source).
+- [ ] AC5 — Compiles the schema once at module load — not per call.
+- [ ] AC6 — Test fixtures: 3 valid + 5 invalid (missing field, wrong type,
+      bad path pattern, missing `@genie`, ManifestEntry without viewport).
+
+## Implementation Notes
+- File: `packages/server/src/llm/validate.ts`.
+- Reuse the regex from M3-01's package so the two stay in sync.
+
+## Out of Scope
+- Auto-repair of malformed output (single retry only — repair is the model's
+  job, not ours).
+
+## Dependencies
+- Blocks: M2-03 (retry path), M2-04.
+- Blocked by: M2-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — fixtures.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:llm,priority:P0-critical,size:S",M2 — LLM Generation Surface,,Todo,Urgent,3h
+"[M2-08] Multi-framework adapter (React first, Vue/HTML stubbed)","## Summary
+Abstract the framework-specific bits of `conjure` into a small
+adapter interface so React lands in v1 and Vue / vanilla HTML can be added
+without refactoring the generation pipeline. Crib the staged IR pattern from
+`Kinglions/ui-design-to-code-mcp` (research §5 prior art #3).
+
+## Context
+- Research report §3.1: `framework?: ""react"" | ""vue"" | ""html""`.
+- §5 prior art: ""Take: the IR pipeline architecture — `ingest_*` →
+  `build_semantic_ir` → `build_cross_platform_nodes` → `build_target_ir` →
+  `run_codegen` → `validate_pipeline`.""
+
+## Acceptance Criteria
+- [ ] AC1 — `interface FrameworkAdapter` defines `renderSource`,
+      `renderPreview`, `extractDts`, `defaultViewport`.
+- [ ] AC2 — `ReactAdapter` implemented; defaults to `.tsx` + JSX preview
+      bundle + `ts-morph`-extracted `.d.ts`.
+- [ ] AC3 — `VueAdapter` and `HtmlAdapter` ship as stubs that return a
+      structured `NotYetImplementedError` with a link to the tracking issue
+      (v2 milestone).
+- [ ] AC4 — `conjure` picks the adapter based on the `framework`
+      input.
+- [ ] AC5 — Adapter contract is independently testable
+      (`adapter-conformance.test.ts`).
+
+## Implementation Notes
+- File: `packages/server/src/framework/{interface.ts,react.ts,vue.ts,html.ts}`.
+- React adapter uses `esbuild` to bundle the preview to an IIFE.
+
+## Out of Scope
+- Full Vue / HTML implementations (v2).
+
+## Dependencies
+- Blocks: nothing.
+- Blocked by: M2-03.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — React adapter happy path + Vue/HTML stub errors.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:llm,priority:P2-medium,size:M",M2 — LLM Generation Surface,,Todo,Medium,6h
+[M2-09] M2 integration tests (real LLM endpoint round-trip),"## Summary
+End-to-end test that calls `conjure` against the real configured LLM
+endpoint with a 5 USD per-run budget cap, asserts the response validates
+against `COMPONENT_SCHEMA`, and asserts the produced `<Name>.html` passes the
+`@genie` regex. Runs only on `main` (not every PR) to keep CI cheap.
+
+## Context
+- This is the canary for the entire generation pipeline. If this is green,
+  the foundation works.
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/e2e/test/m2-generation.test.ts`.
+- [ ] AC2 — Runs only when `GENIE_LLM_API_KEY` env is set (skipped
+      otherwise).
+- [ ] AC3 — Generates 5 components (primary button, secondary button, card,
+      modal, nav bar) against `design-default`.
+- [ ] AC4 — Asserts schema validation passes for all 5.
+- [ ] AC5 — Asserts `@genie` regex matches first line of every produced
+      `.html`.
+- [ ] AC6 — Aggregates `promptTokens + completionTokens * pricing` and fails
+      if > 5 USD.
+- [ ] AC7 — Test report and per-component sample uploaded as CI artefact.
+- [ ] AC8 — Refine round-trip: generate, then refine with ""make it dark
+      mode"", assert diff non-empty.
+
+## Implementation Notes
+- Gate behind `if (!process.env.GENIE_LLM_API_KEY) ctx.skip()`.
+- Pricing table for cost-assert maintained in `packages/e2e/src/pricing.ts`.
+
+## Out of Scope
+- Viewer end-to-end (M4-10).
+
+## Dependencies
+- Blocks: M2 milestone close.
+- Blocked by: M2-03, M2-04, M2-07.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — the suite is the deliverable.
+- [ ] Docs updated.
+- [ ] Manual verification — run locally with `GENIE_LLM_API_KEY`.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:test,area:llm,priority:P0-critical,size:M",M2 — LLM Generation Surface,,Todo,Urgent,6h
+[M3-01] @genie first-line regex validator,"## Summary
+Implement genie's own first-line marker validator with the regex
+`/^<!--\s*@genie\s+group=""[^""]*""[^>]*-->/`. Apply it to the first line of every
+`**/preview.html` and `**/<Name>.html` file. A missing or malformed marker
+emits `[MARKER_MISSING] <relpath>` and fails the build.
+
+## Context
+- D-B (`00-decisions.md`): `@genie` is genie's **native** marker. The validator
+  tests the `@genie` regex; the Anthropic `@dsCard` regex lives only in the
+  future interop adapter.
+- The regex permits arbitrary additional attributes after `group` (viewport,
+  name, subtitle).
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/server/src/validate/marker.ts` exports
+      `MARKER_REGEX` and `validateMarker(path, content)`.
+- [ ] AC2 — Regex literal is exactly
+      `/^<!--\s*@genie\s+group=""[^""]*""[^>]*-->/`.
+- [ ] AC3 — Tested against genie's own validation fixtures (≥ 5 good, 5 bad).
+- [ ] AC4 — Returns `{ ok: true } | { ok: false, code:
+      ""MARKER_MISSING"", path }`.
+- [ ] AC5 — Optional attribute parsing: extract `viewport=""WxH""` into a
+      structured `{ width, height }` (W and H are integers).
+- [ ] AC6 — Public re-export from `packages/server/src/validate/index.ts`.
+
+## Implementation Notes
+- File: `packages/server/src/validate/marker.ts`.
+- Use `txt.split('\n', 1)[0]` for the first-line slice.
+- Keep the regex strict and stable — it is genie's registration contract.
+
+## Out of Scope
+- Watching files (M3-02).
+- Compiling the manifest (M3-03).
+
+## Dependencies
+- Blocks: M2-07, M3-03, M3-04.
+- Blocked by: M0-04.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`ref-genie-card.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-genie-card.svg) — the @genie marker the card detail depends on.
+
+**Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
+
+## Definition of Done
+- [ ] Tests added — 5 good, 5 bad fixtures; viewport extraction.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-server,priority:P0-critical,size:S",M3 — @genie Validator + Manifest,,Todo,Urgent,3h
+[M3-02] chokidar watcher for component tree,"## Summary
+Watch the project's `components/**/*.html`, `tokens/`, and `styles.css` with
+chokidar. On any change, debounce 100 ms then re-run the @genie validator
+(M3-01) and the manifest compiler (M3-03). Emits a `manifest.updated` event
+the viewer (M4) subscribes to.
+
+## Context
+- Research report §3.4: ""chokidar-driven HMR on preview.html saves"".
+- §7 step 5: ""200-LOC dev server whose only job is to render those same
+  artifacts in a grid with hot reload"".
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/server/src/watch/watcher.ts` exports
+      `startWatcher(projectRoot, onChange)`.
+- [ ] AC2 — Watches `${projectRoot}/components/**/*.{html,tsx,d.ts,md}`,
+      `${projectRoot}/tokens/**`, `${projectRoot}/styles.css`,
+      `${projectRoot}/meta.json`.
+- [ ] AC3 — Debounces back-to-back events (100 ms window).
+- [ ] AC4 — Emits `{ type: ""preview"" | ""tokens"" | ""manifest"", paths: string[] }`
+      on `onChange`.
+- [ ] AC5 — Gracefully degrades to polling when running on Docker volumes
+      (chokidar's `usePolling: true` fallback).
+- [ ] AC6 — Stopped via returned `stop()` function.
+- [ ] AC7 — Logs `{ added, changed, deleted, debouncedTo }` per cycle.
+
+## Implementation Notes
+- File: `packages/server/src/watch/watcher.ts`.
+- `chokidar` v3+, `ignoreInitial: false` so subscribers get the current state
+  on startup.
+
+## Out of Scope
+- HMR over WebSocket / postMessage (M4-04).
+
+## Dependencies
+- Blocks: M3-03, M4-04.
+- Blocked by: M3-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — create/modify/delete events, debounce window, polling
+      fallback.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-server,priority:P1-high,size:M",M3 — @genie Validator + Manifest,,Todo,High,5h
+[M3-03] .genie/manifest.json writer (client-side compiler),"## Summary
+Recompile `<projectRoot>/.genie/manifest.json` whenever the watcher fires. Walks
+`components/**/*.html`, extracts the `@genie` markers, joins with
+`meta.json` siblings, emits a manifest matching the schema in research
+report §3.4. This is the ""20-line Node script that watches `**/preview.html`
+→ first-line regex → write `.genie/manifest.json`"" called out as a substitute for
+Anthropic's server-side manifest compilation.
+
+## Context
+- Research report §6 substitute: ""Server-side `.genie/manifest.json` self-check
+  → Vite plugin or 20-line Node script that watches `**/preview.html` →
+  first-line regex → write `.genie/manifest.json`"".
+- §3.4 manifest schema documented in the report.
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/server/src/manifest/compiler.ts` exports
+      `compileManifest(projectRoot): Manifest`.
+- [ ] AC2 — Walks `${projectRoot}/components/**/*.html`; reads first line of
+      each; extracts group + viewport via the M3-01 helper.
+- [ ] AC3 — Joins each card with sibling `meta.json` (if present) for tags,
+      subtitle, etc.
+- [ ] AC4 — Output schema matches research report §3.4 exactly: `{ version:
+      1, name, generatedAt, groups: [], cards: [{ id, name, subtitle, group,
+      path, viewport, tags, hash, lastModified }] }`.
+- [ ] AC5 — Hashes are SHA-256 of the HTML file bytes (matches M1-04's
+      `list_files` hash format).
+- [ ] AC6 — Atomic write: write to `.genie/manifest.json.tmp`, fsync, rename.
+- [ ] AC7 — Compiles in < 100 ms for a 50-component kit on a 2025 laptop.
+
+## Implementation Notes
+- File: `packages/server/src/manifest/compiler.ts`.
+- Group order: alphabetical unless a `_groups.json` sibling pins it.
+- Per-card sort: alphabetical by `name`.
+
+## Out of Scope
+- Inlining manifest into `index.html` for sandboxed iframe (M4-05).
+- Server-side regeneration (we're explicitly the client-side substitute).
+
+## Dependencies
+- Blocks: M4-05, M4-06.
+- Blocked by: M3-01, M3-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — cards group correctly in the grid.
+
+**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
+
+**Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
+
+## Definition of Done
+- [ ] Tests added — small/empty/large kits; viewport extraction; hash
+      stability.
+- [ ] Docs updated.
+- [ ] Manual verification — compile against `packages/server/test/fixtures/`.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-server,priority:P0-critical,size:M",M3 — @genie Validator + Manifest,,Todo,Urgent,5h
+[M3-04] Tool: validate — full-scan facet,"## Summary
+Implement the **full-scan facet** of genie's single `validate` verb (D-A): run
+the `@genie` regex check + ""thin render"" check + ""variants identical"" check
+across the project and return structured findings the model can act on. The
+counter-persistence facet is M1-12 — both are the same MCP verb.
+
+## Context
+- D-A (`00-decisions.md`): `report_validate` + `validate_design_system` →
+  one `validate` verb. This issue is the heavyweight full-scan facet.
+- Shape: `validate({ kitId, planId? }):
+  { markerMissing: string[], thin: string[], variantsIdentical: string[],
+  total: number, bad: number }`.
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__validate`.
+- [ ] AC2 — Input: `{ kitId: string, planId?: string }`.
+- [ ] AC3 — `markerMissing`: array of paths where the first-line regex
+      (M3-01) fails.
+- [ ] AC4 — `thin`: array of paths whose rendered viewport bounding-box is <
+      `meta.json.renderCheck.minHeight` (default 80 px).
+- [ ] AC5 — `variantsIdentical`: array of pairs of paths whose
+      perceptual hash (`pHash`) matches within tolerance — catches ""model
+      generated 3 buttons that all look the same"".
+- [ ] AC6 — `total` = total `.html` files inspected; `bad` =
+      `markerMissing.length + thin.length + variantsIdentical.length`.
+- [ ] AC7 — Runs in < 5 s for a 50-component kit (uses Playwright with
+      `headless: true`).
+- [ ] AC8 — Persists run counters via the same `validate.ts` module as the
+      M1-12 facet (one verb, one persistence path).
+
+## Implementation Notes
+- File: `packages/server/src/tools/validate.ts` (shared with M1-12's facet).
+- Reuse Playwright instance from M2-04's region cropper.
+- Perceptual hash via `sharp` + `phash-im` or `imghash` (research the
+  best maintained option).
+
+## Out of Scope
+- Auto-fixing (model's job).
+- Cross-component coherence checks (style guide, etc.).
+
+## Dependencies
+- Blocks: nothing critical.
+- Blocked by: M3-01, M3-03.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`ref-genie-card.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-genie-card.svg) — the 4 @genie validation states.
+
+**Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
+
+## Definition of Done
+- [ ] Tests added — golden fixtures for all three failure modes.
+- [ ] Docs updated.
+- [ ] Manual verification — run against M2's generated kit.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,priority:P0-critical,size:M",M3 — @genie Validator + Manifest,,Todo,Urgent,5h
+[M3-05] 5-step atomic write sequence orchestrator,"## Summary
+Implement genie's 5-step atomic upload sequence: (1)
+write `.genie/recompile` sentinel first to fence the manifest/copy
+machinery, (2) chunk all content writes ≤256 per call, (3) all deletes, (4)
+re-arm the sentinel, (5) write `.genie/sync.json` **last** as the verification
+anchor. Mid-plan failure must leave `.genie/sync.json` unwritten so the next
+sync's diff repairs the half-write.
+
+## Context
+- D0 / ""What did NOT change"" (`00-decisions.md`): the atomic write sequence is
+  load-bearing and unchanged in shape — sentinel → writes ≤256 → deletes →
+  re-arm → anchor last. Write `.genie/sync.json` **last**; a mid-plan failure
+  leaves it absent so the next sync knows the tree is incomplete.
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/server/src/sync/orchestrator.ts` exports
+      `runAtomicSync({ planId, writes, deletes }): SyncResult`.
+- [ ] AC2 — Step 1: writes `.genie/recompile` with body `{""by"":
+      ""genie""}` (genie's sentinel format).
+- [ ] AC3 — Step 2: chunks `writes` into batches of ≤ 256, calls
+      `write_files` per batch.
+- [ ] AC4 — Step 3: calls `delete_files` with the deletes.
+- [ ] AC5 — Step 4: re-arms `.genie/recompile` (writes again).
+- [ ] AC6 — Step 5: computes `.genie/sync.json` (M3-06) and writes it last.
+- [ ] AC7 — If any step except a not-found delete fails, STOP without
+      writing `.genie/sync.json` and return `{ ok: false, failedStep: N,
+      error }`.
+- [ ] AC8 — Idempotent re-run: detecting a stale sentinel + missing anchor =
+      resume-from-step-2.
+- [ ] AC9 — Emits structured events `{ step: 1..5, ok, ms }` for observability.
+
+## Implementation Notes
+- File: `packages/server/src/sync/orchestrator.ts`.
+- Sentinel format and 5-step sequence: see `.deliverables/research-report.json`
+  (`result.report` §2.2 manifest sentinel and §2.3 atomic upload sequence).
+  Canonical sentinel literal: `{""by"":""genie""}` written to
+  `.genie/recompile`. Anchor file: `.genie/sync.json` (last write).
+
+## Out of Scope
+- The `.genie/sync.json` schema itself (M3-06).
+- Conflict resolution vs concurrent plans (rejected at plan-guard layer).
+
+## Dependencies
+- Blocks: M3-06.
+- Blocked by: M1-08, M1-09, M3-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — happy path; fault injection at each step; resume from
+      partial state.
+- [ ] Docs updated — `docs/04-tech-design-rfc.md` §3.3 reconstructed schema.
+- [ ] Manual verification — fault-inject at step 3, observe missing anchor
+      and resume.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-server,priority:P0-critical,size:L",M3 — @genie Validator + Manifest,,Todo,Urgent,10h
+[M3-06] .genie/sync.json schema + writer (genie's verification anchor),"## Summary
+Define and emit `.genie/sync.json` — genie's own verification anchor, written
+**last** by the atomic sync orchestrator (M3-05). It records source/render
+hashes and the verified component list so the next sync can diff and repair.
+
+## Context
+- D-C (`00-decisions.md`): `.genie/sync.json` is genie's native verification
+  anchor (the Anthropic `_ds_sync.json` shape is interop-only). Genie's schema:
+  ```json
+  { ""version"": 1, ""writtenAt"": ""..."", ""by"": ""genie"",
+    ""sourceHashes"": { ""components/.../X.tsx"": ""sha256-..."" },
+    ""renderHashes"":  { ""components/.../X.html"": ""sha256-..."" },
+    ""verified"": [""actions/Button"", ""surfaces/Card""] }
+  ```
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/server/src/sync/anchor.ts` exports
+      `writeAnchor(projectRoot, planResult): void` and
+      `readAnchor(projectRoot): Anchor | null`.
+- [ ] AC2 — Schema matches the genie anchor shape above (D-C); TypeScript type
+      `Anchor` exported alongside.
+- [ ] AC3 — `sourceHashes` covers every `.tsx`/`.jsx` source file touched by
+      the plan.
+- [ ] AC4 — `renderHashes` covers every `.html` preview file touched.
+- [ ] AC5 — `verified` lists `<group>/<Name>` IDs for every component that
+      passed the M3-04 validator within this sync.
+- [ ] AC6 — `by` is always `""genie""` (configurable for forks via
+      env `GENIE_BY`).
+- [ ] AC7 — Atomic write: temp file + rename.
+- [ ] AC8 — `readAnchor` returns `null` (not throw) when the file is
+      missing.
+
+## Implementation Notes
+- File: `packages/server/src/sync/anchor.ts`.
+- `.genie/sync.json` is genie's own anchor format (D-C) — keep the schema
+  stable; the interop adapter maps it to Anthropic's `_ds_sync.json` shape.
+
+## Out of Scope
+- Server-side adherence-config regeneration (out of scope; that's a Claude
+  Design–internal artefact we don't need to mirror exactly).
+
+## Dependencies
+- Blocks: M3-05 step 5.
+- Blocked by: M3-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — the ✓ synced status the browser shows.
+
+**Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
+
+## Definition of Done
+- [ ] Tests added — write + round-trip read; missing file returns null.
+- [ ] Docs updated — schema documented in `docs/04-tech-design-rfc.md`.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-server,priority:P1-high,size:M",M3 — @genie Validator + Manifest,,Todo,High,5h
+[M4-01] @genie/viewer package scaffold,"## Summary
+Create the second pnpm workspace package `@genie/viewer`. Owns
+the static viewer assets (`index.html`, `viewer.js`, `viewer.css`), the Vite
+config, and the CLI binary `genie-viewer`. M4-02 … M4-10 fill it
+in.
+
+## Context
+- Research report §3.4: ""Adopt the bundled-skill file layout verbatim … plus
+  a tiny Vite-backed viewer (`@genie/viewer`) watches the
+  directory and renders the same files in a grid with HMR.""
+- §7 step 5: ""Build the preview viewer … Vite multi-page entry, chokidar
+  watch, iframe grid renderer, HMR-driven card refresh via `postMessage`.""
+
+## Acceptance Criteria
+- [ ] AC1 — Directory `packages/viewer/` exists with its own
+      `package.json` (`@genie/viewer`, `version: 0.0.0`).
+- [ ] AC2 — Listed in `pnpm-workspace.yaml`.
+- [ ] AC3 — Declares `vite`, `chokidar`, `@types/node` as devDeps; `commander`
+      as runtime dep.
+- [ ] AC4 — `package.json` exports the `genie-viewer` bin.
+- [ ] AC5 — `pnpm --filter @genie/viewer build` produces
+      `packages/viewer/dist/` containing the CLI + static assets.
+- [ ] AC6 — Bin script greets with `Usage: genie-viewer <kit-dir>
+      [--port N]`.
+
+## Implementation Notes
+- File: `packages/viewer/{package.json,src/cli.ts,src/index.ts}`.
+- Bin shebang `#!/usr/bin/env node`, ESM (`""type"": ""module""`).
+
+## Out of Scope
+- Actual rendering (M4-03).
+- HMR (M4-04).
+
+## Dependencies
+- Blocks: M4-02 … M4-10.
+- Blocked by: M0-04.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the surface everything renders into.
+
+**Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
+
+## Definition of Done
+- [ ] Tests added — placeholder.
+- [ ] Docs updated — viewer README.
+- [ ] Manual verification — `npx genie-viewer --help`.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:viewer,priority:P0-critical,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,Urgent,5h
+[M4-02] Vite multi-page config (each preview.html as entry point),"## Summary
+Configure Vite to serve `<kit-dir>` with each `components/**/preview.html`
+as a multi-page entry point. Vite supports this natively: ""Vite also
+supports multi-page apps with multiple `.html` entry points… each
+`index.html` is treated as source code and part of the module graph""
+([vite.dev/guide](https://vite.dev/guide/)).
+
+## Context
+- Research report §3.4 + §7 step 5.
+- The viewer's `index.html` is the root; each component preview is a
+  per-card entry that Vite hot-reloads independently.
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/viewer/vite.config.ts` exports a Vite config
+      whose `rollupOptions.input` is dynamically populated by globbing
+      `<kit-dir>/components/**/preview.html`.
+- [ ] AC2 — Root `index.html` is the always-present entry.
+- [ ] AC3 — Dev server: port 5173 (configurable via `--port`); host
+      `127.0.0.1` (no LAN exposure by default).
+- [ ] AC4 — Build target ES2022.
+- [ ] AC5 — Serves static `tokens/`, `styles.css`, `_vendor/` from the kit
+      dir at the same paths.
+- [ ] AC6 — Adds `Cache-Control: no-store` for HTML responses in dev to
+      avoid stale-card surprises.
+
+## Implementation Notes
+- File: `packages/viewer/vite.config.ts`.
+- Use `fast-glob` for the input enumeration.
+
+## Out of Scope
+- Production build optimisation (the viewer is dev-only in v1).
+
+## Dependencies
+- Blocks: M4-03, M4-04.
+- Blocked by: M4-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — each preview.html as a card entry point.
+
+**Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
+
+## Definition of Done
+- [ ] Tests added — config snapshot test.
+- [ ] Docs updated.
+- [ ] Manual verification — `pnpm dev` in viewer + a fixture kit, observe
+      every `preview.html` reachable.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:viewer,priority:P0-critical,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,Urgent,5h
+[M4-03] Iframe grid renderer (index.html + viewer.js),"## Summary
+Implement the viewer's `index.html` + `viewer.js`. Fetches `.genie/manifest.json`,
+groups by `card.group`, renders each card as `<iframe sandbox=""allow-scripts""
+loading=""lazy"" src=""components/.../preview.html"">` sized per
+`card.viewport`.
+
+## Context
+- Research report §3.4 viewer sketch (verbatim):
+  ```js
+  const m = await fetch(""./manifest.json"").then(r => r.json());
+  const grid = document.getElementById(""grid"");
+  for (const card of m.cards) {
+    const article = document.createElement(""article"");
+    article.className = ""ds-card"";
+    article.innerHTML = `…<iframe src=""${card.path}"" sandbox=""allow-scripts"" …>`;
+    grid.appendChild(article);
+  }
+  ```
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/viewer/static/index.html` contains a `<header>`,
+      a search input `#q`, and a `<main id=""grid"">`.
+- [ ] AC2 — File `packages/viewer/static/viewer.js` `fetch('./manifest.json')`,
+      groups by `card.group`, renders cards with viewport sizing.
+- [ ] AC3 — Each iframe is `sandbox=""allow-scripts""` (no `allow-same-origin`
+      → defence in depth).
+- [ ] AC4 — `loading=""lazy""` on every iframe.
+- [ ] AC5 — Search input filters cards client-side by `name` substring
+      (case-insensitive).
+- [ ] AC6 — Empty-state message when manifest has zero cards.
+- [ ] AC7 — Responsive grid (CSS grid `repeat(auto-fill, minmax(320px,
+      1fr))`).
+
+## Implementation Notes
+- Path: `packages/viewer/static/{index.html,viewer.js,viewer.css}`.
+- CSS uses `@layer` for cascade hygiene.
+
+## Out of Scope
+- HMR (M4-04).
+- Inline manifest mode (M4-05).
+
+## Dependencies
+- Blocks: M4-04, M4-09.
+- Blocked by: M4-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the card grid + card anatomy.
+
+**Supporting:** [`ref-genie-card.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-genie-card.svg).
+
+**Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
+
+## Definition of Done
+- [ ] Tests added — DOM snapshot test via Vitest + jsdom.
+- [ ] Docs updated.
+- [ ] Manual verification — open in browser against fixture kit.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:viewer,priority:P0-critical,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,Urgent,6h
+"[M4-04] HMR via postMessage (per-card refresh, no full reload)","## Summary
+Wire chokidar (running in the viewer's Vite dev server) to post a `{type:
+""refresh"", id}` message to the parent window, which targets the matching
+iframe and reloads only that card. Prevents the ""save → whole grid reflows""
+anti-pattern and beats Storybook's cold-rebuild story.
+
+## Context
+- Research report §3.4 viewer sketch: HMR-driven card refresh via
+  `postMessage`.
+- §7 step 5 mentions chokidar-driven HMR explicitly.
+
+## Acceptance Criteria
+- [ ] AC1 — Vite plugin in `packages/viewer/vite.config.ts` registers a
+      WebSocket on `/__genie_hmr` that pushes
+      `{ event: ""card.changed"", path: string }` on chokidar events.
+- [ ] AC2 — `viewer.js` opens a WebSocket on the same path; on each event,
+      identifies the matching iframe by `data-path` attribute and `reload`s
+      its `contentWindow`.
+- [ ] AC3 — Sub-100 ms reload latency on a 50-card kit (measured: save →
+      iframe `load` event).
+- [ ] AC4 — Falls back to a polling check every 2 s if WebSocket fails.
+- [ ] AC5 — Tokens / styles.css changes trigger ALL iframes to reload.
+- [ ] AC6 — Reload count shown in viewer header for debugging
+      (collapsible).
+
+## Implementation Notes
+- File: `packages/viewer/src/hmr-plugin.ts`.
+- Reuse the M3-02 watcher's event shape.
+
+## Out of Scope
+- HMR for the viewer itself (Vite handles that already).
+
+## Dependencies
+- Blocks: M4-10 (e2e needs HMR working).
+- Blocked by: M4-03, M3-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — a single card re-rendering in place on HMR.
+
+**Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
+
+## Definition of Done
+- [ ] Tests added — manual + automated reload-latency benchmark.
+- [ ] Docs updated.
+- [ ] Manual verification — modify a preview's first line, watch only that
+      card reload.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:viewer,priority:P1-high,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,High,6h
+[M4-05] Tool: preview (returns _meta.ui.resourceUri),"## Summary
+Implement the `preview` MCP tool. Returns plain text content
+(`""Preview running at http://localhost:5173""` and a `file://` fallback) plus
+a `_meta.ui.resourceUri` pointing at a `ui://genie/grid` MCP-Apps
+resource (registered in M4-06). Hosts that render `ui://` (Claude, VS Code
+≥Jan 2026, ChatGPT, Cursor) get the inline grid; everyone else gets the URLs.
+
+## Context
+- Research report §3.1: `preview({ kitId, componentName?, group? }):
+  { content: TextContent[], _meta: { ui: { resourceUri:
+  ""ui://genie/grid?…"" } } }`.
+- §3.4: ""MCP Apps `ui://` resource for the four hosts that render it today
+  — Claude, VS Code, ChatGPT, Goose/Postman/MCPJam.""
+
+## Acceptance Criteria
+- [ ] AC1 — Tool name `mcp__genie__preview`.
+- [ ] AC2 — Input: `{ kitId: string, componentName?: string, group?:
+      string }`.
+- [ ] AC3 — Returns: `{ content: [{ type: ""text"", text: <human URLs> }],
+      _meta: { ui: { resourceUri: ""ui://genie/grid?…"" } } }`.
+- [ ] AC4 — Resource URI query string carries `kitId` and optional
+      filter params.
+- [ ] AC5 — Boots the viewer server on demand if not already running;
+      reuses across calls.
+- [ ] AC6 — Falls back to `file://<projectRoot>/index.html` if Vite fails to
+      boot (e.g. port in use).
+- [ ] AC7 — Logs whether the requesting harness supports `ui://` (sniff via
+      `params._meta.client.name` if present).
+
+## Implementation Notes
+- File: `packages/server/src/tools/preview.ts`.
+- Use `@modelcontextprotocol/ext-apps/server` for resource registration
+  (M4-06 provides the actual handler).
+
+## Out of Scope
+- Per-card detail view (v1 = grid only).
+
+## Dependencies
+- Blocks: M4-10 (smoke test).
+- Blocked by: M4-04, M3-03.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`03-embedded-modes.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — the inline ui:// grid payload.
+
+**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
+
+**Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
+
+## Definition of Done
+- [ ] Tests added — happy path; viewer-down fallback.
+- [ ] Docs updated.
+- [ ] Manual verification — invoke from Claude Code + VS Code.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-tools,area:mcp-ui,priority:P0-critical,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,Urgent,5h
+[M4-06] Register ui://genie/grid MCP-Apps resource,"## Summary
+Register the MCP-Apps resource at `ui://genie/grid`. MIME type is
+the spec-mandated `text/html;profile=mcp-app` (per stable spec dated
+2026-01-26). Body is the same `index.html` the Vite viewer serves, **with
+the manifest inlined** as `<script type=""application/json"" id=""manifest"">…
+</script>` so the sandboxed iframe doesn't need any fetch.
+
+## Context
+- Research report §3.4: ""MIME `text/html;profile=mcp-app`, URI scheme
+  `ui://`, linked via `_meta.ui.resourceUri` on the tool result. Stable spec
+  dated 2026-01-26.""
+- Confirmed claim: spec URI scheme + MIME type.
+
+## Acceptance Criteria
+- [ ] AC1 — Resource registered via `server.registerResource({uri:
+      ""ui://genie/grid"", mimeType: ""text/html;profile=mcp-app""})`.
+- [ ] AC2 — Resource handler reads the kit identified by query-string
+      `kitId`, compiles the manifest (M3-03), and inlines it into the
+      HTML.
+- [ ] AC3 — HTML uses RELATIVE paths for `viewer.js` / `viewer.css` (so
+      they're loaded from the resource handler too).
+- [ ] AC4 — Iframe `src` values are absolute `https://` URLs pointing at a
+      separate-origin preview host (`previews.${DOMAIN}`); for solo dev,
+      fall back to `data:text/html;base64,…` inlined HTML.
+- [ ] AC5 — CSP allow-list declared via `connectDomains` / `resourceDomains`
+      / `frameDomains` per MCP-Apps spec.
+- [ ] AC6 — `_meta[""openai/outputTemplate""]` ALSO set on the tool result for
+      ChatGPT Apps SDK compatibility (research report §3.4 cross-vendor note).
+
+## Implementation Notes
+- File: `packages/server/src/ui/grid-resource.ts`.
+- Use `@modelcontextprotocol/ext-apps/server`.
+- Cross-origin: research report §6 — separate origin ""satisfies the
+  per-card iframe isolation Anthropic does at `*.artifacts.anthropic.com`"".
+
+## Out of Scope
+- ChatGPT widget-CSP / widgetDomain extensions beyond outputTemplate (v2).
+
+## Dependencies
+- Blocks: M4-10.
+- Blocked by: M4-05, M3-03.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`03-embedded-modes.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — inline / fullscreen / pip framings.
+
+**Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
+
+## Definition of Done
+- [ ] Tests added — resource fetch returns valid HTML; manifest inlined.
+- [ ] Docs updated.
+- [ ] Manual verification — render in VS Code Insiders inline.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-ui,priority:P0-critical,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,Urgent,5h
+[M4-07] Sandboxed iframe + CSP hardening for ui:// payload,"## Summary
+Lock down the `ui://genie/grid` payload: strict CSP, iframes get
+`sandbox=""allow-scripts""` only (no `allow-same-origin`), no inline
+`onclick`, hash-only `<script>` blocks, deny `<form>`, `<object>`,
+`<embed>`. Ensures hostile component HTML can't escalate inside the host's
+sandbox.
+
+## Context
+- Research report §3.4: ""served from a separate origin … `<iframe sandbox>`
+  + strict CSP. Lost: nothing. Browser sandbox + cross-origin already does
+  this.""
+
+## Acceptance Criteria
+- [ ] AC1 — CSP header on the resource: `default-src 'none'; script-src
+      'sha256-…'; style-src 'self'; img-src 'self' data:; frame-src
+      previews.${DOMAIN};`.
+- [ ] AC2 — Every inline `<script>` has its SHA-256 hash listed in CSP.
+- [ ] AC3 — No `unsafe-inline`, no `unsafe-eval` anywhere.
+- [ ] AC4 — Test: inject `<img src=x onerror=alert(1)>` into a preview;
+      assert the alert never fires (blocked by `script-src 'self'`).
+- [ ] AC5 — Test: try to navigate the parent (`top.location = …`) from
+      inside an iframe; assert blocked by sandbox.
+- [ ] AC6 — Documented threat model in `docs/04-tech-design-rfc.md`.
+
+## Implementation Notes
+- File: `packages/server/src/ui/csp.ts` — compute CSP at build time.
+- Use `parse5` to sanitise inputs if any user-controlled HTML lands in the
+  outer shell (manifest values).
+
+## Out of Scope
+- Trusted Types (browser-only; nice-to-have for v2).
+
+## Dependencies
+- Blocks: M4-10.
+- Blocked by: M4-06.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`03-embedded-modes.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — hardened payload renders identically (G-5 byte-identical).
+
+**Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
+
+## Definition of Done
+- [ ] Tests added — XSS injection + sandbox escape attempts.
+- [ ] Docs updated.
+- [ ] Manual verification — observe blocked attempts in browser console.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:security,area:mcp-ui,priority:P1-high,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,High,5h
+[M4-08] CLI: genie-viewer <kit> [--port N],"## Summary
+Polish the CLI binary `genie-viewer`. Boots Vite against the
+given kit directory, prints the URL, opens the system browser (unless
+`--no-open`), exits cleanly on Ctrl-C.
+
+## Context
+- Research report §3.4 + §7 step 5: `npx genie-viewer
+  ui_kits/<kit>`.
+
+## Acceptance Criteria
+- [ ] AC1 — `genie-viewer <kit-dir>` boots Vite, prints
+      `Preview: http://127.0.0.1:5173`.
+- [ ] AC2 — `--port N` overrides the default port; if in use, picks the next
+      free port and warns.
+- [ ] AC3 — `--open` (default true) opens the URL in the system browser via
+      `open` (npm package).
+- [ ] AC4 — `--no-open` suppresses auto-open.
+- [ ] AC5 — Ctrl-C stops the watcher + closes the server within 1 s.
+- [ ] AC6 — `--help` prints usage; `--version` prints package version.
+- [ ] AC7 — Exits non-zero if `<kit-dir>` doesn't exist or has no
+      `.genie/manifest.json` (suggests running the MCP server first).
+
+## Implementation Notes
+- File: `packages/viewer/src/cli.ts`.
+- Use `commander` for arg parsing.
+
+## Out of Scope
+- LAN exposure / TLS (v2).
+
+## Dependencies
+- Blocks: M4-10.
+- Blocked by: M4-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the booted viewer + empty state.
+
+**Supporting:** [`00-front-door.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/00-front-door.svg).
+
+**Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
+
+## Definition of Done
+- [ ] Tests added — CLI boot + port fallback.
+- [ ] Docs updated — README quickstart.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:feature,area:viewer,priority:P1-high,size:S",M4 — Preview Viewer (Vite + ui://),,Todo,High,3h
+[M4-09] Viewer accessibility audit (axe-core),"## Summary
+Audit the viewer chrome (the grid wrapper, not the per-card iframes) for
+WCAG 2.2 AA conformance with axe-core. Component authors own their own
+preview accessibility; the viewer must not block it.
+
+## Context
+- Research report §M4 exit criterion: viewer accessibility audit (axe-core)
+  passes.
+
+## Acceptance Criteria
+- [ ] AC1 — `pnpm --filter @genie/viewer test:a11y` runs axe-core
+      against the viewer shell.
+- [ ] AC2 — Zero critical or serious violations (only `moderate` or `minor`
+      acceptable, with a justification doc per case).
+- [ ] AC3 — Keyboard navigation: Tab focuses the search input, then each
+      card's `<article>` (focusable via `tabindex=""0""`); Enter on a card
+      opens its detail page (placeholder).
+- [ ] AC4 — Search input has `aria-label`.
+- [ ] AC5 — Each card's `<iframe>` has `title` set from `card.name`.
+- [ ] AC6 — Colour contrast ≥ 4.5:1 for body text.
+- [ ] AC7 — Dark mode toggle (`prefers-color-scheme`) supported.
+
+## Implementation Notes
+- File: `packages/viewer/test/a11y.test.ts` — uses `@axe-core/playwright`.
+
+## Out of Scope
+- Auditing inside iframes (component author's responsibility).
+
+## Dependencies
+- Blocks: M4 milestone close.
+- Blocked by: M4-03.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`ref-foundations.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-foundations.svg) — palette contrast + roles via axe-core.
+
+**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
+
+**Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
+
+## Definition of Done
+- [ ] Tests added — axe-core suite.
+- [ ] Docs updated — `docs/04-tech-design-rfc.md` a11y section.
+- [ ] Manual verification — keyboard walkthrough.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:a11y,area:viewer,priority:P1-high,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,High,5h
+[M4-10] Viewer end-to-end test (Playwright vs Vite vs ui://),"## Summary
+End-to-end test that exercises three delivery vehicles for the same kit
+artefacts: (a) `file://<root>/index.html`, (b) `http://localhost:5173`,
+(c) `ui://genie/grid` rendered headless. Asserts the same cards
+appear with the same viewport sizes in each. This is the M4 acceptance gate.
+
+## Context
+- Research report §3.4 + §7 step 6 explicitly call out tests against VS
+  Code Insiders + Claude Code.
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/e2e/test/m4-viewer.test.ts`.
+- [ ] AC2 — Uses Playwright headed Chromium.
+- [ ] AC3 — Loads a 12-component fixture kit; asserts 12 cards visible in
+      all three vehicles.
+- [ ] AC4 — Asserts the same `data-path` attribute on each card across
+      vehicles (canonical identity check).
+- [ ] AC5 — Triggers an HMR event (modifies a preview's first line) and
+      asserts only the matching iframe reloads in vehicle (b).
+- [ ] AC6 — For vehicle (c), spins up an MCP-Apps test host
+      (`@modelcontextprotocol/ext-apps/test-host`) and asserts the iframe
+      renders the same DOM.
+- [ ] AC7 — Test report includes screenshots of all three vehicles.
+- [ ] AC8 — Runs in < 90 s.
+
+## Implementation Notes
+- File: `packages/e2e/test/m4-viewer.test.ts`.
+
+## Out of Scope
+- Cross-harness manual smoke (that's M5-09 … M5-15).
+
+## Dependencies
+- Blocks: M4 milestone close.
+- Blocked by: M4-04, M4-06, M4-07, M4-08, M4-09.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → visual-validate against the mock → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Design Reference
+
+This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
+
+**Primary mock:** [`03-embedded-modes.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — all 3 vehicles render byte-identical cards (G-5).
+
+**Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
+
+## Definition of Done
+- [ ] Tests added — the suite is the deliverable.
+- [ ] Docs updated.
+- [ ] Manual verification — run with `--headed` and inspect.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:test,area:viewer,area:mcp-ui,priority:P0-critical,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,Urgent,6h
+[M5-01] OAuth 2.0 with Dynamic Client Registration,"## Summary
+Implement OAuth 2.0 with Dynamic Client Registration (RFC 7591) on the MCP
+HTTP server so shared Claude Code installs and Codex CLI's `codex mcp login`
+flow work against an already-running genie URL. Authorisation Server metadata served at
+`/.well-known/oauth-authorization-server`; DCR endpoint at `/register`.
+
+## Context
+- Research report §3.2 auth table: ""OAuth 2.0 + Dynamic Client Registration
+  — Claude Code, Codex CLI (first-class)"".
+- §4 Codex CLI section: ""Run `codex mcp login <server-name>`. Top-level
+  `mcp_oauth_callback_port` and `mcp_oauth_callback_url` for callback
+  overrides. Codex prefers server-advertised `scopes_supported`.""
+- §7 step 8: ""OAuth + static-bearer auth … per MCP spec
+  modelcontextprotocol.io/specification"".
+
+## Acceptance Criteria
+- [ ] AC1 — `/.well-known/oauth-authorization-server` returns RFC 8414
+      metadata: `authorization_endpoint`, `token_endpoint`,
+      `registration_endpoint`, `scopes_supported`,
+      `code_challenge_methods_supported: [""S256""]`.
+- [ ] AC2 — `/register` accepts a DCR request and returns
+      `{ client_id, client_secret, client_secret_expires_at: 0 }`.
+- [ ] AC3 — `/authorize` shows a consent screen listing requested scopes
+      (`read`, `write`); redirects back with `code` on accept.
+- [ ] AC4 — `/token` accepts authorization code + PKCE verifier; returns
+      `{ access_token, token_type: ""Bearer"", expires_in: 3600,
+      refresh_token }`.
+- [ ] AC5 — Bearer access tokens are JWTs signed with HS256, scope claim
+      present.
+- [ ] AC6 — Claude Code `claude mcp add --transport http genie
+      <url>` against an already-running server triggers DCR + browser auth
+      without manual intervention.
+- [ ] AC7 — `codex mcp login genie` round-trips successfully.
+
+## Implementation Notes
+- File: `packages/server/src/auth/oauth/{metadata,dcr,authorize,token}.ts`.
+- JWT signing key from env `OAUTH_HS256_KEY`; refuse to start if missing or
+  < 32 chars.
+- Consent screen is a minimal server-rendered HTML page (no SPA).
+
+## Out of Scope
+- OIDC ID-token issuance (M5-04 covers that via the provider integration test).
+- Refresh-token rotation (RFC 6749 §6 — defer to v2).
+
+## Dependencies
+- Blocks: M5-09 (Claude Code smoke), M5-11 (Codex smoke).
+- Blocked by: M0-04.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — OAuth flow integration test against a stub client.
+- [ ] Docs updated — `docs/04-tech-design-rfc.md` auth section.
+- [ ] Manual verification — `claude mcp add` + `codex mcp login` both work.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:security,area:mcp-server,priority:P0-critical,size:L",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,12h
+"[M5-02] Static Bearer token fallback (VS Code, Cline, Continue)","## Summary
+Accept `Authorization: Bearer <token>` headers in addition to OAuth — covers
+the three harnesses (VS Code Copilot, Cline, Continue.dev) that don't
+implement DCR. Tokens are static, scoped to the user's projects, and
+issued via the admin CLI.
+
+## Context
+- Research report §3.2 auth table: ""Static `Authorization: Bearer <token>`
+  via per-harness header — VS Code, Cline, Continue (simplest)"".
+
+## Acceptance Criteria
+- [ ] AC1 — Server accepts `Authorization: Bearer <token>` on every
+      MCP-over-HTTP request.
+- [ ] AC2 — Token format: `genie_<32-char-base32>` (matches GitHub PAT
+      pattern).
+- [ ] AC3 — Tokens stored hashed (SHA-256) in
+      `${GENIE_HOME}/auth/tokens.json`.
+- [ ] AC4 — Token claims: `{ sub: <userId>, scopes: [""read"", ""write""],
+      createdAt, lastUsedAt }`.
+- [ ] AC5 — Admin CLI: `genie token create [--scope read]
+      [--scope write]` prints the plaintext token once, never again.
+- [ ] AC6 — Admin CLI: `genie token list` shows hashed
+      tokens with metadata.
+- [ ] AC7 — Admin CLI: `genie token revoke <prefix>`
+      invalidates a token.
+
+## Implementation Notes
+- File: `packages/server/src/auth/bearer.ts` + `packages/server/src/cli/token.ts`.
+- Token check is constant-time (`crypto.timingSafeEqual`).
+
+## Out of Scope
+- Per-project ACLs (v1 = all-or-nothing).
+
+## Dependencies
+- Blocks: M5-10 (Claude Desktop smoke), M5-12, M5-14, M5-15.
+- Blocked by: M0-04.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — create / list / revoke; auth-required endpoint with
+      missing / invalid / valid token.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:security,area:mcp-server,priority:P0-critical,size:S",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,3h
+[M5-03] Env-var secret handling (no plaintext at rest),"## Summary
+Every secret the server uses (`GENIE_LLM_API_KEY`, `OAUTH_HS256_KEY`,
+`GENIE_GIT_TOKEN`, `OAUTH_CLIENT_SECRET`) is read only from env or from a
+mounted secret file. The server refuses to start if a
+required secret is logged anywhere, present in argv, or readable by other
+local users.
+
+## Context
+- Secrets live in env or mounted secret files, never in the repo.
+
+## Acceptance Criteria
+- [ ] AC1 — `packages/server/src/config/secrets.ts` exports `loadSecrets()`
+      that reads from env only.
+- [ ] AC2 — Bootstrap rejects: any required secret missing; any required
+      secret < 16 chars; any required secret present in `process.argv`.
+- [ ] AC3 — A startup audit logs which secrets are loaded (their key names
+      only, never the values).
+- [ ] AC4 — Logger redacts any value matching a configured secret pattern
+      from log output (`****`).
+- [ ] AC5 — `.env.example` lists every supported var with a comment.
+- [ ] AC6 — Optional `--secrets-from <path>` arg lets containers read from
+      a mounted file (e.g. Docker secret).
+
+## Implementation Notes
+- File: `packages/server/src/config/{secrets,redact}.ts`.
+- Use `pino`'s redact option for the logger.
+
+## Out of Scope
+- Vault / Doppler integration (v2).
+
+## Dependencies
+- Blocks: nothing (parallel work).
+- Blocked by: M5-01, M5-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — missing / short / argv-leaked secret cases.
+- [ ] Docs updated.
+- [ ] Manual verification — `pnpm dev` rejects with clear error when
+      `GENIE_LLM_API_KEY` unset.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:security,area:mcp-server,priority:P1-high,size:S",M5 — Auth + Distribution + Smoke Tests,,Todo,High,3h
+[M5-04] OIDC provider integration test,"## Summary
+Integration test that runs the OAuth flow against a real OIDC provider.
+Confirms the OIDC handshake, scope mapping, and group-based access works
+end-to-end. Acts as the template for adopters who bring their own provider.
+
+## Context
+- Research report §3.2: ""OIDC against your IdP; OAuth DCR for Claude
+  Code/Codex"".
+
+## Acceptance Criteria
+- [ ] AC1 — File `packages/e2e/test/m5-oidc.test.ts`.
+- [ ] AC2 — Spins up an ephemeral OIDC provider via testcontainers.
+- [ ] AC3 — Bootstraps an OAuth2/OpenID Provider with client_id
+      `genie-test`.
+- [ ] AC4 — Headless browser (Playwright) performs the auth code + PKCE
+      flow.
+- [ ] AC5 — Asserts the issued bearer token authenticates a call to
+      `mcp__genie__list_kits`.
+- [ ] AC6 — Asserts users not in the `genie-users` group are rejected
+      with HTTP 403.
+- [ ] AC7 — Runs in < 3 min on GitHub Actions (Linux runner).
+
+## Implementation Notes
+- File: `packages/e2e/test/m5-oidc.test.ts`.
+- Container fixtures cached between runs to keep CI under the 6-hour cap.
+
+## Out of Scope
+- Other OIDC provider parity; this issue proves one concrete provider path.
+
+## Dependencies
+- Blocks: M6-03 (security audit can reuse this harness).
+- Blocked by: M5-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — the suite.
+- [ ] Docs updated — `docs/06-operations-runbook.md` OIDC section.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:security,type:test,area:mcp-server,priority:P1-high,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,High,6h
+[M5-05] .mcpb bundle packaging for Claude Desktop,"## Summary
+Package the server as a `.mcpb` bundle so Claude Desktop users can
+double-click install. Use the renamed `modelcontextprotocol/mcpb` toolchain
+(formerly `anthropics/dxt`). Output artefact `genie.mcpb`
+attached to every GitHub Release.
+
+## Context
+- Research report §7 step 9: ""`npx @modelcontextprotocol/mcpb pack` (per
+  the renamed `anthropics/dxt` → `modelcontextprotocol/mcpb` toolchain)"".
+- §5 prior art (shadcn-ui-mcp-server v2.0.0 ships `.mcpb`) — model the
+  bundle after that one.
+
+## Acceptance Criteria
+- [ ] AC1 — File `mcpb/manifest.json` describes name, version, transports
+      (stdio), entry, env-var requirements.
+- [ ] AC2 — `pnpm bundle:mcpb` runs `npx @modelcontextprotocol/mcpb pack`
+      and emits `dist/genie.mcpb`.
+- [ ] AC3 — Bundle includes the server's `dist/`, `node_modules` (prod
+      only), the embedded viewer assets, and the manifest.
+- [ ] AC4 — Bundle size < 30 MB compressed.
+- [ ] AC5 — Double-clicking the `.mcpb` on macOS installs into Claude
+      Desktop without manual config.
+- [ ] AC6 — Bundle uploaded to every GitHub Release via Action.
+
+## Implementation Notes
+- File: `mcpb/manifest.json`, `scripts/bundle-mcpb.mjs`.
+- Document the env-var prompts Claude Desktop shows on first run
+  (`GENIE_LLM_API_KEY`, etc.).
+
+## Out of Scope
+- Windows / Linux Claude Desktop (Linux not supported by Claude Desktop
+  per research §4).
+
+## Dependencies
+- Blocks: M5-10 (Claude Desktop smoke).
+- Blocked by: M4-08.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — bundle generation passes integrity check.
+- [ ] Docs updated — README install section.
+- [ ] Manual verification — install on a fresh macOS profile.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:infra,area:mcpb,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
+[M5-06] npm publish pipeline (release-please + provenance),"## Summary
+Publish `genie` (server) and `@genie/viewer` to
+npm on every release-please-generated release tag. Enable `--provenance`
+(npm supply-chain attestation). Reserve scope `@genie`.
+
+## Context
+- INDEX.md: distribution = npm + `.mcpb` + Docker.
+- Research report §7 step 1 + §5 prior art (Framelink uses `npx
+  figma-developer-mcp`).
+
+## Acceptance Criteria
+- [ ] AC1 — `.github/workflows/release.yml` triggers on tag `v*`.
+- [ ] AC2 — Workflow publishes both packages with `--provenance` flag set.
+- [ ] AC3 — `NODE_AUTH_TOKEN` sourced from GitHub Actions `NPM_TOKEN`
+      secret with publish scope.
+- [ ] AC4 — Server publishes as `genie` (root scope, public).
+- [ ] AC5 — Viewer publishes as `@genie/viewer` (scoped, public).
+- [ ] AC6 — Publish step is gated on M0-04 CI green.
+- [ ] AC7 — Release notes auto-generated by `release-please`.
+
+## Implementation Notes
+- File: `.github/workflows/release.yml`.
+- `setup-node@v4` with `registry-url`, `always-auth: true`.
+
+## Out of Scope
+- Beta / canary channels (v2).
+
+## Dependencies
+- Blocks: M5-09 … M5-15 (harnesses install via npm).
+- Blocked by: M0-04.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — dry-run publish on a non-prod tag.
+- [ ] Docs updated.
+- [ ] Manual verification — release published, `npm view genie`
+      shows the right version.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:infra,area:ci,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
+[M5-07] Docker image (multi-arch amd64/arm64),"## Summary
+Build a multi-arch Docker image `roshangautam/genie` for
+amd64 + arm64. Published to Docker Hub + GitHub Container Registry on every
+release. Includes a `docker-compose.yml` reference for self-hosters.
+
+## Context
+- INDEX.md: distribution includes Docker.
+
+## Acceptance Criteria
+- [ ] AC1 — `Dockerfile` uses `node:22-alpine` base, multi-stage
+      (build + runtime).
+- [ ] AC2 — Runtime image < 200 MB.
+- [ ] AC3 — Runs as UID 1000, not root.
+- [ ] AC4 — Healthcheck: `curl -f http://localhost:8080/health || exit 1`.
+- [ ] AC5 — `docker buildx build --platform linux/amd64,linux/arm64`
+      succeeds and pushes to both registries.
+- [ ] AC6 — `deploy/docker-compose.yml` includes the MCP server +
+      commented kit-root volume/env examples; no git host sidecar by default.
+- [ ] AC7 — Image signed via sigstore cosign (keyless).
+
+## Implementation Notes
+- File: `Dockerfile`, `deploy/docker-compose.yml`.
+
+## Out of Scope
+- Helm chart (v2).
+- Kubernetes manifests (v2).
+
+## Dependencies
+- Blocks: nothing critical.
+- Blocked by: M0-04, M5-06.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — image starts; healthcheck green.
+- [ ] Docs updated — README Docker section.
+- [ ] Manual verification — `docker run -p 8080:8080 ...` works.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:infra,area:ci,priority:P1-high,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,High,5h
+[M5-08] Smithery + mcpb.dev listings,"## Summary
+List the server on Smithery and mcpb.dev so users can install via their
+one-click flows. Ship `smithery.yaml` per the Smithery spec.
+
+## Context
+- Research report §5 prior art `21st-dev/magic-mcp` confirmed: ships
+  `smithery.yaml` and `llms-install.md`.
+
+## Acceptance Criteria
+- [ ] AC1 — `smithery.yaml` at repo root: `startCommand: { type: ""stdio"",
+      configSchema: <env vars>, commandFunction: ""..."" }`.
+- [ ] AC2 — Listing submitted to Smithery and approved (URL in
+      README badges).
+- [ ] AC3 — Listing submitted to mcpb.dev and approved (URL in README
+      badges).
+- [ ] AC4 — `llms-install.md` documents the install steps in
+      LLM-readable format (per `21st-dev/magic-mcp` convention).
+- [ ] AC5 — Both listings link back to the GitHub repo + npm package.
+
+## Implementation Notes
+- File: `smithery.yaml`, `llms-install.md`.
+
+## Out of Scope
+- Other registries (v2).
+
+## Dependencies
+- Blocks: nothing critical.
+- Blocked by: M5-06.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — N/A.
+- [ ] Docs updated.
+- [ ] Manual verification — listings live, install via Smithery one-click
+      works.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:docs,area:docs,priority:P2-medium,size:S",M5 — Auth + Distribution + Smoke Tests,,Todo,Medium,3h
+[M5-09] Claude Code harness config snippet + smoke test,"## Summary
+Ship the Claude Code config snippet for `~/.claude.json` (or project
+`.mcp.json`) and an automated Playwright smoke that runs
+`conjure → preview → write_files → validate`
+inside Claude Code. Capture screenshots.
+
+## Context
+- Research report §7 step 11 + per-harness snippets.
+- Tool name shape `mcp__genie__<verb>`.
+
+## Acceptance Criteria
+- [ ] AC1 — `docs/harness/claude-code.md` contains the canonical
+      `~/.claude.json` snippet (HTTP transport + `apiKeyHelper` pattern).
+- [ ] AC2 — Snippet documents the OAuth flow + `apiKeyHelper` script
+      template.
+- [ ] AC3 — Gotcha: callout that OAuth login can bypass the configured LLM endpoint
+      routing in Claude Code (research CLAUDE.md gotcha — `/logout` to restore routing).
+- [ ] AC4 — Smoke test boots Claude Code in a Docker sandbox, installs the
+      MCP server, runs the four-verb chain, captures screenshots.
+- [ ] AC5 — Smoke test asserts each tool call returns non-error.
+- [ ] AC6 — Screenshots saved to `docs/harness/screenshots/claude-code/`.
+- [ ] AC7 — Smoke runs in M5 CI workflow (manually triggered).
+
+## Implementation Notes
+- File: `docs/harness/claude-code.md`, `packages/e2e/test/m5-smoke-claude-code.test.ts`.
+
+## Out of Scope
+- Cross-OS smoke (macOS-only is fine for v1).
+
+## Dependencies
+- Blocks: M5 milestone close.
+- Blocked by: M2-03, M3-04, M4-05, M5-01, M5-06.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — Playwright smoke.
+- [ ] Docs updated — harness snippet doc.
+- [ ] Manual verification — copy-paste snippet onto a clean profile, all
+      four verbs work.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:docs,type:test,area:harness:claude-code,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
+[M5-10] Claude Desktop harness config snippet + smoke test,"## Summary
+Ship the Claude Desktop config snippet for
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) and
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows). Smoke test via
+`.mcpb` install (M5-05).
+
+## Context
+- Research report §4 Claude Desktop row + §7 snippets.
+
+## Acceptance Criteria
+- [ ] AC1 — `docs/harness/claude-desktop.md` includes the snippet (stdio
+      transport via `npx -y genie`).
+- [ ] AC2 — Mentions Linux is not officially supported by Claude Desktop.
+- [ ] AC3 — Documents `~/Library/Logs/Claude/mcp*.log` for debugging.
+- [ ] AC4 — Documents the `mcp-remote` bridge pattern for users who want to
+      reach a remote server from Desktop.
+- [ ] AC5 — `.mcpb` install is the recommended path; the JSON snippet is
+      ""if you prefer"".
+- [ ] AC6 — Smoke test installs the `.mcpb`, opens Claude Desktop, fires
+      `list_kits`, captures screenshot.
+
+## Implementation Notes
+- File: `docs/harness/claude-desktop.md`,
+  `packages/e2e/test/m5-smoke-claude-desktop.test.ts`.
+
+## Out of Scope
+- Windows-specific smoke (defer to v2; v1 is macOS-tested).
+
+## Dependencies
+- Blocks: M5 milestone close.
+- Blocked by: M5-05, M5-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — smoke + screenshot.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:docs,type:test,area:harness:claude-desktop,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
+[M5-11] Codex CLI harness config snippet + smoke test,"## Summary
+Ship the Codex CLI config snippet for `~/.codex/config.toml`. Critical
+gotcha: NO `type` key — Codex infers transport from `command` (stdio) vs
+`url` (HTTP). Uses `bearer_token_env_var`, NOT plain `headers`.
+
+## Context
+- Research report §4 Codex CLI row: ""**No `type`/`transport` key** —
+  transport is implicit by which keys present (`command` → stdio, `url` →
+  HTTP). Use `bearer_token_env_var`/`http_headers`/`env_http_headers`, **not**
+  plain `headers`.""
+- Confirmed claim re: documented keys.
+
+## Acceptance Criteria
+- [ ] AC1 — `docs/harness/codex.md` contains the canonical TOML snippet:
+      ```toml
+      [mcp_servers.genie]
+      url = ""https://genie.<operator-domain>/mcp""
+      bearer_token_env_var = ""GENIE_TOKEN""
+      startup_timeout_sec = 15
+      tool_timeout_sec = 120
+      ```
+- [ ] AC2 — Doc explicitly warns against adding a `type` key (will be
+      silently ignored or cause errors).
+- [ ] AC3 — Documents `codex mcp login genie` for OAuth path.
+- [ ] AC4 — Documents `enabled_tools` allow-list / `disabled_tools`
+      deny-list usage.
+- [ ] AC5 — Notes Codex is tools-only — `ui://` resources downgrade to
+      text-only output.
+- [ ] AC6 — Smoke test runs the four-verb chain via Codex's REPL,
+      captures terminal output.
+
+## Implementation Notes
+- File: `docs/harness/codex.md`,
+  `packages/e2e/test/m5-smoke-codex.test.ts`.
+- Smoke uses `expect` (TCL) to drive the Codex REPL.
+
+## Out of Scope
+- Cursor-style ""Add to Codex"" deeplinks (undocumented).
+
+## Dependencies
+- Blocks: M5 milestone close.
+- Blocked by: M5-01.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:docs,type:test,area:harness:codex,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
+[M5-12] VS Code Copilot harness config snippet + smoke test,"## Summary
+Ship the VS Code Copilot Chat config snippet for `.vscode/mcp.json` (uses
+top-level `servers`, NOT `mcpServers`). Smoke test verifies inline `ui://`
+rendering in the Insiders build (Stable in Jan 2026 per microsoft/vscode#260218).
+
+## Context
+- Research report §4 Copilot row: ""Top-level key is `servers` (not
+  Cursor/Desktop's `mcpServers`). Sandbox flag `sandboxEnabled: true` for
+  stdio (macOS/Linux only).""
+- VS Code MCP Apps: targeted for VS Code Stable Jan 2026 (see INDEX
+  honest-uncertainty #4 — verify pre-launch; tracked in
+  microsoft/vscode#260218).
+
+## Acceptance Criteria
+- [ ] AC1 — `docs/harness/copilot.md` includes the canonical snippet:
+      ```json
+      { ""servers"": { ""genie"": { ""type"": ""http"",
+          ""url"": ""https://genie.<operator-domain>/mcp"" } } }
+      ```
+- [ ] AC2 — Warns about the `servers` (not `mcpServers`) gotcha.
+- [ ] AC3 — Documents `sandbox.network.allowedDomains` config for stdio
+      installs on macOS/Linux.
+- [ ] AC4 — Documents one-click install: search `@mcp` → install button.
+- [ ] AC5 — Documents `code --add-mcp ""...""` CLI install path.
+- [ ] AC6 — Smoke test runs the four-verb chain in VS Code Insiders;
+      asserts `ui://genie/grid` renders inline (not as text).
+- [ ] AC7 — Falls back to text-only assertion when running on Stable (until
+      Jan 2026 ships).
+
+## Implementation Notes
+- File: `docs/harness/copilot.md`,
+  `packages/e2e/test/m5-smoke-copilot.test.ts`.
+
+## Out of Scope
+- Devcontainer integration (mention in docs, no smoke).
+
+## Dependencies
+- Blocks: M5 milestone close.
+- Blocked by: M4-06, M5-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added.
+- [ ] Docs updated.
+- [ ] Manual verification — install on Insiders, inline grid renders.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:docs,type:test,area:harness:copilot,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
+[M5-13] Cursor harness config snippet + smoke test,"## Summary
+Ship the Cursor config snippet for `.cursor/mcp.json` or
+`~/.cursor/mcp.json`. Tests the `auth` block (Cursor's OAuth shape) and
+sniffs whether the historical 40-tool cap is still enforced.
+
+## Context
+- Research report §4 Cursor row: ""The historical 40-tool cap is **not** in
+  current docs page; treat as unverified. `auth: { CLIENT_ID, CLIENT_SECRET,
+  scopes }` for OAuth; static callback at
+  `https://www.cursor.com/agents/mcp/oauth/callback`.""
+- Open question (research §8): ""Cursor's 40-tool cap — historical claim,
+  not in current docs. Ship 50+ tools and observe; if 40 are loaded, the cap
+  survived.""
+
+## Acceptance Criteria
+- [ ] AC1 — `docs/harness/cursor.md` includes the canonical snippet
+      using the `auth` block with `CLIENT_ID`/`CLIENT_SECRET`/`scopes`.
+- [ ] AC2 — Documents `env:` interpolation tokens (`${env:VAR}`).
+- [ ] AC3 — Smoke test installs the server, runs the four-verb chain,
+      asserts `ui://genie/grid` renders via Cursor's Apps
+      extension.
+- [ ] AC4 — Tool-cap probe: registers 50+ dummy tools alongside the real
+      ones; logs how many Cursor exposes; writes the result into
+      `docs/harness/cursor.md` as a confirmed empirical finding.
+- [ ] AC5 — Documents the static callback URL
+      `https://www.cursor.com/agents/mcp/oauth/callback` and how the OAuth
+      flow lands there.
+
+## Implementation Notes
+- File: `docs/harness/cursor.md`,
+  `packages/e2e/test/m5-smoke-cursor.test.ts`.
+
+## Out of Scope
+- ""Add to Cursor"" deeplink format (undocumented per research §8).
+
+## Dependencies
+- Blocks: M5 milestone close.
+- Blocked by: M5-01, M4-06.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added.
+- [ ] Docs updated — 40-tool finding recorded.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:docs,type:test,area:harness:cursor,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
+[M5-14] Cline harness config snippet + smoke test,"## Summary
+Ship the Cline config snippet for `~/.cline/mcp.json` (CLI) and document the
+IDE-extension settings path (per research §8 open question — to be
+re-confirmed empirically). Cline is tools-only; smoke test asserts the
+four-verb chain works and the `ui://` resource degrades to text.
+
+## Context
+- Research report §4 Cline row: ""**No `type` key in JSON examples** —
+  transport is implicit (presence of `command` vs `url`). `autoApprove`
+  array per server.""
+
+## Acceptance Criteria
+- [ ] AC1 — `docs/harness/cline.md` includes the snippet using `url` +
+      `headers` for HTTP transport and `autoApprove` for read-only verbs.
+- [ ] AC2 — Warns against adding a `type` key (silently ignored or
+      breaks).
+- [ ] AC3 — Documents `autoApprove: [""list_components"",
+      ""preview"", ""list_files""]` as the recommended baseline.
+- [ ] AC4 — Empirically locates and documents the IDE-extension settings
+      path (open question 12 from research) and notes the date of the probe.
+- [ ] AC5 — Smoke test runs the four-verb chain via Cline; asserts
+      `ui://` content shows as text (not silently dropped).
+
+## Implementation Notes
+- File: `docs/harness/cline.md`,
+  `packages/e2e/test/m5-smoke-cline.test.ts`.
+
+## Out of Scope
+- One-click install via Cline Marketplace (mention, no smoke).
+
+## Dependencies
+- Blocks: M5 milestone close.
+- Blocked by: M5-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:docs,type:test,area:harness:cline,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
+[M5-15] Continue.dev harness config snippet + smoke test,"## Summary
+Ship the Continue.dev config snippet for `.continue/mcpServers/`. Continue
+is the only harness that REQUIRES the explicit `type` discriminator
+(`stdio | sse | streamable-http`) and uses `${{ secrets.NAME }}`
+interpolation. MCP only works in agent mode.
+
+## Context
+- Research report §4 Continue row: ""**Requires explicit `type: stdio | sse |
+  streamable-http`** — only harness that mandates the discriminator.
+  Secrets interpolated as `${{ secrets.NAME }}`. No `headers`/`auth` keys.
+  MCP usable only in **agent mode**.""
+
+## Acceptance Criteria
+- [ ] AC1 — `docs/harness/continue.md` includes the canonical YAML
+      snippet:
+      ```yaml
+      name: genie
+      version: 1.0.0
+      schema: v1
+      mcpServers:
+        - name: genie
+          type: streamable-http
+          url: ""https://genie.<operator-domain>/mcp""
+          requestOptions:
+            headers:
+              Authorization: Bearer ${{ secrets.GENIE_TOKEN }}
+      ```
+- [ ] AC2 — Warns this is the only harness requiring an explicit `type`.
+- [ ] AC3 — Documents secret interpolation via Continue's `${{ secrets.NAME
+      }}` syntax.
+- [ ] AC4 — Warns MCP only works in agent mode (not chat / autocomplete).
+- [ ] AC5 — Smoke test runs the four-verb chain in agent mode; asserts text
+      output (no `ui://` rendering).
+
+## Implementation Notes
+- File: `docs/harness/continue.md`,
+  `packages/e2e/test/m5-smoke-continue.test.ts`.
+
+## Out of Scope
+- Continue's `prompt` / `model` configuration (orthogonal).
+
+## Dependencies
+- Blocks: M5 milestone close.
+- Blocked by: M5-02.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added.
+- [ ] Docs updated.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:docs,type:test,area:harness:continue,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
+[M5-16] CHANGELOG honesty matrix (what works in each harness),"## Summary
+Compile the empirical results of all 7 harness smoke tests (M5-09 …
+M5-15) into a single honest matrix at the top of CHANGELOG.md. For each
+harness × tier-{0,1,2} combination, mark works / degraded / broken with a
+link to the smoke-test screenshot.
+
+## Context
+- Research report §7 step 11: ""Honest matrix in CHANGELOG"".
+
+## Acceptance Criteria
+- [ ] AC1 — CHANGELOG.md `## v0.1.0 Harness Matrix` section.
+- [ ] AC2 — 7 rows (one per harness), 3 columns (Tier 0/1/2).
+- [ ] AC3 — Each cell is ""✅ works"" / ""⚠️ degraded"" / ""❌ broken"" linked
+      to a screenshot.
+- [ ] AC4 — Below the table, a ""Known limitations"" list pulls from each
+      harness doc's gotcha notes.
+- [ ] AC5 — Updated automatically by the smoke-test CI workflow (post-run
+      job re-generates the table).
+
+## Implementation Notes
+- File: `CHANGELOG.md`, `scripts/update-harness-matrix.mjs`.
+
+## Out of Scope
+- Per-tool granularity (the matrix is per-tier).
+
+## Dependencies
+- Blocks: M5 milestone close.
+- Blocked by: M5-09 … M5-15.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — N/A.
+- [ ] Docs updated.
+- [ ] Manual verification — table matches reality.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:docs,area:docs,priority:P1-high,size:S",M5 — Auth + Distribution + Smoke Tests,,Todo,High,3h
+[M6-01] Observability: Prometheus exporter + Grafana dashboard,"## Summary
+Expose Prometheus metrics from the MCP server (`/metrics` endpoint) and ship
+a Grafana dashboard JSON. Metrics cover the four golden signals plus per-tool
+latency / count / error rate.
+
+## Context
+- Operators bring their own Prometheus/Grafana stack.
+- Research report §6: model gateways can provide per-key/per-team budget +
+  rate-limit middleware; expose those signals when the configured endpoint has them.
+
+## Acceptance Criteria
+- [ ] AC1 — `/metrics` endpoint serves Prometheus text format with at
+      least: `genie_tool_calls_total{tool,status}`,
+      `genie_tool_latency_seconds{tool}` (histogram, p50/p95/p99),
+      `genie_plan_count{state}`, `genie_llm_tokens_total{model,
+      kind}`.
+- [ ] AC2 — Endpoint is auth-gated by the bearer-token middleware (M5-02)
+      with `scope: metrics`.
+- [ ] AC3 — `deploy/grafana/dashboard.json` defines panels: tool latency
+      p50/p95/p99 by verb, error rate, plan lifecycle, LLM token usage,
+      LLM cost estimate when the configured endpoint exposes cost data.
+- [ ] AC4 — Dashboard imports cleanly into Grafana 11+; documented in
+      `docs/06-operations-runbook.md`.
+- [ ] AC5 — Scrape config sample in `deploy/prometheus/scrape.yml`.
+
+## Implementation Notes
+- File: `packages/server/src/metrics/{registry,middleware}.ts`,
+  `deploy/grafana/dashboard.json`.
+- Use `prom-client` v15+.
+
+## Out of Scope
+- Tracing (OTLP) — defer to v2.
+
+## Dependencies
+- Blocks: nothing.
+- Blocked by: M5 milestone close.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — `/metrics` content snapshot.
+- [ ] Docs updated.
+- [ ] Manual verification — dashboard live with real data.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:infra,area:mcp-server,priority:P1-high,size:M",M6 — GA Hardening,,Todo,High,6h
+"[M6-02] Load test (100 concurrent plans, k6)","## Summary
+Run a k6 load test against the server (Docker image from M5-07) at 100
+concurrent plans for 5 minutes. Asserts no OOM, p95 latency < 500 ms,
+error rate < 0.1 %. Publishes a perf report.
+
+## Context
+- M6 milestone exit: ""Load test report: server handles 100 concurrent
+  plans without OOM"".
+
+## Acceptance Criteria
+- [ ] AC1 — File `perf/k6/concurrent-plans.js` defines the scenario.
+- [ ] AC2 — Scenario walks: `create_kit → plan → write_files
+      (10 files) → validate`.
+- [ ] AC3 — Ramp: 0 → 100 VUs over 30 s; hold 5 min; ramp down 30 s.
+- [ ] AC4 — Asserts: no failed HTTP requests, p95 < 500 ms (read verbs) /
+      < 2 s (write_files), no container OOM (monitored via cAdvisor).
+- [ ] AC5 — Report saved to `perf/reports/<git-sha>.html`.
+- [ ] AC6 — Runs nightly in CI against the latest Docker image.
+
+## Implementation Notes
+- File: `perf/k6/concurrent-plans.js`, `.github/workflows/perf.yml`.
+- LLM endpoint calls stubbed out (we're testing the server, not the LLM).
+
+## Out of Scope
+- Stress test beyond 100 VUs (v2).
+
+## Dependencies
+- Blocks: nothing.
+- Blocked by: M5-07.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — the k6 script.
+- [ ] Docs updated — perf report linked from README.
+- [ ] Manual verification.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:perf,area:mcp-server,priority:P1-high,size:M",M6 — GA Hardening,,Todo,High,5h
+"[M6-03] Security audit (OWASP Top 10, dependency CVEs)","## Summary
+External security audit (or internal red-team session) against OWASP Top 10
+2025 + MCP-specific threat model (tool-output injection, sandbox escape,
+prompt injection, plan-vs-write bypass). Patch findings before GA.
+
+## Context
+- Research report §3.4 + M4-07 hardened the iframe sandbox; this issue
+  validates the whole stack.
+
+## Acceptance Criteria
+- [ ] AC1 — `npm audit --omit=dev` clean (zero high/critical).
+- [ ] AC2 — Audit report `docs/security-audit-v1.md` lists each OWASP
+      category with the project's mitigation or ""N/A — not exposed"".
+- [ ] AC3 — MCP-specific checks documented: tool-output injection
+      handling, sandbox-escape attempts (M4-07), plan-vs-write bypass
+      attempts (M1-13), CSP bypass attempts.
+- [ ] AC4 — Prompt-injection probes against `conjure` recorded
+      (does the model leak system prompt?).
+- [ ] AC5 — Findings filed as P0/P1 issues with fixes landed before tag
+      v1.0.0.
+- [ ] AC6 — Re-audit after fixes, sign-off committed.
+
+## Implementation Notes
+- Use `npm audit`, `osv-scanner`, `semgrep --config=p/owasp-top-ten`.
+
+## Out of Scope
+- SOC 2 / ISO 27001 (out of scope for open-source v1).
+
+## Dependencies
+- Blocks: GA tag.
+- Blocked by: M5-04, M4-07.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — N/A (audit).
+- [ ] Docs updated.
+- [ ] Manual verification — clean re-audit.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:security,area:mcp-server,priority:P0-critical,size:M",M6 — GA Hardening,,Todo,Urgent,6h
+[M6-04] Supply-chain hardening (sigstore + npm provenance),"## Summary
+Sign every release artefact with sigstore cosign (keyless, OIDC against
+GitHub Actions). Enable npm `--provenance` flag (M5-06 already wired — this
+issue verifies + documents). Publish SBOM (CycloneDX) alongside each release.
+
+## Context
+- Modern supply-chain best practice; defends against the npm token-theft
+  pattern.
+
+## Acceptance Criteria
+- [ ] AC1 — `.github/workflows/release.yml` runs `cosign sign-blob` against
+      every release artefact (`*.mcpb`, `*.tgz`, Docker image digest).
+- [ ] AC2 — Cosign signatures published as `*.sig` files next to each
+      artefact + uploaded to the Rekor transparency log.
+- [ ] AC3 — npm packages publish with `--provenance` and the attestation
+      is visible on `https://www.npmjs.com/package/genie`.
+- [ ] AC4 — SBOM generated via `@cyclonedx/cdxgen` and attached to each
+      Release.
+- [ ] AC5 — Docs explain how downstream users verify the chain: `cosign
+      verify-blob --certificate-identity-regexp ...`.
+
+## Implementation Notes
+- File: `.github/workflows/release.yml`, `docs/supply-chain.md`.
+
+## Out of Scope
+- in-toto / SLSA Level 3+ (defer to v2).
+
+## Dependencies
+- Blocks: GA tag.
+- Blocked by: M5-06, M5-07.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — verify-after-publish in CI.
+- [ ] Docs updated.
+- [ ] Manual verification — sigstore proof on a real release.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:security,area:ci,priority:P0-critical,size:M",M6 — GA Hardening,,Todo,Urgent,5h
+[M6-05] Public docs site (mkdocs-material on GitHub Pages),"## Summary
+Publish the project docs as a navigable GitHub Pages site at
+`https://<org>.github.io/genie` (or an operator-specific custom domain such as
+`https://genie.docs.<your-domain>`). Use mkdocs-material; auto-deploy on every
+push to `main`.
+
+## Context
+- Mature OSS comparators (Framelink, shadcn-mcp-server) all ship a docs
+  site — table-stakes for adoption.
+
+## Acceptance Criteria
+- [ ] AC1 — `mkdocs.yml` configured with material theme, navigation tree
+      mirroring `docs/` (vision, BRD, PRD, RFC, operations, GTM,
+      harness pages).
+- [ ] AC2 — `.github/workflows/docs.yml` deploys to `gh-pages` on push to
+      `main`.
+- [ ] AC3 — Docs include a copy-paste install matrix per harness (links to
+      M5-09 … M5-15 docs).
+- [ ] AC4 — Search works (mkdocs-material's built-in).
+- [ ] AC5 — Dark mode supported.
+- [ ] AC6 — 404 page links back to home.
+
+## Implementation Notes
+- File: `mkdocs.yml`, `.github/workflows/docs.yml`.
+
+## Out of Scope
+- Custom domain + Cloudflare proxy (defer).
+
+## Dependencies
+- Blocks: launch checklist.
+- Blocked by: M5-09 … M5-15.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — N/A.
+- [ ] Docs updated — site is the docs.
+- [ ] Manual verification — site live + links work.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:docs,area:docs,priority:P1-high,size:M",M6 — GA Hardening,,Todo,High,6h
+[M6-06] GA launch checklist + v1.0.0 tag,"## Summary
+The final go/no-go gate. Checklist of every M0–M6 acceptance criterion,
+each marked ✅ with the closing issue / PR link, plus the launch comms plan
+(Twitter / Mastodon / r/ChatGPTCoding / Hacker News). Tag `v1.0.0` only when
+every box is checked.
+
+## Context
+- This is the milestone exit ritual.
+
+## Acceptance Criteria
+- [ ] AC1 — `docs/launch-checklist.md` lists every milestone's exit
+      criteria; each row has a checkbox and a link to the closing PR.
+- [ ] AC2 — All 6 milestones' exit boxes checked.
+- [ ] AC3 — CHANGELOG entry for v1.0.0 drafted (auto-generated by
+      release-please, hand-polished).
+- [ ] AC4 — Launch comms drafted (1 tweet, 1 Mastodon post, 1 HN
+      submission, 1 r/ChatGPTCoding post) — content lives in
+      `docs/launch-comms.md`.
+- [ ] AC5 — `gh release create v1.0.0` publishes with the
+      `.mcpb` + Docker + npm artefacts attached.
+- [ ] AC6 — Post-launch monitoring plan (who watches the metrics dashboard
+      for the first 48 h) documented.
+
+## Implementation Notes
+- File: `docs/launch-checklist.md`, `docs/launch-comms.md`.
+
+## Out of Scope
+- The actual launch posts (those go out on launch day).
+
+## Dependencies
+- Blocks: nothing — this is the terminal issue.
+- Blocked by: every other M6 issue.
+
+## Agent Workflow
+
+**Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
+plan-on-issue → TDD (failing test first) → test against the local live service →
+adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
++ explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+
+Do not merge with open review comments. Do not leave `main` red. The issue closes only
+when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
+
+## Definition of Done
+- [ ] Tests added — N/A.
+- [ ] Docs updated.
+- [ ] Manual verification — checklist is reviewed and signed off by owner.
+- [ ] No new ESLint/TS errors.
+- [ ] Reviewed by 1 maintainer.","type:chore,area:docs,priority:P0-critical,size:S",M6 — GA Hardening,,Todo,Urgent,3h

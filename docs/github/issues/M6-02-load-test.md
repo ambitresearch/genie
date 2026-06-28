@@ -17,8 +17,8 @@ error rate < 0.1 %. Publishes a perf report.
 
 ## Acceptance Criteria
 - [ ] AC1 — File `perf/k6/concurrent-plans.js` defines the scenario.
-- [ ] AC2 — Scenario walks: `create_project → finalize_plan → write_files
-      (10 files) → validate_design_system → report_validate`.
+- [ ] AC2 — Scenario walks: `create_kit → plan → write_files
+      (10 files) → validate`.
 - [ ] AC3 — Ramp: 0 → 100 VUs over 30 s; hold 5 min; ramp down 30 s.
 - [ ] AC4 — Asserts: no failed HTTP requests, p95 < 500 ms (read verbs) /
       < 2 s (write_files), no container OOM (monitored via cAdvisor).
@@ -27,7 +27,7 @@ error rate < 0.1 %. Publishes a perf report.
 
 ## Implementation Notes
 - File: `perf/k6/concurrent-plans.js`, `.github/workflows/perf.yml`.
-- LiteLLM calls stubbed out (we're testing the server, not the LLM).
+- LLM endpoint calls stubbed out (we're testing the server, not the LLM).
 
 ## Out of Scope
 - Stress test beyond 100 VUs (v2).

@@ -34,3 +34,6 @@ docs/.deliverables/
 .env.*
 *.local
 **/shellprivatevars
+.gstack/
+.goals
+.hallmark

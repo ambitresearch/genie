@@ -22,7 +22,7 @@ gotcha: NO `type` key — Codex infers transport from `command` (stdio) vs
 - [ ] AC1 — `docs/harness/codex.md` contains the canonical TOML snippet:
       ```toml
       [mcp_servers.genie]
-      url = "https://genie.${DOMAIN}/mcp"
+      url = "https://genie.<operator-domain>/mcp"
       bearer_token_env_var = "GENIE_TOKEN"
       startup_timeout_sec = 15
       tool_timeout_sec = 120

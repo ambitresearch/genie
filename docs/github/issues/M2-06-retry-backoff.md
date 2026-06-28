@@ -1,7 +1,7 @@
 ---
-title: "[M2-06] Retry/backoff for LiteLLM calls (exponential, jittered)"
-milestone: "M2 — LiteLLM Generation Surface"
-labels: ["type:feature", "area:litellm", "priority:P1-high", "size:S"]
+title: "[M2-06] Retry/backoff for LLM endpoint calls (exponential, jittered)"
+milestone: "M2 — LLM Generation Surface"
+labels: ["type:feature", "area:llm", "priority:P1-high", "size:S"]
 assignees: []
 estimate: "3h"
 ---
@@ -13,8 +13,8 @@ Exponential backoff with jitter, max 3 retries, surface a typed
 `RateLimitedError` so callers can react.
 
 ## Context
-- LiteLLM passes through Anthropic's 429 with `Retry-After` headers; the
-  client must honour them.
+- OpenAI-compatible gateways commonly pass through provider 429 responses with
+  `Retry-After` headers; the client must honour them.
 
 ## Acceptance Criteria
 - [ ] AC1 — File `packages/server/src/llm/retry.ts` exports
@@ -24,7 +24,7 @@ Exponential backoff with jitter, max 3 retries, surface a typed
 - [ ] AC3 — Honours `Retry-After` header when present.
 - [ ] AC4 — Backoff: base 1 s, cap 30 s, jitter ±20 %.
 - [ ] AC5 — Max 3 retries total (configurable via
-      `LITELLM_RETRY_MAX`).
+      `GENIE_LLM_RETRY_MAX`).
 - [ ] AC6 — On exhaustion, throws typed `RateLimitedError | TransientError`.
 - [ ] AC7 — Each attempt logged with `{ attempt, status, retryAfter }`.
 

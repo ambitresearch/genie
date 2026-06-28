@@ -106,7 +106,7 @@
       <g transform="translate(266,0)"><rect width="92" height="26" rx="13" fill="#dee8fd"/><text x="14" y="18" fill="#345197">feedback</text></g>
       <g transform="translate(400,0)"><rect width="98" height="26" rx="13" fill="#d4f1d8"/><text x="12" y="18" fill="#2a7a42">✓ validated</text></g>
       <g transform="translate(512,0)"><rect width="106" height="26" rx="13" fill="#fae2d8"/><text x="12" y="18" fill="#ac5a40">✦ generating</text></g>
-      <g transform="translate(632,0)"><rect width="150" height="26" rx="13" fill="#ffdcd4"/><text x="12" y="18" fill="#c5372f">⚠ missing @dsCard</text></g>
+      <g transform="translate(632,0)"><rect width="150" height="26" rx="13" fill="#ffdcd4"/><text x="12" y="18" fill="#c5372f">⚠ missing @genie</text></g>
       <g transform="translate(796,0)"><rect width="56" height="26" rx="13" fill="#f3f0ea" stroke="#c7c3bd"/><text x="14" y="18" fill="#423f3d">thin</text></g>
     </g>
   </g>
@@ -117,7 +117,7 @@
     <g transform="translate(0,26)" font-family="JetBrains Mono, monospace" font-size="13">
       <g><rect width="186" height="32" rx="6" fill="#efeae2" stroke="#dad7d2"/><text x="12" y="21" fill="#345197">var(--color-accent)</text></g>
       <g transform="translate(206,0)"><rect width="150" height="32" rx="6" fill="#efeae2" stroke="#dad7d2"/><text x="12" y="21" fill="#345197">--space-md</text><text x="108" y="21" fill="#75716d">16</text></g>
-      <g transform="translate(376,0)"><rect width="360" height="32" rx="6" fill="#efeae2" stroke="#dad7d2"/><text x="12" y="21" fill="#75716d">&lt;!-- @dsCard group=<tspan fill="#2a7440">"actions"</tspan> --&gt;</text></g>
+      <g transform="translate(376,0)"><rect width="360" height="32" rx="6" fill="#efeae2" stroke="#dad7d2"/><text x="12" y="21" fill="#75716d">&lt;!-- @genie group=<tspan fill="#2a7440">"actions"</tspan> --&gt;</text></g>
     </g>
   </g>
 
@@ -130,7 +130,7 @@
       <text x="82" y="25" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="12" font-weight="600" fill="#faf8f5">design-default</text>
       <text x="238" y="25" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="12" fill="#423f3d">design-best</text>
       <text x="392" y="25" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="12" fill="#423f3d">design-local</text>
-      <text x="496" y="25" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">→ LiteLLM alias routing</text>
+      <text x="496" y="25" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">→ gateway alias routing</text>
     </g>
   </g>
 

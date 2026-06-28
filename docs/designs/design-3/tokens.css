@@ -10,7 +10,7 @@
    direction:     turn the lights off so the lamp (generate) is the whole point
    two-tiers:     embedded defers to host surface (even light); standalone = dark
    ----------------------------------------------------------------------------
-   Mirrors docs/design/tokens.css structure so the four directions diff cleanly.
+   Mirrors `docs/designs/design-1/tokens.css` structure so the four directions diff cleanly.
    OKLCH is source of truth; hex are sRGB fallbacks for the SVG mockups.
    ============================================================================ */
 
