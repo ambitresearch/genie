@@ -24,7 +24,8 @@ open, no per-seat hosted canvas, no vendor lock-in.
 
 Inspired by Anthropic's Claude Design; an independent, open-source take on the same
 idea, built on public protocol surfaces. **Not** affiliated with Anthropic. MIT,
-self-hostable, model-agnostic via [LiteLLM](https://litellm.ai).
+self-hostable, model-agnostic via any OpenAI-compatible endpoint; LiteLLM works as
+the reference gateway.
 
 It's a solo, AI-assisted experiment to find out whether MCP-Apps — rich UI rendered
 *inside* a coding harness — are genuinely useful. See [`docs/plan/02-brd.md`](./docs/plan/02-brd.md).
@@ -71,7 +72,7 @@ packages/
   e2e/        @genie/e2e — harness smoke tests (M5, placeholder)
 docs/
   plan/       vision, BRD, PRD, tech-design RFC, launch plan, ops runbook
-  design/     locked design system + SVG surface mockups
+  designs/    locked design system + SVG surface mockups
   github/     M0–M6 issue backlog (agent-delegation-ready)
   research/   Skybridge framework evaluation
 AGENTS.md     the SDLC contract every contributor (human or AI) follows

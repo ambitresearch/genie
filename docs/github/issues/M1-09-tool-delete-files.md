@@ -1,6 +1,6 @@
 ---
 title: "[M1-09] Tool: delete_files"
-milestone: "M1 — Tier-0 File Verbs"
+milestone: "M1 — Kit + Project Foundation"
 labels: ["type:feature", "area:mcp-tools", "priority:P0-critical", "size:S"]
 assignees: []
 estimate: "3h"

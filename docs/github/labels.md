@@ -28,8 +28,10 @@ Hex colours follow GitHub's recommended palette. All labels are namespaced
 | `area:mcp-resources`        | `#00a86b` |
 | `area:mcp-prompts`          | `#1d8e3a` |
 | `area:mcp-ui`               | `#0e8a16` |
-| `area:litellm`              | `#5319e7` |
-| `area:gitea`                | `#f9d0c4` |
+| `area:llm`                  | `#5319e7` |
+| `area:generation`           | `#7057ff` |
+| `area:projects`             | `#1f883d` |
+| `area:storage`              | `#f9d0c4` |
 | `area:viewer`               | `#fef2c0` |
 | `area:mcpb`                 | `#fbca04` |
 | `area:harness:claude-code`  | `#a67c00` |

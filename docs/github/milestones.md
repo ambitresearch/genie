@@ -6,14 +6,14 @@ six-phase split in INDEX.md.
 | ID  | Name                              | Window      | Issues | Theme                                                   |
 |-----|-----------------------------------|-------------|--------|---------------------------------------------------------|
 | M0  | Discovery & Scaffold              | wk 0–1      | 4      | Repo, governance, CI, dev-env                           |
-| M1  | Tier-0 File Verbs                 | wk 1–3      | 15     | The 12-method DesignSync mirror + storage + tests       |
-| M2  | LiteLLM Generation Surface        | wk 3–4      | 9      | `generate_component`, `refine_component`, model routing |
-| M3  | @dsCard Validator + Manifest      | wk 4–5      | 6      | First-line regex contract + atomic write sequence       |
+| M1  | Kit + Project Foundation          | wk 1–3      | 19     | 13 kit verbs + 6 project verbs, storage, tests           |
+| M2  | LLM Generation Surface            | wk 3–4      | 9      | `conjure`, `refine`, model routing |
+| M3  | @genie Validator + Manifest      | wk 4–5      | 6      | First-line `@genie` marker contract + atomic write sequence |
 | M4  | Preview Viewer (Vite + ui://)     | wk 5–7      | 10     | `@genie/viewer` + MCP-Apps fallback          |
 | M5  | Auth + Distribution + Smoke Tests | wk 7–11     | 16     | OAuth/bearer, .mcpb/npm/Docker, 7-harness smoke         |
 | M6  | GA Hardening                      | wk 11–12    | 6      | Observability, perf, security, supply chain, launch     |
 
-**Total issues: 66** (target was 58–70; this lands inside the band).
+**Total issues: 70** (target was 58–70; this lands at the top of the band).
 
 ---
 
@@ -30,51 +30,57 @@ six-phase split in INDEX.md.
   - [ ] `npm run dev` boots an MCP server scaffold (no tools registered yet)
 - **Dependencies:** none.
 
-## M1 — Tier-0 File Verbs (DesignSync 12-method mirror)
+## M1 — Kit + Project Foundation (genie's own 19-tool M1 surface)
 
 - **Window:** week 1–3 (≈6 working days)
-- **Scope summary:** verbatim mirror of DesignSync's 12-method protocol —
-  `list_projects` · `get_project` · `list_files` · `get_file` · `create_project` ·
-  `finalize_plan` · `write_files` · `delete_files` · `register_assets` ·
-  `unregister_assets` · `report_validate` · `list_components`, plus a storage
-  abstraction (local FS for solo dev, Gitea for shared) and the read → plan →
-  write capability guard enforced exactly as the schema description spells out:
-  "Calling write, delete, register, or unregister without a valid `planId`, or
-  with paths outside the plan, is rejected."
+- **Scope summary:** genie's own 19-tool M1 surface: the 13 kit/component verbs —
+  `list_kits` · `get_kit` · `list_files` · `read_file` · `create_kit` ·
+  `plan` · `write_files` · `delete_files` · `validate` · `list_components` ·
+  `conjure` · `refine` · `preview`
+  (the inherited `register_assets`/`unregister_assets` are dropped — the
+  `@genie` marker IS the registration; `report_validate` +
+  `validate_design_system` are merged into `validate`), plus six project verbs —
+  `list_projects` · `get_project` · `create_project` · `delete_project` ·
+  `bind_kit` · `conjure_screen` — plus a storage
+  abstraction (local FS for solo dev, any git host for shared) and the read → plan →
+  write capability guard: write/delete calls without a valid `planId`, or with
+  paths outside the plan, are rejected.
 - **Exit criteria:**
-  - [ ] All 12 verbs implemented and unit-tested (≥90 % branch coverage)
+  - [ ] All M1 tools implemented and unit-tested (≥90 % branch coverage)
+  - [ ] Projects and blueprint projects persist `.genie/project.json`
+  - [ ] `conjure_screen` resolves explicit/default/sole kit bindings and fails clearly when a kit is required
   - [ ] Plan-vs-write guard rejects out-of-plan paths and invalid `planId`
   - [ ] `write_files` caps at 256 files/call and reads from `localPath` (file
         contents never enter model context)
-  - [ ] `get_file` 256 KiB cap enforced
-  - [ ] Gitea adapter passes the same conformance test suite as local FS
+  - [ ] `read_file` 256 KiB cap enforced
+  - [ ] git-host adapter passes the same conformance test suite as local FS
 - **Dependencies:** M0.
 
-## M2 — LiteLLM Generation Surface
+## M2 — LLM Generation Surface
 
 - **Window:** week 3–4 (≈4 working days)
-- **Scope summary:** wire `openai` client to LiteLLM gateway, define
-  `COMPONENT_SCHEMA`, implement `generate_component` + `refine_component`, ship
+- **Scope summary:** wire `openai` client to the configured OpenAI-compatible endpoint, define
+  `COMPONENT_SCHEMA`, implement `conjure` + `refine`, ship
   retry/backoff + structured-output validation, default model
-  `anthropic/claude-sonnet-4-6` via LiteLLM `design-default` alias.
+  `design-default` model alias.
 - **Exit criteria:**
-  - [ ] `generate_component({ prompt })` returns files conforming to
+  - [ ] `conjure({ prompt })` returns files conforming to
         `COMPONENT_SCHEMA`
-  - [ ] Model routing via LiteLLM aliases (`design-default`, `design-best`,
+  - [ ] Model routing via operator-defined aliases (`design-default`, `design-best`,
         `design-local`)
-  - [ ] Integration test against `https://litellm.roshangautam.com` passes in CI
+  - [ ] Integration test against `GENIE_LLM_BASE_URL` passes in CI
 - **Dependencies:** M1 (`write_files` is the consumer).
 
-## M3 — @dsCard Validator + Manifest Compiler
+## M3 — @genie Validator + Manifest Compiler
 
 - **Window:** week 4–5 (≈3 working days)
-- **Scope summary:** port the regex `/^<!--\s*@dsCard\s+group="[^"]*"[^>]*-->/`
-  from `package-validate.mjs`, ship `validate_design_system`, watch the
+- **Scope summary:** implement genie's own `@genie` first-line marker validator
+  with the regex `/^<!--\s*@genie\s+group="[^"]*"[^>]*-->/`, ship `validate`, watch the
   components tree with chokidar, recompile `manifest.json` on any preview HTML
   change, implement the 5-step atomic write sequence (sentinel · chunks · deletes
   · re-arm sentinel · anchor last).
 - **Exit criteria:**
-  - [ ] `[DSCARD_MISSING]` raised on first-line failure, exit code 1
+  - [ ] `[GENIE_MARKER_MISSING]` raised on first-line failure, exit code 1
   - [ ] `manifest.json` regenerated on save (< 100 ms)
   - [ ] Atomic write sequence verified via fault-injection tests
 - **Dependencies:** M1 (`write_files`), M2 (generation produces HTML to validate).
@@ -83,13 +89,13 @@ six-phase split in INDEX.md.
 
 - **Window:** week 5–7 (≈6 working days)
 - **Scope summary:** build `@genie/viewer` (Vite multi-page entry,
-  chokidar HMR, sandboxed iframe grid), ship `render_preview` tool that returns
+  chokidar HMR, sandboxed iframe grid), ship `preview` tool that returns
   `_meta.ui.resourceUri` for hosts that render `ui://`, register MIME
   `text/html;profile=mcp-app`, inline `manifest.json` into the iframe payload so
   no network fetch is needed in the sandbox.
 - **Exit criteria:**
   - [ ] `npx genie-viewer ui_kits/<kit>` boots on `:5173` with HMR
-  - [ ] `render_preview` rendered inline in VS Code Insiders + Claude Code
+  - [ ] `preview` rendered inline in VS Code Insiders + Claude Code
   - [ ] Viewer accessibility audit (axe-core) passes
 - **Dependencies:** M3 (manifest is the input).
 
@@ -98,7 +104,7 @@ six-phase split in INDEX.md.
 - **Window:** week 7–11 (≈10 working days)
 - **Scope summary:** OAuth 2.0 with Dynamic Client Registration (Claude Code,
   Codex), static `Authorization: Bearer` fallback (VS Code, Cline, Continue),
-  env-var secret handling, Authentik OIDC integration test, package as `.mcpb`,
+  env-var secret handling, OIDC provider integration test, package as `.mcpb`,
   publish to npm + Docker + Smithery + mcpb.dev, per-harness config snippet docs
   for the 7 Tier-0 targets, end-to-end Playwright smoke test per harness.
 - **Exit criteria:**
@@ -116,7 +122,7 @@ six-phase split in INDEX.md.
   load test, security audit, supply-chain hardening (sigstore + npm provenance),
   public-facing docs site, launch checklist.
 - **Exit criteria:**
-  - [ ] Grafana dashboard live on TrueNAS with at least p50/p95/p99 tool
+  - [ ] Grafana dashboard JSON imports cleanly with at least p50/p95/p99 tool
         latency + error rate panels
   - [ ] Load test report: server handles 100 concurrent plans without OOM
   - [ ] `npm audit --omit=dev` clean

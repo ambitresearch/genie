@@ -1,0 +1,239 @@
+<!-- Warm Instrument · design-6 · genre: editorial-precision
+     surface: 02-preview-refine · 3-pane review (option-3 flow)
+     pre-emit critique: P5 H5 E5 S5 R5 V5
+     Clay rule: Refine / Apply / Approve buttons only. Ghosted chat left-pane. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="980" viewBox="0 0 1440 980"
+     font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif">
+
+  <!-- ── Background ──────────────────────────────────────────────── -->
+  <rect width="1440" height="980" fill="#faf8f5"/>
+
+  <!-- ── Top bar ──────────────────────────────────────────────────── -->
+  <rect width="1440" height="56" fill="#faf8f5"/>
+  <line x1="0" y1="56" x2="1440" y2="56" stroke="#dad7d2" stroke-width="1"/>
+  <text x="32" y="34" font-family="Georgia, 'Times New Roman', ui-serif, serif"
+        font-size="19" font-weight="600" letter-spacing="-0.01em" fill="#171614">genie</text>
+  <text x="148" y="33" font-size="14" fill="#75716d">Generate</text>
+  <text x="228" y="33" font-size="14" fill="#75716d">Browse</text>
+  <text x="302" y="33" font-size="14" font-weight="500" fill="#171614">Review</text>
+  <line x1="302" y1="55" x2="347" y2="55" stroke="#171614" stroke-width="2"/>
+  <!-- breadcrumb -->
+  <text x="660" y="33" font-size="12" fill="#75716d" text-anchor="middle">
+        Pricing Card · Draft #2 · Quanta UI Kit</text>
+  <!-- right controls -->
+  <rect x="1352" y="16" width="24" height="24" rx="12" fill="#eae6df"/>
+  <text x="1364" y="33" font-size="12" font-weight="600" fill="#75716d" text-anchor="middle">RG</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       LEFT PANE: ghosted conversation history (280px)
+  ═══════════════════════════════════════════════════════════════════ -->
+  <rect x="0" y="56" width="280" height="924" fill="#faf8f5" opacity="0.7"/>
+  <line x1="280" y1="56" x2="280" y2="980" stroke="#dad7d2" stroke-width="1"/>
+
+  <!-- pane header -->
+  <rect x="0" y="56" width="280" height="40" fill="transparent"/>
+  <text x="16" y="81" font-size="12" font-weight="600" fill="#75716d">Conversation</text>
+  <line x1="0" y1="96" x2="280" y2="96" stroke="#dad7d2" stroke-width="0.5"/>
+
+  <!-- user turn 1 (ghosted) -->
+  <rect x="48" y="108" width="216" height="60" rx="8"
+        fill="#eae6df" opacity="0.7"/>
+  <text x="64" y="128" font-size="11" fill="#423f3d" opacity="0.7">a pricing card with three</text>
+  <text x="64" y="144" font-size="11" fill="#423f3d" opacity="0.7">tiers — free / pro / enterprise</text>
+  <text x="64" y="160" font-size="10" fill="#75716d" opacity="0.6">You · 3m ago</text>
+
+  <!-- genie turn 1 (ghosted) -->
+  <rect x="16" y="180" width="216" height="52" rx="8"
+        fill="#ffffff" stroke="#dad7d2" stroke-width="1" opacity="0.7"/>
+  <text x="32" y="200" font-size="11" fill="#171614" opacity="0.7">Generated PricingCard v1 with</text>
+  <text x="32" y="216" font-size="11" fill="#171614" opacity="0.7">Quanta tokens applied.</text>
+  <text x="32" y="226" font-size="10" fill="#75716d" opacity="0.6">genie · 3m ago</text>
+
+  <!-- user turn 2 (ghosted) -->
+  <rect x="48" y="244" width="216" height="60" rx="8"
+        fill="#eae6df" opacity="0.7"/>
+  <text x="64" y="264" font-size="11" fill="#423f3d" opacity="0.7">Make the pro tier card taller,</text>
+  <text x="64" y="280" font-size="11" fill="#423f3d" opacity="0.7">emphasise the CTA row</text>
+  <text x="64" y="296" font-size="10" fill="#75716d" opacity="0.6">You · 1m ago</text>
+
+  <!-- genie turn 2 (ghosted, most recent) -->
+  <rect x="16" y="316" width="216" height="52" rx="8"
+        fill="#ffffff" stroke="#dad7d2" stroke-width="1" opacity="0.8"/>
+  <text x="32" y="336" font-size="11" fill="#171614" opacity="0.8">Updated. Pro card height +40px,</text>
+  <text x="32" y="352" font-size="11" fill="#171614" opacity="0.8">CTA row contrast raised.</text>
+  <text x="32" y="362" font-size="10" fill="#75716d" opacity="0.7">genie · just now</text>
+
+  <!-- conversation compose area (ghosted) -->
+  <line x1="0" y1="900" x2="280" y2="900" stroke="#dad7d2" stroke-width="0.5"/>
+  <rect x="16" y="912" width="248" height="36" rx="5"
+        fill="#f3f0ea" stroke="#dad7d2" stroke-width="1" opacity="0.7"/>
+  <text x="32" y="934" font-size="12" fill="#75716d" opacity="0.6">Refine further…</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       CENTRE PANE: preview stage (840px, x=280..1120)
+  ═══════════════════════════════════════════════════════════════════ -->
+  <rect x="280" y="56" width="840" height="924" fill="#f3f0ea"/>
+
+  <!-- stage label -->
+  <rect x="280" y="56" width="840" height="40" fill="#f3f0ea"/>
+  <text x="700" y="81" font-size="11" fill="#75716d" text-anchor="middle"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        letter-spacing="0.04em">DRAFT #2 · LIVE PREVIEW</text>
+  <line x1="280" y1="96" x2="1120" y2="96" stroke="#c7c3bd" stroke-width="1"/>
+
+  <!-- simulated component: Pricing Card -->
+  <!-- free tier card -->
+  <rect x="340" y="168" width="200" height="480" rx="8"
+        fill="#ffffff" stroke="#dad7d2" stroke-width="1"/>
+  <text x="440" y="212" font-size="16" font-weight="600" fill="#171614"
+        text-anchor="middle">Free</text>
+  <text x="440" y="238" font-size="26" font-weight="600" fill="#171614"
+        text-anchor="middle">$0</text>
+  <text x="440" y="256" font-size="12" fill="#75716d" text-anchor="middle">/ month</text>
+  <line x1="360" y1="268" x2="520" y2="268" stroke="#dad7d2" stroke-width="0.5"/>
+  <text x="376" y="292" font-size="12" fill="#423f3d">5 components</text>
+  <text x="376" y="312" font-size="12" fill="#423f3d">Community support</text>
+  <text x="376" y="332" font-size="12" fill="#423f3d">1 kit</text>
+  <text x="376" y="352" font-size="12" fill="#75716d">— DesignSync</text>
+  <text x="376" y="372" font-size="12" fill="#75716d">— Priority build</text>
+  <rect x="360" y="590" width="160" height="34" rx="5"
+        fill="transparent" stroke="#dad7d2" stroke-width="1.5"/>
+  <text x="440" y="612" font-size="13" font-weight="500" fill="#171614"
+        text-anchor="middle">Get started</text>
+
+  <!-- pro tier card (taller, highlighted — the edited one) -->
+  <rect x="560" y="128" width="240" height="560" rx="8"
+        fill="#ffffff" stroke="#dad7d2" stroke-width="1.5"/>
+  <!-- pro highlight edge -->
+  <rect x="560" y="128" width="240" height="4" rx="2" fill="#c87c5e"/>
+  <text x="680" y="180" font-size="11" font-weight="700" fill="#c87c5e"
+        text-anchor="middle" letter-spacing="0.08em">POPULAR</text>
+  <text x="680" y="212" font-size="16" font-weight="600" fill="#171614"
+        text-anchor="middle">Pro</text>
+  <text x="680" y="248" font-size="30" font-weight="600" fill="#171614"
+        text-anchor="middle">$29</text>
+  <text x="680" y="268" font-size="12" fill="#75716d" text-anchor="middle">/ month</text>
+  <line x1="580" y1="280" x2="780" y2="280" stroke="#dad7d2" stroke-width="0.5"/>
+  <text x="596" y="304" font-size="12" fill="#423f3d">Unlimited components</text>
+  <text x="596" y="324" font-size="12" fill="#423f3d">DesignSync active</text>
+  <text x="596" y="344" font-size="12" fill="#423f3d">5 kits</text>
+  <text x="596" y="364" font-size="12" fill="#423f3d">Priority build queue</text>
+  <text x="596" y="384" font-size="12" fill="#75716d">— Enterprise SSO</text>
+  <!-- CTA row — emphasised (clay fill) -->
+  <rect x="580" y="638" width="200" height="36" rx="5" fill="#c87c5e"/>
+  <text x="680" y="661" font-size="14" font-weight="600" fill="#ffffff"
+        text-anchor="middle">Start Pro trial</text>
+
+  <!-- enterprise tier card -->
+  <rect x="820" y="168" width="200" height="480" rx="8"
+        fill="#ffffff" stroke="#dad7d2" stroke-width="1"/>
+  <text x="920" y="212" font-size="16" font-weight="600" fill="#171614"
+        text-anchor="middle">Enterprise</text>
+  <text x="920" y="238" font-size="26" font-weight="600" fill="#171614"
+        text-anchor="middle">Custom</text>
+  <text x="920" y="256" font-size="12" fill="#75716d" text-anchor="middle">/ year</text>
+  <line x1="840" y1="268" x2="1000" y2="268" stroke="#dad7d2" stroke-width="0.5"/>
+  <text x="856" y="292" font-size="12" fill="#423f3d">Unlimited everything</text>
+  <text x="856" y="312" font-size="12" fill="#423f3d">SLA + dedicated support</text>
+  <text x="856" y="332" font-size="12" fill="#423f3d">Multi-team kits</text>
+  <text x="856" y="352" font-size="12" fill="#423f3d">DesignSync enterprise</text>
+  <text x="856" y="372" font-size="12" fill="#423f3d">Priority build queue</text>
+  <rect x="840" y="590" width="160" height="34" rx="5"
+        fill="transparent" stroke="#dad7d2" stroke-width="1.5"/>
+  <text x="920" y="612" font-size="13" font-weight="500" fill="#171614"
+        text-anchor="middle">Contact sales</text>
+
+  <!-- diff annotation: change indicator on pro card -->
+  <line x1="560" y1="596" x2="540" y2="596" stroke="#75716d" stroke-width="1"
+        stroke-dasharray="3 3"/>
+  <rect x="296" y="582" width="232" height="28" rx="4" fill="#f3f0ea" stroke="#dad7d2"/>
+  <text x="316" y="600" font-size="10" fill="#75716d">↑ Pro card height +40px</text>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       RIGHT PANE: refine panel (320px, x=1120..1440)
+  ═══════════════════════════════════════════════════════════════════ -->
+  <rect x="1120" y="56" width="320" height="924" fill="#faf8f5"/>
+  <line x1="1120" y1="56" x2="1120" y2="980" stroke="#dad7d2" stroke-width="1"/>
+
+  <!-- pane header -->
+  <rect x="1120" y="56" width="320" height="40" fill="transparent"/>
+  <text x="1136" y="81" font-size="12" font-weight="600" fill="#171614">Review &amp; Refine</text>
+  <line x1="1120" y1="96" x2="1440" y2="96" stroke="#dad7d2" stroke-width="0.5"/>
+
+  <!-- component metadata -->
+  <text x="1136" y="120" font-size="11" font-weight="600" fill="#75716d">COMPONENT</text>
+  <text x="1136" y="140" font-size="14" font-weight="600" fill="#171614">PricingCard</text>
+  <text x="1136" y="158" font-size="11" fill="#75716d">Quanta UI Kit · @dsCard · draft #2</text>
+
+  <!-- status row -->
+  <rect x="1136" y="168" width="74" height="18" rx="9" fill="#fae2d8"/>
+  <text x="1173" y="181" font-size="9" font-weight="600" fill="#c87c5e"
+        text-anchor="middle">@genie draft</text>
+  <rect x="1218" y="168" width="70" height="18" rx="9" fill="#f3f0ea" stroke="#dad7d2"/>
+  <text x="1253" y="181" font-size="9" font-weight="500" fill="#75716d"
+        text-anchor="middle">not committed</text>
+  <line x1="1120" y1="198" x2="1440" y2="198" stroke="#dad7d2" stroke-width="0.5"/>
+
+  <!-- changes summary -->
+  <text x="1136" y="220" font-size="11" font-weight="600" fill="#75716d">CHANGES IN DRAFT #2</text>
+  <text x="1152" y="242" font-size="12" fill="#423f3d">Pro card height: 520 → 560px</text>
+  <text x="1152" y="260" font-size="12" fill="#423f3d">CTA row: outline → clay fill</text>
+  <text x="1152" y="278" font-size="12" fill="#75716d">Free, Enterprise: unchanged</text>
+  <line x1="1120" y1="292" x2="1440" y2="292" stroke="#dad7d2" stroke-width="0.5"/>
+
+  <!-- diff stats -->
+  <text x="1136" y="314" font-size="11" font-weight="600" fill="#75716d">DIFF STATS</text>
+  <text x="1136" y="334" font-size="11"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        fill="#2a7a42">+14 lines</text>
+  <text x="1200" y="334" font-size="11"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        fill="#b5503a">–6 lines</text>
+  <line x1="1120" y1="348" x2="1440" y2="348" stroke="#dad7d2" stroke-width="0.5"/>
+
+  <!-- checklist -->
+  <text x="1136" y="370" font-size="11" font-weight="600" fill="#75716d">CHECKLIST</text>
+  <text x="1156" y="392" font-size="12" fill="#2a7a42">✓ Quanta tokens only</text>
+  <text x="1156" y="412" font-size="12" fill="#2a7a42">✓ WCAG contrast OK</text>
+  <text x="1156" y="432" font-size="12" fill="#2a7a42">✓ Clay accent constraint</text>
+  <text x="1156" y="452" font-size="12" fill="#75716d">○ Keyboard nav (manual)</text>
+  <line x1="1120" y1="468" x2="1440" y2="468" stroke="#dad7d2" stroke-width="0.5"/>
+
+  <!-- refine instruction field -->
+  <text x="1136" y="490" font-size="11" font-weight="600" fill="#75716d">FURTHER REFINEMENT</text>
+  <rect x="1136" y="500" width="272" height="80" rx="5"
+        fill="#ffffff" stroke="#dad7d2" stroke-width="1"/>
+  <text x="1152" y="524" font-size="12" fill="#75716d">Add annotation if needed…</text>
+
+  <!-- Refine button — CLAY -->
+  <rect x="1136" y="592" width="272" height="36" rx="5" fill="#c87c5e"/>
+  <text x="1272" y="615" font-size="13" font-weight="600" fill="#ffffff"
+        text-anchor="middle">Refine →</text>
+
+  <!-- separator -->
+  <line x1="1120" y1="644" x2="1440" y2="644" stroke="#dad7d2" stroke-width="0.5"/>
+  <text x="1136" y="664" font-size="11" font-weight="600" fill="#75716d">DECISION</text>
+
+  <!-- Approve button — CLAY -->
+  <rect x="1136" y="676" width="128" height="36" rx="5" fill="#c87c5e"/>
+  <text x="1200" y="699" font-size="13" font-weight="600" fill="#ffffff"
+        text-anchor="middle">Approve</text>
+
+  <!-- Request Changes button — neutral/ink outline -->
+  <rect x="1280" y="676" width="128" height="36" rx="5"
+        fill="transparent" stroke="#dad7d2" stroke-width="1.5"/>
+  <text x="1344" y="699" font-size="12" font-weight="500" fill="#423f3d"
+        text-anchor="middle">Request changes</text>
+
+  <!-- Apply to kit — CLAY outline -->
+  <rect x="1136" y="724" width="272" height="36" rx="5"
+        fill="transparent" stroke="#c87c5e" stroke-width="1.5"/>
+  <text x="1272" y="747" font-size="13" font-weight="500" fill="#c87c5e"
+        text-anchor="middle">Apply to kit →</text>
+
+  <!-- ── Footer ──────────────────────────────────────────────────── -->
+  <line x1="0" y1="960" x2="1440" y2="960" stroke="#dad7d2" stroke-width="1"/>
+  <text x="32" y="973" font-size="11" fill="#75716d">genie · design-6 warm instrument</text>
+  <text x="1408" y="973" font-size="11" fill="#75716d" text-anchor="end">02 preview refine</text>
+
+</svg>

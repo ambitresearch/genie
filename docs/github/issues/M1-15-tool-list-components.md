@@ -1,25 +1,22 @@
 ---
 title: "[M1-15] Tool: list_components"
-milestone: "M1 — Tier-0 File Verbs"
+milestone: "M1 — Kit + Project Foundation"
 labels: ["type:feature", "area:mcp-tools", "priority:P0-critical", "size:S"]
 assignees: []
 estimate: "3h"
 ---
 
 ## Summary
-Implement `list_components` MCP tool — the 12th DesignSync mirror verb.
-Read-only enumeration of components within a project, optionally filtered by
+Implement `list_components` MCP tool — one of genie's 13 kit/component core verbs.
+Read-only enumeration of components within a kit, optionally filtered by
 group. Backs every UI that needs to render a component picker, the manifest
 compiler's seed list, and the harness smoke tests that assert "library X has
 N components".
 
 ## Context
-- INDEX.md §Source-of-truth: "12-method DesignSync mirror **includes
-  `list_components`**" — closing the gap where every other doc said "12
-  verbs" but only enumerated 11.
-- RFC §3.1 G-2: `list_components` lives permanently in the DesignSync mirror
-  family (not the Generation family).
-- Research report §3.1 tool surface: `list_components({ projectId, group? }):
+- D-A (`00-decisions.md`): `list_components` is a kept verb in genie's kit/component
+  file protocol (the read/enumeration family, not the generation family).
+- Research report §3.1 tool surface: `list_components({ kitId, group? }):
   { name, group, path, viewport, hash, lastModified }[]`.
 
 ## Acceptance Criteria
@@ -27,7 +24,7 @@ N components".
       rewrite rule applied).
 - [ ] AC2 — Description ≤ 2 KB (Claude truncation limit).
 - [ ] AC3 — JSON Schema is Draft 7 only — no `anyOf` / `$ref` chains.
-- [ ] AC4 — Input: `{ projectId: string, group?: string }`. When `group` is
+- [ ] AC4 — Input: `{ kitId: string, group?: string }`. When `group` is
       omitted, returns every component across all groups.
 - [ ] AC5 — Returns an array of
       `{ name: string, group: string, path: string, viewport: string,
@@ -35,11 +32,11 @@ N components".
 - [ ] AC6 — **Deterministic ordering**: results sorted by `group` ASC, then
       `name` ASC; ties broken by `path`.
 - [ ] AC7 — Respects the 256-result pagination cap shared with `list_files` /
-      `list_projects`; cursor returned in `_meta.nextCursor` when truncated.
+      `list_kits`; cursor returned in `_meta.nextCursor` when truncated.
 - [ ] AC8 — Returns `[]` (not `null`, not error) when the project has no
       components or the `group` filter matches nothing.
-- [ ] AC9 — Backed by `ComponentStore.listComponents({ projectId, group })`
-      (shared abstraction; both LocalFsStore and GiteaStore implement).
+- [ ] AC9 — Backed by `KitStore.listComponents({ kitId, group })`
+      (shared abstraction; both LocalFsStore and GitHostStore implement).
 - [ ] AC10 — Integration test loads a 50-component fixture spanning 5 groups
       and asserts: total count, group-filtered count, deterministic
       ordering, and pagination cursor round-trip.
@@ -49,8 +46,8 @@ N components".
 - Register in `packages/server/src/tools/index.ts`.
 - Description template from research report §3.1 — copy verbatim where ≤ 2 KB.
 - `hash` is the SHA-256 of the preview HTML; sourced from the same manifest
-  pipeline M3-03 (`manifest.json`) feeds.
-- `viewport` mirrors the value the @dsCard regex captures from the first-line
+  pipeline M3-03 (`.genie/manifest.json`) feeds.
+- `viewport` mirrors the value the @genie regex captures from the first-line
   marker (M3-01).
 
 ## Out of Scope
@@ -78,15 +75,15 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`01-ds-browser.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-1/01-ds-browser.svg) — response feeds the browser grouping.
+**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — response feeds the browser grouping.
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 
 ## Definition of Done
 - [ ] Tests added — unit (mocked store) + integration (50-component fixture
       asserting count, group filter, ordering, pagination cursor).
-- [ ] Docs updated — `docs/04-tech-design-rfc.md` §3.1 tool list and §6.2
-      DesignSync mirror enumeration both include `list_components` as verb 12.
+- [ ] Docs updated — `docs/plan/04-tech-design-rfc.md` §3.1 tool list and §6.2
+      genie verb enumeration both include `list_components`.
 - [ ] Manual verification — call from `npx @modelcontextprotocol/inspector`
       against a fixture project; verify ordering + pagination.
 - [ ] No new ESLint/TS errors.

@@ -8,8 +8,8 @@ estimate: "12h"
 
 ## Summary
 Implement OAuth 2.0 with Dynamic Client Registration (RFC 7591) on the MCP
-server so Claude Code and Codex CLI's `codex mcp login` flow work
-out-of-the-box. Authorisation Server metadata served at
+HTTP server so shared Claude Code installs and Codex CLI's `codex mcp login`
+flow work against an already-running genie URL. Authorisation Server metadata served at
 `/.well-known/oauth-authorization-server`; DCR endpoint at `/register`.
 
 ## Context
@@ -36,7 +36,8 @@ out-of-the-box. Authorisation Server metadata served at
 - [ ] AC5 — Bearer access tokens are JWTs signed with HS256, scope claim
       present.
 - [ ] AC6 — Claude Code `claude mcp add --transport http genie
-      <url>` triggers DCR + browser auth without manual intervention.
+      <url>` against an already-running server triggers DCR + browser auth
+      without manual intervention.
 - [ ] AC7 — `codex mcp login genie` round-trips successfully.
 
 ## Implementation Notes
@@ -46,7 +47,7 @@ out-of-the-box. Authorisation Server metadata served at
 - Consent screen is a minimal server-rendered HTML page (no SPA).
 
 ## Out of Scope
-- OIDC ID-token issuance (M5-04 covers that via Authentik).
+- OIDC ID-token issuance (M5-04 covers that via the provider integration test).
 - Refresh-token rotation (RFC 6749 §6 — defer to v2).
 
 ## Dependencies

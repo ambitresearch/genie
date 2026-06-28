@@ -7,15 +7,14 @@ estimate: "3h"
 ---
 
 ## Summary
-Every secret the server uses (`LITELLM_MASTER_KEY`, `OAUTH_HS256_KEY`,
-`GITEA_TOKEN`, `AUTHENTIK_CLIENT_SECRET`) is read only from env or from a
-sourced file (`~/.shellprivatevars`). The server refuses to start if a
+Every secret the server uses (`GENIE_LLM_API_KEY`, `OAUTH_HS256_KEY`,
+`GENIE_GIT_TOKEN`, `OAUTH_CLIENT_SECRET`) is read only from env or from a
+mounted secret file. The server refuses to start if a
 required secret is logged anywhere, present in argv, or readable by other
 local users.
 
 ## Context
-- CLAUDE.md homelab pattern: secrets live in `~/.shellprivatevars`, never
-  in the repo.
+- Secrets live in env or mounted secret files, never in the repo.
 
 ## Acceptance Criteria
 - [ ] AC1 — `packages/server/src/config/secrets.ts` exports `loadSecrets()`
@@ -55,6 +54,6 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 - [ ] Tests added — missing / short / argv-leaked secret cases.
 - [ ] Docs updated.
 - [ ] Manual verification — `pnpm dev` rejects with clear error when
-      `LITELLM_MASTER_KEY` unset.
+      `GENIE_LLM_API_KEY` unset.
 - [ ] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.

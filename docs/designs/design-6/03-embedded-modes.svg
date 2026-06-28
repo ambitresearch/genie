@@ -1,0 +1,262 @@
+<!-- Warm Instrument · design-6 · genre: editorial-precision
+     surface: 03-embedded-modes · three display modes
+     pre-emit critique: P5 H5 E5 S5 R5 V5
+     Clay rule: @genie marker + Conjure/Apply buttons. System fonts only (CSP constraint). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1080" viewBox="0 0 1440 1080"
+     font-family="Inter, ui-sans-serif, system-ui, -apple-system, sans-serif">
+
+  <!-- ── Background ──────────────────────────────────────────────── -->
+  <rect width="1440" height="1080" fill="#faf8f5"/>
+
+  <!-- ── CSP constraint strip ──────────────────────────────────────── -->
+  <rect width="1440" height="36" fill="#f3f0ea"/>
+  <line x1="0" y1="36" x2="1440" y2="36" stroke="#dad7d2" stroke-width="1"/>
+  <text x="24" y="22"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        font-size="10" font-weight="600" fill="#75716d" letter-spacing="0.04em">CSP CONSTRAINT</text>
+  <text x="156" y="22"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        font-size="10" fill="#423f3d">EMBEDDED: default-src 'none' · connect-src 'none' · system fonts only</text>
+  <text x="900" y="22"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        font-size="10" fill="#75716d">STANDALONE: full brand fonts · external connect allowed</text>
+  <rect x="1340" y="8" width="88" height="20" rx="4" fill="#fae2d8"/>
+  <text x="1384" y="22"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        font-size="9" font-weight="700" fill="#c87c5e" text-anchor="middle">CLAY NEVER DEFERS</text>
+
+  <!-- ── Top bar ──────────────────────────────────────────────────── -->
+  <rect y="36" width="1440" height="56" fill="#faf8f5"/>
+  <line x1="0" y1="92" x2="1440" y2="92" stroke="#dad7d2" stroke-width="1"/>
+  <text x="32" y="70" font-family="Georgia, 'Times New Roman', ui-serif, serif"
+        font-size="19" font-weight="600" letter-spacing="-0.01em" fill="#171614">genie</text>
+  <text x="148" y="69" font-size="14" fill="#75716d">Generate</text>
+  <text x="228" y="69" font-size="14" fill="#75716d">Browse</text>
+  <text x="302" y="69" font-size="14" font-weight="500" fill="#171614">Embedded</text>
+  <line x1="302" y1="91" x2="365" y2="91" stroke="#171614" stroke-width="2"/>
+  <rect x="1352" y="52" width="24" height="24" rx="12" fill="#eae6df"/>
+  <text x="1364" y="69" font-size="12" font-weight="600" fill="#75716d" text-anchor="middle">RG</text>
+
+  <!-- ── Section heading ──────────────────────────────────────────── -->
+  <text x="32" y="132" font-size="22" font-weight="600" fill="#171614">Embedded Modes</text>
+  <text x="32" y="154" font-size="14" fill="#75716d">
+        Genie adapts to three display contexts. Clay identity persists across all of them.</text>
+  <line x1="32" y1="168" x2="1408" y2="168" stroke="#dad7d2" stroke-width="1"/>
+
+  <!-- ── Column labels ──────────────────────────────────────────────── -->
+  <text x="236" y="196" font-size="13" font-weight="600" fill="#171614"
+        text-anchor="middle">Inline</text>
+  <text x="236" y="212" font-size="11" fill="#75716d" text-anchor="middle">Compact card in host page</text>
+
+  <text x="720" y="196" font-size="13" font-weight="600" fill="#171614"
+        text-anchor="middle">Fullscreen</text>
+  <text x="720" y="212" font-size="11" fill="#75716d" text-anchor="middle">Full-window takeover</text>
+
+  <text x="1204" y="196" font-size="13" font-weight="600" fill="#171614"
+        text-anchor="middle">Picture-in-Picture</text>
+  <text x="1204" y="212" font-size="11" fill="#75716d" text-anchor="middle">Floating persistent widget</text>
+
+  <!-- ── Pane dividers ──────────────────────────────────────────────── -->
+  <line x1="480" y1="168" x2="480" y2="1060" stroke="#dad7d2" stroke-width="1"/>
+  <line x1="960" y1="168" x2="960" y2="1060" stroke="#dad7d2" stroke-width="1"/>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       COLUMN 1: INLINE MODE (0..480)
+       .genie-embedded class — host bg deferred, but clay holds
+  ══════════════════════════════════════════════════════════════════ -->
+  <!-- host page context (grey scaffold) -->
+  <rect x="32" y="228" width="416" height="784" rx="5"
+        fill="#f3f0ea" stroke="#dad7d2" stroke-width="1"/>
+  <!-- host page nav bar (not genie) -->
+  <rect x="32" y="228" width="416" height="40" rx="5" fill="#eae6df"/>
+  <text x="64" y="253" font-size="11" fill="#75716d">Host Application · Dashboard</text>
+  <line x1="32" y1="268" x2="448" y2="268" stroke="#dad7d2" stroke-width="0.5"/>
+  <!-- host content -->
+  <rect x="48" y="280" width="380" height="80" rx="5" fill="rgba(255,255,255,0.6)" stroke="#dad7d2"/>
+  <rect x="60" y="296" width="180" height="8" rx="2" fill="#dad7d2"/>
+  <rect x="60" y="312" width="280" height="6" rx="2" fill="#eae6df"/>
+  <rect x="60" y="324" width="220" height="6" rx="2" fill="#eae6df"/>
+  <rect x="48" y="372" width="380" height="80" rx="5" fill="rgba(255,255,255,0.6)" stroke="#dad7d2"/>
+  <rect x="60" y="388" width="140" height="8" rx="2" fill="#dad7d2"/>
+  <rect x="60" y="404" width="260" height="6" rx="2" fill="#eae6df"/>
+  <rect x="60" y="416" width="200" height="6" rx="2" fill="#eae6df"/>
+
+  <!-- embedded genie card (.genie-embedded) — inline -->
+  <rect x="48" y="472" width="380" height="280" rx="8"
+        fill="#ffffff" stroke="#dad7d2" stroke-width="1"/>
+  <!-- card top: warm paper with @genie marker -->
+  <rect x="48" y="472" width="380" height="44" rx="8" fill="#faf8f5"/>
+  <rect x="48" y="496" width="380" height="20" fill="#faf8f5"/>
+  <!-- @genie marker — CLAY -->
+  <text x="68" y="498"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        font-size="10" font-weight="600" fill="#c87c5e">@genie</text>
+  <text x="116" y="498" font-size="12" font-weight="600" fill="#171614">Inline Widget</text>
+  <rect x="340" y="484" width="72" height="18" rx="9" fill="#fae2d8"/>
+  <text x="376" y="497" font-size="9" font-weight="600" fill="#c87c5e"
+        text-anchor="middle">.genie-embedded</text>
+  <line x1="48" y1="516" x2="428" y2="516" stroke="#dad7d2" stroke-width="0.5"/>
+  <!-- card content -->
+  <text x="68" y="540" font-size="12" fill="#423f3d">Generate a component:</text>
+  <rect x="68" y="552" width="280" height="32" rx="5"
+        fill="#f3f0ea" stroke="#dad7d2" stroke-width="1"/>
+  <text x="80" y="573" font-size="11" fill="#75716d">Describe it…</text>
+  <!-- kit selector row -->
+  <text x="68" y="608" font-size="11" fill="#75716d">Kit</text>
+  <text x="90" y="608" font-size="11" fill="#423f3d">Quanta</text>
+  <text x="140" y="608" font-size="10" fill="#dad7d2">▼</text>
+  <!-- Conjure button — CLAY -->
+  <rect x="328" y="592" width="80" height="28" rx="5" fill="#c87c5e"/>
+  <text x="368" y="611" font-size="12" font-weight="600" fill="#ffffff"
+        text-anchor="middle">Conjure</text>
+  <!-- system-fonts-only annotation -->
+  <text x="68" y="644" font-size="10" fill="#75716d"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace">// system fonts · default-src 'none'</text>
+  <!-- status row -->
+  <rect x="68" y="656" width="74" height="16" rx="8" fill="#fae2d8"/>
+  <text x="105" y="668" font-size="9" font-weight="600" fill="#c87c5e"
+        text-anchor="middle">clay persists</text>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       COLUMN 2: FULLSCREEN MODE (480..960)
+  ══════════════════════════════════════════════════════════════════ -->
+  <!-- fullscreen chrome -->
+  <rect x="496" y="228" width="448" height="784" rx="5"
+        fill="#faf8f5" stroke="#dad7d2" stroke-width="1"/>
+  <!-- fullscreen top bar (genie's own) -->
+  <rect x="496" y="228" width="448" height="48" rx="5" fill="#faf8f5"/>
+  <rect x="496" y="256" width="448" height="20" fill="#faf8f5"/>
+  <line x1="496" y1="276" x2="944" y2="276" stroke="#dad7d2" stroke-width="1"/>
+  <text x="516" y="256" font-family="Georgia, 'Times New Roman', ui-serif, serif"
+        font-size="15" font-weight="600" fill="#171614">genie</text>
+  <!-- @genie marker — CLAY -->
+  <text x="566" y="256"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        font-size="9" font-weight="600" fill="#c87c5e">@genie</text>
+  <text x="610" y="256" font-size="11" fill="#75716d">Fullscreen</text>
+  <!-- close indicator -->
+  <text x="924" y="256" font-size="14" fill="#75716d" text-anchor="end">✕</text>
+
+  <!-- hero inside fullscreen -->
+  <text x="720" y="316" font-size="18" font-weight="500" fill="#171614" text-anchor="middle"
+        font-family="Georgia, 'Times New Roman', ui-serif, serif">Your wish is my command.</text>
+  <text x="720" y="336" font-size="11" fill="#75716d" text-anchor="middle">Full brand experience · standalone tier</text>
+
+  <!-- prompt box fullscreen -->
+  <rect x="516" y="352" width="408" height="96" rx="8"
+        fill="#ffffff" stroke="#dad7d2" stroke-width="1"/>
+  <text x="534" y="384" font-size="13" fill="#171614">a hero section with video bg and CTA</text>
+  <rect x="536" y="372" width="2" height="16" rx="1" fill="#c87c5e"/>
+  <line x1="516" y1="396" x2="924" y2="396" stroke="#dad7d2" stroke-width="0.5"/>
+  <text x="534" y="416" font-size="11" fill="#75716d">Kit  Quanta  ▼</text>
+  <!-- Conjure button — CLAY -->
+  <rect x="800" y="402" width="80" height="28" rx="5" fill="#c87c5e"/>
+  <text x="840" y="421" font-size="12" font-weight="600" fill="#ffffff"
+        text-anchor="middle">Conjure</text>
+
+  <!-- blueprint table preview inside fullscreen -->
+  <text x="516" y="468"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        font-size="9" font-weight="600" fill="#75716d" letter-spacing="0.06em">BLUEPRINTS</text>
+  <line x1="516" y1="472" x2="924" y2="472" stroke="#dad7d2" stroke-width="0.5"/>
+  <text x="516" y="492" font-size="11" fill="#423f3d">Hero Section</text>
+  <text x="700" y="492" font-size="11" fill="#75716d">PATTERN</text>
+  <line x1="516" y1="500" x2="924" y2="500" stroke="#dad7d2" stroke-width="0.5"/>
+  <text x="516" y="520" font-size="11" fill="#423f3d">Pricing Card</text>
+  <text x="700" y="520" font-size="11" fill="#75716d">PATTERN</text>
+  <line x1="516" y1="528" x2="924" y2="528" stroke="#dad7d2" stroke-width="0.5"/>
+  <text x="516" y="548" font-size="11" fill="#423f3d">Navigation Bar</text>
+  <text x="700" y="548" font-size="11" fill="#75716d">COMPONENT</text>
+  <line x1="516" y1="556" x2="924" y2="556" stroke="#dad7d2" stroke-width="1"/>
+  <!-- standalone label -->
+  <rect x="516" y="568" width="100" height="18" rx="9" fill="#f3f0ea" stroke="#dad7d2"/>
+  <text x="566" y="581" font-size="9" font-weight="600" fill="#75716d"
+        text-anchor="middle">.genie-standalone</text>
+  <text x="626" y="581" font-size="9" fill="#75716d">brand fonts · full connect</text>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       COLUMN 3: PICTURE-IN-PICTURE (960..1440)
+  ══════════════════════════════════════════════════════════════════ -->
+  <!-- host page context -->
+  <rect x="976" y="228" width="432" height="784" rx="5"
+        fill="#f3f0ea" stroke="#dad7d2" stroke-width="1"/>
+  <rect x="976" y="228" width="432" height="40" rx="5" fill="#eae6df"/>
+  <text x="1008" y="253" font-size="11" fill="#75716d">Host Application · Active page</text>
+  <line x1="976" y1="268" x2="1408" y2="268" stroke="#dad7d2" stroke-width="0.5"/>
+  <!-- host page content blocks -->
+  <rect x="992" y="280" width="400" height="120" rx="5" fill="rgba(255,255,255,0.6)" stroke="#dad7d2"/>
+  <rect x="1008" y="296" width="200" height="8" rx="2" fill="#dad7d2"/>
+  <rect x="1008" y="312" width="320" height="6" rx="2" fill="#eae6df"/>
+  <rect x="1008" y="324" width="260" height="6" rx="2" fill="#eae6df"/>
+  <rect x="1008" y="336" width="280" height="6" rx="2" fill="#eae6df"/>
+  <rect x="1008" y="348" width="220" height="6" rx="2" fill="#eae6df"/>
+  <rect x="992" y="412" width="400" height="80" rx="5" fill="rgba(255,255,255,0.6)" stroke="#dad7d2"/>
+  <rect x="1008" y="428" width="160" height="8" rx="2" fill="#dad7d2"/>
+  <rect x="1008" y="444" width="300" height="6" rx="2" fill="#eae6df"/>
+  <rect x="1008" y="456" width="240" height="6" rx="2" fill="#eae6df"/>
+
+  <!-- PiP floating widget -->
+  <rect x="1160" y="660" width="230" height="320" rx="8"
+        fill="#ffffff" stroke="#dad7d2" stroke-width="1.5"/>
+  <!-- drop shadow hint (lightweight) -->
+  <rect x="1163" y="664" width="230" height="320" rx="8"
+        fill="rgba(40,30,20,0.05)" z="0"/>
+  <rect x="1160" y="660" width="230" height="320" rx="8"
+        fill="#ffffff" stroke="#dad7d2" stroke-width="1.5"/>
+  <!-- PiP header -->
+  <rect x="1160" y="660" width="230" height="36" rx="8" fill="#faf8f5"/>
+  <rect x="1160" y="678" width="230" height="18" fill="#faf8f5"/>
+  <line x1="1160" y1="696" x2="1390" y2="696" stroke="#dad7d2" stroke-width="0.5"/>
+  <!-- @genie marker — CLAY -->
+  <text x="1174" y="682"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
+        font-size="9" font-weight="600" fill="#c87c5e">@genie</text>
+  <text x="1217" y="682" font-size="11" font-weight="600" fill="#171614">PiP</text>
+  <!-- PiP close handle -->
+  <line x1="1358" y1="674" x2="1370" y2="686" stroke="#dad7d2" stroke-width="1.5"/>
+  <line x1="1370" y1="674" x2="1358" y2="686" stroke="#dad7d2" stroke-width="1.5"/>
+
+  <!-- PiP prompt field -->
+  <text x="1174" y="722" font-size="11" fill="#75716d">Quick generate:</text>
+  <rect x="1174" y="730" width="192" height="28" rx="5"
+        fill="#f3f0ea" stroke="#dad7d2" stroke-width="1"/>
+  <text x="1186" y="749" font-size="11" fill="#75716d">Describe…</text>
+
+  <!-- Conjure mini — CLAY -->
+  <rect x="1174" y="772" width="192" height="28" rx="5" fill="#c87c5e"/>
+  <text x="1270" y="791" font-size="12" font-weight="600" fill="#ffffff"
+        text-anchor="middle">Conjure</text>
+
+  <!-- PiP recent generated -->
+  <line x1="1174" y1="812" x2="1374" y2="812" stroke="#dad7d2" stroke-width="0.5"/>
+  <text x="1174" y="828" font-size="10" fill="#75716d">Recent</text>
+  <text x="1174" y="846" font-size="11" fill="#423f3d">PricingCard draft #2</text>
+  <text x="1174" y="862" font-size="11" fill="#423f3d">Button · @genie synced</text>
+  <!-- Apply button — CLAY outline -->
+  <rect x="1174" y="876" width="192" height="26" rx="5"
+        fill="transparent" stroke="#c87c5e" stroke-width="1.5"/>
+  <text x="1270" y="893" font-size="11" font-weight="500" fill="#c87c5e"
+        text-anchor="middle">Apply to kit →</text>
+  <!-- system-fonts annotation -->
+  <text x="1174" y="924" font-size="9" fill="#75716d"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace">system fonts · .genie-embedded</text>
+
+  <!-- drag handle (PiP) -->
+  <line x1="1262" y1="970" x2="1286" y2="970" stroke="#dad7d2" stroke-width="2" stroke-linecap="round"/>
+  <line x1="1262" y1="975" x2="1286" y2="975" stroke="#dad7d2" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- ── Mode capability table ────────────────────────────────────── -->
+  <line x1="32" y1="1028" x2="1408" y2="1028" stroke="#dad7d2" stroke-width="1"/>
+  <text x="240" y="1020" font-size="10" fill="#75716d" text-anchor="middle"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace">inline · system-fonts · no-connect</text>
+  <text x="720" y="1020" font-size="10" fill="#75716d" text-anchor="middle"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace">fullscreen · brand-fonts · full-connect</text>
+  <text x="1204" y="1020" font-size="10" fill="#75716d" text-anchor="middle"
+        font-family="'JetBrains Mono', ui-monospace, Menlo, monospace">pip · system-fonts · no-connect</text>
+
+  <!-- ── Footer ──────────────────────────────────────────────────── -->
+  <line x1="0" y1="1060" x2="1440" y2="1060" stroke="#dad7d2" stroke-width="1"/>
+  <text x="32" y="1073" font-size="11" fill="#75716d">genie · design-6 warm instrument</text>
+  <text x="1408" y="1073" font-size="11" fill="#75716d" text-anchor="end">03 embedded modes</text>
+
+</svg>

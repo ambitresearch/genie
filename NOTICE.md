@@ -9,9 +9,9 @@ Licensed under the MIT License (see LICENSE).
 genie is an independent, open-source project **inspired by** Anthropic's hosted
 Claude Design surface. It is **not** affiliated with, endorsed by, or a
 reproduction of any Anthropic product. genie is built against public Model
-Context Protocol (MCP) surfaces and reimplements observable, interoperable
-conventions (e.g. the `@dsCard` first-line marker, the file-flow verb shape) as
-a clean-room implementation so that work can round-trip with compatible tools.
+Context Protocol (MCP) surfaces and uses its own native conventions. A future
+opt-in bridge may support observable, interoperable conventions such as
+`@dsCard` and the file-flow verb shape so work can round-trip with compatible tools.
 
 "Claude", "Claude Design", and "Anthropic" are trademarks of Anthropic, PBC.
 genie uses them only descriptively, to state what it is inspired by and

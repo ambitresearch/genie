@@ -1,0 +1,178 @@
+/* Warm Instrument · design-6 · custom theme: genie · genre: editorial-precision
+ * vibe: "warm bone paper + hairline instrument shell — sibling of Claude Design"
+ * paper-band: light bone (98%) · display-style: serif · accent-hue: clay/gilt (42°)
+ *
+ * Synthesis: design-1 warmth (paper, ink, clay, serif) +
+ *            design-4 restraint (hairlines, air, sharp radii, near-flat elevation) +
+ *            option-2 prompt-first · option-1 workbench · option-3 review flow
+ *
+ * Clay rule: --color-accent appears ONLY on generate/refine moments.
+ *            Structural chrome stays ink/neutral. This is the identity contract.
+ *
+ * ── TWO TIERS (unchanged from design-1) ─────────────────────────────────────
+ *   EMBEDDED (ui://genie/grid): system fonts, defers to host theme, identity via
+ *            genie-clay accent + structure. App CSP: default-src 'none'.
+ *   STANDALONE (Vite viewer, README, file://): full brand fonts allowed.
+ *   Use --font-* as the default (brand-if-present, system-always). Cards stay
+ *   byte-identical across file://, localhost, and ui:// (RFC G-5).
+ */
+
+:root {
+  /* ─── Type families ──────────────────────────────────────────────────────
+   * Display = Newsreader (warm serif, Claude Design sibling move). Used ONLY for
+   * wordmark and generate-moment hero — restraint is what makes this "Instrument".
+   * Body = Inter. Mono = JetBrains Mono. Safe stacks are the embedded-tier guarantee. */
+  --font-display: "Newsreader", "Times New Roman", Georgia, ui-serif, serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* embedded tier — system-only (what actually renders in ui://) */
+  --font-display-safe: ui-serif, Georgia, "Times New Roman", serif;
+  --font-body-safe: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono-safe: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  /* standalone tier — full brand */
+  --font-display-brand: "Newsreader", var(--font-display-safe);
+  --font-body-brand: "Inter", var(--font-body-safe);
+  --font-mono-brand: "JetBrains Mono", var(--font-mono-safe);
+
+  /* ─── Type scale (1.250 major-third, 16 px base) ────────────────────────── */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.25rem;
+  --text-3xl: 3rem;
+  --text-display: 4.5rem;
+  --text-display-s: 3.5rem;
+  --leading-tight: 1.06;
+  --leading-snug: 1.22;
+  --leading-normal: 1.55;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semi: 600;
+  --weight-bold: 700;
+  --tracking-tight: -0.015em;
+  --tracking-wide: 0.04em;
+
+  /* ─── Color · warm bone paper + near-black ink (design-1 origin) ─────────── */
+  --color-paper: oklch(98% 0.005 85); /* warm bone       #faf8f5 */
+  --color-paper-2: oklch(95.5% 0.008 82); /* raised          #f3f0ea */
+  --color-paper-3: oklch(92.5% 0.01 80); /* sunken/hover    #eae6df */
+  --color-ink: oklch(20% 0.004 60); /* near-black warm #171614 */
+  --color-ink-2: oklch(37% 0.005 60); /* secondary       #423f3d */
+  --color-ink-3: oklch(55% 0.008 65); /* tertiary        #75716d */
+  --color-hairline: oklch(88% 0.008 82); /* borders         #dad7d2 */
+  --color-hairline-2: oklch(82% 0.01 80); /* stronger        #c7c3bd */
+
+  /* ─── Color · genie-clay (GENERATION MOMENTS ONLY — the identity contract) ── */
+  --color-accent: oklch(66% 0.105 42); /* genie-clay  #c87c5e */
+  --color-accent-2: oklch(56% 0.115 38); /* deeper clay #ac5a40 */
+  --color-accent-tint: oklch(93% 0.03 46); /* clay wash   #fae2d8 */
+  --color-accent-edge: oklch(82% 0.07 44); /* clay border #ecb6a0 */
+
+  /* ─── Color · structural ink-blue (links / focus only — demoted) ─────────── */
+  --color-struct: oklch(45% 0.12 265); /* ink-blue    #345197 */
+  --color-struct-tint: oklch(93% 0.03 265); /* selected    #dee8fd */
+  --color-focus: oklch(52% 0.14 265); /* focus ring  #4064b9 (≥3:1) */
+  --color-primary: var(--color-struct); /* alias — links / primary structural */
+
+  /* ─── Color · semantic states ────────────────────────────────────────────── */
+  --color-success: oklch(58% 0.13 150);
+  --color-success-tint: oklch(93% 0.045 150);
+  --color-warning: oklch(72% 0.14 68);
+  --color-danger: oklch(55% 0.18 28);
+  --color-danger-tint: oklch(93% 0.05 30);
+
+  /* ─── Code surface ───────────────────────────────────────────────────────── */
+  --color-code-bg: oklch(94.5% 0.012 84); /* #f1ece4 */
+  --color-code-ink: oklch(30% 0.012 75);
+  --color-code-key: oklch(45% 0.12 265); /* ink-blue keyword */
+  --color-code-str: oklch(50% 0.11 150); /* green string */
+  --color-code-com: oklch(58% 0.016 75); /* warm grey comment */
+
+  /* ─── Spacing · radii · rules ────────────────────────────────────────────── */
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+  --space-4xl: 96px;
+  /* Radii: between design-1 (rounded) and design-4 (sharp) */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+  --rule-hair: 1px;
+  --rule-thick: 2px;
+  --rule-accent: 3px;
+
+  /* ─── Elevation (warm shadows, never cold black) ─────────────────────────── */
+  /* Structural panels, rails, sidebars: NO shadow — hairline + air only.       */
+  --shadow-sm: 0 1px 2px oklch(30% 0.02 70 / 0.06), 0 1px 1px oklch(30% 0.02 70 / 0.04);
+  --shadow-md: 0 4px 12px oklch(30% 0.02 70 / 0.09), 0 2px 4px oklch(30% 0.02 70 / 0.05);
+  --shadow-lg: 0 12px 32px oklch(30% 0.02 70 / 0.13), 0 4px 8px oklch(30% 0.02 70 / 0.07);
+  --shadow-accent: 0 4px 16px oklch(66% 0.105 42 / 0.28); /* clay glow — generating */
+
+  /* ─── Motion ─────────────────────────────────────────────────────────────── */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+/* ─── Dark mode (warm charcoal, not cold) ───────────────────────────────────── */
+:root[data-scheme="dark"],
+.genie-dark {
+  --color-paper: oklch(19% 0.006 60);
+  --color-paper-2: oklch(23% 0.007 60);
+  --color-paper-3: oklch(27% 0.008 60);
+  --color-ink: oklch(94% 0.008 82);
+  --color-ink-2: oklch(76% 0.012 78);
+  --color-ink-3: oklch(55% 0.008 65);
+  --color-hairline: oklch(32% 0.012 75);
+  --color-hairline-2: oklch(40% 0.014 75);
+  --color-accent: oklch(74% 0.1 46);
+  --color-accent-tint: oklch(30% 0.06 46);
+  --color-accent-edge: oklch(48% 0.1 46);
+  --color-struct: oklch(68% 0.13 265);
+  --color-struct-tint: oklch(30% 0.06 265);
+  --color-primary: var(--color-struct);
+  --color-code-bg: oklch(16% 0.01 75);
+  --color-code-ink: oklch(88% 0.01 80);
+  --color-code-com: oklch(54% 0.016 75);
+  --shadow-sm: 0 1px 2px oklch(0% 0 0 / 0.3);
+  --shadow-md: 0 4px 12px oklch(0% 0 0 / 0.4);
+  --shadow-lg: 0 12px 32px oklch(0% 0 0 / 0.5);
+}
+
+/* ─── EMBEDDED tier · host-deference (ui://genie/grid) ─────────────────────── */
+.genie-embedded {
+  /* Surface and ink defer to host; structure follows host palette. */
+  --color-paper: var(--host-bg, var(--vscode-editor-background, oklch(98% 0.005 85)));
+  --color-paper-2: var(--host-bg-2, var(--vscode-editorWidget-background, oklch(95.5% 0.008 82)));
+  --color-ink: var(--host-fg, var(--vscode-editor-foreground, oklch(20% 0.004 60)));
+  --color-ink-2: var(--host-fg-2, var(--vscode-descriptionForeground, oklch(37% 0.005 60)));
+  --color-hairline: var(--host-border, var(--vscode-widget-border, oklch(88% 0.008 82)));
+  /* IDENTITY HOLDS — clay never defers; that's "still genie" */
+  --color-accent: oklch(66% 0.105 42);
+  --color-struct: var(--vscode-textLink-foreground, oklch(45% 0.12 265));
+  /* System fonts only — App CSP blocks web fonts */
+  --font-display: var(--font-display-safe);
+  --font-body: var(--font-body-safe);
+  --font-mono: var(--font-mono-safe);
+}
+
+.genie-standalone {
+  --font-display: var(--font-display-brand);
+  --font-body: var(--font-body-brand);
+  --font-mono: var(--font-mono-brand);
+}

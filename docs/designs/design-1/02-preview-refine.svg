@@ -49,7 +49,7 @@
         <text x="14" y="84" font-family="Inter, sans-serif" font-size="12.5" fill="#423f3d">Tweak it, or tell me what to change.</text>
       </g>
       <g transform="translate(0,174)"><rect width="320" height="30" rx="8" fill="#efeae2" stroke="#dad7d2"/><text x="14" y="20" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#ac5a40">✦ mcp__genie__generate_component</text></g>
-      <g transform="translate(0,214)"><rect width="320" height="30" rx="8" fill="#efeae2" stroke="#dad7d2"/><text x="14" y="20" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#75716d">↳ wrote 4 files · ✓ @dsCard ok</text></g>
+      <g transform="translate(0,214)"><rect width="320" height="30" rx="8" fill="#efeae2" stroke="#dad7d2"/><text x="14" y="20" font-family="JetBrains Mono, monospace" font-size="10.5" fill="#75716d">↳ wrote 4 files · ✓ @genie ok</text></g>
     </g>
     <g transform="translate(20,914)" opacity="0.92"><rect width="320" height="44" rx="10" fill="#faf8f5" stroke="#dad7d2"/><text x="16" y="27" font-family="Inter, sans-serif" font-size="13" fill="#75716d">Message Claude…</text></g>
     <g transform="translate(372,470)"><rect x="-4" width="8" height="40" rx="4" fill="#fae2d8"/></g>
@@ -212,7 +212,7 @@
         <g transform="translate(154,0)"><rect width="80" height="36" rx="8" fill="#faf8f5" stroke="#c7c3bd"/><text x="16" y="23" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="#423f3d">Discard</text></g>
       </g>
 
-      <g transform="translate(24,872)"><rect width="252" height="40" rx="10" fill="#d4f1d8"/><line x1="10" y1="1" x2="242" y2="1" stroke="#e8faea"/><text x="16" y="25" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#2a7a42">✓ validated · @dsCard ok · 1 pending</text></g>
+      <g transform="translate(24,872)"><rect width="252" height="40" rx="10" fill="#d4f1d8"/><line x1="10" y1="1" x2="242" y2="1" stroke="#e8faea"/><text x="16" y="25" font-family="JetBrains Mono, monospace" font-size="11.5" fill="#2a7a42">✓ validated · @genie ok · 1 pending</text></g>
     </g>
   </g>
 

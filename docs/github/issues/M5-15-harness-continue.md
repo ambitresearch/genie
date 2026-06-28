@@ -28,7 +28,7 @@ interpolation. MCP only works in agent mode.
       mcpServers:
         - name: genie
           type: streamable-http
-          url: https://genie.${DOMAIN}/mcp
+          url: "https://genie.<operator-domain>/mcp"
           requestOptions:
             headers:
               Authorization: Bearer ${{ secrets.GENIE_TOKEN }}

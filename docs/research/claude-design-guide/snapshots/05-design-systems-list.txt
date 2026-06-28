@@ -1,0 +1,81 @@
+- link "Claude Design Beta":
+  - /url: /design
+  - generic: Claude Design
+  - generic: Beta
+- button "Profile and connectors":
+  - generic: R
+- heading "What will you design today?" [level=1]
+- textbox "Create a loading animation"
+- button "":
+  - generic: 
+- button "Design system  Quanta Design System":
+  - text: Design system
+  - generic: 
+  - generic: Quanta Design System
+- button "Template  None":
+  - text: Template
+  - generic: 
+  - generic: None
+- button "Model  Claude Sonnet 4.6" [active]:
+  - text: Model
+  - generic: 
+  - generic: Claude Sonnet 4.6
+- button "":
+  - generic: 
+- generic: Start with a template…
+- button "Prototype":
+  - generic: Prototype
+- button "Slides":
+  - generic: Slides
+- button "Document":
+  - generic: Document
+- button "Wireframe":
+  - generic: Wireframe
+- button "Animation":
+  - generic: Animation
+- button "…or start a blank project ":
+  - text: …or start a blank project
+  - generic: 
+- radiogroup "Homepage list":
+  - radio "Projects"
+  - radio
+  - radio "Design systems" [checked]
+  - radio [checked]
+  - radio "Templates"
+  - radio
+- button "Create design system":
+  - generic: Create design system
+- generic: 
+- searchbox "Search"
+- button "Show starred only":
+  - generic: 
+- table:
+  - rowgroup:
+    - row "Name Last viewed  All owners":
+      - columnheader "Name":
+        - button "Name"
+      - columnheader "Last viewed ":
+        - button "Last viewed ":
+          - text: Last viewed
+          - generic: 
+      - columnheader "All owners":
+        - button "All owners"
+      - columnheader
+  - rowgroup:
+    - row "Quanta Design System 2 days ago You You  ":
+      - cell "Quanta Design System":
+        - link "Quanta Design System":
+          - /url: /design/p/e2f3a429-1eb5-4a89-8512-2b09f4d9d59f
+          - generic: 
+          - generic: Quanta Design System
+      - cell "2 days ago":
+        - time: 2 days ago
+      - cell "You You":
+        - img "You": "Y"
+        - text: You
+      - text:  
+      - cell " ":
+        - button "":
+          - generic: 
+        - button "":
+          - generic: 

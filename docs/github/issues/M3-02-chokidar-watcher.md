@@ -1,6 +1,6 @@
 ---
 title: "[M3-02] chokidar watcher for component tree"
-milestone: "M3 — @dsCard Validator + Manifest"
+milestone: "M3 — @genie Validator + Manifest"
 labels: ["type:feature", "area:mcp-server", "priority:P1-high", "size:M"]
 assignees: []
 estimate: "5h"
@@ -8,7 +8,7 @@ estimate: "5h"
 
 ## Summary
 Watch the project's `components/**/*.html`, `tokens/`, and `styles.css` with
-chokidar. On any change, debounce 100 ms then re-run the @dsCard validator
+chokidar. On any change, debounce 100 ms then re-run the @genie validator
 (M3-01) and the manifest compiler (M3-03). Emits a `manifest.updated` event
 the viewer (M4) subscribes to.
 

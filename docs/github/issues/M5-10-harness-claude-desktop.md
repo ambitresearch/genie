@@ -25,7 +25,7 @@ Ship the Claude Desktop config snippet for
 - [ ] AC5 — `.mcpb` install is the recommended path; the JSON snippet is
       "if you prefer".
 - [ ] AC6 — Smoke test installs the `.mcpb`, opens Claude Desktop, fires
-      `list_projects`, captures screenshot.
+      `list_kits`, captures screenshot.
 
 ## Implementation Notes
 - File: `docs/harness/claude-desktop.md`,

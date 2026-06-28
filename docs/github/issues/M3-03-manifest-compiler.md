@@ -1,23 +1,23 @@
 ---
-title: "[M3-03] manifest.json writer (client-side compiler)"
-milestone: "M3 — @dsCard Validator + Manifest"
+title: "[M3-03] .genie/manifest.json writer (client-side compiler)"
+milestone: "M3 — @genie Validator + Manifest"
 labels: ["type:feature", "area:mcp-server", "priority:P0-critical", "size:M"]
 assignees: []
 estimate: "5h"
 ---
 
 ## Summary
-Recompile `<projectRoot>/manifest.json` whenever the watcher fires. Walks
-`components/**/*.html`, extracts the `@dsCard` markers, joins with
+Recompile `<projectRoot>/.genie/manifest.json` whenever the watcher fires. Walks
+`components/**/*.html`, extracts the `@genie` markers, joins with
 `meta.json` siblings, emits a manifest matching the schema in research
 report §3.4. This is the "20-line Node script that watches `**/preview.html`
-→ first-line regex → write `manifest.json`" called out as a substitute for
+→ first-line regex → write `.genie/manifest.json`" called out as a substitute for
 Anthropic's server-side manifest compilation.
 
 ## Context
-- Research report §6 substitute: "Server-side `_ds_manifest.json` self-check
+- Research report §6 substitute: "Server-side `.genie/manifest.json` self-check
   → Vite plugin or 20-line Node script that watches `**/preview.html` →
-  first-line regex → write `manifest.json`".
+  first-line regex → write `.genie/manifest.json`".
 - §3.4 manifest schema documented in the report.
 
 ## Acceptance Criteria
@@ -32,7 +32,7 @@ Anthropic's server-side manifest compilation.
       path, viewport, tags, hash, lastModified }] }`.
 - [ ] AC5 — Hashes are SHA-256 of the HTML file bytes (matches M1-04's
       `list_files` hash format).
-- [ ] AC6 — Atomic write: write to `manifest.json.tmp`, fsync, rename.
+- [ ] AC6 — Atomic write: write to `.genie/manifest.json.tmp`, fsync, rename.
 - [ ] AC7 — Compiles in < 100 ms for a 50-component kit on a 2025 laptop.
 
 ## Implementation Notes
@@ -62,9 +62,9 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`01-ds-browser.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-1/01-ds-browser.svg) — cards group correctly in the grid.
+**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — cards group correctly in the grid.
 
-**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-1/02-preview-refine.svg).
+**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 

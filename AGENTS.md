@@ -14,7 +14,7 @@
 
 1. **Read the issue fully** — Summary, Acceptance Criteria (AC), Design Reference, DoD.
 2. **Read `CLAUDE.md`** (repo root) for project context + the hard rules below.
-3. **Read the linked design/plan docs** the issue references (`docs/plan/`, `docs/designs/design-1/`).
+3. **Read the linked design/plan docs** the issue references (`docs/plan/`, `docs/designs/design-6/`).
 4. **Restate the task** in your PR-to-be description: what you're building, which ACs
    you'll satisfy, what's explicitly out of scope.
 5. If the issue is **ambiguous, contradicts existing patterns, or the data model is
@@ -45,7 +45,7 @@ If the issue has a **## Design Reference** section, it produces visible output:
 
 1. Run the thing. Render the surface (browser, viewer, or `ui://` host).
 2. **Screenshot your build.** Use the Playwright/Chrome MCP or `mcp__Claude_Preview`.
-3. **Diff against the mock** named in the Design Reference (an SVG in `docs/designs/design-1/`).
+3. **Diff against the mock** named in the Design Reference (an SVG in `docs/designs/design-6/`).
    Compare layout, hierarchy, spacing, and — critically — the **genie identity rules**
    (clay/gilt accent ONLY on generate/refine moments; structure stays ink/neutral).
 4. Note any deliberate deviation from the mock in the PR description with a reason.
@@ -57,7 +57,7 @@ If the issue has a **## Design Reference** section, it produces visible output:
 - Don't trust unit tests alone for anything touching the running server.
 - Boot the local stack (see `CLAUDE.md` → dev environment / the issue's notes) and
   exercise the change end-to-end against it: real MCP tool call, real `ui://` fetch,
-  real LiteLLM round-trip (against the gateway, never a hardcoded key).
+  real configured-LLM-endpoint round-trip (against the gateway, never a hardcoded key).
 - Capture the command(s) you ran + the observed output in the PR description.
 
 ## 5. Adversarial self-review (before opening the PR)
@@ -121,10 +121,10 @@ satisfied with evidence, docs updated if behavior changed. Anything less stays o
 
 ## Hard rules — break these and the PR is rejected
 
-1. **Preserve Anthropic interop terms verbatim:** `DesignSync`, `Claude Design`,
-   `@dsCard`, `_ds_*`, `design-sync`. genie *mirrors* this on-disk protocol for
-   round-trip compatibility — renaming breaks the feature. genie's own user-facing
-   sync skill is `genie-sync`.
+1. **Preserve Anthropic interop terms verbatim when referencing interop:** `DesignSync`,
+   `Claude Design`, `@dsCard`, `_ds_*`, `design-sync`. genie's native surface uses
+   its own 13 verbs, `@genie`, `.genie/`, and `genie://`; Anthropic shapes belong
+   only in explanatory prose or a future opt-in interop bridge.
 2. **Terminology:** the user's component library is a **"UI kit"** (not "design
    system"). genie's *own* locked visual language *is* its "design system." Starter
    templates are **"blueprints."**
@@ -132,8 +132,8 @@ satisfied with evidence, docs updated if behavior changed. Anything less stays o
    on generation + refine moments. Structure (chrome, browser, layout) stays
    ink / ink-blue / neutral.
 4. **Secrets are never committed.** `HA_AGENT_KEY`, `HONCHO_API_KEY`, `TRUENAS_API_KEY`,
-   LiteLLM keys → env / `user_config` only. LiteLLM calls go through the gateway
-   (`https://litellm.roshangautam.com`), never a hardcoded key in source.
+   LLM endpoint keys → env / `user_config` only. Model calls go through the configured
+   OpenAI-compatible endpoint, never a hardcoded key or private URL in source.
 5. **Embedded-tier CSP is law:** `default-src 'none'`, no web fonts, `connect-src 'none'`.
    Cards must be **byte-identical across `file://` / `localhost` / `ui://`** (RFC G-5).
 6. **Skybridge is parked**, not adopted — gated on a pre-M4 spike (RFC §15.8). Don't
@@ -152,5 +152,5 @@ satisfied with evidence, docs updated if behavior changed. Anything less stays o
 | npm scope | `@genie/*` (e.g. `@genie/viewer`) |
 | Issue backlog | `docs/github/issues/` |
 | Mock map | `docs/github/MOCK-MAP.md` |
-| Design mocks | `docs/designs/design-1/*.svg` |
+| Design mocks | `docs/designs/design-6/*.svg` |
 | Co-author trailer | `Co-Authored-By: Claude <noreply@anthropic.com>` |

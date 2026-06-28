@@ -1,0 +1,129 @@
+- link "Claude Design Beta":
+  - /url: /design
+  - generic: Claude Design
+  - generic: Beta
+- button "Profile and connectors":
+  - generic: R
+- heading "What will you design today?" [level=1]
+- textbox "Animate a logo reveal"
+- button "":
+  - generic: 
+- button "Design system  Quanta Design System":
+  - text: Design system
+  - generic: 
+  - generic: Quanta Design System
+- generic: 
+- textbox "Search design systems" [active]
+- button "Clear":
+  - generic: Clear
+- button "Create":
+  - generic: Create
+- generic: 
+- generic: Quanta Design System
+- generic: IBM Plex Mono
+- generic: Org default
+- button "":
+  - generic: 
+- button "Template  None":
+  - text: Template
+  - generic: 
+  - generic: None
+- button "Model  Claude Sonnet 4.6":
+  - text: Model
+  - generic: 
+  - generic: Claude Sonnet 4.6
+- button "":
+  - generic: 
+- generic: Start with a template…
+- button "Prototype":
+  - generic: Prototype
+- button "Slides":
+  - generic: Slides
+- button "Document":
+  - generic: Document
+- button "Wireframe":
+  - generic: Wireframe
+- button "Animation":
+  - generic: Animation
+- button "…or start a blank project ":
+  - text: …or start a blank project
+  - generic: 
+- radiogroup "Homepage list":
+  - radio "Projects" [checked]
+  - radio [checked]
+  - radio "Design systems"
+  - radio
+  - radio "Templates"
+  - radio
+- generic: 
+- searchbox "Search"
+- button "Show starred only":
+  - generic: 
+- radiogroup "View as":
+  - radio "List" [checked]:
+    - generic: 
+  - radio [checked]
+  - radio "Thumbnails":
+    - generic: 
+  - radio
+- table:
+  - rowgroup:
+    - row "Name Last viewed  All owners":
+      - columnheader "Name":
+        - button "Name"
+      - columnheader "Last viewed ":
+        - button "Last viewed ":
+          - text: Last viewed
+          - generic: 
+      - columnheader "All owners":
+        - button "All owners"
+      - columnheader
+  - rowgroup:
+    - row "Redesign prototypes for screens 54 minutes ago You You  ":
+      - cell "Redesign prototypes for screens":
+        - link "Redesign prototypes for screens":
+          - /url: /design/p/34d30932-a2de-4019-9095-1573bde96ae1
+          - generic: Redesign prototypes for screens
+      - cell "54 minutes ago":
+        - time: 54 minutes ago
+      - cell "You You":
+        - img "You": "Y"
+        - text: You
+      - text: 
+      - cell " ":
+        - button "":
+          - generic: 
+        - button "":
+          - generic: 
+    - row "Calculator construction kit 54 minutes ago You You  ":
+      - cell "Calculator construction kit":
+        - link "Calculator construction kit":
+          - /url: /design/p/f62a7fcb-5df6-41bc-a256-35d2ed8eab06
+          - generic: Calculator construction kit
+      - cell "54 minutes ago":
+        - time: 54 minutes ago
+      - cell "You You":
+        - img "You": "Y"
+        - text: You
+      - text: 
+      - cell " ":
+        - button "":
+          - generic: 
+        - button "":
+          - generic: 
+    - row "App prototype versions 54 minutes ago You You  ":
+      - cell "App prototype versions":
+        - link "App prototype versions":
+          - /url: /design/p/5852ddd7-8bc9-4df6-866c-39a51a132368
+          - generic: App prototype versions
+      - cell "54 minutes ago":
+        - time: 54 minutes ago
+      - cell "You You":
+        - img "You": "Y"
+        - text: You
+      - text: 
+      - cell " ":
+        - button "":
+          - generic: 
+        - button "":
+          - generic: 

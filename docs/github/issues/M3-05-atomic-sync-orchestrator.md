@@ -1,36 +1,37 @@
 ---
 title: "[M3-05] 5-step atomic write sequence orchestrator"
-milestone: "M3 — @dsCard Validator + Manifest"
+milestone: "M3 — @genie Validator + Manifest"
 labels: ["type:feature", "area:mcp-server", "priority:P0-critical", "size:L"]
 assignees: []
 estimate: "10h"
 ---
 
 ## Summary
-Implement the 5-step atomic upload sequence the bundled skill enforces: (1)
-write `_ds_needs_recompile` sentinel first to fence the manifest/copy
+Implement genie's 5-step atomic upload sequence: (1)
+write `.genie/recompile` sentinel first to fence the manifest/copy
 machinery, (2) chunk all content writes ≤256 per call, (3) all deletes, (4)
-re-arm the sentinel, (5) write `_ds_sync.json` **last** as the verification
-anchor. Mid-plan failure must leave `_ds_sync.json` unwritten so the next
+re-arm the sentinel, (5) write `.genie/sync.json` **last** as the verification
+anchor. Mid-plan failure must leave `.genie/sync.json` unwritten so the next
 sync's diff repairs the half-write.
 
 ## Context
-- Research report §2.3 confirmed claim: the exact 5-step sequence is
-  load-bearing — "Write `_ds_sync.json` **last** — it's the verification
-  anchor; mid-plan failure leaves it vouching for files that aren't there."
+- D0 / "What did NOT change" (`00-decisions.md`): the atomic write sequence is
+  load-bearing and unchanged in shape — sentinel → writes ≤256 → deletes →
+  re-arm → anchor last. Write `.genie/sync.json` **last**; a mid-plan failure
+  leaves it absent so the next sync knows the tree is incomplete.
 
 ## Acceptance Criteria
 - [ ] AC1 — File `packages/server/src/sync/orchestrator.ts` exports
       `runAtomicSync({ planId, writes, deletes }): SyncResult`.
-- [ ] AC2 — Step 1: writes `_ds_needs_recompile` with body `{"by":
-      "genie"}` (matches the bundled skill's sentinel format).
+- [ ] AC2 — Step 1: writes `.genie/recompile` with body `{"by":
+      "genie"}` (genie's sentinel format).
 - [ ] AC3 — Step 2: chunks `writes` into batches of ≤ 256, calls
       `write_files` per batch.
 - [ ] AC4 — Step 3: calls `delete_files` with the deletes.
-- [ ] AC5 — Step 4: re-arms `_ds_needs_recompile` (writes again).
-- [ ] AC6 — Step 5: computes `_ds_sync.json` (M3-06) and writes it last.
+- [ ] AC5 — Step 4: re-arms `.genie/recompile` (writes again).
+- [ ] AC6 — Step 5: computes `.genie/sync.json` (M3-06) and writes it last.
 - [ ] AC7 — If any step except a not-found delete fails, STOP without
-      writing `_ds_sync.json` and return `{ ok: false, failedStep: N,
+      writing `.genie/sync.json` and return `{ ok: false, failedStep: N,
       error }`.
 - [ ] AC8 — Idempotent re-run: detecting a stale sentinel + missing anchor =
       resume-from-step-2.
@@ -41,10 +42,10 @@ sync's diff repairs the half-write.
 - Sentinel format and 5-step sequence: see `.deliverables/research-report.json`
   (`result.report` §2.2 manifest sentinel and §2.3 atomic upload sequence).
   Canonical sentinel literal: `{"by":"genie"}` written to
-  `_ds_needs_recompile`. Anchor file: `_ds_sync.json` (last write).
+  `.genie/recompile`. Anchor file: `.genie/sync.json` (last write).
 
 ## Out of Scope
-- The `_ds_sync.json` schema itself (M3-06).
+- The `.genie/sync.json` schema itself (M3-06).
 - Conflict resolution vs concurrent plans (rejected at plan-guard layer).
 
 ## Dependencies

@@ -22,7 +22,7 @@ prompt injection, plan-vs-write bypass). Patch findings before GA.
 - [ ] AC3 — MCP-specific checks documented: tool-output injection
       handling, sandbox-escape attempts (M4-07), plan-vs-write bypass
       attempts (M1-13), CSP bypass attempts.
-- [ ] AC4 — Prompt-injection probes against `generate_component` recorded
+- [ ] AC4 — Prompt-injection probes against `conjure` recorded
       (does the model leak system prompt?).
 - [ ] AC5 — Findings filed as P0/P1 issues with fixes landed before tag
       v1.0.0.

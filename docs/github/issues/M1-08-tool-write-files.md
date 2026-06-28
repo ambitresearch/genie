@@ -1,6 +1,6 @@
 ---
 title: "[M1-08] Tool: write_files (≤256 files/call, reads from localPath)"
-milestone: "M1 — Tier-0 File Verbs"
+milestone: "M1 — Kit + Project Foundation"
 labels: ["type:feature", "area:mcp-tools", "priority:P0-critical", "size:L"]
 assignees: []
 estimate: "10h"

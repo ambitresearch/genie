@@ -49,7 +49,7 @@
     <text x="104" y="122" font-family="Inter, sans-serif" font-size="13.5" fill="#cbb9ac">❯ generate a primary button for the Quanta kit — confident and warm</text>
     <text x="104" y="148" font-family="Inter, sans-serif" font-size="12.5" fill="#9a8579">Generated <tspan fill="#cbb9ac">Button / Primary</tspan> — 4 variants, 8 states. On the light table below ↓</text>
     <text x="828" y="122" font-family="'JetBrains Mono', monospace" font-size="11.5" fill="#c87c5e">✦ mcp__genie__generate_component</text>
-    <text x="828" y="148" font-family="'JetBrains Mono', monospace" font-size="11" fill="#7a675b">↳ wrote 4 files · <tspan fill="#86d7a0">✓ @dsCard ok</tspan></text>
+    <text x="828" y="148" font-family="'JetBrains Mono', monospace" font-size="11" fill="#7a675b">↳ wrote 4 files · <tspan fill="#86d7a0">✓ @genie ok</tspan></text>
   </g>
 
   <!-- ── the SEAM — host above, genie's light below ── -->
@@ -124,7 +124,7 @@
     <line x1="730" y1="22" x2="730" y2="76" stroke="#46342b"/>
     <text x="754" y="32" font-family="'JetBrains Mono', monospace" font-size="10.5" fill="#7a675b">Claude's suggestion</text>
     <text x="754" y="52" font-family="Inter, sans-serif" font-size="12.5" fill="#cbb9ac">weight 600 → 700 · tracking −0.01</text>
-    <g transform="translate(754,62)"><rect width="150" height="22" rx="11" fill="#22392a"/><text x="75" y="16" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#86d7a0">✓ validated · @dsCard ok</text></g>
+    <g transform="translate(754,62)"><rect width="150" height="22" rx="11" fill="#22392a"/><text x="75" y="16" text-anchor="middle" font-family="'JetBrains Mono', monospace" font-size="10" fill="#86d7a0">✓ validated · @genie ok</text></g>
     <!-- apply / discard, on the bench -->
     <g transform="translate(924,30)"><rect width="92" height="38" rx="11" fill="url(#flame0)" filter="url(#glowf)"/><text x="46" y="24" text-anchor="middle" font-family="Inter, sans-serif" font-size="12.5" font-weight="700" fill="#2a140d">✦ Apply</text></g>
     <g transform="translate(924,74)"><text x="46" y="6" text-anchor="middle" font-family="Inter, sans-serif" font-size="11.5" fill="#9a8579">Discard</text></g>

@@ -1,0 +1,192 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="980" viewBox="0 0 1440 980" role="img" aria-labelledby="title desc">
+  <title id="title">genie UI option 1 - prompt workbench</title>
+  <desc id="desc">A Claude Design-informed genie workspace with chat, UI kit and blueprint selectors, live card preview grid, and a focused refine pane.</desc>
+  <metadata>
+    Hallmark critique stamp: Macrostructure=Workbench Split View; Theme=Ink Studio; Nav=N5 left rail; Footer=Ft2 status rail; Claude Design context=chat plus preview, selectors, page tools, comments, tweaks.
+  </metadata>
+  <style>
+    :root {
+      --bg: oklch(97% 0.018 82);
+      --shell: oklch(99% 0.006 82);
+      --panel: oklch(94.5% 0.018 82);
+      --card: oklch(99.2% 0.004 82);
+      --ink: oklch(20% 0.042 252);
+      --muted: oklch(48% 0.032 252);
+      --faint: oklch(71% 0.022 252);
+      --line: oklch(85% 0.018 82);
+      --line-strong: oklch(72% 0.032 252);
+      --accent: oklch(60% 0.118 42);
+      --accent-soft: oklch(91% 0.046 42);
+      --green: oklch(58% 0.105 152);
+      --blue: oklch(54% 0.088 252);
+      --shadow: oklch(24% 0.032 252 / 0.12);
+      --mono: "SFMono-Regular", "JetBrains Mono", ui-monospace, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --serif: Georgia, "Times New Roman", serif;
+    }
+    .bg { fill: var(--bg); }
+    .shell { fill: var(--shell); stroke: var(--line); }
+    .panel { fill: var(--panel); stroke: var(--line); }
+    .card { fill: var(--card); stroke: var(--line); }
+    .card-strong { fill: var(--card); stroke: var(--line-strong); }
+    .soft { fill: var(--accent-soft); stroke: var(--accent); }
+    .accent { fill: var(--accent); }
+    .ink { fill: var(--ink); }
+    .muted { fill: var(--muted); }
+    .faint { fill: var(--faint); }
+    .line { stroke: var(--line); }
+    .line-strong { stroke: var(--line-strong); }
+    .green { fill: var(--green); }
+    .blue { fill: var(--blue); }
+    .on-accent { fill: var(--shell); }
+    .h1 { font: 700 31px var(--serif); fill: var(--ink); }
+    .h2 { font: 700 17px var(--sans); fill: var(--ink); }
+    .h3 { font: 650 13px var(--sans); fill: var(--ink); letter-spacing: .02em; }
+    .body { font: 13px var(--sans); fill: var(--muted); }
+    .small { font: 11px var(--sans); fill: var(--muted); }
+    .tiny { font: 10px var(--mono); fill: var(--faint); letter-spacing: .02em; }
+    .mono { font: 12px var(--mono); fill: var(--muted); }
+    .button { fill: var(--card); stroke: var(--line); }
+    .chip { fill: var(--shell); stroke: var(--line); }
+    .shadow { filter: drop-shadow(0 18px 24px var(--shadow)); }
+  </style>
+
+  <rect class="bg" width="1440" height="980"/>
+  <rect x="26" y="22" width="1388" height="936" rx="34" class="shell shadow"/>
+
+  <rect x="48" y="46" width="64" height="888" rx="24" class="panel"/>
+  <circle cx="80" cy="82" r="15" class="ink"/>
+  <circle cx="88" cy="76" r="5" class="accent"/>
+  <text x="80" y="132" text-anchor="middle" class="tiny">genie</text>
+  <rect x="62" y="168" width="36" height="36" rx="12" class="card-strong"/>
+  <text x="80" y="191" text-anchor="middle" class="h3">G</text>
+  <rect x="62" y="222" width="36" height="36" rx="12" class="card"/>
+  <text x="80" y="245" text-anchor="middle" class="faint">K</text>
+  <rect x="62" y="276" width="36" height="36" rx="12" class="card"/>
+  <text x="80" y="299" text-anchor="middle" class="faint">B</text>
+  <rect x="62" y="330" width="36" height="36" rx="12" class="card"/>
+  <text x="80" y="353" text-anchor="middle" class="faint">P</text>
+  <rect x="62" y="826" width="36" height="36" rx="12" class="card"/>
+  <text x="80" y="849" text-anchor="middle" class="faint">?</text>
+
+  <text x="140" y="74" class="tiny">WORKSPACE / prompt-to-card</text>
+  <text x="140" y="112" class="h1">Generate, preview, refine - without leaving the harness.</text>
+  <text x="140" y="142" class="body">Claude Design's chat + preview loop, adapted to genie's MCP-native card grid and UI kit browser.</text>
+
+  <rect x="1050" y="64" width="124" height="36" rx="18" class="button"/>
+  <text x="1112" y="87" text-anchor="middle" class="small">Reload</text>
+  <rect x="1184" y="64" width="154" height="36" rx="18" class="button"/>
+  <text x="1261" y="87" text-anchor="middle" class="small">Preview tools</text>
+
+  <rect x="140" y="174" width="350" height="702" rx="28" class="panel"/>
+  <text x="168" y="213" class="h2">Conversation</text>
+  <rect x="304" y="192" width="156" height="34" rx="17" class="chip"/>
+  <text x="382" y="214" text-anchor="middle" class="small">Sonnet route · high</text>
+
+  <rect x="166" y="246" width="286" height="74" rx="18" class="card"/>
+  <text x="188" y="274" class="h3">User</text>
+  <text x="188" y="297" class="body">Create a billing settings card set</text>
+  <text x="188" y="314" class="small">Use our app shell and empty states.</text>
+
+  <rect x="166" y="338" width="286" height="122" rx="18" class="card"/>
+  <text x="188" y="366" class="h3">genie</text>
+  <text x="188" y="390" class="body">Reading kit manifest and matching card</text>
+  <text x="188" y="410" class="body">patterns before generating previews.</text>
+  <rect x="188" y="424" width="76" height="22" rx="11" class="soft"/>
+  <text x="226" y="439" text-anchor="middle" class="tiny">CONJURE</text>
+
+  <rect x="166" y="478" width="286" height="116" rx="18" class="card"/>
+  <text x="188" y="506" class="h3">Status</text>
+  <text x="188" y="530" class="mono">@genie marker found</text>
+  <text x="188" y="552" class="mono">3 cards rendered byte-identical</text>
+  <text x="188" y="574" class="mono">CSP: default-src none</text>
+
+  <rect x="166" y="620" width="286" height="116" rx="18" class="card"/>
+  <text x="188" y="648" class="h3">Attach context</text>
+  <rect x="188" y="666" width="104" height="26" rx="13" class="chip"/>
+  <text x="240" y="684" text-anchor="middle" class="small">UI kit</text>
+  <rect x="302" y="666" width="126" height="26" rx="13" class="chip"/>
+  <text x="365" y="684" text-anchor="middle" class="small">Blueprint</text>
+  <rect x="188" y="704" width="138" height="24" rx="12" class="chip"/>
+  <text x="257" y="721" text-anchor="middle" class="tiny">issue #M4-03</text>
+
+  <rect x="166" y="760" width="286" height="82" rx="20" class="shell"/>
+  <text x="188" y="790" class="body">Refine selected card...</text>
+  <rect x="358" y="802" width="74" height="28" rx="14" class="accent"/>
+  <text x="395" y="821" text-anchor="middle" class="on-accent" font-family="Inter, ui-sans-serif, system-ui" font-size="12" font-weight="700">Send</text>
+
+  <rect x="514" y="174" width="560" height="702" rx="28" class="shell"/>
+  <text x="542" y="213" class="h2">Live preview grid</text>
+  <text x="542" y="239" class="body">Read-only cards. Authoring stays in code; iteration happens through MCP.</text>
+  <rect x="836" y="196" width="72" height="28" rx="14" class="button"/>
+  <text x="872" y="215" text-anchor="middle" class="small">Mark up</text>
+  <rect x="916" y="196" width="62" height="28" rx="14" class="button"/>
+  <text x="947" y="215" text-anchor="middle" class="small">Zoom</text>
+  <rect x="986" y="196" width="62" height="28" rx="14" class="button"/>
+  <text x="1017" y="215" text-anchor="middle" class="small">Share</text>
+
+  <rect x="542" y="274" width="238" height="174" rx="22" class="card-strong"/>
+  <text x="564" y="306" class="h3">BillingSettings.tsx</text>
+  <text x="564" y="330" class="body">Account, plan, payment method</text>
+  <rect x="564" y="354" width="80" height="46" rx="12" class="panel"/>
+  <rect x="656" y="354" width="94" height="46" rx="12" class="panel"/>
+  <line x1="564" y1="420" x2="748" y2="420" class="line" stroke-width="2"/>
+  <circle cx="756" cy="286" r="10" class="accent"/>
+
+  <rect x="808" y="274" width="238" height="174" rx="22" class="card"/>
+  <text x="830" y="306" class="h3">UsageEmpty.tsx</text>
+  <text x="830" y="330" class="body">First-run empty state</text>
+  <rect x="860" y="360" width="126" height="18" rx="9" class="panel"/>
+  <rect x="874" y="392" width="98" height="12" rx="6" class="panel"/>
+  <rect x="892" y="416" width="62" height="18" rx="9" class="soft"/>
+
+  <rect x="542" y="474" width="238" height="174" rx="22" class="card"/>
+  <text x="564" y="506" class="h3">PlanCompare.tsx</text>
+  <text x="564" y="530" class="body">Three-tier comparison</text>
+  <rect x="564" y="554" width="48" height="70" rx="10" class="panel"/>
+  <rect x="628" y="538" width="56" height="86" rx="10" class="soft"/>
+  <rect x="700" y="568" width="48" height="56" rx="10" class="panel"/>
+
+  <rect x="808" y="474" width="238" height="174" rx="22" class="card"/>
+  <text x="830" y="506" class="h3">InvoiceRow.tsx</text>
+  <text x="830" y="530" class="body">Dense state with actions</text>
+  <line x1="830" y1="558" x2="1008" y2="558" class="line" stroke-width="2"/>
+  <line x1="830" y1="594" x2="1008" y2="594" class="line" stroke-width="2"/>
+  <line x1="830" y1="630" x2="1008" y2="630" class="line" stroke-width="2"/>
+
+  <rect x="542" y="676" width="504" height="138" rx="22" class="card"/>
+  <text x="564" y="708" class="h3">Evidence strip</text>
+  <text x="564" y="734" class="body">file://, localhost, and ui://genie/grid rendered the same HTML bytes.</text>
+  <rect x="564" y="760" width="134" height="28" rx="14" class="chip"/>
+  <text x="631" y="779" text-anchor="middle" class="small">file OK</text>
+  <rect x="714" y="760" width="134" height="28" rx="14" class="chip"/>
+  <text x="781" y="779" text-anchor="middle" class="small">localhost OK</text>
+  <rect x="864" y="760" width="134" height="28" rx="14" class="chip"/>
+  <text x="931" y="779" text-anchor="middle" class="small">ui OK</text>
+
+  <rect x="1098" y="174" width="274" height="702" rx="28" class="panel"/>
+  <text x="1126" y="213" class="h2">Refine target</text>
+  <text x="1126" y="239" class="body">Selected: BillingSettings.tsx</text>
+  <rect x="1126" y="270" width="218" height="116" rx="18" class="card"/>
+  <text x="1148" y="300" class="h3">Suggested tweak</text>
+  <text x="1148" y="324" class="body">Make payment method hierarchy</text>
+  <text x="1148" y="344" class="body">clearer and add loading state.</text>
+  <rect x="1148" y="356" width="82" height="22" rx="11" class="soft"/>
+  <text x="1189" y="371" text-anchor="middle" class="tiny">REFINE</text>
+
+  <rect x="1126" y="410" width="218" height="146" rx="18" class="card"/>
+  <text x="1148" y="440" class="h3">Page selector</text>
+  <text x="1148" y="466" class="mono">01 overview</text>
+  <text x="1148" y="490" class="mono">02 billing cards</text>
+  <text x="1148" y="514" class="mono">03 validation</text>
+  <text x="1148" y="538" class="small">New blank page / duplicate / rename</text>
+
+  <rect x="1126" y="580" width="218" height="172" rx="18" class="card"/>
+  <text x="1148" y="610" class="h3">Why this works</text>
+  <text x="1148" y="636" class="body">Best for everyday use: chat</text>
+  <text x="1148" y="656" class="body">history stays visible while</text>
+  <text x="1148" y="676" class="body">the grid gives fast visual</text>
+  <text x="1148" y="696" class="body">comparison across variants.</text>
+
+  <text x="140" y="918" class="tiny">Hallmark stamp: Workbench Split View / N5 / Ft2 / critique: strong for active iteration; weaker for first-time orientation.</text>
+</svg>

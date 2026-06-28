@@ -19,7 +19,7 @@ issued via the admin CLI.
 ## Acceptance Criteria
 - [ ] AC1 — Server accepts `Authorization: Bearer <token>` on every
       MCP-over-HTTP request.
-- [ ] AC2 — Token format: `dsc_<32-char-base32>` (matches GitHub PAT
+- [ ] AC2 — Token format: `genie_<32-char-base32>` (matches GitHub PAT
       pattern).
 - [ ] AC3 — Tokens stored hashed (SHA-256) in
       `${GENIE_HOME}/auth/tokens.json`.

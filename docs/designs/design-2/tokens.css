@@ -9,7 +9,7 @@
    direction:     escape the warm-neutral default; ink-blue leads, clay signals
    two-tiers:     embedded = system fonts + host-deference; standalone = brand
    ----------------------------------------------------------------------------
-   Mirrors docs/design/tokens.css structure so the four directions diff cleanly.
+   Mirrors `docs/designs/design-1/tokens.css` structure so the four directions diff cleanly.
    OKLCH is the source of truth; hex are sRGB fallbacks for the SVG mockups.
    ============================================================================ */
 

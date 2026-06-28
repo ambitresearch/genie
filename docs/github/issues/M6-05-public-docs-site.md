@@ -7,9 +7,10 @@ estimate: "6h"
 ---
 
 ## Summary
-Publish the project docs as a navigable site at
-`https://genie.docs.roshangautam.com` (or the GitHub Pages
-default). Use mkdocs-material; auto-deploy on every push to `main`.
+Publish the project docs as a navigable GitHub Pages site at
+`https://<org>.github.io/genie` (or an operator-specific custom domain such as
+`https://genie.docs.<your-domain>`). Use mkdocs-material; auto-deploy on every
+push to `main`.
 
 ## Context
 - Mature OSS comparators (Framelink, shadcn-mcp-server) all ship a docs

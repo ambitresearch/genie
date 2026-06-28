@@ -1,7 +1,7 @@
 ---
 title: "[M2-07] Structured-output validation (Ajv strict mode)"
-milestone: "M2 — LiteLLM Generation Surface"
-labels: ["type:feature", "area:litellm", "priority:P0-critical", "size:S"]
+milestone: "M2 — LLM Generation Surface"
+labels: ["type:feature", "area:llm", "priority:P0-critical", "size:S"]
 assignees: []
 estimate: "3h"
 ---
@@ -23,11 +23,11 @@ appended to the prompt.
 - [ ] AC2 — Uses Ajv with `{ strict: true, allErrors: true }`.
 - [ ] AC3 — On failure, throws `SchemaValidationError` with `errors:
       ErrorObject[]` attached.
-- [ ] AC4 — Validates the `@dsCard` regex against the first line of any
+- [ ] AC4 — Validates the `@genie` regex against the first line of any
       `<Name>.html` file in the output (cross-check vs M3-01 regex source).
 - [ ] AC5 — Compiles the schema once at module load — not per call.
 - [ ] AC6 — Test fixtures: 3 valid + 5 invalid (missing field, wrong type,
-      bad path pattern, missing `@dsCard`, ManifestEntry without viewport).
+      bad path pattern, missing `@genie`, ManifestEntry without viewport).
 
 ## Implementation Notes
 - File: `packages/server/src/llm/validate.ts`.

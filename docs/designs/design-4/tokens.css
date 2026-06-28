@@ -10,7 +10,7 @@
    direction:     remove every other colour so scarce clay is the loudest mark
    two-tiers:     most host-deferential of the four (resting state already neutral)
    ----------------------------------------------------------------------------
-   Mirrors docs/design/tokens.css structure so the four directions diff cleanly.
+   Mirrors `docs/designs/design-1/tokens.css` structure so the four directions diff cleanly.
    OKLCH is source of truth; hex are sRGB fallbacks for the SVG mockups.
    ============================================================================ */
 

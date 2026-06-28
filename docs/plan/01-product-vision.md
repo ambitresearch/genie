@@ -1,6 +1,6 @@
 # Product Vision — genie
 
-> Document owner: the maintainer (solo) · Status: working draft · Last revised: 2026-06-24
+> Document owner: the maintainer (solo) · Status: working draft · Last revised: 2026-06-27
 > Source-of-truth: this document supersedes any prior pitch or slide. All
 > downstream docs (BRD, PRD, RFC, GTM, Runbook) inherit from it.
 > Revision note (2026-06-24): Raised minimum Node.js from 18 to 22 (Node 18 & 20 reached EOL; Node 22 is the current Active LTS).
@@ -9,10 +9,10 @@
 
 ## 1. One-line vision statement
 
-> **Every AI coding harness — not just Claude.ai — deserves a Design-System-aware
+> **Every AI coding harness — not just Claude.ai — deserves a UI-kit-aware
 > teammate that lives where the developer already works, runs on infrastructure
-> the team already owns, and speaks the same on-disk contract Anthropic invented
-> so the work round-trips both ways.**
+> the team already owns, and speaks its own open conventions — with optional
+> bridges back to Claude Design for those who want them.**
 
 ---
 
@@ -21,8 +21,7 @@
 ### 2.1 The asymmetry as it exists today
 
 Per Anthropic's announcement, Claude Design launched in research preview in
-mid-2026, marketed as powered by "Claude Opus 4.7" (an internal alias; the
-public model catalog lists Opus 4.8).[^claude-design] It is the first commercial product that treats a design system as a
+mid-2026, marketed as powered by "Claude Opus 4.7".[^claude-design] It is the first commercial product that treats a UI kit as a
 first-class collaborator for an LLM: components register themselves via the
 `<!-- @dsCard group="…" -->` first-line marker, a server-side self-check
 recompiles a `ds_manifest` on every upload, and the canvas at `claude.ai/design`
@@ -49,7 +48,7 @@ This produces a starkly asymmetric world:
 |---|---|---|
 | Generate UI against the team's real components | ✅ | ❌ |
 | Get inline edits via "knobs made by Claude" | ✅ | ❌ |
-| Push a design system from code with one slash command | ✅ | ❌ |
+| Push a UI kit from code with one slash command | ✅ | ❌ |
 | Render the result in a live, grouped grid of preview cards | ✅ | ❌ |
 | Run the whole loop against a model the security team approved | ❌ | ❌ |
 | Run the whole loop on infrastructure the team already owns | ❌ | ❌ |
@@ -62,13 +61,13 @@ hosted product.
 
 ### 2.2 Personas living inside the asymmetry
 
-**Priya — staff design-systems engineer at a 600-person fintech.**
+**Priya — staff UI-platform engineer at a 600-person fintech.**
 Priya owns the company's React component library and ships it as a private
 package consumed by 14 product teams. Her engineers are split: half use VS Code
 with GitHub Copilot agent mode, four squads have standardized on Cursor, the
 infra team uses Claude Code, and the platform CTO insists on OpenAI Codex CLI
 for any work touching regulated systems. None of these users can talk to a
-design-system-aware LLM today. Priya watches Anthropic's demo, demos `@dsCard`
+UI-kit-aware LLM today. Priya watches Anthropic's demo, demos `@dsCard`
 to her CTO, and is told flatly: *"We can't put our component IP through
 claude.ai. Find an alternative or build one."*
 
@@ -104,9 +103,9 @@ Kenji's product is a developer-facing CLI. Internal designers ship mockups in
 Figma, internal frontend engineers ship in plain HTML + Web Components. The
 team's daily editor is OpenAI Codex CLI. There is no React, there is no
 Storybook, and there is no Anthropic subscription. Kenji wants the
-*incremental-sync verb set* — the 12-method `list_projects / finalize_plan /
-write_files / delete_files / register_assets / report_validate` protocol — so
-his designers' Figma exports land in his repo as `@dsCard`-marked HTML cards
+*incremental-sync verb set* — the 13-method `list_kits / plan /
+write_files / delete_files / validate` protocol — so
+his designers' Figma exports land in his repo as `@genie`-marked HTML cards
 that his Codex agent can iterate on. The visual canvas is irrelevant to him; he
 needs the contract.
 
@@ -138,7 +137,7 @@ slow, honest, second-year workstream.** That is what genie is.
 > **Weekly active component-store mutations originating from a non-Claude.ai
 > harness — counted as the number of distinct `(repo, week, harness)` triples
 > in which our MCP server processes at least one `write_files` against a
-> `PROJECT_TYPE_DESIGN_SYSTEM` repo.**
+> `GENIE_KIT` repo.**
 
 Target by end of Year 1: **2,500 weekly triples** across the public install base,
 of which at least **40%** come from harnesses other than Claude Code (i.e.
@@ -149,7 +148,7 @@ Codex CLI, Copilot, Cursor, Cline, Continue.dev, Claude Desktop combined).
 The metric is engineered to refuse three temptations.
 
 **It refuses GitHub stars.** Stars measure curiosity, not workflow. A repo can
-trend on Hacker News and never touch a production design system. Stars also
+trend on Hacker News and never touch a production UI kit. Stars also
 collapse to zero signal once the project crosses ~5k — fan-out makes per-week
 deltas meaningless.
 
@@ -164,7 +163,7 @@ owns the cost-and-budget surface. Optimizing for tokens would push us toward
 chatty prompts and away from terse, deterministic verbs.
 
 **The chosen metric is workflow-anchored.** A `write_files` against a
-design-system repo is the moment the product earned its keep — the user trusted
+UI-kit repo is the moment the product earned its keep — the user trusted
 the system to mutate code they care about. It captures retention (weekly), real
 work (writes, not reads), distinct contexts (per repo), and harness diversity
 (per harness). The 40% non-Claude-Code threshold encodes our reason to exist:
@@ -175,16 +174,16 @@ substrate.
 
 We pair the north star with two guard-rails:
 
-- **Median latency of `render_preview` ≤ 600 ms (p95 ≤ 1500 ms).** If the
+- **Median latency of `preview` ≤ 600 ms (p95 ≤ 1500 ms).** If the
   preview pane is slow, the metric will be gamed by tooling that batches writes.
-- **`validate_design_system` failure rate ≤ 3% per project per week.** If we
+- **`validate` failure rate ≤ 3% per project per week.** If we
   let users write garbage cards, the metric becomes a vanity number.
 
 ---
 
 ## 4. Who it's for (target users)
 
-### 4.1 Priya — staff design-systems engineer (the anchor persona)
+### 4.1 Priya — staff UI-platform engineer (the anchor persona)
 
 **Role.** Owns a private React component library at a regulated-industry
 mid-market company. Reports to the head of design platform. KPI'd on adoption
@@ -193,7 +192,7 @@ across product teams.
 **Current workflow pain.** Component churn. New product engineers ship hand-
 rolled buttons instead of `acme-ui` primitives because LLM tab-completions
 generate `<button class="bg-blue-500">` snippets that look right and ship green.
-Six months in, the design-system migration story is on fire.
+Six months in, the UI-kit migration story is on fire.
 
 **What success looks like.** When a product engineer in Cursor asks for "a
 loading state for the deposit confirmation card," they get back a snippet that
@@ -214,7 +213,7 @@ three times.
 
 **What success looks like.** A single MCP server pointed at his local
 `~/code/shared-ui/` directory, mounted in both Continue.dev and Claude Desktop.
-A `generate_component` call in either harness produces a card that lands in
+A `conjure` call in either harness produces a card that lands in
 `shared-ui/components/`, shows up in his Vite-backed viewer at
 `http://localhost:5173`, and is committable in 30 seconds. His Ollama instance
 serves the cheap iterations; LiteLLM routes the polish step to Sonnet 4.6.
@@ -247,8 +246,9 @@ lab's research output funnels through ten distinct project websites, each
 hand-styled because nobody has bandwidth to keep them aligned.
 
 **What success looks like.** A single Docker-deployed genie
-behind the lab's Authelia SSO, pointed at a Gitea repo on TrueNAS. LiteLLM
-routes generation requests to a self-hosted Qwen3-Coder 32B on the lab GPU.
+behind the lab's OIDC SSO, pointed at a self-hosted git host. An
+OpenAI-compatible endpoint routes generation requests to a self-hosted
+Qwen3-Coder 32B on the lab GPU.
 Audit logs flow to the institutional SIEM. Lina's grad students get the Claude
 Design workflow without a single byte of `oxfordoa-ui` leaving the campus
 network.
@@ -263,7 +263,7 @@ HTML + Web Components. No React. No Storybook. No subscription. Every design
 hand-off is a manual translation.
 
 **What success looks like.** Kenji's designers run a Figma export pipeline that
-emits `@dsCard`-marked HTML and dumps it into a genie project.
+emits `@genie`-marked HTML and dumps it into a genie project.
 Kenji's Codex CLI agent picks up the cards via `list_components`, iterates on
 copy, and writes back via `write_files`. The visual canvas is never opened —
 Kenji uses the verbs and the viewer, nothing else.
@@ -286,10 +286,10 @@ We accept three documented capability tiers and design for graceful
 degradation:
 
 - **Tier-0 (every harness):** tools + structured JSON responses.
-- **Tier-1 (Claude Code, Cursor, VS Code):** add resources (`ds://`) and
-  prompts (`/genie__new-component`).
-- **Tier-2 (Claude, VS Code Stable Jan 2026, ChatGPT, Cursor):** add `ui://`
-  inline rendering for the rich preview grid.
+- **Tier-1 (Claude Code, Cursor, VS Code):** add resources (`genie://`) and
+  optional fallback prompts (`/genie__new-component`).
+- **Tier-2 (Claude, VS Code Stable Jan 2026, ChatGPT, Cursor):** add the
+  `ui://` MCP App for inline preview, generate, refine, and audit.
 
 The same server emits all three. A tools-only Cline session can do real work; a
 Tier-2 Claude session gets the same work plus an inline card grid.
@@ -301,42 +301,42 @@ moment a host-specific feature requires a parallel codepath, we refuse it.
 
 ### 5.2 Pillar 2 — Self-hostable by default
 
-**What it means.** The reference deployment runs on a TrueNAS box with a Gitea
-sidecar and a LiteLLM gateway. There is no hosted SaaS in the critical path.
+**What it means.** The reference deployment runs on self-hosted infrastructure with a git host
+and a configurable OpenAI-compatible endpoint. There is no hosted SaaS in the critical path.
 The `npm` package, the `.mcpb` bundle, and the Docker image are interchangeable
 artifacts of the same build. Every secret is an env var. Every backend is
 swappable.
 
 We assume the deployer owns the model, owns the storage, and owns the auth
-provider. Our defaults reflect that — local FS for solo, Gitea on TrueNAS aether
-pool for shared, LiteLLM at `https://litellm.roshangautam.com` for generation,
-OIDC against the deployer's IdP (Authelia/Authentik/Keycloak) for auth. We
-publish reference configurations for each.
+provider. Our defaults reflect that — local FS for solo, a self-hosted git host
+(GitHub / Gitea / GitLab) for shared, a configurable OpenAI-compatible LLM
+endpoint (LiteLLM / Ollama / vLLM / …) for generation, and OIDC against the
+deployer's existing IdP for shared HTTP deployments. We publish reference
+configurations for each.
 
 **What it does NOT mean.** We do not refuse to run against hosted backends.
 LiteLLM can route to Anthropic's hosted Sonnet 4.6, OpenAI's models, or a local
 Qwen. The point is not anti-cloud purity; it is *operator choice at the
 deployment boundary*.
 
-### 5.3 Pillar 3 — Design-system-first
+### 5.3 Pillar 3 — UI-kit-first
 
-**What it means.** The unit of work is the design system, not the component, not
-the screen, not the conversation. Every verb takes a `projectId`. Every
-generation is constrained by the project's adherence rules. Every preview lives
-in a card that registers itself via the `<!-- @dsCard group="…" -->` marker. We
-mirror the DesignSync 12-method protocol — `list_projects`, `get_project`,
-`list_files`, `get_file`, `create_project`, `finalize_plan`, `write_files`,
-`delete_files`, `register_assets`, `unregister_assets`, `report_validate`,
-`list_components`, plus our generation verbs — because that is the contract
-Anthropic invented and because it is the right one.
+**What it means.** The units of work are the UI kit and the project, not the
+component, not the screen alone, not the conversation. Kit verbs take a `kitId`;
+screen verbs take a `projectId` and resolve the bound kit explicitly. Every
+kit-constrained generation follows the kit's adherence rules. Every card preview
+registers itself via the `<!-- @genie group="…" -->` marker. genie's M1 surface
+keeps the capability-gated *shape* Anthropic's DesignSync pioneered (read freely →
+one `plan` gate → scoped writes) because that shape is right, while naming the
+verbs genie's own way.
 
-Cards group themselves. Validations short-circuit. The `[DSCARD_MISSING]` build
+Cards group themselves. Validations short-circuit. The `[MARKER_MISSING]` build
 failure is a feature, not a bug. We refuse the option to ship "loose" component
-fragments outside a design-system project.
+fragments outside a UI-kit project.
 
 **What it does NOT mean.** We are not a Figma alternative, and we are not a
 visual canvas editor. We do not invent new design tokens, we do not opinionate
-on color, and we do not bundle a primitive library. The design system is yours;
+on color, and we do not bundle a primitive library. The UI kit is yours;
 we merely make it legible to an LLM.
 
 ### 5.4 Pillar 4 — Open by default, MIT-licensed, plain TypeScript
@@ -363,41 +363,49 @@ expect agencies, consultancies, and enterprise platforms to deploy this in
 production and charge their customers for it. MIT was chosen precisely because
 it permits that.
 
-### 5.5 Pillar 5 — Reversible — round-trips with hosted Claude Design
+### 5.5 Pillar 5 — Own conventions, optional bridges
 
-**What it means.** Our on-disk file layout, our `@dsCard` regex, and our 12-verb
-schema are byte-compatible with the bundled `design-sync` skill. A project
-authored against genie can be uploaded into a real
-`claude.ai/design` project via the official `/design-sync` slash command with
-zero translation. A project pulled down from `claude.ai/design` can be served
-by our viewer and consumed by our verbs with no migration step.
+**What it means.** genie speaks its **own** conventions natively — its own verb
+names, its own first-line `@genie` card marker, its own `.genie/` on-disk layout,
+its own `genie://` resource scheme. We do not conform to anyone else's schema as a
+design constraint. The conventions are designed for clarity and for genie's own
+users first.
 
-This is deliberate. We do not want to lock users into our world the way Claude
-Design locks them into Anthropic's. If `claude.ai/design` someday ships an open
-API surface, we should be the easiest thing to migrate from — because the file
-formats already match.
+Interoperability with hosted Claude Design is a **future, opt-in bridge** — not a
+foundational pillar. A later adapter mode can read and write Anthropic's
+`@dsCard` / `_ds_*` shapes so a project can round-trip into a real
+`claude.ai/design` project, and (separately) import designs from Google Stitch.
+That bridge is additive and lives behind a flag; it never dictates genie's native
+surface.
 
-**What it does NOT mean.** Reversibility is not the same as feature parity. We
-are not promising the canvas, the inline-comment UI, or the per-element knobs.
-Those are open R&D and live behind Year 2 / Year 3 milestones. But the
-*persistence layer* — the bits on disk — is reversible from v1.0.
+This is deliberate. Designing our own conventions is the honest move for an
+independent project — we are inspired by Claude Design, not a reproduction of it.
+If a team later wants to move work between genie and a hosted tool, the bridge is
+there; but no genie user pays a "compatibility tax" in their day-to-day surface.
+
+**What it does NOT mean.** Own-conventions does not mean hostile-to-interop. We
+will ship the bridge when it earns its place (post-v1), and we keep our file
+formats cat-able, diff-able, and documented precisely so that *any* external tool
+— Anthropic's or otherwise — can integrate against them. The point is operator
+choice, with genie's own clean surface as the default and bridges as opt-in.
 
 ### 5.6 Pillar 6 — Boring infrastructure, opinionated UX
 
-**What it means.** Under the hood: stdio transport for local dev, Streamable
-HTTP for remote, OAuth 2.0 with Dynamic Client Registration for Claude Code,
-Codex CLI, and Cursor, static `Authorization: Bearer` for
-VS Code/Cline/Continue. Vite for the preview viewer because Vite natively
+**What it means.** Under the hood: stdio transport for first-run local installs,
+Streamable HTTP for already-running local dev, shared, or remote deployments,
+OAuth 2.0 with Dynamic Client Registration for HTTP-capable Claude Code, Codex
+CLI, and Cursor setups, static `Authorization: Bearer` for HTTP harnesses
+without OAuth. Vite for the preview viewer because Vite natively
 supports multi-page entry points
 ([vite.dev/guide](https://vite.dev/guide/)). Chokidar for file watching. No
 custom protocol invention. No homegrown bundlers.
 
 On top of that infrastructure: a single, opinionated UX. One verb name for
 generation. One layout for the preview grid. One regex for card validation.
-One sentinel file (`_ds_needs_recompile`) for triggering recompile. One
-verification anchor (`_ds_sync.json`) written last. We chose these because the
-on-disk bundled skill chose them; we keep them because they work; and we will
-not paint the bikeshed.
+One sentinel file (`.genie/recompile`) for triggering recompile. One
+verification anchor (`.genie/sync.json`) written last. We chose these as
+genie's own conventions, kept them tidy under one `.genie/` directory, and we
+will not paint the bikeshed.
 
 **What it does NOT mean.** Boring does not mean immutable. We will swap Vite
 for something faster if Vite stagnates. We will adopt new MCP capabilities the
@@ -419,16 +427,23 @@ not invite host-specific shims.
 directly to bypass the MCP plan-then-write boundary, even if it is faster.
 Reject.
 
-### Principle 2 — We mirror DesignSync verbs verbatim
+### Principle 2 — We name our own verbs for clarity
 
-**Clarification.** Every verb listed in the bundled skill's tool schema is
-implemented with the same name, the same JSON Schema shape, and the same
-ordering constraint ("read → finalize_plan → write/delete"). This is not
-because Anthropic owns the verbs — they do not, by the MCP spec — but because
-mirroring is the cheapest path to reversibility (Pillar 5).
+**Clarification.** genie declares its own tool names, chosen to read clearly for
+genie's users. The kit/component core is
+`list_kits`, `get_kit`, `read_file`, `create_kit`, `plan`, `write_files`,
+`delete_files`, `validate`, `list_components`, `conjure`, `refine`, `preview`
+plus `list_files`; the project core is `list_projects`, `get_project`,
+`create_project`, `delete_project`, `bind_kit`, `conjure_screen`. They keep the DesignSync *protocol shape* — read
+freely → one `plan` permission gate → writes scoped to the granted globs — because
+that shape is genuinely good, not because we are obliged to mirror it. Anthropic
+does not own the verbs (MCP tool names are server-declared), and we are not bound
+to their names.
 
-**Anti-example.** Renaming `finalize_plan` to `commit_plan` because we think
-the new name reads better. Reject.
+**Anti-example.** Re-introducing `plan` / `conjure` purely to
+match Anthropic's bundled skill, at the cost of a clearer name. Reject — the
+optional interop bridge (Pillar 5) handles their schema; our native surface stays
+ours.
 
 ### Principle 3 — Previews are static HTML files first, rich UI second
 
@@ -442,21 +457,20 @@ React-component-as-preview that cannot be opened standalone. Reject.
 
 ### Principle 4 — Authoring without LLM access still works
 
-**Clarification.** A user with a broken LiteLLM connection can still
-`list_projects`, `get_file`, `write_files`, `validate_design_system`, and
-`render_preview`. Generation verbs (`generate_component`, `refine_component`)
+**Clarification.** A user with a broken LLM-gateway connection can still
+`list_kits`, `read_file`, `write_files`, `validate`, and
+`preview`. Generation verbs (`conjure`, `refine`)
 fail loudly with an actionable error. Everything else degrades gracefully.
 
-**Anti-example.** A startup screen that refuses to load until a LiteLLM
+**Anti-example.** A startup screen that refuses to load until an LLM-gateway
 heartbeat succeeds. Reject.
 
 ### Principle 5 — The plan is the permission grant
 
-**Clarification.** `finalize_plan` is the *only* user-visible permission
+**Clarification.** `plan` is the *only* user-visible permission
 boundary. Everything before it (reads) is unprompted; everything after it
-(writes, deletes, registrations) is constrained to the plan's paths. Per the
-DesignSync schema verbatim: "Calling write, delete, register, or unregister
-without a valid planId, or with paths outside the plan, is rejected." We
+(writes, deletes) is constrained to the plan's paths: calling write or delete
+without a valid `planId`, or with paths outside the plan, is rejected. We
 enforce this with a hard check in the server, not in the harness.
 
 **Anti-example.** A "convenience" tool that takes a write and an implicit plan
@@ -465,48 +479,50 @@ in one call. Reject.
 ### Principle 6 — Atomic upload sequence, anchor last
 
 **Clarification.** The five-step write sequence is non-negotiable: (1) write
-`_ds_needs_recompile` sentinel first, (2) chunk content writes ≤256 per call,
-(3) all deletes, (4) re-arm the sentinel, (5) write `_ds_sync.json` last. The
+the `.genie/recompile` sentinel first, (2) chunk content writes ≤256 per call,
+(3) all deletes, (4) re-arm the sentinel, (5) write `.genie/sync.json` last. The
 anchor's job is to vouch for files; if anything mid-plan fails, the anchor must
 not exist — its absence becomes the trigger for the next sync's repair pass.
 
-**Anti-example.** Writing `_ds_sync.json` first to "lock in the version" before
+**Anti-example.** Writing `.genie/sync.json` first to "lock in the version" before
 content. Reject.
 
 ### Principle 7 — The card marker is the registration mechanism
 
 **Clarification.** A component registers itself by having a `preview.html` whose
-first line matches `/^<!--\s*@dsCard\s+group="[^"]*"[^>]*-->/`. There is no
-manual registration. There is no central registry file the user edits.
-`register_assets` and `unregister_assets` exist for legacy hand-authored
-projects without `@dsCard` markers and are not the recommended path.
+first line matches `/^<!--\s*@genie\s+group="[^"]*"[^>]*-->/`. There is no
+manual registration. There is no central registry file the user edits. There are
+no asset-registration verbs at all — the marker *is* the registration; to
+unregister, delete the file. (Anthropic's legacy `register_assets` /
+`unregister_assets` live only in the optional interop bridge.)
 
 **Anti-example.** A `dsRegister()` helper called from inside a component's TSX.
 Reject.
 
 ### Principle 8 — Storage is git
 
-**Clarification.** A "project" is a git repo. A `planId` becomes a branch.
-`finalize_plan` opens a PR. `write_files` commits to that branch. Merge is
+**Clarification.** A kit's shared backing store is a git repo. A `planId` becomes a branch.
+`plan` opens a PR. `write_files` commits to that branch. Merge is
 atomic publish. Rollback is a `git revert`. This holds for both the solo case
-(local working tree) and the shared case (Gitea on TrueNAS aether pool). We get
+(local working tree) and the shared case (GitHub / Gitea / GitLab). We get
 diff, history, code review, branching, and audit for free; we will never
 reinvent any of them.
 
 **Anti-example.** A bespoke `~/.genie/db.sqlite` that tracks
 "project state" outside git. Reject.
 
-### Principle 9 — Models route through LiteLLM, never directly
+### Principle 9 — Models route through a configurable OpenAI-compatible endpoint, never directly
 
-**Clarification.** The MCP server calls `https://litellm.roshangautam.com` as
-an OpenAI-compatible endpoint. Model selection is `model: "design-default"` or
-`model: "design-best"` (Opus tier; routes to `anthropic/claude-opus-4-8` via
-LiteLLM) — aliases configured in LiteLLM, not hardcoded in our code. Default is
-`anthropic/claude-sonnet-4-6` via the `design-default` alias. Per-key budgets
-and rate limits are LiteLLM's job.
+**Clarification.** The MCP server calls an operator-configured OpenAI-compatible
+endpoint (LiteLLM is the reference; Ollama / OpenAI / vLLM also work — D-H). The
+base URL is an env var with no hardcoded default. Model selection is
+`model: "design-default"` or `model: "design-best"` — aliases the operator maps
+at their gateway, not hardcoded in our code. Per-key budgets and rate limits are
+the gateway's job.
 
 **Anti-example.** Embedding an `anthropic-sdk` direct call into
-`generate_component` "for performance." Reject.
+`conjure` "for performance." Reject. Also reject baking any specific provider
+URL into the code as a default.
 
 ### Principle 10 — Tool descriptions ≤ 2 KB, names ≤ 64 chars, JSON Schema Draft 7
 
@@ -531,18 +547,20 @@ and auth shape. The server's behavior is identical.
 **Anti-example.** A `--cursor-mode` or `--vscode-mode` flag that changes verb
 behavior. Reject.
 
-### Principle 12 — The on-disk skill is our reference, not our master
+### Principle 12 — Claude Design is the inspiration, not a spec we conform to
 
-**Clarification.** When the bundled `design-sync` skill on disk disagrees with
-our judgment, we document the disagreement and choose what serves users better.
-Reversibility (Pillar 5) is the constraint, not absolute fidelity. We mirror
-verbs verbatim; we are free to add tools the skill does not have
-(`generate_component`, `refine_component`, `render_preview`,
-`validate_design_system`) because those serve users in harnesses Anthropic's
-skill never targeted.
+**Clarification.** We studied Anthropic's bundled `design-sync` skill to learn
+*which techniques work* — the capability-gated plan→write flow, the in-file card
+marker, the verification anchor, the atomic write order. We adopt those
+**techniques** and design our own **conventions** on top (our verb names, our
+`@genie` marker, our `.genie/` layout, our `genie://` scheme). Where the skill's
+choices don't serve genie's users, we choose differently and document why. The
+optional interop bridge (Pillar 5) — not our native surface — is where Anthropic's
+exact schema lives.
 
-**Anti-example.** Refusing to ship `render_preview` because "Anthropic doesn't
-have it." Reject — we are not Anthropic.
+**Anti-example.** Refusing to ship `preview` because "Anthropic doesn't
+have it," or re-adopting their file names "for fidelity." Reject — we are not
+Anthropic, and the bridge handles round-tripping.
 
 ---
 
@@ -554,50 +572,50 @@ have it." Reject — we are not Anthropic.
 
 | # | Outcome | Concrete artifact |
 |---|---|---|
-| 1 | The 12-verb DesignSync protocol works end-to-end against a local FS | `mcp__genie__list_projects` through `report_validate` (including `list_components`) all pass smoke tests in 7 harnesses |
-| 2 | `generate_component` produces a card that lands in the store and validates | `M2` release; demo video of Sonnet 4.6 generating an `acme.Button` variant in Cursor |
-| 3 | `@dsCard` validator and manifest compiler reach behavioral parity with `package-validate.mjs` | `M3` release; CI matrix runs our regex against the bundled skill's test fixtures |
+| 1 | The M1 genie tool surface works end-to-end against a local FS | Kit verbs plus `list_projects`, `get_project`, `create_project`, `delete_project`, `bind_kit`, and `conjure_screen` pass smoke tests in 7 harnesses |
+| 2 | `conjure` produces a card that lands in the store and validates | `M2` release; demo video of Sonnet 4.6 generating an `acme.Button` variant in Cursor |
+| 3 | `@genie` validator and manifest compiler ship and are covered by genie's own regex test fixtures | `M3` release; CI matrix runs the `@genie` regex against genie's fixture suite |
 | 4 | Vite-backed preview viewer with HMR ships as `@genie/viewer` | `npx genie-viewer ui_kits/<kit>` renders the grid at `http://localhost:5173` |
-| 5 | Auth + distribution complete: OAuth DCR for Claude Code/Codex, static bearer for VS Code/Cline/Continue, `.mcpb` bundle for Claude Desktop | `M5` release; one-command install in all 7 harnesses |
+| 5 | Auth + distribution complete: local stdio install, OAuth DCR for supported HTTP harnesses, static bearer for the rest, `.mcpb` bundle for Claude Desktop | `M5` release; one-command install in all 7 harnesses |
 | 6 | First wave of public adoption | 1,000 GitHub stars; 100 weekly active component-store mutations |
-| 7 | Reference deployment on TrueNAS documented end-to-end | `docs/06-operations-runbook.md` plus a homelab tutorial blog post |
-| 8 | One brand-name design system adopts us in production | A public case study or testimonial from a recognizable team |
+| 7 | Reference self-hosted deployment documented end-to-end | `docs/06-operations-runbook.md` plus a self-hosting tutorial blog post |
+| 8 | One brand-name UI kit adopts us in production | A public case study or testimonial from a recognizable team |
 
 **Explicit GA milestone — v1.0 in Q4 2026.** v1.0 ships with M0–M6 complete
 (M6 being the GA-hardening tail: load test, security audit, supply-chain
 provenance, public docs site, launch checklist), the 7-harness compatibility
-matrix in CHANGELOG, and the reference TrueNAS deployment proven by at least
+matrix in CHANGELOG, and the reference self-hosted deployment proven by at least
 one external adopter.
 
-### 7.2 Year 2 — multi-user, team workflows, hosted preview gallery, plugin ecosystem
+### 7.2 Year 2 — multi-user, team workflows, shareable previews, plugin ecosystem
 
 **Theme.** Cross the team threshold. Make this safe for ten people instead of
 one.
 
 | # | Outcome | Concrete artifact |
 |---|---|---|
-| 1 | Gitea backend with branch-as-plan model ships as default for shared deployments | v1.1 release; `finalize_plan` opens a PR, merge = publish |
-| 2 | Multi-tenant auth via OIDC (Authelia/Authentik/Keycloak reference deploys) | v1.2 release; per-org per-project RBAC |
-| 3 | Hosted preview gallery — shareable card URLs designers can drop in Slack | `previews.genie.dev` static site generator + self-hosted variant |
+| 1 | Git-host backend with branch-as-plan model ships as default for shared deployments | v1.1 release; `plan` opens a PR/MR where supported, merge = publish |
+| 2 | Multi-tenant auth via the deployer's OIDC provider | v1.2 release; per-org per-project RBAC |
+| 3 | Shareable preview exports — card URLs designers can drop in Slack | Static-site generator operators can deploy on their own domain |
 | 4 | Plugin API for custom verbs (e.g. Storybook adapter, MDX adapter, Figma exporter) | v2.0 release with plugin SDK; first three reference plugins |
 | 5 | First external community plugins ship | Three plugins from outside contributors in the registry |
 | 6 | Webhook surface for CI integration (PR previews, Chromatic-style visual diff) | v2.1 release; reference GitHub Action |
 | 7 | Adoption signal: 5,000 weekly active component-store mutations, 40% from non-Claude harnesses | North-star metric hit |
-| 8 | First commercial deployment-as-a-service | An agency or platform ships genie as a paid hosted offering |
+| 8 | First external operator guide | An agency or platform publishes a repeatable self-hosted deployment guide |
 
-### 7.3 Year 3 — de-facto open standard for AI-design-system tooling
+### 7.3 Year 3 — de-facto open standard for AI UI-kit tooling
 
 **Theme.** Become the substrate everyone else builds on.
 
 | # | Outcome | Concrete artifact |
 |---|---|---|
-| 1 | The `@dsCard` marker and the 12-verb protocol are referenced by at least two unrelated MCP servers | Citation in the public MCP registry; cross-server interop demos |
+| 1 | The `@genie` marker and genie's kit/project protocol are referenced by at least two unrelated MCP servers | Citation in the public MCP registry; cross-server interop demos |
 | 2 | A canonical Storybook adapter ships (greenfield gap noted in research — no Storybook MCP exists today) | `@genie/storybook-adapter` v1.0 |
 | 3 | First-class adapters for Tailwind v5, shadcn/ui registry, Material UI, Chakra | Four adapter packages, all maintained |
 | 4 | Canvas-side generation R&D ships — inline-comment edit protocol, region-targeted refinement | v3.0 release; the part Anthropic hides becomes openly specified |
-| 5 | Adoption signal: 25,000 weekly active mutations, presence in three Top-10 design-system org workflows | Public usage report |
-| 6 | A vendor-neutral MCP working group adopts the `@dsCard` regex as a recommended extension | Spec-track inclusion |
-| 7 | At least one harness ships native rendering of our `ui://` cards as a bundled UX | A harness (likely VS Code or Cursor) ships a "design system" tab powered by our resource |
+| 5 | Adoption signal: 25,000 weekly active mutations, presence in three Top-10 UI-platform org workflows | Public usage report |
+| 6 | A vendor-neutral MCP working group adopts the `@genie` regex as a recommended extension | Spec-track inclusion |
+| 7 | At least one harness ships native rendering of our `ui://` cards as a bundled UX | A harness (likely VS Code or Cursor) ships a "UI kit" tab powered by our resource |
 | 8 | Anthropic ships an official cross-harness Claude Design extension and references our prior art | Acknowledgment or compatibility statement from Anthropic; we treat this as success, not threat |
 
 ---
@@ -611,7 +629,7 @@ move. We refuse it. The entire product thesis is self-hosting; a SaaS would
 make us functionally indistinguishable from Anthropic on the "trust us with
 your component IP" axis and would let one outage of ours take down every
 customer's design pipeline. We will publish a reference Docker image, a
-Helm chart, and a TrueNAS app catalog entry. We will not run them on our
+Helm chart, and a self-hosted app catalog entry. We will not run them on our
 infrastructure for customers.
 
 If a partner agency wants to operate a managed genie on
@@ -627,7 +645,7 @@ v0.dev simultaneously. None of those products have been "won," and the
 team that wins them will not look like the team that wins MCP adoption.
 
 We ship a preview *grid* (read-only), not a preview *canvas* (editable).
-Refinements happen via `refine_component({ instruction, region })` calls
+Refinements happen via `refine({ instruction, region })` calls
 made by the harness, not by clicking on pixels in our viewer. That is a
 deliberate scope cut. The visual canvas is on the Year 3 R&D track and may
 never ship at all.
@@ -636,7 +654,7 @@ never ship at all.
 
 Designers will continue to use Figma, and that is fine. We expect Figma to
 be the *source* of design intent (via `refImageDataUrl` or via a third-party
-exporter that emits `@dsCard` HTML), not its competitor. We will publish
+exporter that emits `@genie` HTML), not its competitor. We will publish
 recipes for Figma → genie flows, but we will not maintain a
 Figma plugin, we will not parse `.fig` files, and we will not try to
 replace `Figma → Dev Mode → MCP Server` for the teams who already pay for
@@ -662,16 +680,16 @@ already has it.
 
 ### 8.6 We will NOT ship our own LLM
 
-LiteLLM is the model gateway. We are not a model. We are not a fine-tuning
-provider. We are not a prompt library. We will publish *prompts* in the
+The configured OpenAI-compatible endpoint is the model gateway. We are not a
+model. We are not a fine-tuning provider. We are not a prompt library. We will publish *prompts* in the
 repository — they are part of the open-source surface — but we will not
 ship weights, we will not train embeddings, and we will not bundle Ollama
 in the Docker image. Choosing a model is the operator's job.
 
 ### 8.7 We will NOT lock the file format
 
-The on-disk format is `preview.html` + `meta.json` + `manifest.json` +
-`_ds_sync.json`, matching the bundled `design-sync` skill. We will not
+The on-disk format is `preview.html` + `meta.json` + `.genie/manifest.json` +
+`.genie/sync.json` — genie's own, plain and inspectable. We will not
 invent a proprietary binary, we will not depend on a closed schema
 registry, and we will not require our viewer to read the files. Cat-able,
 diff-able, grep-able. Always.
@@ -684,7 +702,7 @@ diff-able, grep-able. Always.
 
 | # | Product | Harness portability | Self-hostable | Design-system-first | Open source | No subscription required | Custom LLMs | Visual pane | Programmable |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | **genie** (this) | ✅ 7 harnesses Tier-0 | ✅ Docker/npm/`.mcpb` | ✅ DesignSync 12-verb | ✅ MIT | ✅ | ✅ via LiteLLM | ⚠️ grid-only (Year 1), canvas (Year 3) | ✅ MCP |
+| 1 | **genie** (this) | ✅ 7 harnesses Tier-0 | ✅ Docker/npm/`.mcpb` | ✅ 19-tool kit/project protocol | ✅ MIT | ✅ | ✅ any OpenAI-compatible endpoint | ⚠️ grid-only (Year 1), canvas (Year 3) | ✅ MCP |
 | 2 | Claude Design (hosted, Anthropic) | ❌ Claude Code only | ❌ | ✅ | ❌ closed | ❌ Pro/Max/Team/Ent | ❌ Opus 4.x (marketed Opus 4.7; resolves to Opus 4.8) | ✅ full canvas | ⚠️ DesignSync tool only |
 | 3 | v0.dev (Vercel) | ❌ web UI only | ❌ | ⚠️ ad-hoc shadcn | ⚠️ shadcn snippets MIT | ❌ Vercel plan | ❌ | ✅ canvas | ❌ |
 | 4 | Galileo AI | ❌ web/Figma plugin | ❌ | ❌ generic AI aesthetics | ❌ | ❌ | ❌ | ✅ canvas | ❌ |
@@ -695,37 +713,36 @@ diff-able, grep-able. Always.
 
 ### 9.2 Interpreting the table
 
-**The only competitor that ticks both "harness portability" and "design-system-
+**The only competitor that ticks both "harness portability" and "UI-kit-
 first" is us.** Claude Design is the most polished product in the row, but it
-binds the design-system loop to one harness and one subscription. v0.dev and
+binds the UI-kit loop to one harness and one subscription. v0.dev and
 Galileo AI optimize for canvas-first ideation, not component-library adherence
 — they generate beautiful-but-orphan UI. Figma-Context-MCP and shadcn-ui-mcp-
 server are harness-portable, but neither treats *your* component library as
 the first-class object; one is a Figma viewer and the other is a registry
-client. Storybook is the closest design-system-first cousin, but it is not an
-LLM substrate and has no equivalent to `@dsCard` or `generate_component`.
+client. Storybook is the closest UI-kit-first cousin, but it is not an
+LLM substrate and has no equivalent to `@genie` or `conjure`.
 
 **Our differentiation is the conjunction, not any single column.** Anyone can
-ship a harness-portable MCP server. Anyone can ship a design-system viewer.
+ship a harness-portable MCP server. Anyone can ship a UI-kit viewer.
 The combination — *one open-source MCP server that runs in seven harnesses,
-self-hosts, mirrors the DesignSync verbs, and rounds-trips with hosted Claude
-Design* — exists only here.
+self-hosts, speaks its own UI-kit-native protocol, and can later bridge to hosted
+Claude Design* — exists only here.
 
-**We are also the only entry where "open source" and "design-system-first"
+**We are also the only entry where "open source" and "UI-kit-first"
 co-occur with "self-hostable."** Storybook is open and self-hostable but does
 not generate or refine components. shadcn-ui-mcp-server is open and
 self-hostable but ties you to the shadcn registry rather than your library.
-Plain Copilot is harness-native but knows nothing about your design system.
+Plain Copilot is harness-native but knows nothing about your UI kit.
 The gap in the market is precise and it is the gap we fill.
 
-**The reversibility column does not appear in the table because nobody else
+**The future interop column does not appear in the table because nobody else
 offers it.** Claude Design users cannot export their work to a non-Anthropic
 backend. v0.dev users cannot export to a non-Vercel backend. Figma-Context-MCP
-users cannot save state outside Figma. genie is the only
-product whose on-disk format is byte-compatible with another vendor's product
-(Anthropic's, by deliberate design). That alone is a moat: it means we are
-the safe bet, even for teams who eventually plan to migrate to hosted Claude
-Design.
+users cannot save state outside Figma. genie is the only product planning an
+opt-in bridge that can read/write another vendor's project shapes while keeping
+its native protocol independent. That alone is a moat: it means we are the safe
+bet, even for teams who eventually need to migrate to hosted Claude Design.
 
 ---
 
@@ -737,7 +754,7 @@ Design.
 |---|---|
 | Likelihood | **M** — there is a coherent business reason to do this (broaden the addressable harness market), but Anthropic's pricing model is subscription-anchored and a cross-harness extension dilutes that. |
 | Impact | **H** — our reason to exist contracts overnight. |
-| Mitigation | (a) Pillar 5 reversibility means our users can migrate to Anthropic's official offering in a day if they prefer it; (b) self-host + custom-LLM remain advantages Anthropic will not match; (c) we explicitly frame v3 as "the substrate they build on," so if Anthropic does ship, we have already become the canonical extension target. |
+| Mitigation | (a) the optional interop bridge (Pillar 5) lets users migrate to Anthropic's official offering in a day if they prefer it; (b) self-host + custom-LLM remain advantages Anthropic will not match; (c) we explicitly frame v3 as "the substrate they build on," so if Anthropic does ship, we have already become the canonical extension target. |
 
 ### 10.2 MCP spec evolves in a breaking way
 
@@ -775,11 +792,11 @@ Design.
 
 | Field | Value |
 |---|---|
-| Likelihood | **L–M** — npm has had high-profile compromises (chalk, ua-parser-js); a small (~1-2 MB) MCP server that runs against private design systems is an obvious target. |
+| Likelihood | **L–M** — npm has had high-profile compromises (chalk, ua-parser-js); a small (~1-2 MB) MCP server that runs against private UI kits is an obvious target. |
 | Impact | **H** — a compromised release could exfiltrate component IP, secrets, or LiteLLM tokens. |
 | Mitigation | npm provenance attestations on every release; signed `.mcpb` bundles; dependency pinning with `npm audit signatures`; restrict release access to a 2-of-3 maintainer quorum; publish reproducible Docker images; document SBOM generation in the runbook. |
 
-### 10.7 Legal/IP question around mirroring DesignSync verbs
+### 10.7 Legal/IP question around DesignSync verb interoperability
 
 | Field | Value |
 |---|---|
@@ -800,15 +817,15 @@ Design.
 | Field | Value |
 |---|---|
 | Likelihood | **M** — LiteLLM is a single process and any deployment's most concentrated dependency; restart, mis-config, or an upstream provider's quota event takes the gateway with it. |
-| Impact | **H** — every `generate_component`/`refine_component` call fails; the read/write verbs degrade gracefully (Principle 4) but the user-visible value collapses. |
+| Impact | **H** — every `conjure`/`refine` call fails; the read/write verbs degrade gracefully (Principle 4) but the user-visible value collapses. |
 | Mitigation | Document the multi-provider fall-through pattern in LiteLLM (`fallbacks: [...]`); ship a one-page runbook for LiteLLM restart/rollback; clarify in error messages that generation is the failed surface, not the whole product; publish health-check endpoints and operator-facing dashboards. |
 
-### 10.10 Gitea / aether-pool data loss
+### 10.10 Git-host / storage-pool data loss
 
 | Field | Value |
 |---|---|
-| Likelihood | **L–M** — ZFS mirror reduces the single-disk-failure risk, but operator error (`zfs destroy`, accidental dataset removal, snapshot retention misconfig) is the leading cause of homelab data loss. |
-| Impact | **H** — the design-system component store *is* the product; loss means starting over from scratch. |
+| Likelihood | **L–M** — ZFS mirror reduces the single-disk-failure risk, but operator error (`zfs destroy`, accidental dataset removal, snapshot retention misconfig) is the leading cause of self-hosted data loss. |
+| Impact | **H** — the UI-kit component store *is* the product; loss means starting over from scratch. |
 | Mitigation | Document the ZFS snapshot policy in `docs/06-operations-runbook.md`; require off-pool replication (`zfs send` to a second machine or rsync.net); publish a recovery drill that operators must run before going to production; treat backups as a release-blocker for the shared-deploy path. |
 
 ### 10.11 License drift in transitive dependencies
@@ -823,17 +840,17 @@ Design.
 
 | Field | Value |
 |---|---|
-| Likelihood | **M** — Authelia and Authentik both ship breaking releases; Keycloak's adminAPI has historically introduced quiet incompatibilities. |
+| Likelihood | **M** — OIDC providers can change discovery metadata, token claims, or admin APIs across major releases. |
 | Impact | **M** — shared deployments become unable to log in until the operator pins a known-good IdP version. |
 | Mitigation | Test against last-known-good versions of each reference IdP in CI; document the supported version matrix in `docs/06-operations-runbook.md`; emit clear diagnostic errors when an unexpected token shape arrives; keep the static-bearer fallback path always-available so an OIDC outage is recoverable in minutes. |
 
-### 10.13 Hosted-gallery GDPR exposure
+### 10.13 Optional gallery privacy exposure
 
 | Field | Value |
 |---|---|
-| Likelihood | **M** — the Year 2 hosted preview gallery (`previews.genie.dev`) ingests user-generated UI, which can include screenshots, names, copy, and brand IP from EU residents. |
+| Likelihood | **M** — a future opt-in preview gallery can ingest user-generated UI, which can include screenshots, names, copy, and brand IP from EU residents. |
 | Impact | **H** — a single complaint can trigger DSAR/erasure obligations the maintainer team is not staffed to handle. |
-| Mitigation | Default the hosted gallery to self-hosted-only; publish a privacy notice and a DPA template before any `previews.genie.dev` URL goes live; require explicit operator opt-in for any data leaving the operator's own infrastructure; treat hosted gallery launch as a separate Year-2 go/no-go gate. |
+| Mitigation | Keep any gallery opt-in and self-hostable by default; publish a privacy notice and a DPA template before any managed URL goes live; require explicit operator opt-in for any data leaving the operator's own infrastructure; treat managed gallery launch as a separate go/no-go gate. |
 
 ---
 
@@ -844,8 +861,8 @@ Design.
 | 1 | The 7-harness smoke test passes on every release | 100% green for ≥ 12 consecutive monthly releases | CI matrix in GitHub Actions; per-harness screenshots in `tests/screenshots/` |
 | 2 | Weekly active component-store mutations | ≥ 2,500 distinct (repo, week, harness) triples by end of month 12 | Anonymized telemetry from self-hosted deployments (opt-in) + public GitHub event sampling |
 | 3 | Non-Claude-Code harness share of mutations | ≥ 40% of mutations originate from Codex CLI / Copilot / Cursor / Cline / Continue / Claude Desktop combined | Same telemetry segmentation |
-| 4 | Median `render_preview` latency | ≤ 600 ms p50, ≤ 1500 ms p95 | Built-in `@genie/viewer` telemetry; OTel traces in reference deployment |
-| 5 | `validate_design_system` failure rate per project per week | ≤ 3% | Aggregated from `report_validate` calls |
+| 4 | Median `preview` latency | ≤ 600 ms p50, ≤ 1500 ms p95 | Built-in `@genie/viewer` telemetry; OTel traces in reference deployment |
+| 5 | `validate` failure rate per project per week | ≤ 3% | Aggregated from `validate` calls |
 | 6 | Public adopter case studies | ≥ 3 named external teams with public blog post, talk, or testimonial | Tracked in `docs/case-studies/` |
 | 7 | npm download trajectory | ≥ 1,000 weekly downloads of `genie` by month 12 | npmtrends.com snapshots |
 | 8 | Round-trip with hosted Claude Design verified | At least one documented end-to-end test where a project authored in genie uploads cleanly via real `/design-sync` and re-imports back | Test recording + project artifact in `tests/round-trip/` |
@@ -856,12 +873,10 @@ Design.
 
 The GA shipping checklist. v1.0 ships when all 15 items are checked.
 
-- [ ] **All 12 DesignSync verbs implemented** — `list_projects`, `get_project`,
-      `list_files`, `get_file`, `create_project`, `finalize_plan`, `write_files`,
-      `delete_files`, `register_assets`, `unregister_assets`, `report_validate`,
-      `list_components`, plus the genie-specific generation verbs
-      (`generate_component`, `refine_component`, `render_preview`,
-      `validate_design_system`).
+- [ ] **All 13 genie verbs implemented** — `list_kits`, `get_kit`,
+      `list_files`, `read_file`, `create_kit`, `plan`, `write_files`,
+      `delete_files`, `validate`, `list_components`, plus the generation verbs
+      `conjure`, `refine`, `preview`.
 - [ ] **The plan-vs-write guard rejects out-of-plan paths** — automated tests
       mirror the bundled skill's "Calling write, delete, register, or
       unregister without a valid planId, or with paths outside the plan, is
@@ -869,11 +884,11 @@ The GA shipping checklist. v1.0 ships when all 15 items are checked.
 - [ ] **The five-step atomic upload sequence works correctly** — sentinel first,
       content chunks ≤ 256, deletes, re-arm sentinel, anchor last; recovery
       from mid-sequence failure has integration tests.
-- [ ] **`@dsCard` validator passes the bundled skill's regex test fixtures** —
-      `/^<!--\s*@dsCard\s+group="[^"]*"[^>]*-->/` against the same inputs.
+- [ ] **`@genie` validator passes genie's own regex test fixtures** —
+      `/^<!--\s*@genie\s+group="[^"]*"[^>]*-->/` against the fixture suite.
 - [ ] **`manifest.json` compiles deterministically** from the component store,
       reproducibly across runs.
-- [ ] **LiteLLM is wired and routes through `design-default` alias by default**
+- [ ] **The configured LLM endpoint routes through `design-default` alias by default**
       with environment-driven override.
 - [ ] **Vite-backed viewer ships as `@genie/viewer`** with HMR on
       `preview.html` saves; opens to a grouped card grid.
@@ -883,12 +898,12 @@ The GA shipping checklist. v1.0 ships when all 15 items are checked.
 - [ ] **`.mcpb` bundle installs in Claude Desktop on macOS, Windows, Linux** —
       double-click flow proven.
 - [ ] **OAuth 2.0 + Dynamic Client Registration works for Claude Code and Codex
-      CLI** — tested against a reference Authentik deployment.
+      CLI over Streamable HTTP** — tested against a reference OIDC provider.
 - [ ] **Static `Authorization: Bearer` works for VS Code Copilot, Cline,
       Continue.dev** — per-harness README snippets verified.
 - [ ] **7-harness compatibility matrix in CHANGELOG** — every entry is `✅`,
       `⚠️ degraded`, or `❌ not supported`, with screenshots.
-- [ ] **Gitea backend reference deployment proven on TrueNAS aether pool** —
+- [ ] **Git-host backend reference deployment proven on a self-hosted storage pool** —
       `docs/06-operations-runbook.md` includes the exact commands.
 - [ ] **Round-trip with hosted `claude.ai/design` proven** — one external user
       uploads a genie project via real `/design-sync` and reports
@@ -907,32 +922,33 @@ AI clients (harnesses) to capability servers. The spec defines the envelope; too
 names and schemas are declared by individual servers.
 
 **DesignSync** — Anthropic's internal MCP tool, bundled with Claude Code, that
-exposes a 12-method protocol for pushing a code-defined design system into a
+exposes a 12-method protocol for pushing a code-defined UI kit into a
 `claude.ai/design` project. Its schema is injected into the model's tool catalog
 at session start and is not in the public developer docs.
 
-**`@dsCard`** — The first-line HTML comment marker
-(`<!-- @dsCard group="…" -->`) that registers a preview file as a design-system
+**`@dsCard`** — *Anthropic's* first-line HTML comment marker
+(`<!-- @dsCard group="…" -->`) that registers a preview file as a Claude Design
 card. Validated by the regex `/^<!--\s*@dsCard\s+group="[^"]*"[^>]*-->/` in
-`package-validate.mjs`. The only registration mechanism; missing it raises
-`[DSCARD_MISSING]` and fails the build.
+`package-validate.mjs`; missing it raises `[DSCARD_MISSING]` and fails the build.
+genie's **native** equivalent is `@genie` (D-B); the `@dsCard` form is read/written
+only by the optional interop adapter.
 
 **`manifest.json` / `_ds_manifest.json` / `ds_manifest`** — The compiled index
-of all cards in a design-system project. In Anthropic's product, this is
+of all cards in a Claude Design project. In Anthropic's product, this is
 regenerated server-side by `claude.ai/design`'s self-check from each
-`<Name>.d.ts` and `<Name>.html`. In genie, we compile it
-client-side as `manifest.json` and treat the Anthropic-side `_ds_manifest.json`
-as a reversible target format.
+`<Name>.d.ts` and `<Name>.html`. genie compiles its own index **client-side** to
+`.genie/manifest.json` (D-D); the Anthropic-side `_ds_manifest.json` is only an
+interop target.
 
-**`_ds_needs_recompile`** — The sentinel file written first in an upload
-sequence to fence the server's manifest/copy machinery. Body is
-`{"by": "genie"}` (or `design-sync-cli` from Anthropic's bundled
-skill). The server's self-check fires when this file appears.
+**`_ds_needs_recompile`** — *Anthropic's* sentinel file, written first in an
+upload sequence to fence the server's manifest/copy machinery. genie's native
+equivalent is `.genie/recompile` (D-C), body `{"by": "genie"}`; the `_ds_*` name
+is interop-only.
 
-**`_ds_sync.json`** — The verification anchor written **last** in an upload
-sequence. Carries `sourceHashes`, `renderHashes`, and a `verified` array. A
-mid-plan failure must leave this file absent so the next sync can repair from
-the diff.
+**`_ds_sync.json`** — *Anthropic's* verification anchor, written **last** in an
+upload sequence, carrying `sourceHashes`, `renderHashes`, and a `verified` array.
+genie's native equivalent is `.genie/sync.json` (D-C). A mid-plan failure must
+leave the anchor absent so the next sync can repair from the diff.
 
 **`ui://` resource** — A URI scheme defined by the MCP Apps spec *(targeted Jan
 2026; see INDEX honest-uncertainty #4)* for delivering inline interactive UI as
@@ -947,10 +963,10 @@ install into Claude Desktop. Packaged via `npx @modelcontextprotocol/mcpb pack`.
 Successor to the earlier `anthropics/dxt` toolchain.
 
 **LiteLLM** — Open-source OpenAI-compatible gateway that routes LLM requests
-across providers and enforces per-key budgets and rate limits. The
-genie reference deployment calls it at
-`https://litellm.roshangautam.com` (public) or `http://100.81.124.86:4000`
-(tailnet). It replaces Anthropic's subscription metering with operator-owned
+across providers and enforces per-key budgets and rate limits. It is genie's
+**reference** generation endpoint — the operator points genie at their own
+gateway URL (env-configured; nothing hardcoded). It replaces Anthropic's
+subscription metering with operator-owned
 budgets.
 
 **Harness** — An AI client that hosts an MCP server connection. Our Tier-0
@@ -965,13 +981,13 @@ local-dev configurations.
 in Claude Code's JSON config). Supports OAuth and long-lived connections. Our
 recommended transport for any non-local deployment.
 
-**`finalize_plan`** — The single user-visible permission grant in the DesignSync
+**`plan`** — The single user-visible permission grant in genie's native
 protocol. Locks an allowlist of write/delete paths and a local source
 directory. Returns a `planId`. Every subsequent write/delete must reference that
 `planId` and stay inside the allowlist.
 
 **Adherence config** — The `_adherence.oxlintrc.json`-shaped rule set generated
-from a design system's `.d.ts` files. Used by the canvas agent to score
+from a UI kit's `.d.ts` files. Used by the canvas agent to score
 generated UI against the team's real components. Schema is undocumented by
 Anthropic; we reconstruct ours via `ts-morph` and treat it as ownable.
 
@@ -981,24 +997,25 @@ and prompts (Claude Code, Cursor, VS Code). Tier-2 adds `ui://` inline
 rendering (Claude, VS Code Stable Jan 2026, ChatGPT, Cursor).
 
 **`PROJECT_TYPE_DESIGN_SYSTEM`** — The `claude.ai/design` project type, used to
-filter `list_projects` to writable design-system projects. Immutable at
-creation. We honor the same type for round-trippability.
+filter Claude Design projects in the future interop bridge. Immutable at creation
+in Anthropic's hosted product; not part of genie's native `.genie/` contract.
 
-**Reversibility** — Our deliberate design choice to make genie
-projects byte-compatible with `claude.ai/design` projects, so users can migrate
-in either direction without translation. Pillar 5.
+**Interop bridge** — A future opt-in adapter that reads/writes Anthropic-compatible
+project shapes so users can migrate in either direction. This replaced the earlier
+"reversibility as a pillar" assumption.
 
 **Tier-0 universal harnesses** — The seven harnesses we commit to supporting on
 day one: Claude Code, Claude Desktop, Codex CLI, GitHub Copilot (VS Code agent
 mode), Cursor, Cline, Continue.dev.
 
-**Gitea** — Self-hostable git server. Our reference shared-store backend, run on
-TrueNAS aether pool. A "project" is a Gitea repo, a `planId` is a branch,
-`finalize_plan` opens a PR, `write_files` commits, and merge is atomic publish.
+**Gitea** — Self-hostable git server. One supported shared-store backend, not the
+native assumption. In any git-host backend, a "project" is a repo, a `planId` is a
+branch, `plan` opens a PR where supported, `write_files` commits, and merge is atomic publish.
 
-**`@dsCard` regex** — `/^<!--\s*@dsCard\s+group="[^"]*"[^>]*-->/`. Mirrored
-verbatim from Anthropic's `package-validate.mjs`. The card validator's only
-test.
+**`@genie` regex** — `/^<!--\s*@genie\s+group="[^"]*"[^>]*-->/`. genie's native
+card-validator test (D-B). The Anthropic `@dsCard` regex
+(`/^<!--\s*@dsCard\s+group="[^"]*"[^>]*-->/`, from `package-validate.mjs`) lives
+only in the optional interop adapter.
 
 **Tool-name shape** — `mcp__genie__<verb>`. Mandated by Claude
 Code's MCP page; characters outside `[A-Za-z0-9_-]` are rewritten to `_`. Tool

@@ -1,7 +1,7 @@
 # genie — Design 4: "Instrument" (`design.md`)
 
-> Alternative direction for review, alongside Design 1 (`docs/design/`),
-> Design 2 (`docs/design-2/`), Design 3 (`docs/design-3/`).
+> Alternative direction for review, alongside Design 1 (`docs/designs/design-1/`),
+> Design 2 (`docs/designs/design-2/`), Design 3 (`docs/designs/design-3/`).
 > Hallmark-managed candidate. v0.1 (instrument direction). 2026-06.
 >
 > **Same product, different material.** Identical surfaces, content, and hard
@@ -79,8 +79,8 @@ Three facts shape everything:
 | Struct (ink-blue) | `--color-struct` | `48% 0.13 264` | `#4064b9` | **focus ring + selection only** |
 | Focus ring | `--color-focus` | `52% 0.14 264` | `#4f6fc6` | `:focus-visible` |
 | Success | `--color-success` | `56% 0.13 152` | `#2f8f57` | validated (in-moment only) |
-| Warning | `--color-warning` | `70% 0.12 70` | `#cf8a2e` | thin / dscard-warn |
-| Danger | `--color-danger` | `55% 0.20 26` | `#c5372f` | error, missing @dsCard |
+| Warning | `--color-warning` | `70% 0.12 70` | `#cf8a2e` | thin / marker-warn |
+| Danger | `--color-danger` | `55% 0.20 26` | `#c5372f` | error, missing @genie |
 
 Ink-blue carries **no structural duty here** — it surfaces only when an element is
 focused or text is selected. That is the inversion from Design 2 (where ink-blue
@@ -97,7 +97,7 @@ not oxblood. Same instrument, lights down.
 | Role | Family | Notes |
 |---|---|---|
 | Display + Body | **Archivo** (free Google grotesque) | ONE family across the whole UI; hierarchy by **weight + size only** — display 600/700 tight, body 400. The Swiss one-family move. |
-| Mono | **JetBrains Mono** | `@dsCard` markers, tokens, paths, counts, dimensions |
+| Mono | **JetBrains Mono** | `@genie` markers, tokens, paths, counts, dimensions |
 
 Pairing axis: **single family in multiple weights** (impeccable-sanctioned alternative
 to a contrast pairing) + the mono as the constant "protocol" voice. This is the sharpest
@@ -161,7 +161,7 @@ per spec — identical negotiation to Design 1.
 | File | Surface |
 |---|---|
 | `00-front-door.svg` | empty / generate state — "Your wish is my command." set in Archivo, hairline prompt frame, flat-clay Conjure, starter blueprints, recent kits + `/genie-sync`. |
-| `01-ds-browser.svg` | UI-kit browser → component detail; hairline live-render stage, `@dsCard` marker, ✓ validated. |
+| `01-ui-kit-browser.svg` | UI-kit browser → component detail; hairline live-render stage, `@genie` marker, ✓ validated. |
 | `02-preview-refine.svg` | rendered component + Tweaks/Comments + sliders + state strip + code + Apply; ghosted harness rail (lightest grey hatch, hairline seam). |
 | `03-embedded-modes.svg` | embedded tier in 3 MCP-App modes; deferring to host theme, system fonts, byte-identical card. |
 

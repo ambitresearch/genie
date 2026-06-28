@@ -64,10 +64,10 @@ current plan **hand-rolls** exactly the layer Skybridge productizes:
 | G-5 "one artifact, three vehicles" (file://, localhost, ui://) | "Write once, run everywhere" | **High** |
 | §6.2 hand-written Zod tool schemas → manual `_meta.ui` wiring | "tRPC-style inference, tool def → React view" | **Medium** |
 | §6.10 OAuth-DCR / bearer auth | (Skybridge is not an auth layer) | **None** |
-| §6.6 LiteLLM client, §6.7 Gitea store, §6.8 manifest compiler | (server-side, framework-agnostic) | **None** |
+| §6.6 LLM client, §6.7 git store, §6.8 manifest compiler | (server-side, framework-agnostic) | **None** |
 
 **The decision is scoped to the preview/UI tier only.** genie's server core
-(LiteLLM, Gitea store, DesignSync 12-method mirror, `@dsCard` compiler, atomic sync)
+(LLM client, git store, `@genie`-marker compiler, atomic sync)
 is unaffected either way.
 
 ---

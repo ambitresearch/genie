@@ -1,19 +1,23 @@
 ---
-title: "[M2-05] LiteLLM model alias config (design-default, design-best, design-local)"
-milestone: "M2 — LiteLLM Generation Surface"
-labels: ["type:infra", "area:litellm", "priority:P1-high", "size:S"]
+title: "[M2-05] Model alias config (reference: LiteLLM model_list)"
+milestone: "M2 — LLM Generation Surface"
+labels: ["type:infra", "area:llm", "priority:P1-high", "size:S"]
 assignees: []
 estimate: "3h"
 ---
 
 ## Summary
-Ship the LiteLLM `model_list` config that the homelab gateway loads, and
-document it in the repo so contributors can reproduce it. Aliases:
-`design-default` → `anthropic/claude-sonnet-4-6`, `design-best` →
-`anthropic/claude-opus-4-8`, `design-local` → `ollama/qwen3-coder:32b`.
+Ship a reference `model_list` config (LiteLLM-style — the reference gateway)
+and document it so operators can reproduce or adapt it to their own
+OpenAI-compatible endpoint (D-H). Aliases the generation verbs use:
+`design-default` → a Sonnet-class model, `design-best` → an Opus-class model,
+`design-local` → a local model (e.g. Ollama Qwen). Operators map these aliases
+to whatever their endpoint serves.
 
 ## Context
-- Research report §3.2 example YAML:
+- D-H (`00-decisions.md`): the LLM endpoint is configurable; LiteLLM is the
+  reference but not required. Aliases are operator-mapped, not hardcoded.
+- Reference YAML (LiteLLM example):
   ```yaml
   model_list:
     - model_name: design-default
@@ -23,14 +27,14 @@ document it in the repo so contributors can reproduce it. Aliases:
     - model_name: design-local
       litellm_params: { model: ollama/qwen3-coder:32b, api_base: ... }
   ```
-- CLAUDE.md: LiteLLM runs on TrueNAS, config at `/etc/litellm/config.yaml`.
 
 ## Acceptance Criteria
-- [ ] AC0 — Confirm current LiteLLM model catalog via
-      <https://litellm.roshangautam.com/v1/models> before configuring aliases
-      (placeholder model IDs below — `claude-opus-4-8`, `qwen3-coder:32b` —
-      must match real catalog entries; substitute the actual current names).
-- [ ] AC1 — File `deploy/litellm/config.yaml` checked into the repo.
+- [ ] AC0 — Confirm the operator's actual model catalog (via the endpoint's
+      `/v1/models`) before configuring aliases — placeholder model IDs below
+      (`claude-opus-4-8`, `qwen3-coder:32b`) must match real catalog entries;
+      substitute the actual current names.
+- [ ] AC1 — File `deploy/litellm/config.yaml` checked into the repo as the
+      reference example (operators adapt it to their endpoint).
 - [ ] AC2 — Three aliases defined; passthrough secret refs use
       `os.environ/ANTHROPIC_API_KEY` and `os.environ/OLLAMA_API_BASE`.
 - [ ] AC3 — Per-key budget block: each MCP-server caller gets 50 USD / month
@@ -45,7 +49,7 @@ document it in the repo so contributors can reproduce it. Aliases:
 - Reference: <https://docs.litellm.ai/docs/proxy/users>.
 
 ## Out of Scope
-- Provisioning LiteLLM itself (it's already running per CLAUDE.md).
+- Provisioning a gateway itself; this issue only ships the reference alias config.
 
 ## Dependencies
 - Blocks: nothing.
@@ -63,7 +67,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 ## Definition of Done
 - [ ] Tests added — N/A (config file).
-- [ ] Docs updated — `docs/06-operations-runbook.md`.
+- [ ] Docs updated — `docs/plan/06-operations-runbook.md`.
 - [ ] Manual verification — restart LiteLLM, hit `/v1/models`, see 3 aliases.
 - [ ] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.
