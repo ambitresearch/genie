@@ -15,17 +15,14 @@ concurrency:
 
 jobs:
   check:
-    name: ${{ matrix.task }} (node ${{ matrix.node }}, ${{ matrix.os }})
-    # On the ubuntu leg, honor the RUNS_ON repo variable (set by runner-guard.yml)
-    # so CI offloads to the self-hosted TrueNAS runner near the monthly quota; a
-    # value like `["self-hosted"]` re-parses as a one-label runner array. The macOS
-    # leg always stays on GitHub-hosted macos-latest (no self-hosted macOS runner).
-    runs-on: ${{ matrix.os == 'ubuntu-latest' && fromJSON(vars.RUNS_ON || '["ubuntu-latest"]') || matrix.os }}
+    name: ${{ matrix.task }} (node ${{ matrix.node }})
+    # Honor the RUNS_ON repo variable (set by runner-guard.yml) so CI offloads to
+    # the self-hosted TrueNAS runner near the monthly quota; `["self-hosted"]`.
+    runs-on: ${{ fromJSON(vars.RUNS_ON || '["ubuntu-latest"]') }}
     strategy:
       fail-fast: false
       matrix:
         node: [22, 24]
-        os: [ubuntu-latest, macos-latest]
         task: [lint, typecheck, test, build]
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +48,7 @@ jobs:
         if: matrix.task == 'build'
         uses: actions/upload-artifact@v4
         with:
-          name: server-dist-${{ matrix.node }}-${{ matrix.os }}
+          name: server-dist-${{ matrix.node }}
           path: packages/server/dist
           if-no-files-found: error
           retention-days: 7
