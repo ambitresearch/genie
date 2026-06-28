@@ -20,7 +20,7 @@ jobs:
     # so CI offloads to the self-hosted TrueNAS runner near the monthly quota; a
     # value like `["self-hosted"]` re-parses as a one-label runner array. The macOS
     # leg always stays on GitHub-hosted macos-latest (no self-hosted macOS runner).
-    runs-on: ${{ matrix.os == 'ubuntu-latest' && (vars.RUNS_ON || 'ubuntu-latest') || matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && fromJSON(vars.RUNS_ON || '["ubuntu-latest"]') || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
