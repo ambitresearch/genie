@@ -12,7 +12,7 @@ export const SERVER_INFO = {
  * M0 ships an *empty but bootable* server: it negotiates the MCP handshake,
  * advertises capabilities, and answers `tools/list` — but the only tool is a
  * built-in `ping` health check. The real surfaces arrive in later milestones:
- *   - M1: genie's 13 native file-flow tools (`mcp__genie__*`)
+ *   - M1: genie's 19 core tools (13 kit verbs + 6 project verbs) (`mcp__genie__*`)
  *   - M2: generation tools (conjure, refine) via the configured LLM endpoint
  *   - M3: @genie marker validator + manifest compiler
  *   - M4: the ui://genie/grid MCP-Apps resource + Vite viewer
