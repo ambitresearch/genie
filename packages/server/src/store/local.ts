@@ -9,7 +9,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 import type {
   FileOp,
@@ -35,6 +35,21 @@ function genieHome(): string {
 
 async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
+}
+
+/**
+ * Resolve a path within a base directory and verify it doesn't escape.
+ * Prevents path traversal attacks (e.g. "../../etc/passwd").
+ */
+function safePath(baseDir: string, userPath: string): string {
+  const resolved = resolve(baseDir, userPath);
+  const normalizedBase = resolve(baseDir) + "/";
+  if (!resolved.startsWith(normalizedBase) && resolved !== resolve(baseDir)) {
+    throw new Error(
+      `Path traversal denied: "${userPath}" resolves outside the allowed directory.`,
+    );
+  }
+  return resolved;
 }
 
 /** Recursively list files relative to `baseRoot`. */
@@ -138,7 +153,7 @@ export class LocalFsKitStore implements KitStore {
   }
 
   async readFile(kitId: KitId, path: string): Promise<string> {
-    const filePath = join(this.kitDir(kitId), path);
+    const filePath = safePath(this.kitDir(kitId), path);
     let fileStats;
     try {
       fileStats = await stat(filePath);
@@ -200,7 +215,7 @@ export class LocalFsKitStore implements KitStore {
 
   private async applyOps(dir: string, ops: FileOp[]): Promise<void> {
     for (const op of ops) {
-      const target = join(dir, op.path);
+      const target = safePath(dir, op.path);
       if (op.kind === "write") {
         await ensureDir(join(target, ".."));
         await writeFile(target, op.content);

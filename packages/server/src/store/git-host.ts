@@ -209,7 +209,13 @@ export class GitHostKitStore implements KitStore {
       throw new FileTooLargeError(path, entry.size);
     }
     if (entry.content && entry.encoding === "base64") {
-      return Buffer.from(entry.content, "base64").toString("utf-8");
+      const decoded = Buffer.from(entry.content, "base64").toString("utf-8");
+      // Fallback size check when entry.size was not provided by the API
+      const byteLength = Buffer.byteLength(decoded, "utf-8");
+      if (byteLength > MAX_FILE_BYTES) {
+        throw new FileTooLargeError(path, byteLength);
+      }
+      return decoded;
     }
     return entry.content ?? "";
   }

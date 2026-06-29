@@ -102,15 +102,6 @@ function kitStoreContract(
       );
     });
 
-    it("readFile throws FileTooLargeError for oversized files", async () => {
-      // This test is adapter-specific; for LocalFsStore, we manually create a
-      // large file in the kit directory.
-      const kit = await store.createKit("large-file-kit");
-      // We can't easily test this through the interface alone — it's tested
-      // in the adapter-specific tests below.
-      expect(kit).toBeTruthy();
-    });
-
     it("openPlan + commitPlan + closePlan lifecycle", async () => {
       const kit = await store.createKit("plan-kit");
       const planId = await store.openPlan(kit.id, [
@@ -244,7 +235,6 @@ function projectStoreContract(
 
 async function createLocalFsKitFactory() {
   const tmpDir = await mkdtemp(join(tmpdir(), "genie-test-kits-"));
-  const plansDir = await mkdtemp(join(tmpdir(), "genie-test-plans-"));
 
   // Override GENIE_HOME so plans go to our temp dir
   const origHome = process.env["GENIE_HOME"];
@@ -257,7 +247,6 @@ async function createLocalFsKitFactory() {
     cleanup: async () => {
       process.env["GENIE_HOME"] = origHome;
       await rm(tmpDir, { recursive: true, force: true });
-      await rm(plansDir, { recursive: true, force: true });
       await rm(fakeGenieHome, { recursive: true, force: true });
     },
   };
@@ -361,6 +350,22 @@ describe("LocalFsKitStore — adapter-specific", () => {
 
     // Close plan removes the staging dir
     await store.closePlan(kit.id, planId);
+  });
+
+  it("readFile denies path traversal attacks", async () => {
+    const kit = await store.createKit("traversal-kit");
+    await expect(
+      store.readFile(kit.id, "../../etc/passwd"),
+    ).rejects.toThrow("Path traversal denied");
+  });
+
+  it("openPlan denies path traversal in file ops", async () => {
+    const kit = await store.createKit("traversal-plan-kit");
+    await expect(
+      store.openPlan(kit.id, [
+        { kind: "write", path: "../../../tmp/evil.txt", content: "pwned" },
+      ]),
+    ).rejects.toThrow("Path traversal denied");
   });
 });
 
