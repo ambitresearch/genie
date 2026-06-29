@@ -29,11 +29,15 @@ export interface ServerOptions {
  * registration — see transport.ts.
  */
 export function createServer(opts?: ServerOptions): McpServer {
-  const server = new McpServer(SERVER_INFO, {
-    instructions:
-      "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. Use create_project to set up workspaces and blueprints.",
-  });
+  const projectStore = opts?.store?.project;
+
+  const instructions = projectStore
+    ? "genie generates UI components against your own UI kit, inside your coding " +
+      "harness. Use create_project to set up workspaces and blueprints."
+    : "genie generates UI components against your own UI kit, inside your coding " +
+      "harness. (Scaffold build — only the built-in ping tool is registered so far.)";
+
+  const server = new McpServer(SERVER_INFO, { instructions });
 
   // A single built-in tool. Registering it makes the SDK wire up the
   // tools/list + tools/call handlers (they are lazy-initialized on first
@@ -59,7 +63,6 @@ export function createServer(opts?: ServerOptions): McpServer {
   );
 
   // M1 tools — registered when a store is provided.
-  const projectStore = opts?.store?.project;
   if (projectStore) {
     registerCreateProject(server, projectStore);
   }

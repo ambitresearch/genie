@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile, cp } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 import type {
@@ -42,6 +42,18 @@ export class LocalProjectStore implements ProjectStore {
 
   constructor(baseDir?: string) {
     this.projectsDir = join(baseDir ?? genieHome(), "projects");
+  }
+
+  /**
+   * Resolve a project directory and ensure it stays within projectsDir.
+   * Rejects path-traversal attempts (e.g. IDs containing "../").
+   */
+  private safeProjectDir(projectId: string): string {
+    const resolved = resolve(this.projectsDir, projectId);
+    if (!resolved.startsWith(this.projectsDir + "/") && resolved !== this.projectsDir) {
+      throw new Error(`Invalid project ID: "${projectId}"`);
+    }
+    return resolved;
   }
 
   /** Read project.json for a given project directory, or undefined. */
@@ -86,7 +98,7 @@ export class LocalProjectStore implements ProjectStore {
   }
 
   async getProject(projectId: string): Promise<ProjectMeta | undefined> {
-    return this.readProjectJson(join(this.projectsDir, projectId));
+    return this.readProjectJson(this.safeProjectDir(projectId));
   }
 
   async createProject(args: CreateProjectArgs): Promise<ProjectMeta> {
@@ -123,7 +135,7 @@ export class LocalProjectStore implements ProjectStore {
     // Ensure .genie dir exists (may already exist from blueprint copy)
     await mkdir(genieDir, { recursive: true });
 
-    // Merge kit bindings: blueprint bindings + explicit overrides
+    // Resolve kit bindings: prefer explicit, fall back to blueprint, default to empty
     const kitBindings = args.kitBindings ??
       blueprintMeta?.kitBindings ??
       [];

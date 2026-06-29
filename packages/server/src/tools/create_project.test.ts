@@ -295,3 +295,29 @@ describe("create_project — server without store", () => {
     await client.close();
   });
 });
+
+describe("LocalProjectStore — path traversal prevention", () => {
+  let baseDir: string;
+  let store: LocalProjectStore;
+
+  beforeEach(async () => {
+    baseDir = await mkdtemp(join(tmpdir(), "genie-traversal-"));
+    store = new LocalProjectStore(baseDir);
+
+    return async () => {
+      await rm(baseDir, { recursive: true, force: true });
+    };
+  });
+
+  it("rejects getProject with path traversal in projectId", async () => {
+    await expect(store.getProject("../../../etc/passwd")).rejects.toThrow(
+      /Invalid project ID/,
+    );
+  });
+
+  it("rejects getProject with absolute path as projectId", async () => {
+    await expect(store.getProject("/etc/passwd")).rejects.toThrow(
+      /Invalid project ID/,
+    );
+  });
+});
