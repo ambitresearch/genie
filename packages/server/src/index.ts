@@ -5,3 +5,4 @@ export {
   type TransportKind,
   type StartOptions,
 } from "./transport.js";
+export * from "./store/index.js";
