@@ -1,4 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ProjectStore } from "./store/interface.js";
+import { InMemoryProjectStore } from "./store/memory.js";
+import { registerTools } from "./tools/index.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -6,31 +9,34 @@ export const SERVER_INFO = {
   version: "0.0.0",
 } as const;
 
+/** Options accepted by `createServer`. */
+export interface ServerOptions {
+  /** Project store to use. Defaults to an empty InMemoryProjectStore. */
+  projectStore?: ProjectStore;
+}
+
 /**
  * Build the genie MCP server.
  *
- * M0 ships an *empty but bootable* server: it negotiates the MCP handshake,
- * advertises capabilities, and answers `tools/list` — but the only tool is a
- * built-in `ping` health check. The real surfaces arrive in later milestones:
- *   - M1: genie's 19 core tools (13 kit verbs + 6 project verbs) (`mcp__genie__*`)
- *   - M2: generation tools (conjure, refine) via the configured LLM endpoint
- *   - M3: @genie marker validator + manifest compiler
- *   - M4: the ui://genie/grid MCP-Apps resource + Vite viewer
+ * M0 shipped an empty but bootable server; M1 adds the core tools.
+ * Currently registered:
+ *   - `ping` — built-in health check
+ *   - `list_projects` — project discovery (M1-16)
  *
  * Keeping this a single factory means every transport (stdio, HTTP) shares one
  * registration — see transport.ts.
  */
-export function createServer(): McpServer {
+export function createServer(opts: ServerOptions = {}): McpServer {
+  const projectStore = opts.projectStore ?? new InMemoryProjectStore();
+
   const server = new McpServer(SERVER_INFO, {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. (Scaffold build — only the built-in ping tool is registered so far.)",
+      "harness. Use list_projects to discover workspaces and blueprints.",
   });
 
-  // A single built-in tool. Registering it makes the SDK wire up the
-  // tools/list + tools/call handlers (they are lazy-initialized on first
-  // registration), so capability negotiation is honest from M0 onward.
-  // It also gives every harness a trivial "is genie alive?" probe.
+  // Built-in health check — also ensures the SDK wires up tools/list +
+  // tools/call handlers (they are lazy-initialized on first registration).
   server.registerTool(
     "ping",
     {
@@ -49,6 +55,9 @@ export function createServer(): McpServer {
       ],
     }),
   );
+
+  // Register M1 tools.
+  registerTools(server, { projectStore });
 
   return server;
 }
