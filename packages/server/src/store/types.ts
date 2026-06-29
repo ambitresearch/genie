@@ -14,7 +14,7 @@ export const GENIE_KIT_TYPE = "GENIE_KIT" as const;
 export interface KitMeta {
   id: string;
   name: string;
-  type: typeof GENIE_KIT_TYPE | string;
+  type: typeof GENIE_KIT_TYPE | (string & {});
   canEdit: boolean;
   createdAt: string; // ISO 8601
   updatedAt: string; // ISO 8601
