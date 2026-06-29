@@ -217,6 +217,8 @@ async function copyResolvedSymlink(
     throw new Error(`Blueprint starter file directory symlinks are not supported: ${source}`);
   } else if (resolvedStats.isFile()) {
     await copyFile(resolvedSource, destination);
+  } else {
+    throw new Error(`Blueprint starter file symlink target is not a file: ${source}`);
   }
 }
 

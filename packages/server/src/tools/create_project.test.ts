@@ -38,4 +38,46 @@ describe("mcp__genie__create_project", () => {
     expect(result.structuredContent).toEqual({ projectId: "tool-workspace" });
     await client.close();
   });
+
+  it("surfaces duplicate project errors through MCP", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "genie-create-project-tool-"));
+    const client = await connectClient(rootDir);
+    await client.callTool({
+      name: "mcp__genie__create_project",
+      arguments: { name: "Duplicate Project", kind: "workspace" },
+    });
+
+    const result = await client.callTool({
+      name: "mcp__genie__create_project",
+      arguments: { name: "Duplicate Project", kind: "blueprint" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: "ERR_PROJECT_EXISTS",
+      details: { suggestedSlug: "duplicate-project-2" },
+    });
+    await client.close();
+  });
+
+  it("surfaces missing blueprint errors through MCP", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "genie-create-project-tool-"));
+    const client = await connectClient(rootDir);
+
+    const result = await client.callTool({
+      name: "mcp__genie__create_project",
+      arguments: {
+        name: "Traversal Workspace",
+        kind: "workspace",
+        fromBlueprintId: "../external-blueprint",
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: "ERR_BLUEPRINT_NOT_FOUND",
+      details: { blueprintId: "../external-blueprint" },
+    });
+    await client.close();
+  });
 });
