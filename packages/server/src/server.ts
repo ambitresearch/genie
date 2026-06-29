@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerReadFile } from "./tools/read_file.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -49,6 +50,9 @@ export function createServer(): McpServer {
       ],
     }),
   );
+
+  // M1 tools
+  registerReadFile(server);
 
   return server;
 }

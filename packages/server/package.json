@@ -9,7 +9,9 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "tsx watch src/cli.ts",
     "start": "node dist/cli.js",
@@ -18,11 +20,15 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "mime-types": "^3.0.2",
     "zod": "^4.4.3"
   },
   "engines": {
     "node": ">=22"
   },
   "license": "MIT",
-  "author": "Roshan Gautam"
+  "author": "Roshan Gautam",
+  "devDependencies": {
+    "@types/mime-types": "^3.0.1"
+  }
 }
