@@ -1,10 +1,18 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ProjectStore } from "./store/interface.js";
+import { registerCreateProject } from "./tools/create_project.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
   name: "genie",
   version: "0.0.0",
 } as const;
+
+export interface ServerOptions {
+  store?: {
+    project?: ProjectStore;
+  };
+}
 
 /**
  * Build the genie MCP server.
@@ -20,11 +28,11 @@ export const SERVER_INFO = {
  * Keeping this a single factory means every transport (stdio, HTTP) shares one
  * registration — see transport.ts.
  */
-export function createServer(): McpServer {
+export function createServer(opts?: ServerOptions): McpServer {
   const server = new McpServer(SERVER_INFO, {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. (Scaffold build — only the built-in ping tool is registered so far.)",
+      "harness. Use create_project to set up workspaces and blueprints.",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -49,6 +57,12 @@ export function createServer(): McpServer {
       ],
     }),
   );
+
+  // M1 tools — registered when a store is provided.
+  const projectStore = opts?.store?.project;
+  if (projectStore) {
+    registerCreateProject(server, projectStore);
+  }
 
   return server;
 }
