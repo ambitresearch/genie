@@ -184,4 +184,11 @@ describe("read_file tool", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain("File not found");
   });
+
+  // ── kitId traversal guard ──
+  it("rejects kitId containing path separators", async () => {
+    const result = await callRaw(client, "../../../etc", "passwd");
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("InvalidPathError");
+  });
 });

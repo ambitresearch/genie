@@ -108,6 +108,14 @@ export function registerReadFile(server: McpServer): void {
       },
     },
     async ({ kitId, path: relPath }) => {
+      // Validate kitId does not contain path separators or traversal
+      if (kitId.includes("/") || kitId.includes("\\") || kitId.includes("..")) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `InvalidPathError: invalid kit identifier`,
+        );
+      }
+
       const kitRoot = resolveKitRoot(kitId);
 
       // AC6 — path traversal check
