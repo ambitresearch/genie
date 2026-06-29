@@ -8,17 +8,16 @@
  * @see docs/github/issues/M1-16-tool-list-projects.md
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ProjectStore } from "../store/interface.js";
-import type { Project, StoreWarning } from "../store/interface.js";
+import type { Project, ProjectStore, StoreWarning } from "../store/interface.js";
 
-/** Deterministic sort: kind asc → name asc → id asc. */
+/** Deterministic sort: kind asc → name asc → id asc (locale-pinned). */
 function sortProjects(projects: Project[]): Project[] {
   return projects.slice().sort((a, b) => {
-    const kindCmp = a.kind.localeCompare(b.kind);
+    const kindCmp = a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0;
     if (kindCmp !== 0) return kindCmp;
-    const nameCmp = a.name.localeCompare(b.name);
+    const nameCmp = a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
     if (nameCmp !== 0) return nameCmp;
-    return a.id.localeCompare(b.id);
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
 }
 
