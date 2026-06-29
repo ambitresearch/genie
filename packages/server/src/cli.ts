@@ -53,8 +53,8 @@ Options:
 Env:
   MCP_TRANSPORT              Same as --transport
 
-This is a scaffold build (M0): the server boots and speaks MCP but registers
-no tools yet. Tool surfaces land in M1+.`;
+This build boots the genie MCP server and registers the available milestone
+tools.`;
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

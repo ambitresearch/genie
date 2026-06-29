@@ -1,4 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ProjectStore } from "./project-store.js";
+import { registerCreateProjectTool } from "./tools/create_project.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -9,9 +11,8 @@ export const SERVER_INFO = {
 /**
  * Build the genie MCP server.
  *
- * M0 ships an *empty but bootable* server: it negotiates the MCP handshake,
- * advertises capabilities, and answers `tools/list` — but the only tool is a
- * built-in `ping` health check. The real surfaces arrive in later milestones:
+ * The server negotiates the MCP handshake, advertises capabilities, and keeps
+ * a built-in `ping` health check alongside the milestone tool surface:
  *   - M1: genie's 19 core tools (13 kit verbs + 6 project verbs) (`mcp__genie__*`)
  *   - M2: generation tools (conjure, refine) via the configured LLM endpoint
  *   - M3: @genie marker validator + manifest compiler
@@ -20,11 +21,14 @@ export const SERVER_INFO = {
  * Keeping this a single factory means every transport (stdio, HTTP) shares one
  * registration — see transport.ts.
  */
-export function createServer(): McpServer {
+export interface CreateServerOptions {
+  projectStore?: ProjectStore;
+}
+
+export function createServer(options: CreateServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO, {
     instructions:
-      "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. (Scaffold build — only the built-in ping tool is registered so far.)",
+      "genie generates UI components against your own UI kit, inside your coding harness.",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -48,6 +52,11 @@ export function createServer(): McpServer {
         },
       ],
     }),
+  );
+
+  registerCreateProjectTool(
+    server,
+    options.projectStore ?? new ProjectStore({ rootDir: process.cwd() }),
   );
 
   return server;
