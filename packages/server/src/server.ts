@@ -1,10 +1,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { KitStore } from "./store/types.js";
+import { registerTools } from "./tools/index.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
   name: "genie",
   version: "0.0.0",
 } as const;
+
+export interface CreateServerOptions {
+  /** Storage backend for UI kits. When omitted the server boots without kit tools. */
+  kitStore?: KitStore;
+}
 
 /**
  * Build the genie MCP server.
@@ -20,11 +27,10 @@ export const SERVER_INFO = {
  * Keeping this a single factory means every transport (stdio, HTTP) shares one
  * registration — see transport.ts.
  */
-export function createServer(): McpServer {
+export function createServer(opts: CreateServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO, {
     instructions:
-      "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. (Scaffold build — only the built-in ping tool is registered so far.)",
+      "genie generates UI components against your own UI kit, inside your coding " + "harness.",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -49,6 +55,11 @@ export function createServer(): McpServer {
       ],
     }),
   );
+
+  // M1+ tools — only registered when a KitStore is provided.
+  if (opts.kitStore) {
+    registerTools(server, opts.kitStore);
+  }
 
   return server;
 }
