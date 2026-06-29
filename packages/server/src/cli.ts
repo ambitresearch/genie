@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createServer, SERVER_INFO } from "./server.js";
 import { startTransport } from "./transport.js";
+import { LocalFsStore } from "./store/local.js";
 
 /** Minimal flag parser — no dependency needed for M0's tiny surface. */
 function parseArgs(argv: string[]): {
@@ -68,7 +69,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const server = createServer();
+  const server = createServer({ kitStore: new LocalFsStore() });
   await startTransport(server, {
     kind: args.transport,
     port: args.port,
