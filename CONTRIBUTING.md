@@ -66,6 +66,14 @@ Scope is optional but nice: `feat(server): add list_kits tool`.
 - Prefer explicit over clever. Small, focused modules.
 - Prettier + ESLint are the source of truth; run them before pushing.
 
+## CI
+
+Every PR runs the CI workflow (`.github/workflows/ci.yml`): **lint**,
+**typecheck**, **test**, and **build** across Node 22 and 24 on Ubuntu. All four
+checks must be green before merge. Releases are managed automatically by
+[release-please](https://github.com/googleapis/release-please) based on
+Conventional Commit messages.
+
 ## Reviews
 
 PRs are reviewed by the maintainer and/or an AI review agent (GitHub Copilot is
