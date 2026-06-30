@@ -14,14 +14,17 @@ import { GENIE_KIT_TYPE } from "../store/types.js";
  */
 export function registerGetKit(server: McpServer, store: KitStore): void {
   server.registerTool(
-    "get_kit",
+    "mcp__genie__get_kit",
     {
       title: "Get Kit",
       description:
         "Return metadata for a single UI kit. Confirms the kitId resolves " +
         "to a valid genie UI kit.",
       inputSchema: {
-        kitId: z.string().describe("The unique identifier of the UI kit to retrieve."),
+        kitId: z
+          .string()
+          .regex(/^[a-z0-9-]{3,64}$/, "kitId must match ^[a-z0-9-]{3,64}$")
+          .describe("The unique identifier of the UI kit to retrieve."),
       },
     },
     async ({ kitId }) => {
@@ -52,9 +55,17 @@ export function registerGetKit(server: McpServer, store: KitStore): void {
               canEdit: kit.canEdit,
               createdAt: kit.createdAt,
               updatedAt: kit.updatedAt,
-            }),
+            }, null, 2),
           },
         ],
+        structured: {
+          id: kit.id,
+          name: kit.name,
+          type: kit.type,
+          canEdit: kit.canEdit,
+          createdAt: kit.createdAt,
+          updatedAt: kit.updatedAt,
+        },
       };
     },
   );

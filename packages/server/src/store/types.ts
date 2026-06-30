@@ -2,7 +2,7 @@
  * Store types for genie kits and projects.
  *
  * The KitStore interface defines the contract all storage adapters must
- * satisfy (LocalFsStore, GitHostStore, InMemoryStore for tests).
+ * satisfy (LocalFsStore, GitHostStore, InMemoryKitStore for tests).
  * Only the subset needed by M1-03 (get_kit) is defined here; the full
  * surface (listFiles, readFile, openPlan, …) will arrive with M1-01.
  */

@@ -57,6 +57,11 @@ export function createServer(opts: CreateServerOptions = {}): McpServer {
   );
 
   // M1+ tools — only registered when a KitStore is provided.
+  // NOTE: The CLI currently calls createServer() without a kitStore, so these
+  // tools are not yet registered in the runnable server. A real KitStore
+  // implementation (LocalFsStore) will be wired in by M1-01, which unblocks
+  // the full M1 tool surface for production use. Tests explicitly provide
+  // InMemoryKitStore to verify tool behavior.
   if (opts.kitStore) {
     registerTools(server, opts.kitStore);
   }

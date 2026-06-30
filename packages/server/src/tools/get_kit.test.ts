@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../server.js";
@@ -34,6 +34,12 @@ async function setup(kits: KitMeta[] = []) {
 describe("get_kit tool", () => {
   let client: Client;
 
+  afterEach(async () => {
+    if (client) {
+      await client.close();
+    }
+  });
+
   describe("happy path", () => {
     const kit = makeKit();
 
@@ -43,12 +49,12 @@ describe("get_kit tool", () => {
 
     it("is listed in tools/list", async () => {
       const { tools } = await client.listTools();
-      expect(tools.map((t) => t.name)).toContain("get_kit");
+      expect(tools.map((t) => t.name)).toContain("mcp__genie__get_kit");
     });
 
     it("returns kit metadata as JSON text content", async () => {
       const result = await client.callTool({
-        name: "get_kit",
+        name: "mcp__genie__get_kit",
         arguments: { kitId: "kit-1" },
       });
 
@@ -75,7 +81,7 @@ describe("get_kit tool", () => {
 
     it("returns isError with code -32602 for unknown kitId", async () => {
       const result = await client.callTool({
-        name: "get_kit",
+        name: "mcp__genie__get_kit",
         arguments: { kitId: "does-not-exist" },
       });
 
@@ -96,7 +102,7 @@ describe("get_kit tool", () => {
 
     it("returns isError with code -32602 when project is not a UI kit", async () => {
       const result = await client.callTool({
-        name: "get_kit",
+        name: "mcp__genie__get_kit",
         arguments: { kitId: "repo-1" },
       });
 
