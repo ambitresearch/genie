@@ -1,4 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { join } from "node:path";
+import { ProjectStore, registerCreateProjectTool } from "./tools/create_project.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -20,11 +22,15 @@ export const SERVER_INFO = {
  * Keeping this a single factory means every transport (stdio, HTTP) shares one
  * registration — see transport.ts.
  */
-export function createServer(): McpServer {
+export interface CreateServerOptions {
+  projectsRoot?: string;
+}
+
+export function createServer(options: CreateServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO, {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. (Scaffold build — only the built-in ping tool is registered so far.)",
+      "harness. (Scaffold build — project creation and the built-in ping tool are registered so far.)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -48,6 +54,15 @@ export function createServer(): McpServer {
         },
       ],
     }),
+  );
+
+  registerCreateProjectTool(
+    server,
+    new ProjectStore(
+      options.projectsRoot ??
+        process.env.GENIE_PROJECTS_ROOT ??
+        join(process.cwd(), ".genie", "projects"),
+    ),
   );
 
   return server;
