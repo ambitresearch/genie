@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { KitStore } from "../store/interface.js";
-import { KIT_TYPE, KitAlreadyExistsError } from "../store/interface.js";
+import { KitAlreadyExistsError } from "../store/interface.js";
 
 /** Validation pattern: ASCII alphanumeric, spaces, hyphens, underscores. Must contain at least one alphanumeric. */
 const NAME_PATTERN = /^(?=.*[A-Za-z0-9])[A-Za-z0-9 _-]+$/;
