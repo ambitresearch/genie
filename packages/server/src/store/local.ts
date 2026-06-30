@@ -9,7 +9,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type {
   FileOp,
@@ -40,12 +40,16 @@ async function ensureDir(dir: string): Promise<void> {
 /**
  * Resolve a path within a base directory and verify it doesn't escape.
  * Prevents path traversal attacks (e.g. "../../etc/passwd").
+ *
+ * Uses path-segment-aware checks so legitimate names beginning with
+ * the literal "..". (e.g. "..foo/bar") are not falsely rejected.
  */
 function safePath(baseDir: string, userPath: string): string {
   const resolved = resolve(baseDir, userPath);
   const rel = relative(baseDir, resolved);
-  // If the relative path starts with ".." or is absolute, it's outside baseDir
-  if (rel.startsWith("..") || resolve(rel) === rel) {
+  // The relative path escapes baseDir only when it IS ".." itself,
+  // starts with ".." followed by a path separator, or is absolute.
+  if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
     throw new Error(
       `Path traversal denied: "${userPath}" resolves outside the allowed directory.`,
     );

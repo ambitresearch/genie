@@ -85,23 +85,26 @@ function kitStoreContract(
       expect(Array.isArray(files)).toBe(true);
     });
 
-    it("readFile returns file content", async () => {
+    it("readFile rejects files staged in a plan but never committed to the kit", async () => {
+      // Both adapters isolate plan staging from the kit's readable surface
+      // (LocalFs uses a separate plans dir; GitHost writes to a plan branch
+      // rather than the default branch). After closePlan, those files must
+      // NOT be visible via readFile on the kit itself.
       const kit = await store.createKit("read-kit");
-      // Write a file to the kit via plan, then use the appropriate adapter
-      // mechanism to make it available for readFile.
-      // For LocalFs, we'll write files directly. For GitHost, plan commits them.
       const planId = await store.openPlan(kit.id, [
         { kind: "write", path: "test.txt", content: "test content" },
       ]);
       await store.closePlan(kit.id, planId);
 
-      // Note: LocalFsStore stages files in a plan dir, not in the kit itself.
-      // For actual readFile testing, we need files committed to the kit.
-      // This is an adapter-specific limitation. For now, we'll test with
-      // adapter-specific tests below. This conformance test documents the
-      // behavior difference.
+      // listFiles still returns an array (may be empty for either adapter
+      // depending on whether the plan persisted anything to the kit).
       const files = await store.listFiles(kit.id);
       expect(Array.isArray(files)).toBe(true);
+
+      // readFile must reject for content that was only ever in the plan.
+      await expect(store.readFile(kit.id, "test.txt")).rejects.toThrow(
+        NotFoundError,
+      );
     });
 
     it("readFile throws NotFoundError for missing file", async () => {
@@ -254,7 +257,13 @@ async function createLocalFsKitFactory() {
   return {
     store,
     cleanup: async () => {
-      process.env["GENIE_HOME"] = origHome;
+      // Restore env var carefully: assigning `undefined` to process.env coerces
+      // to the literal string "undefined" and would leak into other tests.
+      if (origHome === undefined) {
+        delete process.env["GENIE_HOME"];
+      } else {
+        process.env["GENIE_HOME"] = origHome;
+      }
       await rm(tmpDir, { recursive: true, force: true });
       await rm(fakeGenieHome, { recursive: true, force: true });
     },
@@ -286,10 +295,26 @@ import { GitHostKitStore, GitHostProjectStore } from "../src/store/git-host.js";
  * Simulates a git host API in-memory.
  */
 function createMockGitHostFactory() {
-  // In-memory storage for repos, files, branches
+  // In-memory storage for repos, files, branches.
+  // Files are keyed by `${owner}/${repo}` AND branch, so plan-branch writes
+  // don't leak into reads against the default branch.
   const repos = new Map<string, { name: string; created_at: string; default_branch: string }>();
-  const files = new Map<string, Map<string, { content: string; sha: string }>>();
+  const files = new Map<string, Map<string, Map<string, { content: string; sha: string }>>>();
   const branches = new Map<string, Set<string>>();
+
+  const filesFor = (repoKey: string, branch: string) => {
+    let perBranch = files.get(repoKey);
+    if (!perBranch) {
+      perBranch = new Map();
+      files.set(repoKey, perBranch);
+    }
+    let perFile = perBranch.get(branch);
+    if (!perFile) {
+      perFile = new Map();
+      perBranch.set(branch, perFile);
+    }
+    return perFile;
+  };
 
   const mockFetch = async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
@@ -299,6 +324,7 @@ function createMockGitHostFactory() {
     const urlObj = new URL(url);
     const pathname = urlObj.pathname.replace(/^\/api\/v1/, "");
     const pathParts = pathname.split("/").filter(Boolean);
+    const refParam = urlObj.searchParams.get("ref");
 
     // Helper to generate SHA
     const genSha = () => Math.random().toString(36).substring(2);
@@ -328,25 +354,30 @@ function createMockGitHostFactory() {
       const key = `${owner}/${name}`;
       const repo = { name, created_at: new Date().toISOString(), default_branch: "main" };
       repos.set(key, repo);
-      files.set(key, new Map());
+      // Seed the default branch with an empty file map.
+      filesFor(key, "main");
       branches.set(key, new Set(["main"]));
       return new Response(JSON.stringify(repo), { status: 201 });
     }
 
-    // Route: POST /repos/:owner/:repo/branches
-    if (method === "POST" && pathParts.length === 5 && pathParts[3] === "branches") {
+    // Route: POST /repos/:owner/:repo/branches  (4 path segments)
+    if (method === "POST" && pathParts.length === 4 && pathParts[0] === "repos" && pathParts[3] === "branches") {
       const [, owner, repo] = pathParts;
       const key = `${owner}/${repo}`;
       if (!repos.has(key)) {
         return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
       }
-      const { new_branch_name } = body;
+      const { new_branch_name, old_branch_name } = body;
       branches.get(key)?.add(new_branch_name);
+      // Copy files from the source branch so the new branch starts as a fork.
+      const source = filesFor(key, old_branch_name ?? "main");
+      const target = filesFor(key, new_branch_name);
+      for (const [path, entry] of source) target.set(path, { ...entry });
       return new Response(JSON.stringify({ name: new_branch_name }), { status: 201 });
     }
 
-    // Route: GET /repos/:owner/:repo/branches/:branch
-    if (method === "GET" && pathParts.length === 5 && pathParts[3] === "branches") {
+    // Route: GET /repos/:owner/:repo/branches/:branch  (5 path segments)
+    if (method === "GET" && pathParts.length === 5 && pathParts[0] === "repos" && pathParts[3] === "branches") {
       const [, owner, repo, , branch] = pathParts;
       const key = `${owner}/${repo}`;
       if (!branches.get(key)?.has(decodeURIComponent(branch))) {
@@ -355,11 +386,13 @@ function createMockGitHostFactory() {
       return new Response(JSON.stringify({ name: branch }), { status: 200 });
     }
 
-    // Route: DELETE /repos/:owner/:repo/branches/:branch
-    if (method === "DELETE" && pathParts.length === 5 && pathParts[3] === "branches") {
+    // Route: DELETE /repos/:owner/:repo/branches/:branch  (5 path segments)
+    if (method === "DELETE" && pathParts.length === 5 && pathParts[0] === "repos" && pathParts[3] === "branches") {
       const [, owner, repo, , branch] = pathParts;
       const key = `${owner}/${repo}`;
-      branches.get(key)?.delete(decodeURIComponent(branch));
+      const decoded = decodeURIComponent(branch);
+      branches.get(key)?.delete(decoded);
+      files.get(key)?.delete(decoded);
       return new Response(null, { status: 204 });
     }
 
@@ -367,24 +400,37 @@ function createMockGitHostFactory() {
     if (pathParts[3] === "contents") {
       const [, owner, repo, , ...pathSegments] = pathParts;
       const key = `${owner}/${repo}`;
-      const filePath = decodeURIComponent(pathSegments.join("/").split("?")[0]);
+      const filePath = decodeURIComponent(pathSegments.join("/"));
 
-      const repoFiles = files.get(key);
-      if (!repoFiles) {
+      if (!repos.has(key)) {
         return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
       }
+      // ref query param wins; for writes, fall back to body.branch; else default.
+      const branch =
+        refParam ??
+        (body && typeof body === "object" && "branch" in body
+          ? (body as { branch: string }).branch
+          : repos.get(key)!.default_branch);
+      if (!branches.get(key)?.has(branch)) {
+        return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+      }
+      const repoFiles = filesFor(key, branch);
 
       if (method === "GET") {
+        // Build a name field from the last path segment for directory entries.
+        const entryFor = (path: string) => ({
+          type: "file" as const,
+          name: path.split("/").pop()!,
+          path,
+          sha: repoFiles.get(path)!.sha,
+          size: Buffer.from(repoFiles.get(path)!.content, "base64").length,
+        });
+
         // If filePath is empty, return all files at root level
         if (!filePath || filePath === "") {
           const entries = Array.from(repoFiles.keys())
             .filter((path) => !path.includes("/"))
-            .map((path) => ({
-              type: "file",
-              path,
-              sha: repoFiles.get(path)!.sha,
-              size: Buffer.from(repoFiles.get(path)!.content, "base64").length,
-            }));
+            .map(entryFor);
           return new Response(JSON.stringify(entries), { status: 200 });
         }
         // Check if this is a directory path (has children)
@@ -396,12 +442,7 @@ function createMockGitHostFactory() {
               const relativePath = path.substring(filePath.length + 1);
               return !relativePath.includes("/");
             })
-            .map((path) => ({
-              type: "file",
-              path,
-              sha: repoFiles.get(path)!.sha,
-              size: Buffer.from(repoFiles.get(path)!.content, "base64").length,
-            }));
+            .map(entryFor);
           return new Response(JSON.stringify(entries), { status: 200 });
         }
         // It's a file
@@ -412,6 +453,7 @@ function createMockGitHostFactory() {
         return new Response(
           JSON.stringify({
             type: "file",
+            name: filePath.split("/").pop(),
             path: filePath,
             content: file.content,
             encoding: "base64",
@@ -589,58 +631,74 @@ describe("LocalFsKitStore — adapter-specific", () => {
 // ─── GitHostStore credential test (AC6) ──────────────────────────────────────
 
 describe("GitHostStore — credential check (AC6)", () => {
+  /**
+   * Helper: restore an env var to its original value, deleting it when the
+   * original was undefined (assigning `undefined` to process.env coerces to
+   * the string "undefined" and leaks into later tests).
+   */
+  const restoreEnv = (key: string, original: string | undefined) => {
+    if (original === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = original;
+    }
+  };
+
   it("fails fast with MissingCredentialError if GENIE_GIT_TOKEN is unset", async () => {
     const origToken = process.env["GENIE_GIT_TOKEN"];
     delete process.env["GENIE_GIT_TOKEN"];
+    try {
+      const { MissingCredentialError } = await import(
+        "../src/store/interface.js"
+      );
+      const { GitHostKitStore } = await import("../src/store/git-host.js");
 
-    const { MissingCredentialError } = await import(
-      "../src/store/interface.js"
-    );
-    const { GitHostKitStore } = await import("../src/store/git-host.js");
-
-    expect(
-      () =>
-        new GitHostKitStore({
-          baseUrl: "https://gitea.example.com/api/v1",
-          owner: "test-org",
-        }),
-    ).toThrow(MissingCredentialError);
-
-    process.env["GENIE_GIT_TOKEN"] = origToken;
+      expect(
+        () =>
+          new GitHostKitStore({
+            baseUrl: "https://gitea.example.com/api/v1",
+            owner: "test-org",
+          }),
+      ).toThrow(MissingCredentialError);
+    } finally {
+      restoreEnv("GENIE_GIT_TOKEN", origToken);
+    }
   });
 
   it("does not throw if GENIE_GIT_TOKEN is set", async () => {
     const origToken = process.env["GENIE_GIT_TOKEN"];
     process.env["GENIE_GIT_TOKEN"] = "test-token-123";
+    try {
+      const { GitHostKitStore } = await import("../src/store/git-host.js");
 
-    const { GitHostKitStore } = await import("../src/store/git-host.js");
-
-    expect(
-      () =>
-        new GitHostKitStore({
-          baseUrl: "https://gitea.example.com/api/v1",
-          owner: "test-org",
-        }),
-    ).not.toThrow();
-
-    process.env["GENIE_GIT_TOKEN"] = origToken;
+      expect(
+        () =>
+          new GitHostKitStore({
+            baseUrl: "https://gitea.example.com/api/v1",
+            owner: "test-org",
+          }),
+      ).not.toThrow();
+    } finally {
+      restoreEnv("GENIE_GIT_TOKEN", origToken);
+    }
   });
 
   it("accepts token via config without env var", async () => {
     const origToken = process.env["GENIE_GIT_TOKEN"];
     delete process.env["GENIE_GIT_TOKEN"];
+    try {
+      const { GitHostKitStore } = await import("../src/store/git-host.js");
 
-    const { GitHostKitStore } = await import("../src/store/git-host.js");
-
-    expect(
-      () =>
-        new GitHostKitStore({
-          baseUrl: "https://gitea.example.com/api/v1",
-          owner: "test-org",
-          token: "explicit-token",
-        }),
-    ).not.toThrow();
-
-    process.env["GENIE_GIT_TOKEN"] = origToken;
+      expect(
+        () =>
+          new GitHostKitStore({
+            baseUrl: "https://gitea.example.com/api/v1",
+            owner: "test-org",
+            token: "explicit-token",
+          }),
+      ).not.toThrow();
+    } finally {
+      restoreEnv("GENIE_GIT_TOKEN", origToken);
+    }
   });
 });

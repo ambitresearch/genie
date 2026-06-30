@@ -328,6 +328,9 @@ export class GitHostKitStore implements KitStore {
           );
         }
       }
+      // Encode each path segment to handle spaces, #, ?, etc.
+      // Consistent with readFile()'s encoding strategy.
+      const encodedPath = pathSegments.map(encodeURIComponent).join("/");
 
       if (op.kind === "write") {
         const content = Buffer.from(op.content).toString("base64");
@@ -336,12 +339,15 @@ export class GitHostKitStore implements KitStore {
         try {
           const existing = await this.api<ContentEntry>(
             "GET",
-            `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${op.path}?ref=${encodeURIComponent(branch)}`,
+            `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`,
           );
           // The Gitea API returns sha at the top level for file content
           existingSha = (existing as unknown as { sha?: string }).sha;
-        } catch {
-          // File doesn't exist yet — will create
+        } catch (e) {
+          // Only "file doesn't exist" should fall through to create.
+          // Rethrow other failures (auth, network, server errors) so callers
+          // aren't silently misled into creating an overwrite.
+          if (!(e instanceof NotFoundError)) throw e;
         }
         const body: Record<string, string> = {
           content,
@@ -351,29 +357,33 @@ export class GitHostKitStore implements KitStore {
         if (existingSha) body["sha"] = existingSha;
         await this.api<FileResponse>(
           existingSha ? "PUT" : "POST",
-          `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${op.path}`,
+          `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}`,
           body,
         );
       } else {
         // Delete: need the file SHA
+        let sha: string;
         try {
           const existing = await this.api<ContentEntry>(
             "GET",
-            `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${op.path}?ref=${encodeURIComponent(branch)}`,
+            `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}?ref=${encodeURIComponent(branch)}`,
           );
-          const sha = (existing as unknown as { sha?: string }).sha ?? "";
-          await this.api<void>(
-            "DELETE",
-            `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${op.path}`,
-            {
-              message: `plan: delete ${op.path}`,
-              branch,
-              sha,
-            },
-          );
-        } catch {
-          // File doesn't exist — nothing to delete
+          sha = (existing as unknown as { sha?: string }).sha ?? "";
+        } catch (e) {
+          // File doesn't exist — idempotent delete, nothing to do.
+          if (e instanceof NotFoundError) continue;
+          // Surface transient API/auth failures rather than silently skipping.
+          throw e;
         }
+        await this.api<void>(
+          "DELETE",
+          `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}`,
+          {
+            message: `plan: delete ${op.path}`,
+            branch,
+            sha,
+          },
+        );
       }
     }
   }
