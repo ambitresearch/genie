@@ -1,6 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { join } from "node:path";
-import { ProjectStore, registerCreateProjectTool } from "./tools/create_project.js";
+import {
+  ProjectStore,
+  registerCreateProjectTool,
+} from "./tools/create_project.js";
+import { registerCreateKit } from "./tools/create_kit.js";
+import { LocalFsKitStore } from "./store/local.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -24,6 +29,7 @@ export const SERVER_INFO = {
  */
 export interface CreateServerOptions {
   projectsRoot?: string;
+  kitsRoot?: string;
 }
 
 export function createServer(options: CreateServerOptions = {}): McpServer {
@@ -62,6 +68,15 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       options.projectsRoot ??
         process.env.GENIE_PROJECTS_ROOT ??
         join(process.cwd(), ".genie", "projects"),
+    ),
+  );
+
+  registerCreateKit(
+    server,
+    new LocalFsKitStore(
+      options.kitsRoot ??
+        process.env.GENIE_KITS_ROOT ??
+        join(process.cwd(), ".genie", "kits"),
     ),
   );
 

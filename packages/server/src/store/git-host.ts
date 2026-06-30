@@ -25,6 +25,8 @@ import type {
 } from "./interface.js";
 import {
   FileTooLargeError,
+  KitAlreadyExistsError,
+  KIT_TYPE,
   MAX_FILE_BYTES,
   MissingCredentialError,
   NotFoundError,
@@ -143,10 +145,13 @@ export class GitHostKitStore implements KitStore {
       `/repos/search?q=&owner=${encodeURIComponent(this.owner)}&limit=50`,
     );
     // Gitea returns { data: [...] } wrapper for search
-    const list = Array.isArray(repos) ? repos : ((repos as unknown as { data: RepoResponse[] }).data ?? []);
+    const list = Array.isArray(repos)
+      ? repos
+      : ((repos as unknown as { data: RepoResponse[] }).data ?? []);
     return list.map((r) => ({
       id: r.name,
       name: r.name,
+      type: KIT_TYPE,
       createdAt: r.created_at,
     }));
   }
@@ -157,7 +162,12 @@ export class GitHostKitStore implements KitStore {
         "GET",
         `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}`,
       );
-      return { id: repo.name, name: repo.name, createdAt: repo.created_at };
+      return {
+        id: repo.name,
+        name: repo.name,
+        type: KIT_TYPE,
+        createdAt: repo.created_at,
+      };
     } catch (e) {
       if (e instanceof NotFoundError) throw new NotFoundError("Kit", kitId);
       throw e;
@@ -238,17 +248,36 @@ export class GitHostKitStore implements KitStore {
     return entry.content;
   }
 
-  async createKit(name: string): Promise<KitMeta> {
-    const repo = await this.api<RepoResponse>(
-      "POST",
-      `/orgs/${encodeURIComponent(this.owner)}/repos`,
-      {
-        name,
-        auto_init: true,
-        private: true,
-      },
-    );
-    return { id: repo.name, name: repo.name, createdAt: repo.created_at };
+  async createKit(name: string, kitId?: string): Promise<KitMeta> {
+    const repoName = kitId ?? name;
+    try {
+      const repo = await this.api<RepoResponse>(
+        "POST",
+        `/orgs/${encodeURIComponent(this.owner)}/repos`,
+        {
+          name: repoName,
+          auto_init: true,
+          private: true,
+        },
+      );
+      return {
+        id: repo.name,
+        name: repo.name,
+        type: KIT_TYPE,
+        createdAt: repo.created_at,
+      };
+    } catch (err: unknown) {
+      // Check if it's a 409 Conflict indicating repo already exists
+      if (
+        err &&
+        typeof err === "object" &&
+        "status" in err &&
+        err.status === 409
+      ) {
+        throw new KitAlreadyExistsError(repoName);
+      }
+      throw err;
+    }
   }
 
   async openPlan(kitId: KitId, ops: FileOp[]): Promise<PlanId> {
