@@ -21,7 +21,7 @@ export interface ServerOptions {
  * M0 shipped an empty but bootable server; M1 adds the core tools.
  * Currently registered:
  *   - `ping` — built-in health check
- *   - `list_projects` — project discovery (M1-16)
+ *   - `mcp__genie__list_projects` — project discovery (M1-16)
  *
  * Keeping this a single factory means every transport (stdio, HTTP) shares one
  * registration — see transport.ts.
@@ -32,7 +32,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO, {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. Use list_projects to discover workspaces and blueprints.",
+      "harness. Use mcp__genie__list_projects to discover workspaces and blueprints.",
   });
 
   // Built-in health check — also ensures the SDK wires up tools/list +

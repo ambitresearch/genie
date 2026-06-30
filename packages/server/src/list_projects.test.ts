@@ -61,10 +61,10 @@ async function makeClient(store?: ProjectStore) {
   return { server, client };
 }
 
-/** Call list_projects and parse the JSON result. */
+/** Call mcp__genie__list_projects and parse the JSON result. */
 async function callListProjects(client: Client) {
   const result = await client.callTool({
-    name: "list_projects",
+    name: "mcp__genie__list_projects",
     arguments: {},
   });
   const text = (result.content as { type: string; text: string }[])[0]?.text ?? "{}";
@@ -97,10 +97,10 @@ describe("list_projects tool", () => {
   });
 
   // AC1 — Tool name is mcp__genie__list_projects
-  it("is listed in tools/list as list_projects", async () => {
+  it("is listed in tools/list as mcp__genie__list_projects", async () => {
     const { client } = await makeClient(store);
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toContain("list_projects");
+    expect(tools.map((t) => t.name)).toContain("mcp__genie__list_projects");
     await client.close();
   });
 
@@ -108,7 +108,7 @@ describe("list_projects tool", () => {
   it("has a description under 2 KB", async () => {
     const { client } = await makeClient(store);
     const { tools } = await client.listTools();
-    const tool = tools.find((t) => t.name === "list_projects");
+    const tool = tools.find((t) => t.name === "mcp__genie__list_projects");
     expect(tool).toBeDefined();
     const descBytes = new TextEncoder().encode(tool!.description ?? "").length;
     expect(descBytes).toBeLessThanOrEqual(2048);
@@ -121,6 +121,18 @@ describe("list_projects tool", () => {
     // Should not throw
     const result = await callListProjects(client);
     expect(result).toHaveProperty("projects");
+    await client.close();
+  });
+
+  // AC3 — Input is {} (rejects extra properties)
+  it("rejects non-empty input arguments", async () => {
+    const { client } = await makeClient(store);
+    const result = await client.callTool({
+      name: "mcp__genie__list_projects",
+      arguments: { unexpected: "value" },
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("unrecognized");
     await client.close();
   });
 

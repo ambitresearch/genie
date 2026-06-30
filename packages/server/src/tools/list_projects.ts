@@ -8,9 +8,10 @@
  * @see docs/github/issues/M1-16-tool-list-projects.md
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import type { Project, ProjectStore, StoreWarning } from "../store/interface.js";
 
-/** Deterministic sort: kind asc → name asc → id asc (locale-pinned). */
+/** Deterministic sort: kind asc → name asc → id asc (JS < operator, no locale awareness). */
 function sortProjects(projects: Project[]): Project[] {
   return projects.slice().sort((a, b) => {
     const kindCmp = a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : 0;
@@ -30,20 +31,20 @@ function buildContent(projects: Project[], warnings: StoreWarning[]) {
   return [{ type: "text" as const, text: JSON.stringify(payload) }];
 }
 
-/** Register the `list_projects` tool on the given MCP server. */
+/** Register the `mcp__genie__list_projects` tool on the given MCP server. */
 export function registerListProjects(
   server: McpServer,
   store: ProjectStore,
 ): void {
   server.registerTool(
-    "list_projects",
+    "mcp__genie__list_projects",
     {
       title: "List Projects",
       description:
         "List all projects (workspaces and blueprints). Returns each project's " +
         "id, name, kind, defaultKitId, kitBindings, updatedAt, and canEdit. " +
         "Results are sorted by kind, then name, then id.",
-      inputSchema: {},
+      inputSchema: z.object({}).strict(),
     },
     async () => {
       const [projects, warnings] = await store.listProjects();
