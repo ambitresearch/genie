@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { join } from "node:path";
+import { LocalFsKitStore } from "./store/local.js";
 import { ProjectStore, registerCreateProjectTool } from "./tools/create_project.js";
+import { registerGetKitTool } from "./tools/get_kit.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -23,6 +25,7 @@ export const SERVER_INFO = {
  * registration — see transport.ts.
  */
 export interface CreateServerOptions {
+  kitsRoot?: string;
   projectsRoot?: string;
 }
 
@@ -30,7 +33,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO, {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. (Scaffold build — project creation and the built-in ping tool are registered so far.)",
+      "harness. (Scaffold build — kit lookup, project creation, and the built-in ping tool are registered so far.)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -62,6 +65,14 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       options.projectsRoot ??
         process.env.GENIE_PROJECTS_ROOT ??
         join(process.cwd(), ".genie", "projects"),
+    ),
+  );
+  registerGetKitTool(
+    server,
+    new LocalFsKitStore(
+      options.kitsRoot ??
+        process.env.GENIE_KITS_ROOT ??
+        join(process.cwd(), ".genie", "kits"),
     ),
   );
 

@@ -89,7 +89,10 @@ async function readMeta<T>(filePath: string): Promise<T | undefined> {
 interface KitMetaFile {
   id: string;
   name: string;
+  type?: string;
+  canEdit?: boolean;
   createdAt: string;
+  updatedAt?: string;
 }
 
 interface ProjectMetaFile {
@@ -112,7 +115,7 @@ export class LocalFsKitStore implements KitStore {
   }
 
   private kitDir(kitId: KitId): string {
-    return join(this.baseDir, kitId);
+    return safePath(this.baseDir, kitId);
   }
 
   private kitMetaPath(kitId: KitId): string {
@@ -133,7 +136,7 @@ export class LocalFsKitStore implements KitStore {
         this.kitMetaPath(entry.name),
       );
       if (meta) {
-        kits.push({ id: meta.id, name: meta.name, createdAt: meta.createdAt });
+        kits.push(toKitMeta(meta));
       }
     }
     return kits;
@@ -142,7 +145,7 @@ export class LocalFsKitStore implements KitStore {
   async getKit(kitId: KitId): Promise<KitMeta> {
     const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId));
     if (!meta) throw new NotFoundError("Kit", kitId);
-    return { id: meta.id, name: meta.name, createdAt: meta.createdAt };
+    return toKitMeta(meta);
   }
 
   async listFiles(kitId: KitId): Promise<string[]> {
@@ -187,10 +190,13 @@ export class LocalFsKitStore implements KitStore {
     const meta: KitMetaFile = {
       id,
       name,
+      type: "GENIE_KIT",
+      canEdit: true,
       createdAt: new Date().toISOString(),
     };
+    meta.updatedAt = meta.createdAt;
     await writeFile(this.kitMetaPath(id), JSON.stringify(meta, null, 2));
-    return { id: meta.id, name: meta.name, createdAt: meta.createdAt };
+    return toKitMeta(meta);
   }
 
   async openPlan(kitId: KitId, ops: FileOp[]): Promise<PlanId> {
@@ -238,6 +244,17 @@ export class LocalFsKitStore implements KitStore {
       }
     }
   }
+}
+
+function toKitMeta(meta: KitMetaFile): KitMeta {
+  return {
+    id: meta.id,
+    name: meta.name,
+    type: meta.type ?? "GENIE_KIT",
+    canEdit: meta.canEdit ?? true,
+    createdAt: meta.createdAt,
+    updatedAt: meta.updatedAt ?? meta.createdAt,
+  };
 }
 
 // ─── LocalFsProjectStore ─────────────────────────────────────────────────────

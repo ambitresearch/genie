@@ -19,7 +19,7 @@ describe("createServer", () => {
     expect(a).not.toBe(b);
   });
 
-  it("answers tools/list with the built-in ping tool and create_project", async () => {
+  it("answers tools/list with the built-in ping tool, create_project, and get_kit", async () => {
     const server = createServer();
     const client = new Client({ name: "test", version: "0" });
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
@@ -28,6 +28,7 @@ describe("createServer", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toContain("ping");
     expect(tools.map((t) => t.name)).toContain("mcp__genie__create_project");
+    expect(tools.map((t) => t.name)).toContain("mcp__genie__get_kit");
 
     await client.close();
   });

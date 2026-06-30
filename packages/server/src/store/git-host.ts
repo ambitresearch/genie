@@ -87,8 +87,14 @@ interface RepoResponse {
   name: string;
   full_name: string;
   created_at: string;
+  updated_at?: string;
   description?: string;
   default_branch?: string;
+  permissions?: {
+    admin?: boolean;
+    push?: boolean;
+    pull?: boolean;
+  };
 }
 
 interface ContentEntry {
@@ -144,11 +150,7 @@ export class GitHostKitStore implements KitStore {
     );
     // Gitea returns { data: [...] } wrapper for search
     const list = Array.isArray(repos) ? repos : ((repos as unknown as { data: RepoResponse[] }).data ?? []);
-    return list.map((r) => ({
-      id: r.name,
-      name: r.name,
-      createdAt: r.created_at,
-    }));
+    return list.map(toKitMeta);
   }
 
   async getKit(kitId: KitId): Promise<KitMeta> {
@@ -157,7 +159,7 @@ export class GitHostKitStore implements KitStore {
         "GET",
         `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}`,
       );
-      return { id: repo.name, name: repo.name, createdAt: repo.created_at };
+      return toKitMeta(repo);
     } catch (e) {
       if (e instanceof NotFoundError) throw new NotFoundError("Kit", kitId);
       throw e;
@@ -248,7 +250,7 @@ export class GitHostKitStore implements KitStore {
         private: true,
       },
     );
-    return { id: repo.name, name: repo.name, createdAt: repo.created_at };
+    return toKitMeta(repo);
   }
 
   async openPlan(kitId: KitId, ops: FileOp[]): Promise<PlanId> {
@@ -387,6 +389,17 @@ export class GitHostKitStore implements KitStore {
       }
     }
   }
+}
+
+function toKitMeta(repo: RepoResponse): KitMeta {
+  return {
+    id: repo.name,
+    name: repo.name,
+    type: "GENIE_KIT",
+    canEdit: repo.permissions?.push ?? repo.permissions?.admin ?? true,
+    createdAt: repo.created_at,
+    updatedAt: repo.updated_at ?? repo.created_at,
+  };
 }
 
 // ─── GitHostProjectStore ─────────────────────────────────────────────────────

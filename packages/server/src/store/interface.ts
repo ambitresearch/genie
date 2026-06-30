@@ -26,7 +26,10 @@ export type PlanId = string;
 export interface KitMeta {
   id: KitId;
   name: string;
+  type: "GENIE_KIT" | string;
+  canEdit: boolean;
   createdAt: string; // ISO-8601
+  updatedAt: string; // ISO-8601
 }
 
 /** Metadata returned when listing or getting a project. */

@@ -595,6 +595,12 @@ describe("LocalFsKitStore — adapter-specific", () => {
     await expect(store.listFiles("ghost")).rejects.toThrow(NotFoundError);
   });
 
+  it("getKit denies path traversal attacks", async () => {
+    await expect(store.getKit("../../outside-kit")).rejects.toThrow(
+      "Path traversal denied",
+    );
+  });
+
   it("plan operations stage files in a temp directory", async () => {
     const kit = await store.createKit("plan-staging-kit");
     const planId = await store.openPlan(kit.id, [
