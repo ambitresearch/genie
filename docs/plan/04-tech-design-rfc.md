@@ -1615,6 +1615,11 @@ Every tool input/output schema below is **authoritative**. Drift between this se
 
 ### 9.1 `mcp__genie__list_kits`
 
+Returns the caller's writable genie-native UI kits, backed by
+`KitStore.listKits()`. Store records whose persisted `type` is not
+`"GENIE_KIT"` are filtered out before the public response is built; Anthropic
+project-type mapping stays in the interop adapter.
+
 ```json
 {
   "input": { "type": "object", "additionalProperties": false, "properties": {}, "required": [] },

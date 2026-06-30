@@ -135,7 +135,7 @@ export class LocalFsKitStore implements KitStore {
       const meta = await readMeta<KitMetaFile>(
         this.kitMetaPath(entry.name),
       );
-      if (meta) {
+      if (meta?.type === KIT_TYPE) {
         kits.push({
           id: meta.id,
           name: meta.name,
@@ -149,7 +149,7 @@ export class LocalFsKitStore implements KitStore {
 
   async getKit(kitId: KitId): Promise<KitMeta> {
     const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId));
-    if (!meta) throw new NotFoundError("Kit", kitId);
+    if (!meta || meta.type !== KIT_TYPE) throw new NotFoundError("Kit", kitId);
     return {
       id: meta.id,
       name: meta.name,
