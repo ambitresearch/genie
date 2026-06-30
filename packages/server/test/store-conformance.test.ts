@@ -295,9 +295,10 @@ function createMockGitHostFactory() {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
 
-    // Parse URL
+    // Parse URL - strip /api/v1 prefix since the baseUrl includes it
     const urlObj = new URL(url);
-    const pathParts = urlObj.pathname.split("/").filter(Boolean);
+    const pathname = urlObj.pathname.replace(/^\/api\/v1/, "");
+    const pathParts = pathname.split("/").filter(Boolean);
 
     // Helper to generate SHA
     const genSha = () => Math.random().toString(36).substring(2);
@@ -321,7 +322,7 @@ function createMockGitHostFactory() {
     }
 
     // Route: POST /orgs/:owner/repos
-    if (method === "POST" && pathParts[0] === "orgs" && pathParts[2] === "repos") {
+    if (method === "POST" && pathParts[0] === "orgs" && pathParts.length === 3 && pathParts[2] === "repos") {
       const [, owner] = pathParts;
       const { name } = body;
       const key = `${owner}/${name}`;
@@ -374,6 +375,36 @@ function createMockGitHostFactory() {
       }
 
       if (method === "GET") {
+        // If filePath is empty, return all files at root level
+        if (!filePath || filePath === "") {
+          const entries = Array.from(repoFiles.keys())
+            .filter((path) => !path.includes("/"))
+            .map((path) => ({
+              type: "file",
+              path,
+              sha: repoFiles.get(path)!.sha,
+              size: Buffer.from(repoFiles.get(path)!.content, "base64").length,
+            }));
+          return new Response(JSON.stringify(entries), { status: 200 });
+        }
+        // Check if this is a directory path (has children)
+        const children = Array.from(repoFiles.keys()).filter((path) => path.startsWith(filePath + "/"));
+        if (children.length > 0) {
+          // Return directory listing
+          const entries = children
+            .filter((path) => {
+              const relativePath = path.substring(filePath.length + 1);
+              return !relativePath.includes("/");
+            })
+            .map((path) => ({
+              type: "file",
+              path,
+              sha: repoFiles.get(path)!.sha,
+              size: Buffer.from(repoFiles.get(path)!.content, "base64").length,
+            }));
+          return new Response(JSON.stringify(entries), { status: 200 });
+        }
+        // It's a file
         if (!repoFiles.has(filePath)) {
           return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
         }
