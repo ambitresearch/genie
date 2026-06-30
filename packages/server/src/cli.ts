@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { createServer, SERVER_INFO } from "./server.js";
 import { startTransport } from "./transport.js";
+import { LocalFsStore } from "./store/index.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 /** Minimal flag parser — no dependency needed for M0's tiny surface. */
 function parseArgs(argv: string[]): {
@@ -52,6 +55,7 @@ Options:
 
 Env:
   MCP_TRANSPORT              Same as --transport
+  GENIE_BASE_DIR             Base directory for kit storage (default: ~/.genie)
 
 This is a scaffold build (M0): the server boots and speaks MCP but registers
 no tools yet. Tool surfaces land in M1+.`;
@@ -68,7 +72,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  const server = createServer();
+  // Instantiate the store with a default base directory
+  const baseDir = process.env.GENIE_BASE_DIR ?? join(homedir(), ".genie");
+  const store = new LocalFsStore(baseDir);
+
+  const server = createServer({ store });
   await startTransport(server, {
     kind: args.transport,
     port: args.port,

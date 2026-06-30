@@ -15,7 +15,7 @@ function expectedHash(content: string): string {
 
 describe("list_files tool (MCP integration)", () => {
   let baseDir: string;
-  let client: Client;
+  let client: Client | undefined;
 
   beforeEach(async () => {
     baseDir = await mkdtemp(join(tmpdir(), "genie-mcp-test-"));
