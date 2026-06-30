@@ -63,7 +63,20 @@ function kitStoreContract(
 
       await expect(
         store.createKit("second kit", "collision-kit-abc123"),
+      ).rejects.toMatchObject({
+        kitId: "collision-kit-abc123",
+      });
+      await expect(
+        store.createKit("second kit", "collision-kit-abc123"),
       ).rejects.toThrow(KitAlreadyExistsError);
+    });
+
+    it("createKit preserves the display name when explicit kitId differs", async () => {
+      const kit = await store.createKit("Display Kit", "display-kit-abc123");
+      expect(kit.name).toBe("Display Kit");
+
+      const fetched = await store.getKit("display-kit-abc123");
+      expect(fetched.name).toBe("Display Kit");
     });
 
     it("listKits returns created kits", async () => {

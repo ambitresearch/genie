@@ -121,6 +121,13 @@ interface FileResponse {
   };
 }
 
+interface KitMetaFile {
+  id: string;
+  name: string;
+  type: string;
+  createdAt: string;
+}
+
 // ─── GitHostKitStore ─────────────────────────────────────────────────────────
 
 /**
@@ -131,6 +138,7 @@ export class GitHostKitStore implements KitStore {
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly owner: string;
+  private readonly kitMetaPath = ".kit.json";
 
   constructor(config: GitHostConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
@@ -148,6 +156,48 @@ export class GitHostKitStore implements KitStore {
     });
   }
 
+  private repoPath(kitId: KitId): string {
+    return `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}`;
+  }
+
+  private async readKitMeta(kitId: KitId): Promise<KitMeta | undefined> {
+    try {
+      const entry = await this.api<ContentEntry>(
+        "GET",
+        `${this.repoPath(kitId)}/contents/${this.kitMetaPath}`,
+      );
+      if (!entry.content || entry.encoding !== "base64") {
+        throw new Error(`Kit metadata for "${kitId}" returned no base64 content.`);
+      }
+      const meta = JSON.parse(
+        Buffer.from(entry.content, "base64").toString("utf-8"),
+      ) as KitMetaFile;
+      return {
+        id: meta.id,
+        name: meta.name,
+        type: KIT_TYPE,
+        createdAt: meta.createdAt,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundError) return undefined;
+      throw error;
+    }
+  }
+
+  private async writeKitMeta(meta: KitMeta): Promise<void> {
+    const content = Buffer.from(JSON.stringify(meta, null, 2)).toString(
+      "base64",
+    );
+    await this.api<FileResponse>(
+      "POST",
+      `${this.repoPath(meta.id)}/contents/${this.kitMetaPath}`,
+      {
+        content,
+        message: `kit: create ${meta.name}`,
+      },
+    );
+  }
+
   async listKits(): Promise<KitMeta[]> {
     const repos = await this.api<RepoResponse[]>(
       "GET",
@@ -157,20 +207,29 @@ export class GitHostKitStore implements KitStore {
     const list = Array.isArray(repos)
       ? repos
       : ((repos as unknown as { data: RepoResponse[] }).data ?? []);
-    return list.map((r) => ({
-      id: r.name,
-      name: r.name,
-      type: KIT_TYPE,
-      createdAt: r.created_at,
-    }));
+    const kits: KitMeta[] = [];
+    for (const repo of list) {
+      const meta = await this.readKitMeta(repo.name);
+      kits.push(
+        meta ?? {
+          id: repo.name,
+          name: repo.name,
+          type: KIT_TYPE,
+          createdAt: repo.created_at,
+        },
+      );
+    }
+    return kits;
   }
 
   async getKit(kitId: KitId): Promise<KitMeta> {
     try {
       const repo = await this.api<RepoResponse>(
         "GET",
-        `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}`,
+        this.repoPath(kitId),
       );
+      const meta = await this.readKitMeta(kitId);
+      if (meta) return meta;
       return {
         id: repo.name,
         name: repo.name,
@@ -186,7 +245,7 @@ export class GitHostKitStore implements KitStore {
   async listFiles(kitId: KitId): Promise<string[]> {
     // Get the full tree recursively
     const entries = await this.listTree(kitId, "");
-    return entries.sort();
+    return entries.filter((path) => path !== this.kitMetaPath).sort();
   }
 
   private async listTree(kitId: KitId, dirPath: string): Promise<string[]> {
@@ -269,12 +328,14 @@ export class GitHostKitStore implements KitStore {
           private: true,
         },
       );
-      return {
+      const meta: KitMeta = {
         id: repo.name,
-        name: repo.name,
+        name,
         type: KIT_TYPE,
         createdAt: repo.created_at,
       };
+      await this.writeKitMeta(meta);
+      return meta;
     } catch (err: unknown) {
       // Check if it's a 409 Conflict indicating repo already exists
       if (err instanceof GitHostApiError && err.status === 409) {
