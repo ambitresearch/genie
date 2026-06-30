@@ -194,21 +194,37 @@ export class GitHostKitStore implements KitStore {
   }
 
   async readFile(kitId: KitId, path: string): Promise<string> {
+    // Encode each path segment to handle spaces, #, ?, etc.
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
     let entry: ContentEntry;
     try {
       entry = await this.api<ContentEntry>(
         "GET",
-        `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${path}`,
+        `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}`,
       );
     } catch (e) {
       if (e instanceof NotFoundError)
         throw new NotFoundError("File", `${kitId}/${path}`);
       throw e;
     }
+
+    // Validate that this is a file, not a directory
+    if (entry.type !== "file") {
+      throw new NotFoundError("File", `${kitId}/${path}`);
+    }
+
     if (entry.size && entry.size > MAX_FILE_BYTES) {
       throw new FileTooLargeError(path, entry.size);
     }
-    if (entry.content && entry.encoding === "base64") {
+
+    // Validate that content is actually present
+    if (!entry.content) {
+      throw new Error(
+        `File "${kitId}/${path}" returned no content from the git host API.`,
+      );
+    }
+
+    if (entry.encoding === "base64") {
       const decoded = Buffer.from(entry.content, "base64").toString("utf-8");
       // Fallback size check when entry.size was not provided by the API
       const byteLength = Buffer.byteLength(decoded, "utf-8");
@@ -217,7 +233,9 @@ export class GitHostKitStore implements KitStore {
       }
       return decoded;
     }
-    return entry.content ?? "";
+
+    // If encoding is not base64, treat content as plain text
+    return entry.content;
   }
 
   async createKit(name: string): Promise<KitMeta> {
@@ -301,6 +319,16 @@ export class GitHostKitStore implements KitStore {
     ops: FileOp[],
   ): Promise<void> {
     for (const op of ops) {
+      // Validate path for traversal-like segments
+      const pathSegments = op.path.split("/");
+      for (const segment of pathSegments) {
+        if (segment === ".." || segment === "." || segment === "") {
+          throw new Error(
+            `Invalid path in file operation: "${op.path}" contains traversal or empty segments.`,
+          );
+        }
+      }
+
       if (op.kind === "write") {
         const content = Buffer.from(op.content).toString("base64");
         // Try to get existing file for its SHA (needed for update)
@@ -389,12 +417,17 @@ export class GitHostProjectStore implements ProjectStore {
         "GET",
         `/repos/${encodeURIComponent(this.owner)}/${this.metaRepo}`,
       );
-    } catch {
-      await this.api<RepoResponse>(
-        "POST",
-        `/orgs/${encodeURIComponent(this.owner)}/repos`,
-        { name: this.metaRepo, auto_init: true, private: true },
-      );
+    } catch (e) {
+      // Only auto-create on NotFoundError; rethrow other failures
+      if (e instanceof NotFoundError) {
+        await this.api<RepoResponse>(
+          "POST",
+          `/orgs/${encodeURIComponent(this.owner)}/repos`,
+          { name: this.metaRepo, auto_init: true, private: true },
+        );
+      } else {
+        throw e;
+      }
     }
   }
 

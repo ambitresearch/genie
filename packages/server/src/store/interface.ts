@@ -86,9 +86,9 @@ export const MAX_FILE_BYTES = 262_144;
 
 /**
  * AC1 — KitStore defines:
- *   listKits, getKit, listFiles, readFile(path, maxBytes),
- *   createKit, openPlan(writes, deletes, localDir) → planId,
- *   commitPlan(planId, fileOps), closePlan(planId).
+ *   listKits, getKit, listFiles, readFile(kitId, path),
+ *   createKit, openPlan(kitId, ops) → planId,
+ *   commitPlan(kitId, planId, ops), closePlan(kitId, planId).
  */
 export interface KitStore {
   /** List all available kits. */
@@ -153,7 +153,10 @@ export interface ProjectStore {
   /** Delete a project. Throws NotFoundError if missing. */
   deleteProject(projectId: ProjectId): Promise<void>;
 
-  /** Bind a kit to a project. Throws NotFoundError if either is missing. */
+  /**
+   * Bind a kit to a project. Throws NotFoundError if the project is missing.
+   * Note: kit existence is not validated by this interface.
+   */
   bindKit(projectId: ProjectId, kitId: KitId): Promise<void>;
 
   /**

@@ -43,8 +43,9 @@ async function ensureDir(dir: string): Promise<void> {
  */
 function safePath(baseDir: string, userPath: string): string {
   const resolved = resolve(baseDir, userPath);
-  const normalizedBase = resolve(baseDir) + "/";
-  if (!resolved.startsWith(normalizedBase) && resolved !== resolve(baseDir)) {
+  const rel = relative(baseDir, resolved);
+  // If the relative path starts with ".." or is absolute, it's outside baseDir
+  if (rel.startsWith("..") || resolve(rel) === rel) {
     throw new Error(
       `Path traversal denied: "${userPath}" resolves outside the allowed directory.`,
     );
@@ -153,7 +154,16 @@ export class LocalFsKitStore implements KitStore {
   }
 
   async readFile(kitId: KitId, path: string): Promise<string> {
-    const filePath = safePath(this.kitDir(kitId), path);
+    // First check if kit exists
+    const kitDir = this.kitDir(kitId);
+    try {
+      await stat(kitDir);
+    } catch {
+      throw new NotFoundError("Kit", kitId);
+    }
+
+    // Now check if file exists
+    const filePath = safePath(kitDir, path);
     let fileStats;
     try {
       fileStats = await stat(filePath);
