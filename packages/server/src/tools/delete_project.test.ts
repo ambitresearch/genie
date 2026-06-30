@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ProjectStore } from "./create_project.js";
-import { deleteProject, ERR_PROJECT_READONLY } from "./delete_project.js";
+import { deleteProject, ERR_INVALID_PROJECT_ID, ERR_PROJECT_READONLY } from "./delete_project.js";
 
 async function tempProjectsRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), "genie-projects-"));
@@ -86,4 +86,34 @@ describe("deleteProject", () => {
       code: ERR_PROJECT_READONLY,
     });
   });
+
+  it.each([
+    ["parent traversal", "../escape"],
+    ["nested traversal", "../../etc"],
+    ["absolute path", "/etc"],
+    ["windows-style absolute", "C:\\Windows"],
+    ["path separator", "foo/bar"],
+    ["backslash separator", "foo\\bar"],
+    ["uppercase letters", "INVALID"],
+    ["dot prefix", ".hidden"],
+    ["too short", "ab"],
+    ["empty string", ""],
+  ])(
+    "rejects path-traversal / invalid projectId (%s) without touching the filesystem",
+    async (_label, projectId) => {
+      const root = await tempProjectsRoot();
+      // Create a sibling directory that a traversal attempt could potentially escape to.
+      const sentinelDir = join(root, "..", `sentinel-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
+      await mkdir(sentinelDir, { recursive: true });
+      await writeFile(join(sentinelDir, "keep.txt"), "do-not-delete", "utf8");
+
+      await expect(deleteProject(root, { projectId })).rejects.toMatchObject({
+        code: ERR_INVALID_PROJECT_ID,
+      });
+
+      // Sentinel must still exist — the rejected projectId never reached `rm()`.
+      expect(existsSync(sentinelDir)).toBe(true);
+      expect(existsSync(join(sentinelDir, "keep.txt"))).toBe(true);
+    },
+  );
 });

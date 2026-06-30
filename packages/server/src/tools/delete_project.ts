@@ -3,14 +3,23 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { PROJECT_ID_PATTERN } from "./create_project.js";
 
 export const DELETE_PROJECT_TOOL_NAME = "mcp__genie__delete_project";
 
 export const ERR_PROJECT_READONLY = "ERR_PROJECT_READONLY";
+export const ERR_INVALID_PROJECT_ID = "ERR_INVALID_PROJECT_ID";
+
+const projectIdSchema = z
+  .string()
+  .regex(
+    PROJECT_ID_PATTERN,
+    "projectId must be a 3-64 character slug containing only lowercase letters, numbers, and hyphens.",
+  );
 
 const deleteProjectArgsSchema = z
   .object({
-    projectId: z.string().min(1),
+    projectId: projectIdSchema,
   })
   .strict();
 
@@ -37,7 +46,20 @@ export async function deleteProject(
   root: string,
   args: DeleteProjectArgs,
 ): Promise<DeleteProjectResult> {
-  const parsed = deleteProjectArgsSchema.parse(args);
+  let parsed: DeleteProjectArgs;
+  try {
+    parsed = deleteProjectArgsSchema.parse(args);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const issue = error.issues[0];
+      throw new DeleteProjectError(
+        ERR_INVALID_PROJECT_ID,
+        issue?.message ??
+          "projectId must be a 3-64 character slug containing only lowercase letters, numbers, and hyphens.",
+      );
+    }
+    throw error;
+  }
   const projectRoot = join(root, parsed.projectId);
 
   // Check if project exists
@@ -75,7 +97,7 @@ export function registerDeleteProjectTool(server: McpServer, projectsRoot: strin
       description:
         "Delete a workspace or blueprint project. Deleting a blueprint does not delete derived workspaces.",
       inputSchema: {
-        projectId: z.string().min(1),
+        projectId: projectIdSchema,
       },
       outputSchema: {
         deletedProjectId: z.string(),
