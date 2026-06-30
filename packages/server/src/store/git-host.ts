@@ -59,6 +59,17 @@ interface RequestOptions {
   token: string;
 }
 
+class GitHostApiError extends Error {
+  constructor(
+    public readonly status: number,
+    statusText: string,
+    body: string,
+  ) {
+    super(`Git host API error: ${status} ${statusText} — ${body}`);
+    this.name = "GitHostApiError";
+  }
+}
+
 async function apiRequest<T>(opts: RequestOptions): Promise<T> {
   const url = `${opts.baseUrl}${opts.path}`;
   const res = await fetch(url, {
@@ -75,9 +86,7 @@ async function apiRequest<T>(opts: RequestOptions): Promise<T> {
   }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(
-      `Git host API error: ${res.status} ${res.statusText} — ${text}`,
-    );
+    throw new GitHostApiError(res.status, res.statusText, text);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -268,12 +277,7 @@ export class GitHostKitStore implements KitStore {
       };
     } catch (err: unknown) {
       // Check if it's a 409 Conflict indicating repo already exists
-      if (
-        err &&
-        typeof err === "object" &&
-        "status" in err &&
-        err.status === 409
-      ) {
+      if (err instanceof GitHostApiError && err.status === 409) {
         throw new KitAlreadyExistsError(repoName);
       }
       throw err;

@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { KitStore, ProjectStore } from "../src/store/interface.js";
 import {
   FileTooLargeError,
+  KitAlreadyExistsError,
   MAX_FILE_BYTES,
   NotFoundError,
 } from "../src/store/interface.js";
@@ -55,6 +56,14 @@ function kitStoreContract(
       const fetched = await store.getKit(kit.id);
       expect(fetched.id).toBe(kit.id);
       expect(fetched.name).toBe("test-kit");
+    });
+
+    it("createKit throws KitAlreadyExistsError for an explicit id collision", async () => {
+      await store.createKit("first kit", "collision-kit-abc123");
+
+      await expect(
+        store.createKit("second kit", "collision-kit-abc123"),
+      ).rejects.toThrow(KitAlreadyExistsError);
     });
 
     it("listKits returns created kits", async () => {
@@ -352,6 +361,11 @@ function createMockGitHostFactory() {
       const [, owner] = pathParts;
       const { name } = body;
       const key = `${owner}/${name}`;
+      if (repos.has(key)) {
+        return new Response(JSON.stringify({ message: "Repository already exists" }), {
+          status: 409,
+        });
+      }
       const repo = { name, created_at: new Date().toISOString(), default_branch: "main" };
       repos.set(key, repo);
       // Seed the default branch with an empty file map.
