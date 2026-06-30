@@ -334,7 +334,7 @@ function createMockGitHostFactory() {
     }
 
     // Route: POST /repos/:owner/:repo/branches
-    if (method === "POST" && pathParts.length === 5 && pathParts[3] === "branches") {
+    if (method === "POST" && pathParts.length === 4 && pathParts[3] === "branches") {
       const [, owner, repo] = pathParts;
       const key = `${owner}/${repo}`;
       if (!repos.has(key)) {
@@ -343,6 +343,17 @@ function createMockGitHostFactory() {
       const { new_branch_name } = body;
       branches.get(key)?.add(new_branch_name);
       return new Response(JSON.stringify({ name: new_branch_name }), { status: 201 });
+    }
+
+    // Route: GET /repos/:owner/:repo/branches (list all branches)
+    if (method === "GET" && pathParts.length === 4 && pathParts[3] === "branches") {
+      const [, owner, repo] = pathParts;
+      const key = `${owner}/${repo}`;
+      if (!repos.has(key)) {
+        return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+      }
+      const branchList = Array.from(branches.get(key) ?? []).map((name) => ({ name }));
+      return new Response(JSON.stringify(branchList), { status: 200 });
     }
 
     // Route: GET /repos/:owner/:repo/branches/:branch
@@ -381,6 +392,7 @@ function createMockGitHostFactory() {
             .filter((path) => !path.includes("/"))
             .map((path) => ({
               type: "file",
+              name: path,
               path,
               sha: repoFiles.get(path)!.sha,
               size: Buffer.from(repoFiles.get(path)!.content, "base64").length,
@@ -396,12 +408,16 @@ function createMockGitHostFactory() {
               const relativePath = path.substring(filePath.length + 1);
               return !relativePath.includes("/");
             })
-            .map((path) => ({
-              type: "file",
-              path,
-              sha: repoFiles.get(path)!.sha,
-              size: Buffer.from(repoFiles.get(path)!.content, "base64").length,
-            }));
+            .map((path) => {
+              const relativePath = path.substring(filePath.length + 1);
+              return {
+                type: "file",
+                name: relativePath,
+                path,
+                sha: repoFiles.get(path)!.sha,
+                size: Buffer.from(repoFiles.get(path)!.content, "base64").length,
+              };
+            });
           return new Response(JSON.stringify(entries), { status: 200 });
         }
         // It's a file
