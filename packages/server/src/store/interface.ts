@@ -9,6 +9,9 @@
 
 // ─── Shared types ────────────────────────────────────────────────────────────
 
+/** Immutable type discriminator stamped on every kit record. */
+export const KIT_TYPE = "GENIE_KIT" as const;
+
 /** Unique identifier for a kit (opaque string, adapter-assigned). */
 export type KitId = string;
 
@@ -26,6 +29,7 @@ export type PlanId = string;
 export interface KitMeta {
   id: KitId;
   name: string;
+  type: typeof KIT_TYPE;
   createdAt: string; // ISO-8601
 }
 
@@ -43,6 +47,14 @@ export type FileOp =
   | { kind: "delete"; path: string };
 
 // ─── Error types ─────────────────────────────────────────────────────────────
+
+/** Thrown when a kit already exists with the given ID. */
+export class KitAlreadyExistsError extends Error {
+  constructor(public readonly kitId: string) {
+    super(`Kit already exists: ${kitId}`);
+    this.name = "KitAlreadyExistsError";
+  }
+}
 
 /** Thrown when `readFile` encounters a file exceeding the 256 KiB cap. */
 export class FileTooLargeError extends Error {
@@ -107,8 +119,11 @@ export interface KitStore {
    */
   readFile(kitId: KitId, path: string): Promise<string>;
 
-  /** Create a new kit with the given name. Returns its metadata. */
-  createKit(name: string): Promise<KitMeta>;
+  /**
+   * Create a new kit with the given name and metadata. Returns its metadata.
+   * Throws KitAlreadyExistsError if a kit with the same ID already exists.
+   */
+  createKit(name: string, kitId?: string): Promise<KitMeta>;
 
   /**
    * Open a plan (staging area) for a kit. Applies initial writes/deletes.
