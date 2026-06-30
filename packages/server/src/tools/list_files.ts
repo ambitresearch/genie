@@ -102,9 +102,12 @@ export function registerListFilesTool(server: McpServer, store: KitFileStore): v
     {
       title: "List files",
       description:
-        "Return the UI kit file tree with project-root-relative paths, byte sizes, SHA-256 SRI hashes, and modification times.",
+        "Return the UI kit file tree with kit-root-relative paths, byte sizes, SHA-256 SRI hashes, and modification times.",
       inputSchema: {
         kitId: z.string().min(1),
+      },
+      outputSchema: {
+        files: z.array(fileEntrySchema),
       },
     },
     async (args) => {
@@ -112,6 +115,7 @@ export function registerListFilesTool(server: McpServer, store: KitFileStore): v
         const result = await listFiles(store, args);
         return {
           content: [{ type: "text", text: JSON.stringify(result) }],
+          structuredContent: { files: result },
         };
       } catch (error) {
         if (error instanceof ListFilesError) {

@@ -131,6 +131,15 @@ describe("listFiles", () => {
         hash: sriSha256("# Tool Kit\n"),
       }),
     ]);
+    expect(result.structuredContent).toEqual({
+      files: [
+        expect.objectContaining({
+          path: "README.md",
+          size: Buffer.byteLength("# Tool Kit\n"),
+          hash: sriSha256("# Tool Kit\n"),
+        }),
+      ],
+    });
 
     await client.close();
   });
