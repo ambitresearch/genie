@@ -1,0 +1,16 @@
+{
+  "name": "sample-kit",
+  "version": "1.0.0",
+  "components": [
+    "components/Button.ts",
+    "components/Card.ts",
+    "components/Input.ts",
+    "components/Modal.ts",
+    "components/Avatar.ts",
+    "components/Badge.ts",
+    "components/Tabs.ts",
+    "components/Alert.ts",
+    "components/Tooltip.ts",
+    "components/Spinner.ts"
+  ]
+}

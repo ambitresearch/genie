@@ -52,9 +52,9 @@ Options:
 
 Env:
   MCP_TRANSPORT              Same as --transport
+  GENIE_PROJECTS_ROOT        Directory where create_project writes project roots
 
-This is a scaffold build (M0): the server boots and speaks MCP but registers
-no tools yet. Tool surfaces land in M1+.`;
+This scaffold build boots, speaks MCP, and registers ping plus M1 project creation.`;
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
