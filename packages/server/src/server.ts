@@ -1,9 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { join } from "node:path";
-import {
-  ProjectStore,
-  registerCreateProjectTool,
-} from "./tools/create_project.js";
+import { ProjectStore, registerCreateProjectTool } from "./tools/create_project.js";
+import { registerListProjectsTool } from "./tools/list_projects.js";
 import { registerDeleteProjectTool } from "./tools/delete_project.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
@@ -71,16 +69,16 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     process.env.GENIE_PROJECTS_ROOT ??
     join(process.cwd(), ".genie", "projects");
 
-  registerCreateProjectTool(server, new ProjectStore(projectsRoot));
+  const projectStore = new ProjectStore(projectsRoot);
+  registerCreateProjectTool(server, projectStore);
+  registerListProjectsTool(server, projectStore);
   registerDeleteProjectTool(server, projectsRoot);
 
   // Resolve the kits root ONCE so every kit verb agrees on where kits live.
   // `create_kit` (via LocalFsKitStore) writes here and `read_file` reads here —
   // threading the same value into both is what keeps them consistent.
   const kitsRoot =
-    options.kitsRoot ??
-    process.env.GENIE_KITS_ROOT ??
-    join(process.cwd(), ".genie", "kits");
+    options.kitsRoot ?? process.env.GENIE_KITS_ROOT ?? join(process.cwd(), ".genie", "kits");
 
   registerCreateKit(server, new LocalFsKitStore(kitsRoot));
 
