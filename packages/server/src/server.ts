@@ -4,6 +4,7 @@ import {
   ProjectStore,
   registerCreateProjectTool,
 } from "./tools/create_project.js";
+import { registerDeleteProjectTool } from "./tools/delete_project.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { LocalFsKitStore } from "./store/local.js";
 
@@ -62,14 +63,13 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     }),
   );
 
-  registerCreateProjectTool(
-    server,
-    new ProjectStore(
-      options.projectsRoot ??
-        process.env.GENIE_PROJECTS_ROOT ??
-        join(process.cwd(), ".genie", "projects"),
-    ),
-  );
+  const projectsRoot =
+    options.projectsRoot ??
+    process.env.GENIE_PROJECTS_ROOT ??
+    join(process.cwd(), ".genie", "projects");
+
+  registerCreateProjectTool(server, new ProjectStore(projectsRoot));
+  registerDeleteProjectTool(server, projectsRoot);
 
   registerCreateKit(
     server,

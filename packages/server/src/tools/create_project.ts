@@ -6,7 +6,7 @@ import { z } from "zod";
 
 export const CREATE_PROJECT_TOOL_NAME = "mcp__genie__create_project";
 
-const PROJECT_ID_PATTERN = /^[a-z0-9-]{3,64}$/;
+export const PROJECT_ID_PATTERN = /^[a-z0-9-]{3,64}$/;
 
 const projectKindSchema = z.enum(["workspace", "blueprint"]);
 const kitBindingSchema = z
