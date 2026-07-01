@@ -7,6 +7,7 @@ import {
 import { registerDeleteProjectTool } from "./tools/delete_project.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
+import { registerValidate } from "./tools/validate.js";
 import { LocalFsKitStore } from "./store/local.js";
 
 /** Server identity. Bumped independently of the workspace version. */
@@ -32,6 +33,7 @@ export const SERVER_INFO = {
 export interface CreateServerOptions {
   projectsRoot?: string;
   kitsRoot?: string;
+  reportsDir?: string;
 }
 
 export function createServer(options: CreateServerOptions = {}): McpServer {
@@ -84,6 +86,15 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   // M1 tools
   registerReadFile(server, kitsRoot);
+
+  // Advisory telemetry facet (M1-12): persists validation counts + emits
+  // Prometheus metrics. No planId required (read-side telemetry).
+  registerValidate(
+    server,
+    options.reportsDir ??
+      process.env.GENIE_REPORTS_DIR ??
+      join(process.cwd(), ".genie", "reports"),
+  );
 
   return server;
 }
