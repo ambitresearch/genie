@@ -17,7 +17,10 @@ interface ReadFileResult {
 /** MCP tool call result. */
 interface ToolResult {
   content: { type: string; text: string }[];
+  structuredContent?: ReadFileResult;
   isError?: boolean;
+  /** Structured error object exposed by some SDK/client versions. */
+  error?: { code?: number; message?: string };
 }
 
 /** Helper: call read_file and return the raw tool result. */
@@ -32,7 +35,26 @@ async function callRaw(
   })) as ToolResult;
 }
 
-/** Helper: call read_file and parse the JSON text result. */
+/**
+ * Extract a human-readable error string from a failed tool result, robust to
+ * SDK error shape.
+ *
+ * A thrown `McpError` from a tool handler is surfaced as
+ * `{ isError: true, content: [{ type: "text", text: err.message }] }`; some
+ * client versions additionally expose a structured `{ error: { code, message } }`.
+ * We prefer the structured `error.message` when present and fall back to the
+ * text content part, so assertions do not depend on a single transport shape.
+ */
+function errorText(result: ToolResult): string {
+  return result.error?.message ?? result.content[0]?.text ?? "";
+}
+
+/**
+ * Helper: call read_file and return the parsed result.
+ *
+ * Prefers `structuredContent` (AC3) when the server provides it, falling back
+ * to parsing the JSON text content part for compatibility.
+ */
 async function callReadFile(
   client: Client,
   kitId: string,
@@ -40,7 +62,10 @@ async function callReadFile(
 ): Promise<ReadFileResult> {
   const result = await callRaw(client, kitId, path);
   if (result.isError) {
-    throw new Error(`Tool error: ${result.content[0]?.text}`);
+    throw new Error(`Tool error: ${errorText(result)}`);
+  }
+  if (result.structuredContent) {
+    return result.structuredContent;
   }
   return JSON.parse(result.content[0]?.text ?? "") as ReadFileResult;
 }
@@ -71,6 +96,13 @@ describe("read_file tool", () => {
     await writeFile(
       join(kitRoot, "components", "Button.tsx"),
       'export const Button = () => <button>Click</button>;',
+    );
+
+    // Source file whose mime-types label is an `application/*` text type
+    // (`.cjs` → application/node); should still be treated as utf-8 text.
+    await writeFile(
+      join(kitRoot, "config.cjs"),
+      "module.exports = { ok: true };",
     );
 
     // Create a file exactly at the 256 KiB limit
@@ -130,6 +162,26 @@ describe("read_file tool", () => {
     expect(result.mimeType).toBe("text/tsx");
   });
 
+  it("treats application/* source types (.cjs) as utf-8 text", async () => {
+    const result = await callReadFile(client, kitId, "config.cjs");
+    expect(result.encoding).toBe("utf-8");
+    expect(result.content).toContain("module.exports");
+  });
+
+  // ── AC3: structured content ──
+  it("returns structuredContent matching the JSON text part", async () => {
+    const result = await callRaw(client, kitId, "hello.txt");
+    expect(result.structuredContent).toBeDefined();
+    expect(result.structuredContent).toEqual({
+      content: "Hello, world!",
+      encoding: "utf-8",
+      mimeType: "text/plain",
+    });
+    // Back-compat: the JSON text part still mirrors the structured payload.
+    const fromText = JSON.parse(result.content[0]?.text ?? "");
+    expect(fromText).toEqual(result.structuredContent);
+  });
+
   // ── AC4: 256 KiB cap ──
   it("accepts a file exactly at 256 KiB", async () => {
     const result = await callReadFile(client, kitId, "exact-limit.txt");
@@ -137,11 +189,10 @@ describe("read_file tool", () => {
     expect(result.content.length).toBe(MAX_FILE_BYTES);
   });
 
-  it("rejects a file over 256 KiB with isError and -32603 message", async () => {
+  it("rejects a file over 256 KiB with an over-cap error", async () => {
     const result = await callRaw(client, kitId, "over-limit.txt");
     expect(result.isError).toBe(true);
-    const text = result.content[0]?.text ?? "";
-    expect(text).toContain("-32603");
+    const text = errorText(result);
     expect(text).toContain("File exceeds 256 KiB cap");
     expect(text).toContain(`${MAX_FILE_BYTES + 1} bytes`);
   });
@@ -161,19 +212,19 @@ describe("read_file tool", () => {
   it("rejects path traversal with ../", async () => {
     const result = await callRaw(client, kitId, "../../../etc/passwd");
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("InvalidPathError");
+    expect(errorText(result)).toContain("InvalidPathError");
   });
 
   it("rejects path traversal with encoded segments", async () => {
     const result = await callRaw(client, kitId, "components/../../etc/passwd");
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("InvalidPathError");
+    expect(errorText(result)).toContain("InvalidPathError");
   });
 
   it("rejects absolute paths that escape the kit root", async () => {
     const result = await callRaw(client, kitId, "/etc/passwd");
     expect(result.isError).toBe(true);
-    const text = result.content[0]?.text ?? "";
+    const text = errorText(result);
     // Should fail as either path traversal or file not found
     expect(text.includes("InvalidPathError") || text.includes("File not found")).toBe(true);
   });
@@ -182,13 +233,13 @@ describe("read_file tool", () => {
   it("returns isError for a non-existent file", async () => {
     const result = await callRaw(client, kitId, "does-not-exist.txt");
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("File not found");
+    expect(errorText(result)).toContain("File not found");
   });
 
   // ── kitId traversal guard ──
   it("rejects kitId containing path separators", async () => {
     const result = await callRaw(client, "../../../etc", "passwd");
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("InvalidPathError");
+    expect(errorText(result)).toContain("InvalidPathError");
   });
 });

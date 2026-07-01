@@ -1,5 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
-import { extname, join, normalize, resolve } from "node:path";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { lookup } from "mime-types";
 import { z } from "zod";
 import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
@@ -32,16 +32,39 @@ function resolveMime(filePath: string): string {
 }
 
 /**
- * MIME type prefixes that are considered textual (returned as utf-8).
- * Everything else is returned as base64.
+ * MIME types (beyond the `text/*` family) that are textual and should be
+ * returned as utf-8 rather than base64. `mime-types` labels several source
+ * formats with an `application/*` type (e.g. `.cjs` → `application/node`,
+ * `.toml` → `application/toml`), so we treat a curated allow-list as text.
+ */
+const TEXT_APPLICATION_MIMES = new Set([
+  "application/json",
+  "application/xml",
+  "application/javascript",
+  "application/ecmascript",
+  "application/node",
+  "application/toml",
+  "application/yaml",
+  "application/x-yaml",
+  "application/graphql",
+  "application/x-sh",
+  "application/x-httpd-php",
+  "application/sql",
+  "application/manifest+json",
+]);
+
+/**
+ * MIME type prefixes/values that are considered textual (returned as utf-8).
+ * Everything else is returned as base64. Any MIME parameters (e.g. a
+ * `; charset=utf-8` suffix) are stripped before matching.
  */
 function isTextMime(mime: string): boolean {
-  if (mime.startsWith("text/")) return true;
-  if (mime === "application/json") return true;
-  if (mime === "application/xml") return true;
-  if (mime.endsWith("+json")) return true;
-  if (mime.endsWith("+xml")) return true;
-  return false;
+  const base = mime.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (base.startsWith("text/")) return true;
+  if (base.endsWith("+json")) return true;
+  if (base.endsWith("+xml")) return true;
+  if (base.endsWith("+yaml")) return true;
+  return TEXT_APPLICATION_MIMES.has(base);
 }
 
 /**
@@ -50,30 +73,31 @@ function isTextMime(mime: string): boolean {
  * Falls back to `~/.genie/kits/<kitId>/`.
  */
 export function resolveKitRoot(kitId: string): string {
-  const home = process.env.GENIE_HOME ?? join(process.env.HOME ?? "", ".genie");
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const home = process.env.GENIE_HOME ?? join(homeDir, ".genie");
   return resolve(home, "kits", kitId);
 }
 
 /**
  * Validate that a resolved path stays within the kit root (prevents traversal).
  * Returns the fully-resolved target path or throws.
+ *
+ * Uses `path.relative`/`path.isAbsolute` rather than string checks against a
+ * hard-coded "/" so traversal protection is correct across platforms (POSIX
+ * and Windows) and for any separator style.
  */
 export function safePath(kitRoot: string, relativePath: string): string {
-  const normalised = normalize(relativePath);
-
-  // Reject any path that contains `..` segments after normalisation
-  if (normalised.startsWith("..") || normalised.includes("/../") || normalised.endsWith("/..")) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
-      `InvalidPathError: path traversal is not allowed`,
-    );
-  }
-
-  const target = resolve(kitRoot, normalised);
   const root = resolve(kitRoot);
+  const target = resolve(root, relativePath);
 
-  // After resolution, target must be inside or equal to root
-  if (!target.startsWith(root + "/") && target !== root) {
+  // `rel` is how you get from root → target. If it escapes the root it either
+  // starts with a `..` segment or is an absolute path (e.g. a different drive
+  // on Windows). An empty `rel` means target === root, which is allowed.
+  const rel = relative(root, target);
+  const escapes =
+    rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+
+  if (escapes) {
     throw new McpError(
       ErrorCode.InvalidParams,
       `InvalidPathError: path traversal is not allowed`,
@@ -157,14 +181,18 @@ export function registerReadFile(server: McpServer): void {
         ? raw.toString("base64")
         : raw.toString("utf-8");
 
-      // AC3 — structured response
+      // AC3 — structured response. Provide `structuredContent` so MCP clients
+      // can consume `{ content, encoding, mimeType }` directly without parsing,
+      // while keeping a JSON text part for backward compatibility.
+      const payload = { content, encoding, mimeType };
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify({ content, encoding, mimeType }),
+            text: JSON.stringify(payload),
           },
         ],
+        structuredContent: payload,
       };
     },
   );
