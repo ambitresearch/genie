@@ -17,6 +17,13 @@ async function readProjectManifest(
 }
 
 describe("ProjectStore.createProject", () => {
+  it("listProjects returns [] when no projects exist", async () => {
+    const root = await tempProjectsRoot();
+    const store = new ProjectStore(root);
+
+    await expect(store.listProjects()).resolves.toEqual([]);
+  });
+
   it("creates a blank workspace with a workspace manifest", async () => {
     const root = await tempProjectsRoot();
     const store = new ProjectStore(root);
@@ -45,6 +52,92 @@ describe("ProjectStore.createProject", () => {
       kind: "blueprint",
       kitBindings: [],
     });
+  });
+
+  it("listProjects returns workspace and blueprint summaries sorted by kind, name, then id", async () => {
+    const root = await tempProjectsRoot();
+    const store = new ProjectStore(root);
+    const workspace = await store.createProject({
+      name: "Checkout Flow",
+      kind: "workspace",
+      kitBindings: [{ kitId: "commerce-kit", default: true }],
+    });
+    const blueprint = await store.createProject({
+      name: "Admin Starter",
+      kind: "blueprint",
+      kitBindings: [{ kitId: "base-kit" }],
+    });
+
+    await expect(store.listProjects()).resolves.toEqual([
+      {
+        id: blueprint.projectId,
+        name: "Admin Starter",
+        kind: "blueprint",
+        kitBindings: [{ kitId: "base-kit" }],
+        updatedAt: expect.any(String),
+        canEdit: true,
+      },
+      {
+        id: workspace.projectId,
+        name: "Checkout Flow",
+        kind: "workspace",
+        defaultKitId: "commerce-kit",
+        kitBindings: [{ kitId: "commerce-kit", default: true }],
+        updatedAt: expect.any(String),
+        canEdit: true,
+      },
+    ]);
+  });
+
+  it("listProjects deterministically sorts by id when kind and name match", async () => {
+    const root = await tempProjectsRoot();
+    await mkdir(join(root, "same-name-b", ".genie"), { recursive: true });
+    await mkdir(join(root, "same-name-a", ".genie"), { recursive: true });
+    const now = new Date().toISOString();
+    for (const id of ["same-name-b", "same-name-a"]) {
+      await writeFile(
+        join(root, id, ".genie", "project.json"),
+        JSON.stringify(
+          {
+            id,
+            name: "Same Name",
+            kind: "workspace",
+            kitBindings: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+    }
+    const store = new ProjectStore(root);
+
+    await expect(store.listProjects()).resolves.toMatchObject([
+      { id: "same-name-a" },
+      { id: "same-name-b" },
+    ]);
+  });
+
+  it("listProjects skips directories without project manifests", async () => {
+    const root = await tempProjectsRoot();
+    const store = new ProjectStore(root);
+    await mkdir(join(root, "not-a-project"), { recursive: true });
+
+    await expect(store.listProjects()).resolves.toEqual([]);
+  });
+
+  it("listProjects skips malformed project manifests and returns remaining projects", async () => {
+    const root = await tempProjectsRoot();
+    const store = new ProjectStore(root);
+    await store.createProject({ name: "Valid Workspace", kind: "workspace" });
+    await mkdir(join(root, "broken-project", ".genie"), { recursive: true });
+    await writeFile(join(root, "broken-project", ".genie", "project.json"), "{broken", "utf8");
+
+    await expect(store.listProjects()).resolves.toMatchObject([
+      { id: "valid-workspace", name: "Valid Workspace" },
+    ]);
   });
 
   it("creates a workspace from a blueprint by copying files and kit bindings", async () => {

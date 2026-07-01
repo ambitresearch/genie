@@ -30,6 +30,7 @@ const projectManifestSchema = z
     id: z.string().regex(PROJECT_ID_PATTERN),
     name: z.string(),
     kind: projectKindSchema,
+    defaultKitId: z.string().optional(),
     kitBindings: z.array(kitBindingSchema),
     createdAt: z.string(),
     updatedAt: z.string(),
@@ -41,6 +42,16 @@ export type ProjectKind = z.infer<typeof projectKindSchema>;
 export type KitBinding = z.infer<typeof kitBindingSchema>;
 export type CreateProjectArgs = z.infer<typeof createProjectArgsSchema>;
 export type ProjectManifest = z.infer<typeof projectManifestSchema>;
+
+export interface ProjectSummary extends Record<string, unknown> {
+  id: string;
+  name: string;
+  kind: ProjectKind;
+  defaultKitId?: string;
+  kitBindings: KitBinding[];
+  updatedAt: string;
+  canEdit: boolean;
+}
 
 export interface CreateProjectResult extends Record<string, unknown> {
   projectId: string;
@@ -118,11 +129,14 @@ export class ProjectStore {
     }
 
     const now = new Date().toISOString();
+    const kitBindings = parsed.kitBindings ?? sourceBlueprint?.kitBindings ?? [];
+    const manifestDefaultKitId = defaultKitId(kitBindings);
     const manifest: ProjectManifest = {
       id: projectId,
       name: parsed.name,
       kind: parsed.kind,
-      kitBindings: parsed.kitBindings ?? sourceBlueprint?.kitBindings ?? [],
+      ...(manifestDefaultKitId ? { defaultKitId: manifestDefaultKitId } : {}),
+      kitBindings,
       createdAt: now,
       updatedAt: now,
       ...(sourceBlueprint ? { sourceBlueprintId: sourceBlueprint.id } : {}),
@@ -130,6 +144,20 @@ export class ProjectStore {
     await this.writeManifest(projectId, manifest);
 
     return { projectId };
+  }
+
+  async listProjects(): Promise<ProjectSummary[]> {
+    await mkdir(this.root, { recursive: true });
+    const entries = await readdir(this.root, { withFileTypes: true });
+    const projects: ProjectSummary[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (!PROJECT_ID_PATTERN.test(entry.name)) continue;
+      const manifest = await this.readListManifest(entry.name);
+      if (!manifest) continue;
+      projects.push(projectSummary(manifest));
+    }
+    return projects.sort(compareProjectSummaries);
   }
 
   private projectRoot(projectId: string): string {
@@ -168,6 +196,21 @@ export class ProjectStore {
       );
     }
     return manifest;
+  }
+
+  private async readListManifest(projectId: string): Promise<ProjectManifest | undefined> {
+    try {
+      return await this.readManifest(projectId);
+    } catch (error) {
+      if (
+        error instanceof SyntaxError ||
+        error instanceof z.ZodError ||
+        error instanceof ProjectStoreError
+      ) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   private async findExistingProject(
@@ -248,4 +291,31 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 64)
     .replace(/-+$/g, "");
+}
+
+function projectSummary(manifest: ProjectManifest): ProjectSummary {
+  const defaultId = manifest.defaultKitId ?? defaultKitId(manifest.kitBindings);
+  return {
+    id: manifest.id,
+    name: manifest.name,
+    kind: manifest.kind,
+    ...(defaultId ? { defaultKitId: defaultId } : {}),
+    kitBindings: manifest.kitBindings,
+    updatedAt: manifest.updatedAt,
+    canEdit: true,
+  };
+}
+
+function defaultKitId(kitBindings: KitBinding[]): string | undefined {
+  return kitBindings.find((binding) => binding.default)?.kitId;
+}
+
+function compareProjectSummaries(a: ProjectSummary, b: ProjectSummary): number {
+  return compareText(a.kind, b.kind) || compareText(a.name, b.name) || compareText(a.id, b.id);
+}
+
+function compareText(a: string, b: string): number {
+  const aNorm = a.normalize("NFC").toLowerCase();
+  const bNorm = b.normalize("NFC").toLowerCase();
+  return aNorm < bNorm ? -1 : aNorm > bNorm ? 1 : a < b ? -1 : a > b ? 1 : 0;
 }
