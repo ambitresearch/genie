@@ -23,6 +23,8 @@ import type {
 } from "./interface.js";
 import {
   FileTooLargeError,
+  KitAlreadyExistsError,
+  KIT_TYPE,
   MAX_FILE_BYTES,
   NotFoundError,
 } from "./interface.js";
@@ -89,6 +91,7 @@ async function readMeta<T>(filePath: string): Promise<T | undefined> {
 interface KitMetaFile {
   id: string;
   name: string;
+  type: string;
   createdAt: string;
 }
 
@@ -133,7 +136,12 @@ export class LocalFsKitStore implements KitStore {
         this.kitMetaPath(entry.name),
       );
       if (meta) {
-        kits.push({ id: meta.id, name: meta.name, createdAt: meta.createdAt });
+        kits.push({
+          id: meta.id,
+          name: meta.name,
+          type: KIT_TYPE,
+          createdAt: meta.createdAt,
+        });
       }
     }
     return kits;
@@ -142,7 +150,12 @@ export class LocalFsKitStore implements KitStore {
   async getKit(kitId: KitId): Promise<KitMeta> {
     const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId));
     if (!meta) throw new NotFoundError("Kit", kitId);
-    return { id: meta.id, name: meta.name, createdAt: meta.createdAt };
+    return {
+      id: meta.id,
+      name: meta.name,
+      type: KIT_TYPE,
+      createdAt: meta.createdAt,
+    };
   }
 
   async listFiles(kitId: KitId): Promise<string[]> {
@@ -180,17 +193,45 @@ export class LocalFsKitStore implements KitStore {
     return readFile(filePath, "utf-8");
   }
 
-  async createKit(name: string): Promise<KitMeta> {
-    const id = randomUUID();
+  async createKit(name: string, kitId?: string): Promise<KitMeta> {
+    const id = kitId ?? randomUUID();
     const dir = this.kitDir(id);
+
+    // Defensive check: fail fast if kit directory already exists
+    try {
+      await stat(dir);
+      throw new KitAlreadyExistsError(id);
+    } catch (err: unknown) {
+      if (err instanceof KitAlreadyExistsError) throw err;
+      // Directory doesn't exist — proceed with creation
+    }
+
     await ensureDir(dir);
     const meta: KitMetaFile = {
       id,
       name,
+      type: KIT_TYPE,
       createdAt: new Date().toISOString(),
     };
-    await writeFile(this.kitMetaPath(id), JSON.stringify(meta, null, 2));
-    return { id: meta.id, name: meta.name, createdAt: meta.createdAt };
+
+    // Atomic write with exclusive flag to catch races
+    try {
+      await writeFile(this.kitMetaPath(id), JSON.stringify(meta, null, 2), {
+        flag: "wx",
+      });
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new KitAlreadyExistsError(id);
+      }
+      throw err;
+    }
+
+    return {
+      id: meta.id,
+      name: meta.name,
+      type: KIT_TYPE,
+      createdAt: meta.createdAt,
+    };
   }
 
   async openPlan(kitId: KitId, ops: FileOp[]): Promise<PlanId> {
