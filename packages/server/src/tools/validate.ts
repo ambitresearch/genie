@@ -90,7 +90,12 @@ export async function persistReport(
 ): Promise<string> {
   await mkdir(reportsDir, { recursive: true });
   const timestamp = new Date().toISOString();
-  const reportPath = join(reportsDir, `${timestamp}.json`);
+  // Sanitize for Windows-safe filenames (`:` is forbidden) and append a
+  // random hex suffix so concurrent calls within the same millisecond never
+  // collide or overwrite each other.
+  const safeTimestamp = timestamp.replace(/:/g, "-");
+  const suffix = Math.random().toString(16).slice(2, 8);
+  const reportPath = join(reportsDir, `${safeTimestamp}-${suffix}.json`);
   const report = {
     timestamp,
     kitId,
