@@ -1,5 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { lookup } from "mime-types";
 import { z } from "zod";
 import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
@@ -68,14 +68,15 @@ function isTextMime(mime: string): boolean {
 }
 
 /**
- * Resolve the kit root directory. In the current local-FS model, kits live
- * under `$GENIE_HOME/kits/<kitId>/` (matching the M1-01 `LocalFsStore` spec).
- * Falls back to `~/.genie/kits/<kitId>/`.
+ * Resolve the on-disk directory for a single kit, given the server's configured
+ * kits root. This is the SAME root the rest of the server's kit tools use
+ * (`create_kit` via `LocalFsKitStore`), so `read_file` reads from exactly the
+ * directory those verbs write to. The root is threaded in from `createServer`
+ * (`options.kitsRoot ?? GENIE_KITS_ROOT ?? <cwd>/.genie/kits`) rather than
+ * re-derived here, to avoid the two paths drifting apart.
  */
-export function resolveKitRoot(kitId: string): string {
-  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "";
-  const home = process.env.GENIE_HOME ?? join(homeDir, ".genie");
-  return resolve(home, "kits", kitId);
+export function resolveKitRoot(kitsRoot: string, kitId: string): string {
+  return resolve(kitsRoot, kitId);
 }
 
 /**
@@ -108,9 +109,14 @@ export function safePath(kitRoot: string, relativePath: string): string {
 }
 
 /**
- * Register the `read_file` tool on the given MCP server.
+ * Register the `mcp__genie__read_file` tool on the given MCP server.
  *
- * AC1: Tool name `read_file` (exposed as `mcp__genie__read_file` by the MCP namespace).
+ * @param server   The MCP server to register the tool on.
+ * @param kitsRoot The directory kits live under — the SAME value `createServer`
+ *                 hands to `LocalFsKitStore`, so `read_file` and `create_kit`
+ *                 operate on one shared kit directory.
+ *
+ * AC1: Tool name `mcp__genie__read_file`.
  * AC2: Input `{ kitId: string, path: string }`.
  * AC3: Returns `{ content, encoding, mimeType }`.
  * AC4: Files > 256 KiB → MCP error -32603.
@@ -118,9 +124,9 @@ export function safePath(kitRoot: string, relativePath: string): string {
  * AC6: Path traversal → InvalidPathError (InvalidParams -32602).
  * AC7: Unknown path → MCP error -32602.
  */
-export function registerReadFile(server: McpServer): void {
+export function registerReadFile(server: McpServer, kitsRoot: string): void {
   server.registerTool(
-    "read_file",
+    "mcp__genie__read_file",
     {
       title: "Read File",
       description:
@@ -140,7 +146,7 @@ export function registerReadFile(server: McpServer): void {
         );
       }
 
-      const kitRoot = resolveKitRoot(kitId);
+      const kitRoot = resolveKitRoot(kitsRoot, kitId);
 
       // AC6 — path traversal check
       const target = safePath(kitRoot, relPath);

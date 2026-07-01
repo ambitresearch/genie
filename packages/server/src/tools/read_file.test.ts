@@ -30,7 +30,7 @@ async function callRaw(
   path: string,
 ): Promise<ToolResult> {
   return (await client.callTool({
-    name: "read_file",
+    name: "mcp__genie__read_file",
     arguments: { kitId, path },
   })) as ToolResult;
 }
@@ -71,17 +71,20 @@ async function callReadFile(
 }
 
 describe("read_file tool", () => {
-  let genieHome: string;
+  let tmpRoot: string;
+  let kitsRoot: string;
   let kitRoot: string;
   let client: Client;
   const kitId = "test-kit";
 
   beforeAll(async () => {
-    // Set up a temporary GENIE_HOME with a kit directory
-    genieHome = await mkdtemp(join(tmpdir(), "genie-test-"));
-    process.env.GENIE_HOME = genieHome;
+    // Set up a temporary kits root and point the server at it explicitly, so
+    // the test exercises the SAME root `read_file` and `create_kit` share
+    // (rather than relying on process-wide GENIE_HOME defaults).
+    tmpRoot = await mkdtemp(join(tmpdir(), "genie-test-"));
+    kitsRoot = join(tmpRoot, "kits");
 
-    kitRoot = join(genieHome, "kits", kitId);
+    kitRoot = join(kitsRoot, kitId);
     await mkdir(kitRoot, { recursive: true });
 
     // Create test fixtures
@@ -120,8 +123,10 @@ describe("read_file tool", () => {
     ]);
     await writeFile(join(kitRoot, "icon.png"), pngHeader);
 
-    // Connect server + client over in-memory transport
-    const server = createServer();
+    // Connect server + client over in-memory transport. The server is
+    // configured with the same kitsRoot the fixtures were written under, so
+    // read_file resolves to the directory create_kit would have written to.
+    const server = createServer({ kitsRoot });
     client = new Client({ name: "test", version: "0" });
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverT), client.connect(clientT)]);
@@ -129,14 +134,13 @@ describe("read_file tool", () => {
 
   afterAll(async () => {
     await client.close();
-    delete process.env.GENIE_HOME;
-    await rm(genieHome, { recursive: true, force: true });
+    await rm(tmpRoot, { recursive: true, force: true });
   });
 
   // ── AC1: tool name ──
-  it("registers as 'read_file' in tools/list", async () => {
+  it("registers as 'mcp__genie__read_file' in tools/list", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toContain("read_file");
+    expect(tools.map((t) => t.name)).toContain("mcp__genie__read_file");
   });
 
   // ── AC2 + AC3: small text file ──

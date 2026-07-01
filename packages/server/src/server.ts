@@ -72,17 +72,18 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     ),
   );
 
-  registerCreateKit(
-    server,
-    new LocalFsKitStore(
-      options.kitsRoot ??
-        process.env.GENIE_KITS_ROOT ??
-        join(process.cwd(), ".genie", "kits"),
-    ),
-  );
+  // Resolve the kits root ONCE so every kit verb agrees on where kits live.
+  // `create_kit` (via LocalFsKitStore) writes here and `read_file` reads here —
+  // threading the same value into both is what keeps them consistent.
+  const kitsRoot =
+    options.kitsRoot ??
+    process.env.GENIE_KITS_ROOT ??
+    join(process.cwd(), ".genie", "kits");
+
+  registerCreateKit(server, new LocalFsKitStore(kitsRoot));
 
   // M1 tools
-  registerReadFile(server);
+  registerReadFile(server, kitsRoot);
 
   return server;
 }
