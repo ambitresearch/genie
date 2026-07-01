@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { PROJECT_ID_PATTERN } from "./create_project.js";
 import type { ProjectSummary } from "./create_project.js";
 
 export const LIST_PROJECTS_TOOL_NAME = "mcp__genie__list_projects";
@@ -35,14 +36,14 @@ export class ProjectBackendUnreachableError extends Error {
 }
 
 const projectSummarySchema = {
-  id: z.string(),
+  id: z.string().regex(PROJECT_ID_PATTERN),
   name: z.string(),
   kind: z.enum(["workspace", "blueprint"]),
   defaultKitId: z.string().optional(),
   kitBindings: z.array(
     z
       .object({
-        kitId: z.string(),
+        kitId: z.string().min(1),
         default: z.boolean().optional(),
       })
       .strict(),

@@ -16,7 +16,7 @@ async function readProjectManifest(
   return JSON.parse(raw) as Record<string, unknown>;
 }
 
-describe("ProjectStore.createProject", () => {
+describe("ProjectStore", () => {
   it("listProjects returns [] when no projects exist", async () => {
     const root = await tempProjectsRoot();
     const store = new ProjectStore(root);
