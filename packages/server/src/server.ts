@@ -11,6 +11,7 @@ import { registerValidate } from "./tools/validate.js";
 import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
 import { registerListKits } from "./tools/list_kits.js";
 import { registerListComponents } from "./tools/list_components.js";
+import { registerPlan } from "./tools/plan.js";
 import { LocalFsKitStore } from "./store/local.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
 
@@ -111,6 +112,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       process.env.GENIE_REPORTS_DIR ??
       join(process.cwd(), ".genie", "reports"),
   );
+
+  registerPlan(server);
 
   return server;
 }
