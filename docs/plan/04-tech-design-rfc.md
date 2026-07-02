@@ -1442,12 +1442,20 @@ The server validates the LLM endpoint response against this schema after parsing
 
 ### 7.6 Plan / planId lifecycle
 
-- `planId` is a v4 UUID generated server-side at `plan` time.
-- TTL is 15 minutes by default; configurable up to 24h via `GENIE_PLAN_TTL_MIN` env var.
-- Plans are persisted to:
-  - **v1: in-process Map**, lost on restart. Acceptable for solo + single-host shared.
-  - **v2 (planned, not in this RFC's scope to build): Redis** for multi-host, keyed by `plan:<planId>`, expiration via `EXPIREAT`.
-- Each plan stores `{ kitId, writes[], deletes[], localDir?, createdAt, expiresAt, writeCount, deleteCount }`.
+- `planId` is a v4 UUID generated server-side at `plan` time (`node:crypto` `randomUUID()`).
+- TTL is **1 hour** by default; configurable via the `GENIE_PLAN_TTL` env var (milliseconds).
+  Supersedes this section's earlier `GENIE_PLAN_TTL_MIN` (minutes) name — shipped as
+  implemented in M1-07.
+- Plans are persisted to `${GENIE_HOME}/plans/<planId>.json` (`GENIE_HOME` defaults to
+  `<cwd>/.genie`) on every create and every access (refreshes `lastAccessedAt`), and are
+  re-hydrated from disk on lookup if not already in the in-process `Map`. This means a plan
+  **survives a server restart** — supersedes this section's earlier "v1: in-process Map, lost
+  on restart" — the on-disk snapshot *is* the v1 durability story; a v2 shared store (Redis or
+  otherwise) remains future scope for multi-host deployments, keyed by `plan:<planId>`.
+- Each plan stores `{ planId, kitId, writes[], deletes[], localDir, createdAt, lastAccessedAt }`
+  (ISO-8601 timestamps). `expiresAt` is not stored; expiry is computed at read time from
+  `lastAccessedAt + TTL`, so the TTL window slides on every access rather than being fixed at
+  creation.
 - There are no asset-registration verbs to track — the `@genie` marker is the
   registration (D-A); `register_assets` / `unregister_assets` are dropped.
 
@@ -1780,6 +1788,19 @@ plain `kits` array on its own for callers that only parse `content`.
 
 ### 9.6 `mcp__genie__plan`
 
+The single user-visible permission grant (§7.6). Locks `writes`, `deletes`, and
+`localDir` for a kit and returns a `planId` that `write_files` / `delete_files` /
+`register_assets` (M1-08/09/12) must present.
+
+Schema-level enforcement deliberately stops at `type`/`required` for `writes` —
+it does **not** declare a `maxItems` cap. The MCP SDK rejects schema violations
+at the protocol layer with a generic, non-JSON error string, which would bypass
+the structured `TooManyWritesError` payload (`{error, message, count, max}`) and
+its `plan.created`-shaped audit trail. The 256-write and ≤3-wildcard-per-glob
+limits are enforced by the handler itself (`createPlan()` / `validateGlobPatterns()`
+in `packages/server/src/plans/index.ts`), which is what produces the structured,
+audited error responses below.
+
 ```json
 {
   "input": {
@@ -1787,35 +1808,42 @@ plain `kits` array on its own for callers that only parse `content`.
     "additionalProperties": false,
     "required": ["kitId", "writes"],
     "properties": {
-      "kitId": { "type": "string" },
+      "kitId": { "type": "string", "minLength": 1 },
       "writes": {
         "type": "array",
-        "minItems": 1,
-        "maxItems": 256,
-        "items": { "type": "string", "maxLength": 512, "description": "Glob pattern, ≤3 wildcards" }
+        "items": { "type": "string", "description": "Glob pattern, ≤3 wildcards (enforced at runtime, not by this schema — see above)" }
       },
       "deletes": {
         "type": "array",
-        "maxItems": 256,
-        "items": { "type": "string", "maxLength": 512 },
+        "items": { "type": "string" },
         "default": []
       },
-      "localDir": { "type": "string", "maxLength": 1024 }
+      "localDir": { "type": "string", "description": "Defaults to process.cwd() when omitted" }
     }
   },
   "output": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["planId", "expiresAt", "writes", "deletes"],
+    "required": ["planId"],
     "properties": {
-      "planId": { "type": "string", "format": "uuid" },
-      "expiresAt": { "type": "string", "format": "date-time" },
-      "writes": { "type": "array", "items": { "type": "string" } },
-      "deletes": { "type": "array", "items": { "type": "string" } }
+      "planId": { "type": "string", "format": "uuid" }
     }
   }
 }
 ```
+
+Error responses (`isError: true`, `content[0].text` is JSON):
+
+| `error` | Cause |
+| --- | --- |
+| `InvalidLocalDir` | `localDir` (explicit or defaulted to `cwd()`) does not exist. |
+| `TooManyWritesError` | `writes.length > 256`. Payload includes `count`, `max`. |
+| `TooComplexGlobError` | A `writes`/`deletes` pattern has >3 `*`/`**` wildcards. Payload includes `pattern`, `wildcardCount`, `max`. |
+
+On success, a `plan.created` line (`{event, kitId, planId, writeCount, deleteCount, timestamp}`,
+no path contents — AC10) is written to **stderr**, never stdout: on the stdio transport (the
+default when a harness pipes JSON-RPC), stdout carries the JSON-RPC protocol stream itself, and
+a stray stdout log line would corrupt every client's message framing.
 
 ### 9.7 `mcp__genie__write_files`
 
