@@ -21,12 +21,32 @@ const NAME_PATTERN = /^(?=.*[A-Za-z0-9])[A-Za-z0-9 _-]+$/;
 const NAME_MAX_LENGTH = 64;
 
 /**
+ * Every `kitId` this module generates must satisfy `KIT_ID_PATTERN`
+ * (`get_kit.ts`): `[a-z0-9-]{3,64}` overall. A generated id is always
+ * `<slug>-<6-char-hex>`, so the slug itself must leave room for the
+ * hyphen + suffix: 64 - 1 - 6 = 57.
+ */
+const SLUG_MAX_LENGTH = 57;
+
+/**
  * Derive a URL-safe slug from a human-readable name.
  * Lowercases, replaces spaces/underscores with hyphens, collapses
  * runs of hyphens, and trims leading/trailing hyphens.
+ *
+ * Truncates to `SLUG_MAX_LENGTH` (re-trimming a trailing hyphen the cut
+ * may expose) so `buildKitId`'s output always fits the 64-char id budget
+ * that `KIT_ID_PATTERN` enforces — names up to `NAME_MAX_LENGTH` (64 chars)
+ * would otherwise slugify to more than that once the `-<6-char-hex>`
+ * suffix is appended, producing a kitId `get_kit`/`bind_kit` reject.
  */
 export function slugify(name: string): string {
-  return name.toLowerCase().replace(/[_ ]+/g, "-").replace(/-{2,}/g, "-").replace(/^-|-$/g, "");
+  return name
+    .toLowerCase()
+    .replace(/[_ ]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, SLUG_MAX_LENGTH)
+    .replace(/-$/, "");
 }
 
 /** Generate a 6-character hex suffix for deduplication. */
@@ -37,7 +57,9 @@ export function randomSuffix(): string {
 /**
  * Build a kitId from a display name: `<slug>-<6-char-hex>`.
  *
- * Exported for testability; the random part can be injected.
+ * Exported for testability; the random part can be injected. The slug is
+ * always truncated (see `slugify`) so the result satisfies `KIT_ID_PATTERN`
+ * regardless of how long `name` is, up to `NAME_MAX_LENGTH`.
  */
 export function buildKitId(name: string, suffix?: string): string {
   const slug = slugify(name);
