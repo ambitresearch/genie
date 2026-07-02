@@ -6,6 +6,7 @@ import { registerDeleteProjectTool } from "./tools/delete_project.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
 import { registerValidate } from "./tools/validate.js";
+import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
 import { LocalFsKitStore } from "./store/local.js";
 
 /** Server identity. Bumped independently of the workspace version. */
@@ -38,7 +39,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO, {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. (Scaffold build — project creation and the built-in ping tool are registered so far.)",
+      "harness. (Scaffold build — the registered tools are ping, kit creation, " +
+      "file listing, file reading, validation, and project create/list/delete.)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -68,22 +70,23 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     options.projectsRoot ??
     process.env.GENIE_PROJECTS_ROOT ??
     join(process.cwd(), ".genie", "projects");
+  // Resolve the kits root ONCE so every kit verb agrees on where kits live.
+  // `create_kit` (via LocalFsKitStore) writes here, `read_file` reads here, and
+  // `list_files` (via KitFileStore) walks here — threading the same value into
+  // all of them is what keeps them consistent.
+  const kitsRoot =
+    options.kitsRoot ?? process.env.GENIE_KITS_ROOT ?? join(process.cwd(), ".genie", "kits");
 
   const projectStore = new ProjectStore(projectsRoot);
   registerCreateProjectTool(server, projectStore);
   registerListProjectsTool(server, projectStore);
   registerDeleteProjectTool(server, projectsRoot);
 
-  // Resolve the kits root ONCE so every kit verb agrees on where kits live.
-  // `create_kit` (via LocalFsKitStore) writes here and `read_file` reads here —
-  // threading the same value into both is what keeps them consistent.
-  const kitsRoot =
-    options.kitsRoot ?? process.env.GENIE_KITS_ROOT ?? join(process.cwd(), ".genie", "kits");
-
   registerCreateKit(server, new LocalFsKitStore(kitsRoot));
 
   // M1 tools
   registerReadFile(server, kitsRoot);
+  registerListFilesTool(server, new KitFileStore(kitsRoot));
 
   // Advisory telemetry facet (M1-12): persists validation counts + emits
   // Prometheus metrics. No planId required (read-side telemetry).

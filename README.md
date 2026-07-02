@@ -10,8 +10,8 @@
 
 </div>
 
-> **Status: scaffold (M0).** The server boots and speaks MCP, with a built-in
-> `ping` tool. The real surfaces — file-flow tools, generation, validator,
+> **Status: scaffold (M1 in progress).** The server boots and speaks MCP, with a built-in
+> `ping` tool plus early M1 tools including `mcp__genie__list_files`. The remaining surfaces — generation, validator,
 > preview viewer — land in M1–M4. See [`docs/plan/`](./docs/plan) for the roadmap.
 
 ---
@@ -28,7 +28,7 @@ self-hostable, model-agnostic via any OpenAI-compatible endpoint; LiteLLM works 
 the reference gateway.
 
 It's a solo, AI-assisted experiment to find out whether MCP-Apps — rich UI rendered
-*inside* a coding harness — are genuinely useful. See [`docs/plan/02-brd.md`](./docs/plan/02-brd.md).
+_inside_ a coding harness — are genuinely useful. See [`docs/plan/02-brd.md`](./docs/plan/02-brd.md).
 
 ## Quickstart
 
@@ -53,12 +53,18 @@ printf '%s\n' \
 # → "pong — genie 0.0.0"
 ```
 
+`mcp__genie__list_files` reads UI kit roots from `GENIE_KITS_ROOT` or
+`.genie/kits` under the current working directory. It returns
+`{ path, size, hash, lastModified }[]` with forward-slash relative paths and
+SHA-256 SRI hashes, includes dot-prefixed files, and excludes `node_modules`,
+`.git`, `dist`, plus patterns in `.genieignore`.
+
 ### Transports
 
-| Flag | Use |
-|---|---|
-| `--transport stdio` | Local harness (Claude Desktop, Claude Code) — the default when piped |
-| `--transport http --port 3000` | Remote / multi-client; `POST /mcp`, `GET /health` |
+| Flag                           | Use                                                                  |
+| ------------------------------ | -------------------------------------------------------------------- |
+| `--transport stdio`            | Local harness (Claude Desktop, Claude Code) — the default when piped |
+| `--transport http --port 3000` | Remote / multi-client; `POST /mcp`, `GET /health`                    |
 
 Auto-detects: a TTY on stdin → HTTP, piped JSON-RPC → stdio. Override with
 `--transport` or `MCP_TRANSPORT`.
