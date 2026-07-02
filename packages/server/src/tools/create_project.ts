@@ -212,8 +212,24 @@ export class ProjectStore {
    * no special-case tool family; AC4). Throws `ProjectStoreError("ERR_PROJECT_NOT_FOUND")`
    * with the id echoed (AC5) for a missing, unreadable, or malformed manifest — the same
    * leniency `readListManifest` already applies when enumerating projects.
+   *
+   * Validates `projectId` against `PROJECT_ID_PATTERN` before any filesystem access —
+   * matching `createProject`/`listProjects`, which only ever touch paths built from
+   * slug-shaped ids. `get_project`'s MCP tool layer already rejects non-slug ids via
+   * its own regex-typed input schema, but `ProjectStore` is a public export and
+   * `getProject` a public method: a direct/programmatic caller (bypassing the MCP
+   * schema) could otherwise pass something like `"../secret"` and probe paths outside
+   * the projects root. Rejecting here, before `readListManifest`/`join()`, closes that
+   * gap without changing the external contract (still `ERR_PROJECT_NOT_FOUND`).
    */
   async getProject(projectId: string): Promise<ProjectDetail> {
+    if (!PROJECT_ID_PATTERN.test(projectId)) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_NOT_FOUND",
+        `Project "${projectId}" was not found.`,
+        { projectId },
+      );
+    }
     const manifest = await this.readListManifest(projectId);
     if (!manifest) {
       throw new ProjectStoreError(

@@ -302,6 +302,40 @@ describe("ProjectStore", () => {
       });
     });
 
+    it("rejects a path-traversal-shaped id before touching the filesystem (defense-in-depth for direct callers)", async () => {
+      // ProjectStore is a public export and getProject a public method — a caller
+      // that bypasses the MCP tool's regex-typed input schema (e.g. a future tool
+      // calling the store directly) must not be able to probe paths outside the
+      // projects root by passing a projectId like "../secret". Craft a manifest
+      // whose own `id` field matches the traversal string exactly, so the
+      // separate "manifest.id !== projectId" guard can't be the thing blocking it —
+      // this isolates the PROJECT_ID_PATTERN check as the actual defense.
+      const parent = await tempProjectsRoot();
+      const root = join(parent, "projects");
+      await mkdir(root, { recursive: true });
+      const traversalId = "../secret-outside-root";
+      const secretDir = join(parent, "secret-outside-root");
+      await mkdir(join(secretDir, ".genie"), { recursive: true });
+      await writeFile(
+        join(secretDir, ".genie", "project.json"),
+        JSON.stringify({
+          id: traversalId,
+          name: "Secret Outside Root",
+          kind: "workspace",
+          kitBindings: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }),
+        "utf8",
+      );
+      const store = new ProjectStore(root);
+
+      await expect(store.getProject(traversalId)).rejects.toMatchObject({
+        code: "ERR_PROJECT_NOT_FOUND",
+        projectId: traversalId,
+      });
+    });
+
     it("raises ERR_PROJECT_NOT_FOUND for a directory with a malformed manifest", async () => {
       const root = await tempProjectsRoot();
       const store = new ProjectStore(root);
