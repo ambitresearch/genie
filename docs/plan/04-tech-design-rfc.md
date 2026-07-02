@@ -1792,8 +1792,9 @@ plain `kits` array on its own for callers that only parse `content`.
 ### 9.6 `mcp__genie__plan`
 
 The single user-visible permission grant (§7.6). Locks `writes`, `deletes`, and
-`localDir` for a kit and returns a `planId` that `write_files` / `delete_files` /
-`register_assets` (M1-08/09/12) must present.
+`localDir` for a kit and returns a `planId` that `write_files` / `delete_files`
+(M1-08/09) must present. (There are no asset-registration verbs — `register_assets` /
+`unregister_assets` are dropped per §7.6 / D-A; the `@genie` marker _is_ the registration.)
 
 Schema-level enforcement deliberately stops at `type`/`required` for `writes` —
 it does **not** declare a `maxItems` cap. The MCP SDK rejects schema violations

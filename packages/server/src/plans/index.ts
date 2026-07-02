@@ -25,6 +25,19 @@ export const DEFAULT_PLAN_TTL = 60 * 60 * 1000;
 /** Environment variable to override plan TTL. */
 export const PLAN_TTL_ENV = "GENIE_PLAN_TTL";
 
+/**
+ * Plan IDs are always UUIDs (see `createPlan` → `randomUUID`). Validating the
+ * shape up front lets `getPlan` reject a malformed/hostile `planId` — e.g. a
+ * path-traversal value like `"../../x"` — before it is ever interpolated into a
+ * `${GENIE_HOME}/plans/<planId>.json` disk path.
+ */
+const PLAN_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** True if `planId` has the UUID shape every real plan uses. */
+export function isValidPlanId(planId: string): boolean {
+  return PLAN_ID_PATTERN.test(planId);
+}
+
 /** Plan state persisted to disk. */
 export interface PlanState {
   planId: string;
@@ -185,6 +198,13 @@ export async function createPlan(
 
 /** Retrieve a plan by ID, checking expiry. */
 export async function getPlan(planId: string): Promise<PlanState> {
+  // Reject a malformed/hostile planId before it ever touches a disk path.
+  // Every real plan id is a UUID; anything else (e.g. a "../../x" traversal
+  // value) cannot correspond to a plan we created, so treat it as not-found.
+  if (!isValidPlanId(planId)) {
+    throw new PlanNotFoundError(planId);
+  }
+
   // Check in-memory registry first
   let state: PlanState | null | undefined = planRegistry.get(planId);
 
@@ -192,6 +212,14 @@ export async function getPlan(planId: string): Promise<PlanState> {
   if (!state) {
     state = await loadPlanFromDisk(planId);
     if (state) {
+      // Defense in depth: the on-disk JSON is untrusted (a tampered snapshot
+      // could carry a `planId` that differs from the file it was read from,
+      // e.g. a traversal value that `savePlanToDisk` would later write outside
+      // the plans dir). Only trust a snapshot whose embedded id matches the id
+      // we looked up.
+      if (state.planId !== planId) {
+        throw new PlanNotFoundError(planId);
+      }
       planRegistry.set(planId, state);
     }
   }
@@ -227,10 +255,15 @@ export function pathMatchesGlobs(path: string, globs: string[]): boolean {
  * Uses `path.relative`/`path.isAbsolute` rather than a string check against a
  * hard-coded "/" separator, so containment is correct across platforms (POSIX
  * and Windows) — mirrors `safePath` in `store/local.ts` and `read_file.ts`.
+ *
+ * A relative `path` is resolved against `localDir` (the RFC's base for
+ * resolving `localPath` in `write_files`), NOT against `process.cwd()` — so
+ * containment stays correct even when the server's cwd differs from localDir.
+ * An absolute `path` is checked as-is.
  */
 export function isPathInsideLocalDir(path: string, localDir: string): boolean {
-  const resolvedPath = resolve(path);
   const resolvedLocalDir = resolve(localDir);
+  const resolvedPath = resolve(resolvedLocalDir, path);
 
   // Identical paths are trivially "inside".
   if (resolvedPath === resolvedLocalDir) {

@@ -2,8 +2,8 @@
  * MCP tool: plan (M1-07).
  *
  * The single user-visible permission grant that locks `writes`, `deletes`,
- * and `localDir`. Returns a `planId` that downstream write/delete/register
- * calls must present. Without a valid `planId`, those verbs are rejected.
+ * and `localDir`. Returns a `planId` that downstream write/delete calls must
+ * present. Without a valid `planId`, those verbs are rejected.
  *
  * Input:  { kitId: string, writes: string[], deletes?: string[], localDir?: string }
  * Output: { planId: string }
@@ -47,6 +47,15 @@ const inputSchema = {
     ),
 } as const;
 
+/** Output schema for plan (Zod v4 raw shape) — declared alongside the
+ * `structuredContent` return so `tools/list` advertises it, matching the
+ * repo-wide convention (see list_kits.ts, get_project.ts, bind_kit.ts). */
+const outputSchema = {
+  planId: z
+    .string()
+    .describe("The plan ID that downstream write_files/delete_files calls must present."),
+} as const;
+
 /**
  * Register the `mcp__genie__plan` tool on the given MCP server.
  */
@@ -57,9 +66,10 @@ export function registerPlan(server: McpServer): void {
       title: "Plan",
       description:
         "Lock write/delete patterns and localDir for a kit. Returns a planId " +
-        "that must be presented to write_files/delete_files/register_assets. " +
+        "that must be presented to write_files/delete_files. " +
         "Plans expire after 1h of inactivity.",
       inputSchema,
+      outputSchema,
     },
     async ({
       kitId,

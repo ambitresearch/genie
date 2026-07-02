@@ -17,6 +17,7 @@ import {
   PlanNotFoundError,
   pathMatchesGlobs,
   isPathInsideLocalDir,
+  isValidPlanId,
 } from "../plans/index.js";
 
 // ────────────────────────────────────────────────────────────
@@ -104,6 +105,17 @@ describe("isPathInsideLocalDir", () => {
     const nested = join(cwd, "nested", "dir", "file.ts");
     expect(isPathInsideLocalDir(nested, cwd)).toBe(true);
   });
+
+  it("anchors a relative path to localDir, not process.cwd()", () => {
+    // Regression guard: the original `resolve(path)` anchored relative paths to
+    // the server's cwd. A relative localPath must be resolved against localDir
+    // (the RFC's base for write_files), so this stays inside even when localDir
+    // differs from cwd — and an escaping "../" relative path is still rejected.
+    const localDir = "/home/user/project";
+    expect(isPathInsideLocalDir("src/index.ts", localDir)).toBe(true);
+    expect(isPathInsideLocalDir("./nested/a.ts", localDir)).toBe(true);
+    expect(isPathInsideLocalDir("../evil.ts", localDir)).toBe(false);
+  });
 });
 
 // ────────────────────────────────────────────────────────────
@@ -185,6 +197,15 @@ describe("getPlan", () => {
 
   it("throws PlanNotFoundError for non-existent plans", async () => {
     await expect(getPlan("nonexistent")).rejects.toThrow(PlanNotFoundError);
+  });
+
+  it("rejects a path-traversal planId before it touches a disk path", async () => {
+    // A hostile planId must never be interpolated into `<planId>.json`; it is
+    // rejected up front as not-found because it can't be a real (UUID) plan.
+    await expect(getPlan("../../etc/passwd")).rejects.toThrow(PlanNotFoundError);
+    await expect(getPlan("..")).rejects.toThrow(PlanNotFoundError);
+    expect(isValidPlanId("../../x")).toBe(false);
+    expect(isValidPlanId("11111111-2222-3333-4444-555555555555")).toBe(true);
   });
 
   it("updates lastAccessedAt on retrieval", async () => {
@@ -343,6 +364,18 @@ describe("plan tool (via MCP)", () => {
     // Parity with list_kits/get_kit/read_file/list_components: MCP clients can
     // consume the result without re-parsing the text part.
     expect(result.structuredContent).toEqual({ planId: response.planId });
+  });
+
+  it("advertises an outputSchema in tools/list (repo-wide convention)", async () => {
+    // Every tool returning structuredContent also declares outputSchema so
+    // clients can validate the result (see list_kits/get_project/bind_kit).
+    const { tools } = await client.listTools();
+    const tool = tools.find((t) => t.name === "mcp__genie__plan");
+    expect(tool).toBeDefined();
+    expect(tool?.outputSchema).toMatchObject({
+      type: "object",
+      required: ["planId"],
+    });
   });
 
   it("emits a plan.created audit line to stderr, not stdout (AC10)", async () => {
