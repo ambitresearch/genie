@@ -28,6 +28,9 @@ describe("listWritableKits", () => {
       async listFiles() {
         throw new Error("not used");
       },
+      async listComponents() {
+        throw new Error("not used");
+      },
       async readFile() {
         throw new Error("not used");
       },
