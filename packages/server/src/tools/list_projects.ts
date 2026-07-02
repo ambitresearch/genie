@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { PROJECT_ID_PATTERN } from "./create_project.js";
+import { projectSummaryShape } from "./create_project.js";
 import type { ProjectSummary } from "./create_project.js";
 
 export const LIST_PROJECTS_TOOL_NAME = "mcp__genie__list_projects";
@@ -35,23 +35,6 @@ export class ProjectBackendUnreachableError extends Error {
   }
 }
 
-const projectSummarySchema = {
-  id: z.string().regex(PROJECT_ID_PATTERN),
-  name: z.string(),
-  kind: z.enum(["workspace", "blueprint"]),
-  defaultKitId: z.string().optional(),
-  kitBindings: z.array(
-    z
-      .object({
-        kitId: z.string().min(1),
-        default: z.boolean().optional(),
-      })
-      .strict(),
-  ),
-  updatedAt: z.string(),
-  canEdit: z.boolean(),
-};
-
 export function registerListProjectsTool(
   server: McpServer,
   localStore: ProjectListStore,
@@ -66,7 +49,7 @@ export function registerListProjectsTool(
         "Read-only and idempotent; returns local results even if an optional git-host backend is unreachable.",
       inputSchema: listProjectsArgsSchema,
       outputSchema: {
-        projects: z.array(z.object(projectSummarySchema).strict()),
+        projects: z.array(z.object(projectSummaryShape).strict()),
       },
     },
     async (args) => {

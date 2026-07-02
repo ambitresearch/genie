@@ -25,6 +25,16 @@ const createProjectArgsSchema = z
   })
   .strict();
 
+/** A recorded screen artifact within a project (written by `conjure_screen`, M1-21). */
+const projectScreenSchema = z
+  .object({
+    id: z.string(),
+    path: z.string(),
+    title: z.string(),
+    updatedAt: z.string(),
+  })
+  .strict();
+
 const projectManifestSchema = z
   .object({
     id: z.string().regex(PROJECT_ID_PATTERN),
@@ -35,11 +45,16 @@ const projectManifestSchema = z
     createdAt: z.string(),
     updatedAt: z.string(),
     sourceBlueprintId: z.string().optional(),
+    // Optional + absent from every manifest `create_project` writes today: no M1 tool
+    // records screens yet (that lands with `conjure_screen`, M1-21). Optional keeps
+    // existing on-disk manifests parsing unchanged; `get_project` defaults this to `[]`.
+    screens: z.array(projectScreenSchema).optional(),
   })
   .strict();
 
 export type ProjectKind = z.infer<typeof projectKindSchema>;
 export type KitBinding = z.infer<typeof kitBindingSchema>;
+export type ProjectScreen = z.infer<typeof projectScreenSchema>;
 export type CreateProjectArgs = z.infer<typeof createProjectArgsSchema>;
 export type ProjectManifest = z.infer<typeof projectManifestSchema>;
 
@@ -53,6 +68,35 @@ export interface ProjectSummary extends Record<string, unknown> {
   canEdit: boolean;
 }
 
+/** Full detail returned by `get_project` — a `ProjectSummary` plus screens and provenance. */
+export interface ProjectDetail extends ProjectSummary {
+  screens: ProjectScreen[];
+  sourceBlueprintId?: string;
+}
+
+/**
+ * Shared output shape for a `ProjectSummary`, consumed by both `list_projects` and
+ * `get_project` so the two tools' schemas can't drift apart (Implementation Notes:
+ * "Share schema helpers with list_projects").
+ */
+export const projectSummaryShape = {
+  id: z.string().regex(PROJECT_ID_PATTERN),
+  name: z.string(),
+  kind: projectKindSchema,
+  defaultKitId: z.string().optional(),
+  kitBindings: z.array(kitBindingSchema),
+  updatedAt: z.string(),
+  canEdit: z.boolean(),
+};
+
+/** Shared output shape for a single recorded screen entry (see `ProjectDetail.screens`). */
+export const projectScreenShape = {
+  id: z.string(),
+  path: z.string(),
+  title: z.string(),
+  updatedAt: z.string(),
+};
+
 export interface CreateProjectResult extends Record<string, unknown> {
   projectId: string;
 }
@@ -60,21 +104,24 @@ export interface CreateProjectResult extends Record<string, unknown> {
 export type ProjectStoreErrorCode =
   | "ERR_PROJECT_EXISTS"
   | "ERR_BLUEPRINT_NOT_FOUND"
-  | "ERR_INVALID_PROJECT_NAME";
+  | "ERR_INVALID_PROJECT_NAME"
+  | "ERR_PROJECT_NOT_FOUND";
 
 export class ProjectStoreError extends Error {
   readonly code: ProjectStoreErrorCode;
   readonly suggestedSlug?: string;
+  readonly projectId?: string;
 
   constructor(
     code: ProjectStoreErrorCode,
     message: string,
-    options: { suggestedSlug?: string } = {},
+    options: { suggestedSlug?: string; projectId?: string } = {},
   ) {
     super(message);
     this.name = "ProjectStoreError";
     this.code = code;
     this.suggestedSlug = options.suggestedSlug;
+    this.projectId = options.projectId;
   }
 }
 
@@ -158,6 +205,29 @@ export class ProjectStore {
       projects.push(projectSummary(manifest));
     }
     return projects.sort(compareProjectSummaries);
+  }
+
+  /**
+   * Get full detail for a single project (workspace or blueprint — same shape,
+   * no special-case tool family; AC4). Throws `ProjectStoreError("ERR_PROJECT_NOT_FOUND")`
+   * with the id echoed (AC5) for a missing, unreadable, or malformed manifest — the same
+   * leniency `readListManifest` already applies when enumerating projects.
+   */
+  async getProject(projectId: string): Promise<ProjectDetail> {
+    const manifest = await this.readListManifest(projectId);
+    if (!manifest) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_NOT_FOUND",
+        `Project "${projectId}" was not found.`,
+        { projectId },
+      );
+    }
+    return {
+      ...projectSummary(manifest),
+      canEdit: !existsSync(join(this.projectRoot(projectId), ".genie", ".readonly")),
+      screens: manifest.screens ?? [],
+      ...(manifest.sourceBlueprintId ? { sourceBlueprintId: manifest.sourceBlueprintId } : {}),
+    };
   }
 
   private projectRoot(projectId: string): string {

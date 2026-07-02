@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { join } from "node:path";
 import { ProjectStore, registerCreateProjectTool } from "./tools/create_project.js";
 import { registerListProjectsTool } from "./tools/list_projects.js";
+import { registerGetProjectTool } from "./tools/get_project.js";
 import { registerDeleteProjectTool } from "./tools/delete_project.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
@@ -41,7 +42,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit creation, kit lookup, " +
-      "file listing, file reading, validation, and project create/list/delete.)",
+      "file listing, file reading, validation, and project create/list/get/delete.)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -81,6 +82,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   const projectStore = new ProjectStore(projectsRoot);
   registerCreateProjectTool(server, projectStore);
   registerListProjectsTool(server, projectStore);
+  registerGetProjectTool(server, projectStore);
   registerDeleteProjectTool(server, projectsRoot);
 
   registerCreateKit(server, new LocalFsKitStore(kitsRoot));

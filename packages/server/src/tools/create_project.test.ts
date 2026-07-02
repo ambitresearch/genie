@@ -222,4 +222,108 @@ describe("ProjectStore", () => {
       code: "ERR_INVALID_PROJECT_NAME",
     });
   });
+
+  describe("getProject", () => {
+    it("returns full detail for a workspace project, defaulting screens to []", async () => {
+      const root = await tempProjectsRoot();
+      const store = new ProjectStore(root);
+      const { projectId } = await store.createProject({
+        name: "Checkout Flow",
+        kind: "workspace",
+        kitBindings: [{ kitId: "commerce-kit", default: true }],
+      });
+
+      await expect(store.getProject(projectId)).resolves.toEqual({
+        id: projectId,
+        name: "Checkout Flow",
+        kind: "workspace",
+        defaultKitId: "commerce-kit",
+        kitBindings: [{ kitId: "commerce-kit", default: true }],
+        updatedAt: expect.any(String),
+        canEdit: true,
+        screens: [],
+      });
+    });
+
+    it("returns kind: \"blueprint\" through the same shape — no special-case tool family (AC4)", async () => {
+      const root = await tempProjectsRoot();
+      const store = new ProjectStore(root);
+      const { projectId } = await store.createProject({
+        name: "Admin Starter",
+        kind: "blueprint",
+        kitBindings: [{ kitId: "base-kit" }],
+      });
+
+      const detail = await store.getProject(projectId);
+      expect(detail.kind).toBe("blueprint");
+      expect(detail).toEqual({
+        id: projectId,
+        name: "Admin Starter",
+        kind: "blueprint",
+        kitBindings: [{ kitId: "base-kit" }],
+        updatedAt: expect.any(String),
+        canEdit: true,
+        screens: [],
+      });
+    });
+
+    it("includes sourceBlueprintId for a workspace instantiated from a blueprint", async () => {
+      const root = await tempProjectsRoot();
+      const store = new ProjectStore(root);
+      const blueprint = await store.createProject({
+        name: "Dashboard Blueprint",
+        kind: "blueprint",
+        kitBindings: [{ kitId: "core-kit", default: true }],
+      });
+      const workspace = await store.createProject({
+        name: "Merchant Dashboard",
+        kind: "workspace",
+        fromBlueprintId: blueprint.projectId,
+      });
+
+      await expect(store.getProject(workspace.projectId)).resolves.toMatchObject({
+        id: workspace.projectId,
+        kind: "workspace",
+        sourceBlueprintId: blueprint.projectId,
+      });
+      // The blueprint itself has no sourceBlueprintId of its own.
+      await expect(store.getProject(blueprint.projectId)).resolves.not.toHaveProperty(
+        "sourceBlueprintId",
+      );
+    });
+
+    it("raises ERR_PROJECT_NOT_FOUND with the id echoed for an invalid id", async () => {
+      const root = await tempProjectsRoot();
+      const store = new ProjectStore(root);
+
+      await expect(store.getProject("no-such-project")).rejects.toMatchObject({
+        code: "ERR_PROJECT_NOT_FOUND",
+        projectId: "no-such-project",
+      });
+    });
+
+    it("raises ERR_PROJECT_NOT_FOUND for a directory with a malformed manifest", async () => {
+      const root = await tempProjectsRoot();
+      const store = new ProjectStore(root);
+      await mkdir(join(root, "broken-project", ".genie"), { recursive: true });
+      await writeFile(join(root, "broken-project", ".genie", "project.json"), "{broken", "utf8");
+
+      await expect(store.getProject("broken-project")).rejects.toMatchObject({
+        code: "ERR_PROJECT_NOT_FOUND",
+        projectId: "broken-project",
+      });
+    });
+
+    it("returns canEdit: false for a read-only project (AC6)", async () => {
+      const root = await tempProjectsRoot();
+      const store = new ProjectStore(root);
+      const { projectId } = await store.createProject({
+        name: "Read Only Project",
+        kind: "workspace",
+      });
+      await writeFile(join(root, projectId, ".genie", ".readonly"), "", "utf8");
+
+      await expect(store.getProject(projectId)).resolves.toMatchObject({ canEdit: false });
+    });
+  });
 });
