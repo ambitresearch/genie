@@ -42,11 +42,19 @@ describe("slugify", () => {
   });
 
   it("re-trims a trailing hyphen exposed by truncation", () => {
-    // 57 'a's followed by a hyphen then more chars: cutting at 57 lands
-    // exactly on the hyphen, which must not survive into the slug.
-    const name = "a".repeat(57) + "-" + "b".repeat(10);
+    // The hyphen must land as the LAST character kept by `.slice(0,
+    // SLUG_MAX_LENGTH)` for this test to actually exercise the re-trim step:
+    // 56 'a's (indices 0-55) + '-' (index 56) is exactly SLUG_MAX_LENGTH (57)
+    // characters, so the pre-retrim slice ends in '-' and the re-trim must
+    // fire to strip it. (An earlier version of this test used 57 'a's before
+    // the hyphen, which pushed the hyphen to index 57 — past the slice
+    // boundary — so it was silently dropped by `.slice()` itself and the
+    // assertion passed without ever touching the re-trim `.replace(/-$/, "")`
+    // call; caught by review.)
+    const name = "a".repeat(56) + "-" + "b".repeat(10);
     const slug = slugify(name);
     expect(slug.endsWith("-")).toBe(false);
+    expect(slug).toBe("a".repeat(56));
   });
 });
 
