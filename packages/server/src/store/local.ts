@@ -175,7 +175,6 @@ export class LocalFsKitStore implements KitStore {
     group?: string;
   }): Promise<import("./interface.js").ComponentEntry[]> {
     const { kitId, group } = params;
-    const kitDir = this.kitDir(kitId);
 
     // Validate kit exists and is properly configured (matches GitHostKitStore behavior)
     await this.getKit(kitId);
