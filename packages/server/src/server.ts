@@ -9,6 +9,7 @@ import { registerReadFile } from "./tools/read_file.js";
 import { registerValidate } from "./tools/validate.js";
 import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
 import { registerListKits } from "./tools/list_kits.js";
+import { registerListComponents } from "./tools/list_components.js";
 import { LocalFsKitStore } from "./store/local.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
 
@@ -88,6 +89,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   const kitStore = new LocalFsKitStore(kitsRoot);
   registerListKits(server, kitStore);
+  registerListComponents(server, kitStore);
   registerCreateKit(server, kitStore);
   registerGetKitTool(server, kitStore);
 

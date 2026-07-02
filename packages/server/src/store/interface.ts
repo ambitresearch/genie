@@ -41,6 +41,16 @@ export interface ProjectMeta {
   createdAt: string; // ISO-8601
 }
 
+/** Component entry returned by listComponents. */
+export interface ComponentEntry {
+  name: string;
+  group: string;
+  path: string;
+  viewport: string;
+  hash: string;
+  lastModified: string; // ISO-8601
+}
+
 /** A single file operation (write or delete) for plan commits. */
 export type FileOp =
   | { kind: "write"; path: string; content: string }
@@ -111,6 +121,16 @@ export interface KitStore {
 
   /** List relative file paths within a kit. */
   listFiles(kitId: KitId): Promise<string[]>;
+
+  /**
+   * List components within a kit, optionally filtered by group.
+   * Returns an array of component metadata sorted by group ASC, then name ASC.
+   * Throws NotFoundError if the kit does not exist.
+   */
+  listComponents(params: {
+    kitId: KitId;
+    group?: string;
+  }): Promise<ComponentEntry[]>;
 
   /**
    * Read a file from a kit.

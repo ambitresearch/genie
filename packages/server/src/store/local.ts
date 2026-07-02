@@ -170,6 +170,32 @@ export class LocalFsKitStore implements KitStore {
     return files.filter((f) => f !== ".kit.json");
   }
 
+  async listComponents(params: {
+    kitId: KitId;
+    group?: string;
+  }): Promise<import("./interface.js").ComponentEntry[]> {
+    const { kitId, group } = params;
+    const kitDir = this.kitDir(kitId);
+
+    // Check kit exists
+    try {
+      await stat(kitDir);
+    } catch {
+      throw new NotFoundError("Kit", kitId);
+    }
+
+    // For now, return empty array as M3-03 manifest compiler is not yet implemented
+    // TODO: After M3-03 lands, read from .genie/manifest.json
+    const components: import("./interface.js").ComponentEntry[] = [];
+
+    // Filter by group if specified
+    if (group) {
+      return components.filter((c) => c.group === group);
+    }
+
+    return components;
+  }
+
   async readFile(kitId: KitId, path: string): Promise<string> {
     // First check if kit exists
     const kitDir = this.kitDir(kitId);
