@@ -1456,6 +1456,9 @@ The server validates the LLM endpoint response against this schema after parsing
   (ISO-8601 timestamps). `expiresAt` is not stored; expiry is computed at read time from
   `lastAccessedAt + TTL`, so the TTL window slides on every access rather than being fixed at
   creation.
+- When a lookup finds a plan expired, or housekeeping (`pruneExpiredPlans`) sweeps one, its
+  on-disk snapshot is deleted along with the in-process `Map` entry — expired plans do not
+  accumulate under `${GENIE_HOME}/plans/`.
 - There are no asset-registration verbs to track — the `@genie` marker is the
   registration (D-A); `register_assets` / `unregister_assets` are dropped.
 
@@ -1836,7 +1839,7 @@ Error responses (`isError: true`, `content[0].text` is JSON):
 
 | `error` | Cause |
 | --- | --- |
-| `InvalidLocalDir` | `localDir` (explicit or defaulted to `cwd()`) does not exist. |
+| `InvalidLocalDir` | `localDir` (explicit or defaulted to `cwd()`) does not exist, or exists but is not a directory (e.g. a regular file). |
 | `TooManyWritesError` | `writes.length > 256`. Payload includes `count`, `max`. |
 | `TooComplexGlobError` | A `writes`/`deletes` pattern has >3 `*`/`**` wildcards. Payload includes `pattern`, `wildcardCount`, `max`. |
 
