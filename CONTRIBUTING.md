@@ -34,7 +34,10 @@ pnpm dev                       # boots the MCP server on stdio
 pnpm test                      # run the suite
 ```
 
-Requires Node ≥ 22 (current Active LTS; CI tests 22/24). `.nvmrc` pins 22.
+Requires Node ≥ 22 (current Active LTS; CI tests 22/24 on Ubuntu/macOS). `.nvmrc` pins 22.
+
+CI required checks for merge are `lint`, `typecheck`, `test`, and `build` from
+`.github/workflows/ci.yml`.
 
 ### Useful scripts
 

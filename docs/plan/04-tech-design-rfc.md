@@ -74,7 +74,7 @@
    - Implement OAuth 2.0 Dynamic Client Registration (RFC 7591) per the MCP 2025-06-18 authorization spec for Streamable HTTP deployments on supporting harnesses; static bearer for other HTTP harnesses.
    - Keep local first-run install on stdio, where the harness launches the `genie` process directly.
    - No service ever sees a long-lived password.
-8. **G-8 — Distribution matrix.** Ship `npm install -g genie`, a signed `.mcpb` bundle, and a `ghcr.io/roshangautam/genie` Docker image, all from one repo, on every release.
+8. **G-8 — Distribution matrix.** Ship `npm install -g @genie/server`, a signed `.mcpb` bundle, and a `ghcr.io/roshangautam/genie` Docker image, all from one repo, on every release.
 9. **G-9 — Observability by default.** Prometheus metrics endpoint at `/metrics`, structured JSON logs, OpenTelemetry trace export to OTLP/HTTP, and a published Grafana dashboard JSON.
 
 ### 3.2 Non-goals (numbered, explicit)

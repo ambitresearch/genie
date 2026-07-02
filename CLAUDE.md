@@ -63,3 +63,4 @@ app to open.
 - `git` operations in this environment may need the MacOS-MCP shell tool (the sandbox blocks
   `.git` writes from the Bash tool).
 - This repo is committed to a **private** GitHub repo: `roshangautam/genie`.
+- npm package naming for server releases uses `@genie/server` (fallback from bare `genie`).
