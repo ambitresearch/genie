@@ -38,15 +38,38 @@ Requires Node ≥ 22 (current Active LTS; CI tests 22/24). `.nvmrc` pins 22.
 
 ### Useful scripts
 
-| Command | What |
-|---|---|
-| `pnpm dev` | Run the server with hot reload (tsx watch) |
-| `pnpm build` | Compile all packages to `dist/` |
-| `pnpm test` | Run Vitest once |
-| `pnpm test:watch` | Vitest in watch mode |
-| `pnpm lint` | ESLint |
-| `pnpm typecheck` | `tsc --noEmit` across packages |
-| `pnpm format` | Prettier write |
+| Command           | What                                       |
+| ----------------- | ------------------------------------------ |
+| `pnpm dev`        | Run the server with hot reload (tsx watch) |
+| `pnpm build`      | Compile all packages to `dist/`            |
+| `pnpm test`       | Run Vitest once                            |
+| `pnpm test:watch` | Vitest in watch mode                       |
+| `pnpm lint`       | ESLint                                     |
+| `pnpm typecheck`  | `tsc --noEmit` across packages             |
+| `pnpm format`     | Prettier write                             |
+
+## Integration tests
+
+The end-to-end conformance suite lives in `packages/e2e` and drives the MCP
+server through the SDK's in-process `InMemoryTransport` — a real MCP client
+talking to a real `createServer()`, no network. It is the milestone-level
+"do the tools compose?" check that complements the per-tool unit tests in
+`packages/server`.
+
+```bash
+pnpm test                                        # runs unit + e2e together (root vitest)
+pnpm --filter @genie/e2e typecheck               # type-check the suite in isolation
+npx vitest run packages/e2e/test                 # just the e2e conformance walk
+```
+
+- The suite must stay **green and fast** (< 60 s wall-clock; the current M1 walk
+  is milliseconds). Each spawns an isolated temp `projectsRoot`/`kitsRoot`, so
+  runs never touch a real `.genie/` and are safe to run in parallel.
+- Coverage grows tool-by-tool. Walks that depend on an **unmerged** upstream tool
+  are `it.todo(...)` naming the blocking issue (e.g. `plan` / `write_files`),
+  never silently skipped — the file doubles as the live M1 checklist. When you
+  land a tool that unblocks a `todo`, convert it to a real assertion in the same
+  PR.
 
 ## Commit convention
 
