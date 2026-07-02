@@ -345,6 +345,51 @@ describe("plan tool (via MCP)", () => {
     expect(result.structuredContent).toEqual({ planId: response.planId });
   });
 
+  it("emits a plan.created audit line to stderr, not stdout (AC10)", async () => {
+    // The audit log MUST go to stderr: on the stdio transport, stdout *is* the
+    // JSON-RPC protocol stream, so a stray line there corrupts client framing.
+    const stderrLines: string[] = [];
+    const stdoutLines: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        stderrLines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      });
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        stdoutLines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      });
+
+    try {
+      const result = await client.callTool({
+        name: "mcp__genie__plan",
+        arguments: { kitId: "kit-abc123", writes: ["*.js", "**/*.ts"], deletes: ["*.tmp"] },
+      });
+      const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
+      const { planId } = JSON.parse(text) as { planId: string };
+
+      const auditLine = stderrLines.find((l) => l.includes("plan.created"));
+      expect(auditLine).toBeTruthy();
+      const audit = JSON.parse(auditLine as string) as Record<string, unknown>;
+      expect(audit).toMatchObject({
+        event: "plan.created",
+        kitId: "kit-abc123",
+        planId,
+        writeCount: 2,
+        deleteCount: 1,
+      });
+
+      // Never on stdout — that would corrupt the JSON-RPC framing.
+      expect(stdoutLines.some((l) => l.includes("plan.created"))).toBe(false);
+    } finally {
+      stderrSpy.mockRestore();
+      stdoutSpy.mockRestore();
+    }
+  });
+
   it("accepts optional deletes parameter", async () => {
     const result = await client.callTool({
       name: "mcp__genie__plan",
