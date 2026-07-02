@@ -177,12 +177,8 @@ export class LocalFsKitStore implements KitStore {
     const { kitId, group } = params;
     const kitDir = this.kitDir(kitId);
 
-    // Check kit exists
-    try {
-      await stat(kitDir);
-    } catch {
-      throw new NotFoundError("Kit", kitId);
-    }
+    // Validate kit exists and is properly configured (matches GitHostKitStore behavior)
+    await this.getKit(kitId);
 
     // For now, return empty array as M3-03 manifest compiler is not yet implemented
     // TODO: After M3-03 lands, read from .genie/manifest.json
