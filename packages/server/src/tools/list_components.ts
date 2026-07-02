@@ -32,7 +32,7 @@ export function registerListComponents(
       description: LIST_COMPONENTS_DESCRIPTION,
       inputSchema: z
         .object({
-          kitId: z.string().describe("The ID of the kit to list components from"),
+          kitId: z.string().regex(/^[a-z0-9-]{3,64}$/).describe("The ID of the kit to list components from"),
           group: z
             .string()
             .min(1)

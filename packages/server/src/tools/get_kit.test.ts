@@ -26,6 +26,10 @@ class MockKitStore implements KitStore {
     return [];
   }
 
+  async listComponents(): Promise<import("../store/interface.js").ComponentEntry[]> {
+    return [];
+  }
+
   async readFile(): Promise<string> {
     return "";
   }
