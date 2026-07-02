@@ -16,6 +16,15 @@ export interface ListKitsEntry extends Record<string, unknown> {
   canEdit: boolean;
 }
 
+/** Zod shape for a single `list_kits` entry — reused by `outputSchema`. */
+const listKitsEntryShape = {
+  id: z.string(),
+  name: z.string(),
+  owner: z.string(),
+  updatedAt: z.string(),
+  canEdit: z.boolean(),
+};
+
 type ListableKitMeta = KitMeta & {
   owner?: string;
   updatedAt?: string;
@@ -42,6 +51,9 @@ export function registerListKits(server: McpServer, store: KitStore): void {
       title: "List kits",
       description: LIST_KITS_DESCRIPTION,
       inputSchema: z.object({}).strict(),
+      outputSchema: {
+        kits: z.array(z.object(listKitsEntryShape).strict()),
+      },
     },
     async () => {
       const kits = await listWritableKits(store);

@@ -168,6 +168,11 @@ describe("mcp__genie__list_kits tool", () => {
       properties: {},
       additionalProperties: false,
     });
+    expect(tool?.outputSchema).toMatchObject({
+      type: "object",
+      required: ["kits"],
+      additionalProperties: false,
+    });
   });
 
   it("returns [] through MCP when the user has no kits", async () => {
