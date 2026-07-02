@@ -3,11 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "genie end-to-end + harness smoke tests (M5). Placeholder scaffold.",
+  "description": "genie end-to-end + harness smoke tests. Hosts the M1 19-tool conformance suite (M1-14 / DRO-318).",
   "scripts": {
-    "build": "echo \"@genie/e2e: nothing to build yet (M5)\"",
-    "typecheck": "echo \"@genie/e2e: no sources yet (M5)\""
+    "build": "echo \"@genie/e2e: test-only package, nothing to build\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "license": "MIT",
-  "author": "Roshan Gautam"
+  "author": "Roshan Gautam",
+  "dependencies": {
+    "@genie/server": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0"
+  }
 }

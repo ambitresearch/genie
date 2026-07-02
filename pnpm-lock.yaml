@@ -33,7 +33,18 @@ importers:
         specifier: ^4.1.9
         version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@26.0.0)(vite@8.0.16(@types/node@26.0.0)(esbuild@0.28.1)(tsx@4.22.4))
 
-  packages/e2e: {}
+  packages/e2e:
+    dependencies:
+      '@genie/server':
+        specifier: workspace:*
+        version: link:../server
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^26.0.0
+        version: 26.0.0
 
   packages/server:
     dependencies:
