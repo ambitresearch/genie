@@ -8,6 +8,7 @@ import { registerReadFile } from "./tools/read_file.js";
 import { registerValidate } from "./tools/validate.js";
 import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
 import { LocalFsKitStore } from "./store/local.js";
+import { registerGetKitTool } from "./tools/get_kit.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -39,7 +40,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO, {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. (Scaffold build — the registered tools are ping, kit creation, " +
+      "harness. (Scaffold build — the registered tools are ping, kit creation, kit lookup, " +
       "file listing, file reading, validation, and project create/list/delete.)",
   });
 
@@ -83,6 +84,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   registerDeleteProjectTool(server, projectsRoot);
 
   registerCreateKit(server, new LocalFsKitStore(kitsRoot));
+  registerGetKitTool(server, new LocalFsKitStore(kitsRoot));
 
   // M1 tools
   registerReadFile(server, kitsRoot);
