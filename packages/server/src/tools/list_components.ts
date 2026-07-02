@@ -5,7 +5,7 @@ import type { ComponentEntry, KitStore } from "../store/interface.js";
 export const LIST_COMPONENTS_TOOL_NAME = "mcp__genie__list_components";
 
 export const LIST_COMPONENTS_DESCRIPTION =
-  "List components within a kit, optionally filtered by group. Returns an array of component metadata (name, group, path, viewport, hash, lastModified) sorted by group ASC, then name ASC. When group is omitted, returns every component across all groups. Returns [] when the kit has no components or the group filter matches nothing.";
+  "List components within a kit, optionally filtered by group. Returns an array of component metadata (name, group, path, viewport, hash, lastModified) sorted by group ASC, then name ASC, then path ASC for deterministic ordering. When group is omitted, returns every component across all groups. Returns [] when the kit has no components or the group filter matches nothing. NOTE: Current stub implementation returns [] until M3-03 manifest compiler lands.";
 
 /** Zod shape for a single component entry — reused by `outputSchema`. */
 const componentEntryShape = {
@@ -35,9 +35,10 @@ export function registerListComponents(
           kitId: z.string().describe("The ID of the kit to list components from"),
           group: z
             .string()
+            .min(1)
             .optional()
             .describe(
-              "Optional group filter. When specified, returns only components in that group.",
+              "Optional group filter. When specified, returns only components in that group. Empty string rejected.",
             ),
         })
         .strict(),

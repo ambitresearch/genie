@@ -188,8 +188,8 @@ export class LocalFsKitStore implements KitStore {
     // TODO: After M3-03 lands, read from .genie/manifest.json
     const components: import("./interface.js").ComponentEntry[] = [];
 
-    // Filter by group if specified
-    if (group) {
+    // Filter by group if specified (use explicit undefined check to handle empty string correctly)
+    if (group !== undefined) {
       return components.filter((c) => c.group === group);
     }
 

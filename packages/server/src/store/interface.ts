@@ -124,7 +124,7 @@ export interface KitStore {
 
   /**
    * List components within a kit, optionally filtered by group.
-   * Returns an array of component metadata sorted by group ASC, then name ASC.
+   * Returns an array of component metadata sorted by group ASC, then name ASC, then path ASC (for deterministic ordering when group + name collide).
    * Throws NotFoundError if the kit does not exist.
    */
   listComponents(params: {

@@ -184,12 +184,20 @@ export class GitHostKitStore implements KitStore {
     kitId: KitId;
     group?: string;
   }): Promise<import("./interface.js").ComponentEntry[]> {
+    // Check kit exists by attempting to fetch .kit.json
+    try {
+      await this.getKit(params.kitId);
+    } catch (error) {
+      // getKit throws NotFoundError for invalid kit, rethrow as-is
+      throw error;
+    }
+
     // For now, return empty array as M3-03 manifest compiler is not yet implemented
     // TODO: After M3-03 lands, fetch .genie/manifest.json from the kit repository
     const components: import("./interface.js").ComponentEntry[] = [];
 
-    // Filter by group if specified
-    if (params.group) {
+    // Filter by group if specified (use explicit undefined check to handle empty string correctly)
+    if (params.group !== undefined) {
       return components.filter((c) => c.group === params.group);
     }
 
