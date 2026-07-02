@@ -1615,21 +1615,40 @@ Every tool input/output schema below is **authoritative**. Drift between this se
 
 ### 9.1 `mcp__genie__list_kits`
 
+Returns the caller's writable genie-native UI kits, backed by
+`KitStore.listKits()`. Store records whose persisted `type` is not
+`"GENIE_KIT"` are filtered out before the public response is built; Anthropic
+project-type mapping stays in the interop adapter.
+
+The `output` schema below describes `structuredContent`, matching the
+`{ <noun>: [...] }` wrapper convention used by every other list-shaped M1 tool
+(§9.3 `list_files` → `{ files }`, §9.14 `list_projects` → `{ projects }`) so
+clients that read `structuredContent` get a consistent, extensible shape
+instead of a bare top-level array. `content[0].text` still serializes the
+plain `kits` array on its own for callers that only parse `content`.
+
 ```json
 {
   "input": { "type": "object", "additionalProperties": false, "properties": {}, "required": [] },
   "output": {
-    "type": "array",
-    "items": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "name", "owner", "updatedAt", "canEdit"],
-      "properties": {
-        "id": { "type": "string", "pattern": "^[a-z0-9-]{3,64}$" },
-        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "owner": { "type": "string" },
-        "updatedAt": { "type": "string", "format": "date-time" },
-        "canEdit": { "type": "boolean" }
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["kits"],
+    "properties": {
+      "kits": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name", "owner", "updatedAt", "canEdit"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[a-z0-9-]{3,64}$" },
+            "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "owner": { "type": "string" },
+            "updatedAt": { "type": "string", "format": "date-time" },
+            "canEdit": { "type": "boolean" }
+          }
+        }
       }
     }
   }

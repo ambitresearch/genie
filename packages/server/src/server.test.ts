@@ -28,6 +28,7 @@ describe("createServer", () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
     expect(names).toContain("ping");
+    expect(names).toContain("mcp__genie__list_kits");
     expect(names).toContain("mcp__genie__create_project");
     expect(names).toContain("mcp__genie__list_projects");
     expect(names).toContain("mcp__genie__get_project");
