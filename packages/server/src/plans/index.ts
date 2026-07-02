@@ -9,8 +9,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import * as micromatch from "micromatch";
 
 /** Max number of write patterns allowed per plan. */
@@ -104,17 +104,13 @@ export function getPlanTTL(): number {
   return DEFAULT_PLAN_TTL;
 }
 
-/** Load a plan from disk. */
-function loadPlanFromDisk(planId: string): PlanState | null {
+/** Load a plan from disk. Returns null if missing or unreadable/corrupt. */
+async function loadPlanFromDisk(planId: string): Promise<PlanState | null> {
   const plansDir = getPlansDir();
   const planPath = resolve(plansDir, `${planId}.json`);
 
-  if (!existsSync(planPath)) {
-    return null;
-  }
-
   try {
-    const content = readFileSync(planPath, "utf-8");
+    const content = await readFile(planPath, "utf-8");
     return JSON.parse(content) as PlanState;
   } catch {
     return null;
@@ -122,12 +118,24 @@ function loadPlanFromDisk(planId: string): PlanState | null {
 }
 
 /** Save a plan to disk. */
-function savePlanToDisk(state: PlanState): void {
+async function savePlanToDisk(state: PlanState): Promise<void> {
   const plansDir = getPlansDir();
-  mkdirSync(plansDir, { recursive: true });
+  await mkdir(plansDir, { recursive: true });
 
   const planPath = resolve(plansDir, `${state.planId}.json`);
-  writeFileSync(planPath, JSON.stringify(state, null, 2), "utf-8");
+  await writeFile(planPath, JSON.stringify(state, null, 2), "utf-8");
+}
+
+/** Delete a plan's disk snapshot, if any. Missing file is not an error. */
+async function deletePlanFromDisk(planId: string): Promise<void> {
+  const plansDir = getPlansDir();
+  const planPath = resolve(plansDir, `${planId}.json`);
+
+  try {
+    await unlink(planPath);
+  } catch {
+    // Already gone (or never persisted) — nothing to clean up.
+  }
 }
 
 /** Check if a plan has expired based on TTL. */
@@ -139,12 +147,12 @@ function isPlanExpired(state: PlanState): boolean {
 }
 
 /** Create a new plan and persist it. */
-export function createPlan(
+export async function createPlan(
   kitId: string,
   writes: string[],
   deletes: string[],
   localDir: string,
-): PlanState {
+): Promise<PlanState> {
   // Validate write count
   if (writes.length > MAX_WRITES) {
     throw new TooManyWritesError(writes.length);
@@ -170,19 +178,19 @@ export function createPlan(
 
   // Store in registry and persist
   planRegistry.set(planId, state);
-  savePlanToDisk(state);
+  await savePlanToDisk(state);
 
   return state;
 }
 
 /** Retrieve a plan by ID, checking expiry. */
-export function getPlan(planId: string): PlanState {
+export async function getPlan(planId: string): Promise<PlanState> {
   // Check in-memory registry first
   let state: PlanState | null | undefined = planRegistry.get(planId);
 
   // Fall back to disk if not in memory
   if (!state) {
-    state = loadPlanFromDisk(planId);
+    state = await loadPlanFromDisk(planId);
     if (state) {
       planRegistry.set(planId, state);
     }
@@ -195,12 +203,15 @@ export function getPlan(planId: string): PlanState {
   // Check expiry
   if (isPlanExpired(state)) {
     planRegistry.delete(planId);
+    // Clean up the on-disk snapshot too, so expired plans don't accumulate
+    // indefinitely under `${GENIE_HOME}/plans/`.
+    await deletePlanFromDisk(planId);
     throw new PlanNotFoundError(planId);
   }
 
   // Update last accessed time
   state.lastAccessedAt = new Date().toISOString();
-  savePlanToDisk(state);
+  await savePlanToDisk(state);
 
   return state;
 }
@@ -210,15 +221,30 @@ export function pathMatchesGlobs(path: string, globs: string[]): boolean {
   return micromatch.isMatch(path, globs, { dot: true });
 }
 
-/** Validate that a path is inside the plan's localDir. */
+/**
+ * Validate that a path is inside the plan's localDir.
+ *
+ * Uses `path.relative`/`path.isAbsolute` rather than a string check against a
+ * hard-coded "/" separator, so containment is correct across platforms (POSIX
+ * and Windows) — mirrors `safePath` in `store/local.ts` and `read_file.ts`.
+ */
 export function isPathInsideLocalDir(path: string, localDir: string): boolean {
   const resolvedPath = resolve(path);
   const resolvedLocalDir = resolve(localDir);
-  return resolvedPath.startsWith(resolvedLocalDir + "/") || resolvedPath === resolvedLocalDir;
+
+  // Identical paths are trivially "inside".
+  if (resolvedPath === resolvedLocalDir) {
+    return true;
+  }
+
+  const rel = relative(resolvedLocalDir, resolvedPath);
+  // `rel` escapes localDir if it's ".." itself, starts with a ".." segment,
+  // or is absolute (e.g. a different drive on Windows).
+  return rel !== "" && rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel);
 }
 
-/** Clear expired plans from the registry (housekeeping). */
-export function pruneExpiredPlans(): number {
+/** Clear expired plans from the registry and disk (housekeeping). */
+export async function pruneExpiredPlans(): Promise<number> {
   let pruned = 0;
   const now = Date.now();
   const ttl = getPlanTTL();
@@ -227,6 +253,7 @@ export function pruneExpiredPlans(): number {
     const lastAccessed = new Date(state.lastAccessedAt).getTime();
     if (now - lastAccessed > ttl) {
       planRegistry.delete(planId);
+      await deletePlanFromDisk(planId);
       pruned++;
     }
   }

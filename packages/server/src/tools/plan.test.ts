@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { mkdtemp, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "../server.js";
@@ -13,6 +13,7 @@ import {
   MAX_WRITES,
   MAX_WILDCARDS,
   getPlan,
+  pruneExpiredPlans,
   PlanNotFoundError,
   pathMatchesGlobs,
   isPathInsideLocalDir,
@@ -84,6 +85,25 @@ describe("isPathInsideLocalDir", () => {
     expect(isPathInsideLocalDir("./foo.js", cwd)).toBe(true);
     expect(isPathInsideLocalDir("../outside.js", cwd)).toBe(false);
   });
+
+  it("returns false for a sibling directory that shares localDir as a string prefix", () => {
+    // Regression guard for the naive `startsWith(localDir)` bug: "/home/user/project-evil"
+    // starts with the string "/home/user/project" but is NOT inside it.
+    expect(isPathInsideLocalDir("/home/user/project-evil/file.js", "/home/user/project")).toBe(
+      false,
+    );
+  });
+
+  it("does not depend on a hard-coded POSIX separator (Windows-safe containment)", () => {
+    // Regression guard: the original implementation checked
+    // `resolvedPath.startsWith(resolvedLocalDir + "/")`, which never matches
+    // on Windows where `path.resolve` joins with "\\". Using `path.relative`
+    // (as asserted here) is separator-agnostic, matching the codebase's
+    // established `safePath` pattern (store/local.ts, tools/read_file.ts).
+    const cwd = process.cwd();
+    const nested = join(cwd, "nested", "dir", "file.ts");
+    expect(isPathInsideLocalDir(nested, cwd)).toBe(true);
+  });
 });
 
 // ────────────────────────────────────────────────────────────
@@ -109,8 +129,8 @@ describe("createPlan", () => {
     await rm(tempHome, { recursive: true, force: true });
   });
 
-  it("creates a plan with valid inputs", () => {
-    const state = createPlan("kit-abc123", ["*.js", "**/*.ts"], ["*.tmp"], process.cwd());
+  it("creates a plan with valid inputs", async () => {
+    const state = await createPlan("kit-abc123", ["*.js", "**/*.ts"], ["*.tmp"], process.cwd());
 
     expect(state.planId).toBeTruthy();
     expect(state.kitId).toBe("kit-abc123");
@@ -121,20 +141,22 @@ describe("createPlan", () => {
     expect(state.lastAccessedAt).toBe(state.createdAt);
   });
 
-  it("rejects plans with >256 writes", () => {
+  it("rejects plans with >256 writes", async () => {
     const writes = Array.from({ length: 257 }, (_, i) => `file${i}.js`);
-    expect(() => createPlan("kit-abc123", writes, [], process.cwd())).toThrow(TooManyWritesError);
-  });
-
-  it("accepts plans with exactly 256 writes", () => {
-    const writes = Array.from({ length: 256 }, (_, i) => `file${i}.js`);
-    expect(() => createPlan("kit-abc123", writes, [], process.cwd())).not.toThrow();
-  });
-
-  it("rejects patterns with >3 wildcards", () => {
-    expect(() => createPlan("kit-abc123", ["a/*/b/*/c/*/d/*.js"], [], process.cwd())).toThrow(
-      TooComplexGlobError,
+    await expect(createPlan("kit-abc123", writes, [], process.cwd())).rejects.toThrow(
+      TooManyWritesError,
     );
+  });
+
+  it("accepts plans with exactly 256 writes", async () => {
+    const writes = Array.from({ length: 256 }, (_, i) => `file${i}.js`);
+    await expect(createPlan("kit-abc123", writes, [], process.cwd())).resolves.not.toThrow();
+  });
+
+  it("rejects patterns with >3 wildcards", async () => {
+    await expect(
+      createPlan("kit-abc123", ["a/*/b/*/c/*/d/*.js"], [], process.cwd()),
+    ).rejects.toThrow(TooComplexGlobError);
   });
 });
 
@@ -152,36 +174,36 @@ describe("getPlan", () => {
     await rm(tempHome, { recursive: true, force: true });
   });
 
-  it("retrieves an existing plan", () => {
-    const state = createPlan("kit-abc123", ["*.js"], [], process.cwd());
-    const retrieved = getPlan(state.planId);
+  it("retrieves an existing plan", async () => {
+    const state = await createPlan("kit-abc123", ["*.js"], [], process.cwd());
+    const retrieved = await getPlan(state.planId);
 
     expect(retrieved.planId).toBe(state.planId);
     expect(retrieved.kitId).toBe(state.kitId);
     expect(retrieved.writes).toEqual(state.writes);
   });
 
-  it("throws PlanNotFoundError for non-existent plans", () => {
-    expect(() => getPlan("nonexistent")).toThrow(PlanNotFoundError);
+  it("throws PlanNotFoundError for non-existent plans", async () => {
+    await expect(getPlan("nonexistent")).rejects.toThrow(PlanNotFoundError);
   });
 
   it("updates lastAccessedAt on retrieval", async () => {
-    const state = createPlan("kit-abc123", ["*.js"], [], process.cwd());
+    const state = await createPlan("kit-abc123", ["*.js"], [], process.cwd());
     const originalAccessed = state.lastAccessedAt;
 
     // Wait a bit to ensure timestamp difference
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    const retrieved = getPlan(state.planId);
+    const retrieved = await getPlan(state.planId);
     expect(retrieved.lastAccessedAt).not.toBe(originalAccessed);
   });
 
   it("does not expire before the configured TTL elapses (AC7)", async () => {
     process.env.GENIE_PLAN_TTL = "500";
     try {
-      const state = createPlan("kit-abc123", ["*.js"], [], process.cwd());
+      const state = await createPlan("kit-abc123", ["*.js"], [], process.cwd());
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(() => getPlan(state.planId)).not.toThrow();
+      await expect(getPlan(state.planId)).resolves.not.toThrow();
     } finally {
       delete process.env.GENIE_PLAN_TTL;
     }
@@ -190,16 +212,43 @@ describe("getPlan", () => {
   it("expires after the configured TTL of inactivity (AC7)", async () => {
     process.env.GENIE_PLAN_TTL = "50";
     try {
-      const state = createPlan("kit-abc123", ["*.js"], [], process.cwd());
+      const state = await createPlan("kit-abc123", ["*.js"], [], process.cwd());
       await new Promise((resolve) => setTimeout(resolve, 150));
-      expect(() => getPlan(state.planId)).toThrow(PlanNotFoundError);
+      await expect(getPlan(state.planId)).rejects.toThrow(PlanNotFoundError);
+    } finally {
+      delete process.env.GENIE_PLAN_TTL;
+    }
+  });
+
+  it("deletes the on-disk snapshot once a plan is found expired (no unbounded growth)", async () => {
+    process.env.GENIE_PLAN_TTL = "50";
+    try {
+      const state = await createPlan("kit-abc123", ["*.js"], [], process.cwd());
+      const planPath = join(tempHome, "plans", `${state.planId}.json`);
+
+      // Snapshot exists immediately after creation.
+      await expect(stat(planPath)).resolves.toBeTruthy();
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await expect(getPlan(state.planId)).rejects.toThrow(PlanNotFoundError);
+
+      // Regression guard: previously, expiry only deleted the in-memory
+      // entry, so the disk snapshot lingered under `${GENIE_HOME}/plans/`
+      // forever (each subsequent getPlan miss would even re-read and
+      // re-discard it). It must now be unlinked as part of expiry.
+      await expect(stat(planPath)).rejects.toThrow();
     } finally {
       delete process.env.GENIE_PLAN_TTL;
     }
   });
 
   it("survives a server restart via disk persistence (AC8)", async () => {
-    const state = createPlan("kit-restart-test", ["*.js", "**/*.tsx"], ["*.tmp"], process.cwd());
+    const state = await createPlan(
+      "kit-restart-test",
+      ["*.js", "**/*.tsx"],
+      ["*.tmp"],
+      process.cwd(),
+    );
 
     // Simulate a server restart: reset the module cache so re-importing
     // plans/index.js constructs a brand-new, empty in-memory planRegistry.
@@ -209,11 +258,47 @@ describe("getPlan", () => {
     vi.resetModules();
     const fresh = await import("../plans/index.js");
 
-    const retrieved = fresh.getPlan(state.planId);
+    const retrieved = await fresh.getPlan(state.planId);
     expect(retrieved.planId).toBe(state.planId);
     expect(retrieved.kitId).toBe("kit-restart-test");
     expect(retrieved.writes).toEqual(["*.js", "**/*.tsx"]);
     expect(retrieved.deletes).toEqual(["*.tmp"]);
+  });
+});
+
+describe("pruneExpiredPlans", () => {
+  let tempHome: string;
+
+  beforeEach(async () => {
+    tempHome = await mkdtemp(join(tmpdir(), "genie-plans-"));
+    process.env.GENIE_HOME = tempHome;
+  });
+
+  afterEach(async () => {
+    delete process.env.GENIE_PLAN_TTL;
+    delete process.env.GENIE_HOME;
+    await rm(tempHome, { recursive: true, force: true });
+  });
+
+  it("removes both the in-memory entry and the disk snapshot for expired plans", async () => {
+    process.env.GENIE_PLAN_TTL = "50";
+    const state = await createPlan("kit-abc123", ["*.js"], [], process.cwd());
+    const planPath = join(tempHome, "plans", `${state.planId}.json`);
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Note: `planRegistry` is a module-level singleton shared across every
+    // test in this file (by design — it models one long-lived server
+    // process), so `pruneExpiredPlans()` here may also sweep up unrelated
+    // expired plans left behind by earlier tests. Assert on this test's own
+    // plan rather than the total pruned count.
+    const pruned = await pruneExpiredPlans();
+    expect(pruned).toBeGreaterThanOrEqual(1);
+
+    // Disk snapshot must be gone too, not just the in-memory Map entry.
+    await expect(stat(planPath)).rejects.toThrow();
+    // And it's no longer retrievable at all (in-memory entry gone too).
+    await expect(getPlan(state.planId)).rejects.toThrow(PlanNotFoundError);
   });
 });
 
@@ -279,7 +364,7 @@ describe("plan tool (via MCP)", () => {
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
     const response = JSON.parse(text) as { planId: string };
 
-    const plan = getPlan(response.planId);
+    const plan = await getPlan(response.planId);
     expect(plan.localDir).toBe(process.cwd());
   });
 
@@ -296,7 +381,7 @@ describe("plan tool (via MCP)", () => {
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
     const response = JSON.parse(text) as { planId: string };
 
-    const plan = getPlan(response.planId);
+    const plan = await getPlan(response.planId);
     expect(plan.localDir).toBe(customDir);
   });
 
@@ -304,6 +389,24 @@ describe("plan tool (via MCP)", () => {
     const result = await client.callTool({
       name: "mcp__genie__plan",
       arguments: { kitId: "kit-abc123", writes: ["*.js"], localDir: "/nonexistent/path" },
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
+    const error = JSON.parse(text) as { error: string };
+    expect(error.error).toBe("InvalidLocalDir");
+  });
+
+  it("rejects a localDir that exists but is a regular file, not a directory (AC5)", async () => {
+    // Regression guard: `existsSync` (the original check) returns true for
+    // any existing path, including a plain file, so a file path would have
+    // silently produced a plan with an unusable localDir.
+    const filePath = join(tempDir, "not-a-dir.txt");
+    await writeFile(filePath, "hello", "utf-8");
+
+    const result = await client.callTool({
+      name: "mcp__genie__plan",
+      arguments: { kitId: "kit-abc123", writes: ["*.js"], localDir: filePath },
     });
 
     expect(result.isError).toBe(true);

@@ -9,7 +9,7 @@
  * Output: { planId: string }
  */
 
-import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -75,8 +75,16 @@ export function registerPlan(server: McpServer): void {
       // Default localDir to cwd
       const resolvedLocalDir = localDir ? resolve(localDir) : process.cwd();
 
-      // Validate that localDir exists
-      if (!existsSync(resolvedLocalDir)) {
+      // Validate that localDir exists AND is a directory. AC5 requires "an
+      // existing directory" — a plain existence check would also accept a
+      // regular file, silently creating a plan whose localDir is unusable.
+      let localDirStat;
+      try {
+        localDirStat = await stat(resolvedLocalDir);
+      } catch {
+        localDirStat = null;
+      }
+      if (!localDirStat || !localDirStat.isDirectory()) {
         return {
           isError: true,
           content: [
@@ -84,7 +92,7 @@ export function registerPlan(server: McpServer): void {
               type: "text" as const,
               text: JSON.stringify({
                 error: "InvalidLocalDir",
-                message: `Local directory "${resolvedLocalDir}" does not exist.`,
+                message: `Local directory "${resolvedLocalDir}" does not exist or is not a directory.`,
               }),
             },
           ],
@@ -92,7 +100,7 @@ export function registerPlan(server: McpServer): void {
       }
 
       try {
-        const state = createPlan(kitId, writes, deletes, resolvedLocalDir);
+        const state = await createPlan(kitId, writes, deletes, resolvedLocalDir);
 
         // Emit audit log line. MUST go to stderr, never stdout: on the stdio
         // transport (the default when a harness pipes JSON-RPC — see
