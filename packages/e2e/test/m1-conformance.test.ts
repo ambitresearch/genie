@@ -14,7 +14,7 @@
  * rest of M1 — nothing is silently skipped.
  *
  *   Merged & driven live here:
- *     create_kit, list_files, read_file, validate,
+ *     create_kit, list_files, list_components, read_file, validate,
  *     create_project, list_projects, get_project, delete_project, (get_kit, list_kits)
  *
  *   In_review / not yet registered — stubbed as it.todo, wired to their issue:
@@ -117,6 +117,7 @@ describe("AC2 — MCP server boots in-process over the SDK test transport", () =
       "mcp__genie__get_kit",
       "mcp__genie__read_file",
       "mcp__genie__list_files",
+      "mcp__genie__list_components",
       "mcp__genie__validate",
       "mcp__genie__create_project",
       "mcp__genie__list_projects",
@@ -229,6 +230,7 @@ describe("AC4 — project / blueprint workflow", () => {
 
   it("get_project reflects kit bindings established at creation (the bind_kit end-state)", async () => {
     const kitResult = await harness.call("mcp__genie__create_kit", { name: "Bound Kit" });
+    expect(kitResult.isError, JSON.stringify(kitResult)).toBeFalsy();
     const { kitId } = payload(kitResult) as { kitId: string };
 
     const projectId = await createProject({
@@ -247,19 +249,33 @@ describe("AC4 — project / blueprint workflow", () => {
     expect(body.defaultKitId).toBe(kitId);
   });
 
-  it("list_projects returns authored projects sorted, and delete_project removes one end-to-end", async () => {
+  it("list_projects returns authored projects in (kind, name, id) order, and delete_project removes one end-to-end", async () => {
+    // Fixture chosen so a naive id-sort disagrees with the server's contract:
+    // "aaa-workspace" sorts before "walk-blueprint" by id, but the server orders
+    // by kind first (blueprint < workspace), so the blueprint must come first.
     await createProject({ name: "Walk Blueprint", kind: "blueprint" });
-    const workspaceId = await createProject({ name: "Walk Workspace", kind: "workspace" });
+    const workspaceId = await createProject({ name: "Aaa Workspace", kind: "workspace" });
 
     const listed = await harness.call("mcp__genie__list_projects", {});
-    const ids = (payload(listed) as { projects: { id: string }[] }).projects.map((p) => p.id);
-    expect(ids).toEqual([...ids].sort());
+    const projects = (payload(listed) as { projects: { id: string; name: string; kind: string }[] })
+      .projects;
+    const ids = projects.map((p) => p.id);
+
+    // Assert the *real* ordering contract: (kind, name, id) lexicographic — not a
+    // bare id-sort, which would pass accidentally and mask an ordering regression.
+    const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+    const expectedOrder = [...projects].sort(
+      (a, b) => cmp(a.kind, b.kind) || cmp(a.name, b.name) || cmp(a.id, b.id),
+    );
+    expect(projects).toEqual(expectedOrder);
+    // And the discriminating case: blueprint precedes the id-earlier workspace.
+    expect(ids.indexOf("walk-blueprint")).toBeLessThan(ids.indexOf("aaa-workspace"));
     expect(ids).toContain("walk-blueprint");
-    expect(ids).toContain("walk-workspace");
+    expect(ids).toContain("aaa-workspace");
 
     const del = await harness.call("mcp__genie__delete_project", { projectId: workspaceId });
     expect(del.isError).toBeFalsy();
-    expect(payload(del)).toMatchObject({ deletedProjectId: "walk-workspace" });
+    expect(payload(del)).toMatchObject({ deletedProjectId: "aaa-workspace" });
 
     const gone = await harness.call("mcp__genie__get_project", { projectId: workspaceId });
     expect(gone.isError).toBe(true);
