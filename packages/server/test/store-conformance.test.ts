@@ -61,14 +61,15 @@ function kitStoreContract(
     it("createKit throws KitAlreadyExistsError for an explicit id collision", async () => {
       await store.createKit("first kit", "collision-kit-abc123");
 
-      await expect(
-        store.createKit("second kit", "collision-kit-abc123"),
-      ).rejects.toMatchObject({
+      // Trigger the collision exactly once, then assert both facets (error type
+      // + carried kitId) against the same settled promise. Awaiting a rejected
+      // promise twice is safe and avoids a second createKit call, which on the
+      // GitHost adapter would be a redundant repo-create API round-trip.
+      const collision = store.createKit("second kit", "collision-kit-abc123");
+      await expect(collision).rejects.toThrow(KitAlreadyExistsError);
+      await expect(collision).rejects.toMatchObject({
         kitId: "collision-kit-abc123",
       });
-      await expect(
-        store.createKit("second kit", "collision-kit-abc123"),
-      ).rejects.toThrow(KitAlreadyExistsError);
     });
 
     it("createKit preserves the display name when explicit kitId differs", async () => {
@@ -652,6 +653,60 @@ describe("LocalFsKitStore — adapter-specific", () => {
         { kind: "write", path: "../../../tmp/evil.txt", content: "pwned" },
       ]),
     ).rejects.toThrow("Path traversal denied");
+  });
+});
+
+// ─── Adapter-specific tests: GitHostKitStore ─────────────────────────────────
+
+describe("GitHostKitStore — adapter-specific", () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("treats the repo name as authoritative when .kit.json embeds a divergent id", async () => {
+    // Reviewer concern (PR #90): readKitMeta must not trust the `id` field
+    // inside .kit.json. If that file is hand-edited or corrupted so its `id`
+    // diverges from the repository name, getKit/listKits must still return the
+    // repo name — the path every subsequent API call routes through — not the
+    // stale embedded id that would resolve to no repo.
+    const mockFetch = createMockGitHostFactory();
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
+
+    const store = new GitHostKitStore({
+      baseUrl: "https://mock-git-host.test/api/v1",
+      owner: "test-org",
+      token: "mock-token",
+    });
+
+    // Create a kit, then overwrite its .kit.json with a divergent embedded id.
+    const kit = await store.createKit("Corrupt Meta Kit", "corrupt-kit-abc123");
+    await mockFetch(
+      `https://mock-git-host.test/api/v1/repos/test-org/${kit.id}/contents/.kit.json`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          content: Buffer.from(
+            JSON.stringify({
+              id: "some-other-id-999999",
+              name: "Corrupt Meta Kit",
+              type: "GENIE_KIT",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            }),
+          ).toString("base64"),
+        }),
+      },
+    );
+
+    const fetched = await store.getKit(kit.id);
+    expect(fetched.id).toBe("corrupt-kit-abc123");
+    expect(fetched.name).toBe("Corrupt Meta Kit");
+
+    const listed = await store.listKits();
+    expect(listed.map((k) => k.id)).toContain("corrupt-kit-abc123");
+    expect(listed.map((k) => k.id)).not.toContain("some-other-id-999999");
   });
 });
 

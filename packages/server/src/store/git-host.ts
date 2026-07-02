@@ -172,8 +172,13 @@ export class GitHostKitStore implements KitStore {
       const meta = JSON.parse(
         Buffer.from(entry.content, "base64").toString("utf-8"),
       ) as KitMetaFile;
+      // The repository name (kitId) is authoritative for the kit's identity —
+      // it is the path every subsequent API call routes through. A manually
+      // edited or corrupted .kit.json could embed a divergent `id`; trusting it
+      // would make listKits/getKit return an ID that resolves to no repo. So we
+      // take only the human-readable fields (name, createdAt) from the file.
       return {
-        id: meta.id,
+        id: kitId,
         name: meta.name,
         type: KIT_TYPE,
         createdAt: meta.createdAt,
@@ -207,19 +212,22 @@ export class GitHostKitStore implements KitStore {
     const list = Array.isArray(repos)
       ? repos
       : ((repos as unknown as { data: RepoResponse[] }).data ?? []);
-    const kits: KitMeta[] = [];
-    for (const repo of list) {
-      const meta = await this.readKitMeta(repo.name);
-      kits.push(
-        meta ?? {
-          id: repo.name,
-          name: repo.name,
-          type: KIT_TYPE,
-          createdAt: repo.created_at,
-        },
-      );
-    }
-    return kits;
+    // Each repo needs its own .kit.json read. Fetch them concurrently so the
+    // total time is bounded by the slowest request rather than the sum of all
+    // N — the previous serial loop was an N+1 latency trap at limit=50.
+    return Promise.all(
+      list.map(async (repo) => {
+        const meta = await this.readKitMeta(repo.name);
+        return (
+          meta ?? {
+            id: repo.name,
+            name: repo.name,
+            type: KIT_TYPE,
+            createdAt: repo.created_at,
+          }
+        );
+      }),
+    );
   }
 
   async getKit(kitId: KitId): Promise<KitMeta> {
