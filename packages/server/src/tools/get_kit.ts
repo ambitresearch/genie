@@ -6,9 +6,14 @@ import { NotFoundError, KIT_TYPE } from "../store/interface.js";
 
 export const GET_KIT_TOOL_NAME = "mcp__genie__get_kit";
 
+/** Shape every `kitId` produced by `buildKitId` (create_kit.ts) satisfies: a
+ * lowercase slug plus a 6-char hex suffix. Exported so other tools (e.g.
+ * `bind_kit`) validate against the exact same pattern instead of redeclaring it. */
+export const KIT_ID_PATTERN = /^[a-z0-9-]{3,64}$/;
+
 const getKitArgsSchema = z
   .object({
-    kitId: z.string().regex(/^[a-z0-9-]{3,64}$/),
+    kitId: z.string().regex(KIT_ID_PATTERN),
   })
   .strict();
 
@@ -48,7 +53,7 @@ export function registerGetKitTool(server: McpServer, store: KitStore): void {
       description:
         "Return metadata for one writable UI kit and verify the kitId resolves to a GENIE_KIT.",
       inputSchema: {
-        kitId: z.string().regex(/^[a-z0-9-]{3,64}$/),
+        kitId: z.string().regex(KIT_ID_PATTERN),
       },
       outputSchema: {
         id: z.string(),
