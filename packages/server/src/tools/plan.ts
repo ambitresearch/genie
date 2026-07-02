@@ -124,6 +124,7 @@ export function registerPlan(server: McpServer): void {
               text: JSON.stringify({ planId: state.planId }),
             },
           ],
+          structuredContent: { planId: state.planId },
         };
       } catch (err: unknown) {
         if (err instanceof TooManyWritesError) {

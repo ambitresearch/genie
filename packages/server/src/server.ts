@@ -46,8 +46,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
-      "listing, kit creation, kit lookup, file listing, file reading, validation, and project " +
-      "create/list/get/delete/bind_kit.)",
+      "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
+      "create/list/get/delete/bind_kit, and plan creation (the capability-grant boundary for " +
+      "write_files/delete_files).)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the

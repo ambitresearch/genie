@@ -340,6 +340,9 @@ describe("plan tool (via MCP)", () => {
     const response = JSON.parse(text) as { planId: string };
     expect(response.planId).toBeTruthy();
     expect(typeof response.planId).toBe("string");
+    // Parity with list_kits/get_kit/read_file/list_components: MCP clients can
+    // consume the result without re-parsing the text part.
+    expect(result.structuredContent).toEqual({ planId: response.planId });
   });
 
   it("accepts optional deletes parameter", async () => {
