@@ -105,6 +105,48 @@ describe("listFiles", () => {
     });
   });
 
+  it("converts invalid arguments into a ListFilesError (ERR_INVALID_ARGS)", async () => {
+    const root = await tempKitsRoot();
+    const store = new KitFileStore(root);
+
+    // Missing kitId
+    await expect(
+      listFiles(store, {} as unknown as { kitId: string }),
+    ).rejects.toMatchObject({ code: "ERR_INVALID_ARGS" });
+
+    // Empty kitId (fails .min(1))
+    await expect(listFiles(store, { kitId: "" })).rejects.toMatchObject({
+      code: "ERR_INVALID_ARGS",
+    });
+
+    // Extra keys rejected by .strict()
+    await expect(
+      listFiles(store, { kitId: "x", extra: true } as unknown as { kitId: string }),
+    ).rejects.toMatchObject({ code: "ERR_INVALID_ARGS" });
+  });
+
+  it("surfaces invalid args as an error through the MCP tool", async () => {
+    const kitsRoot = await tempKitsRoot();
+    const server = createServer({ kitsRoot });
+    const client = new Client({ name: "test", version: "0" });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+
+    // Empty kitId violates the inputSchema (min length 1). The MCP SDK rejects
+    // it at the protocol layer, so the call comes back flagged as an error
+    // rather than returning file data. The tool handler's own ZodError →
+    // ERR_INVALID_ARGS branch is covered by the direct `listFiles()` unit test
+    // above (defense-in-depth for programmatic callers that bypass MCP schema
+    // validation).
+    const result = await client.callTool({
+      name: "mcp__genie__list_files",
+      arguments: { kitId: "" },
+    });
+    expect(result.isError).toBe(true);
+
+    await client.close();
+  });
+
   it("registers mcp__genie__list_files with the MCP server", async () => {
     const kitsRoot = await tempKitsRoot();
     await writeKitFile(kitsRoot, "tool-kit", ".kit.json", "{}");

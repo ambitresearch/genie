@@ -28,7 +28,7 @@ type IgnoreMatcher = (path: string) => boolean;
 
 export class ListFilesError extends Error {
   constructor(
-    readonly code: "ERR_KIT_NOT_FOUND" | "ERR_INVALID_KIT_ID",
+    readonly code: "ERR_KIT_NOT_FOUND" | "ERR_INVALID_KIT_ID" | "ERR_INVALID_ARGS",
     message: string,
   ) {
     super(message);
@@ -92,7 +92,19 @@ export class KitFileStore {
 }
 
 export async function listFiles(store: KitFileStore, args: ListFilesArgs): Promise<ListedFile[]> {
-  const parsed = listFilesArgsSchema.parse(args);
+  let parsed: ListFilesArgs;
+  try {
+    parsed = listFilesArgsSchema.parse(args);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const issue = error.issues[0];
+      throw new ListFilesError(
+        "ERR_INVALID_ARGS",
+        issue?.message ?? "Invalid arguments: expected { kitId: string }.",
+      );
+    }
+    throw error;
+  }
   return z.array(fileEntrySchema).parse(await store.listFiles(parsed.kitId));
 }
 
