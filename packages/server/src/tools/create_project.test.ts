@@ -522,6 +522,11 @@ describe("ProjectStore", () => {
         async listFiles() {
           return [];
         },
+        async listComponents() {
+          // bindKit does not call listComponents; mirror the "not used" idiom
+          // from list_kits.test.ts so a future accidental call is loud.
+          throw new Error("not used");
+        },
         async readFile() {
           return "";
         },
