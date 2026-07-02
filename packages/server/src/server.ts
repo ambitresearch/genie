@@ -4,6 +4,7 @@ import { ProjectStore, registerCreateProjectTool } from "./tools/create_project.
 import { registerListProjectsTool } from "./tools/list_projects.js";
 import { registerGetProjectTool } from "./tools/get_project.js";
 import { registerDeleteProjectTool } from "./tools/delete_project.js";
+import { registerBindKitTool } from "./tools/bind_kit.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
 import { registerValidate } from "./tools/validate.js";
@@ -43,7 +44,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit creation, " +
-      "kit lookup, file listing, file reading, validation, and project create/list/get/delete.)",
+      "kit lookup, file listing, file reading, validation, and project create/list/get/delete/bind_kit.)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -79,14 +80,18 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // all of them is what keeps them consistent.
   const kitsRoot =
     options.kitsRoot ?? process.env.GENIE_KITS_ROOT ?? join(process.cwd(), ".genie", "kits");
+  // Shared instance: `bind_kit` (via ProjectStore) validates kitId through the
+  // same store `create_kit`/`get_kit` already write through, so a kit created
+  // in this process is immediately bindable without a second construction.
+  const kitStore = new LocalFsKitStore(kitsRoot);
 
-  const projectStore = new ProjectStore(projectsRoot);
+  const projectStore = new ProjectStore(projectsRoot, kitStore);
   registerCreateProjectTool(server, projectStore);
   registerListProjectsTool(server, projectStore);
   registerGetProjectTool(server, projectStore);
   registerDeleteProjectTool(server, projectsRoot);
+  registerBindKitTool(server, projectStore);
 
-  const kitStore = new LocalFsKitStore(kitsRoot);
   registerListKits(server, kitStore);
   registerCreateKit(server, kitStore);
   registerGetKitTool(server, kitStore);

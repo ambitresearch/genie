@@ -33,6 +33,7 @@ describe("createServer", () => {
     expect(names).toContain("mcp__genie__list_projects");
     expect(names).toContain("mcp__genie__get_project");
     expect(names).toContain("mcp__genie__list_files");
+    expect(names).toContain("mcp__genie__bind_kit");
 
     await client.close();
   });
@@ -146,6 +147,42 @@ describe("createServer", () => {
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
     expect(text).toContain("ERR_PROJECT_NOT_FOUND");
     expect(text).toContain("does-not-exist");
+
+    await client.close();
+  });
+
+  it("mcp__genie__bind_kit binds a real create_kit-created kit to a project end-to-end", async () => {
+    const projectsRoot = await mkdtemp(join(tmpdir(), "genie-tool-projects-"));
+    const kitsRoot = await mkdtemp(join(tmpdir(), "genie-tool-kits-"));
+    const server = createServer({ projectsRoot, kitsRoot });
+    const client = new Client({ name: "test", version: "0" });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+
+    const kitResult = await client.callTool({
+      name: "mcp__genie__create_kit",
+      arguments: { name: "Commerce Kit" },
+    });
+    const { kitId } = JSON.parse(
+      (kitResult.content as { type: string; text: string }[])[0]?.text ?? "{}",
+    ) as { kitId: string };
+
+    await client.callTool({
+      name: "mcp__genie__create_project",
+      arguments: { name: "Bound Workspace", kind: "workspace" },
+    });
+
+    const result = await client.callTool({
+      name: "mcp__genie__bind_kit",
+      arguments: { projectId: "bound-workspace", kitId, default: true },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      id: "bound-workspace",
+      defaultKitId: kitId,
+      kitBindings: [{ kitId, default: true }],
+    });
 
     await client.close();
   });
