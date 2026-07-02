@@ -180,6 +180,22 @@ export class GitHostKitStore implements KitStore {
     return entries.sort();
   }
 
+  async listComponents(params: {
+    kitId: KitId;
+    group?: string;
+  }): Promise<import("./interface.js").ComponentEntry[]> {
+    // For now, return empty array as M3-03 manifest compiler is not yet implemented
+    // TODO: After M3-03 lands, fetch .genie/manifest.json from the kit repository
+    const components: import("./interface.js").ComponentEntry[] = [];
+
+    // Filter by group if specified
+    if (params.group) {
+      return components.filter((c) => c.group === params.group);
+    }
+
+    return components;
+  }
+
   private async listTree(kitId: KitId, dirPath: string): Promise<string[]> {
     const path = dirPath
       ? `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${dirPath}`
