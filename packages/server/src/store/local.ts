@@ -135,7 +135,7 @@ export class LocalFsKitStore implements KitStore {
       const meta = await readMeta<KitMetaFile>(
         this.kitMetaPath(entry.name),
       );
-      if (meta) {
+      if (meta?.type === KIT_TYPE) {
         kits.push({
           id: meta.id,
           name: meta.name,
@@ -149,7 +149,7 @@ export class LocalFsKitStore implements KitStore {
 
   async getKit(kitId: KitId): Promise<KitMeta> {
     const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId));
-    if (!meta) throw new NotFoundError("Kit", kitId);
+    if (!meta || meta.type !== KIT_TYPE) throw new NotFoundError("Kit", kitId);
     return {
       id: meta.id,
       name: meta.name,
@@ -168,6 +168,27 @@ export class LocalFsKitStore implements KitStore {
     const files = await walkDir(dir);
     // Exclude the metadata file from the listing
     return files.filter((f) => f !== ".kit.json");
+  }
+
+  async listComponents(params: {
+    kitId: KitId;
+    group?: string;
+  }): Promise<import("./interface.js").ComponentEntry[]> {
+    const { kitId, group } = params;
+
+    // Validate kit exists and is properly configured (matches GitHostKitStore behavior)
+    await this.getKit(kitId);
+
+    // For now, return empty array as M3-03 manifest compiler is not yet implemented
+    // TODO: After M3-03 lands, read from .genie/manifest.json
+    const components: import("./interface.js").ComponentEntry[] = [];
+
+    // Filter by group if specified (use explicit undefined check to handle empty string correctly)
+    if (group !== undefined) {
+      return components.filter((c) => c.group === group);
+    }
+
+    return components;
   }
 
   async readFile(kitId: KitId, path: string): Promise<string> {

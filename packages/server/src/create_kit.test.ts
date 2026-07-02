@@ -8,6 +8,7 @@ import { createServer } from "./server.js";
 import { LocalFsKitStore } from "./store/local.js";
 import { KitAlreadyExistsError, KIT_TYPE } from "./store/interface.js";
 import { slugify, buildKitId } from "./tools/create_kit.js";
+import { KIT_ID_PATTERN } from "./tools/get_kit.js";
 
 // ────────────────────────────────────────────────────────────
 // Unit tests — pure functions
@@ -32,6 +33,29 @@ describe("slugify", () => {
   it("handles single word", () => {
     expect(slugify("Widgets")).toBe("widgets");
   });
+
+  it("truncates a maximally long name so the id budget still fits", () => {
+    // NAME_MAX_LENGTH (64 'a's) slugifies to something short enough that
+    // `<slug>-<6-char-hex>` still satisfies KIT_ID_PATTERN's 64-char cap.
+    const slug = slugify("a".repeat(64));
+    expect(slug.length).toBeLessThanOrEqual(57);
+  });
+
+  it("re-trims a trailing hyphen exposed by truncation", () => {
+    // The hyphen must land as the LAST character kept by `.slice(0,
+    // SLUG_MAX_LENGTH)` for this test to actually exercise the re-trim step:
+    // 56 'a's (indices 0-55) + '-' (index 56) is exactly SLUG_MAX_LENGTH (57)
+    // characters, so the pre-retrim slice ends in '-' and the re-trim must
+    // fire to strip it. (An earlier version of this test used 57 'a's before
+    // the hyphen, which pushed the hyphen to index 57 — past the slice
+    // boundary — so it was silently dropped by `.slice()` itself and the
+    // assertion passed without ever touching the re-trim `.replace(/-$/, "")`
+    // call; caught by review.)
+    const name = "a".repeat(56) + "-" + "b".repeat(10);
+    const slug = slugify(name);
+    expect(slug.endsWith("-")).toBe(false);
+    expect(slug).toBe("a".repeat(56));
+  });
 });
 
 describe("buildKitId", () => {
@@ -43,6 +67,16 @@ describe("buildKitId", () => {
   it("generates a random 6-char suffix when none given", () => {
     const id = buildKitId("Test");
     expect(id).toMatch(/^test-[0-9a-f]{6}$/);
+  });
+
+  it("always satisfies KIT_ID_PATTERN, even for a maximally long name", () => {
+    // Regression test: buildKitId used to be able to emit ids up to 71
+    // chars for a 64-char name, which get_kit/bind_kit's shared
+    // KIT_ID_PATTERN (3-64 chars) would then reject — making the kit
+    // un-retrievable and un-bindable right after creation.
+    const id = buildKitId("a".repeat(64), "abc123");
+    expect(id.length).toBeLessThanOrEqual(64);
+    expect(id).toMatch(KIT_ID_PATTERN);
   });
 });
 

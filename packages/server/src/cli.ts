@@ -52,9 +52,12 @@ Options:
 
 Env:
   MCP_TRANSPORT              Same as --transport
+  GENIE_KITS_ROOT            Directory where kit tools read/write UI kits
   GENIE_PROJECTS_ROOT        Directory where create_project writes project roots
 
-This scaffold build boots, speaks MCP, and registers ping plus M1 project creation.`;
+This scaffold build boots, speaks MCP, and registers ping plus M1 tools:
+kit listing, kit creation, file listing, file reading, validation, and project
+create/list/get/delete.`;
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));

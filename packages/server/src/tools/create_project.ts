@@ -3,18 +3,25 @@ import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import type { KitStore } from "../store/interface.js";
+import { getKit, ProjectNotFoundError, WrongProjectTypeError } from "./get_kit.js";
 
 export const CREATE_PROJECT_TOOL_NAME = "mcp__genie__create_project";
 
-const PROJECT_ID_PATTERN = /^[a-z0-9-]{3,64}$/;
+export const PROJECT_ID_PATTERN = /^[a-z0-9-]{3,64}$/;
 
 const projectKindSchema = z.enum(["workspace", "blueprint"]);
-const kitBindingSchema = z
-  .object({
-    kitId: z.string().min(1),
-    default: z.boolean().optional(),
-  })
-  .strict();
+
+/** Shared shape for a single kit binding entry (see `KitBinding`). Exported so
+ * `bind_kit`'s output schema can't drift from what `create_project`/`get_project`
+ * already declare for the same field (mirrors the `projectSummaryShape` pattern
+ * just below). */
+export const kitBindingShape = {
+  kitId: z.string().min(1),
+  default: z.boolean().optional(),
+};
+
+const kitBindingSchema = z.object(kitBindingShape).strict();
 
 const createProjectArgsSchema = z
   .object({
@@ -25,22 +32,77 @@ const createProjectArgsSchema = z
   })
   .strict();
 
+/** A recorded screen artifact within a project (written by `conjure_screen`, M1-21). */
+const projectScreenSchema = z
+  .object({
+    id: z.string(),
+    path: z.string(),
+    title: z.string(),
+    updatedAt: z.string(),
+  })
+  .strict();
+
 const projectManifestSchema = z
   .object({
     id: z.string().regex(PROJECT_ID_PATTERN),
     name: z.string(),
     kind: projectKindSchema,
+    defaultKitId: z.string().optional(),
     kitBindings: z.array(kitBindingSchema),
     createdAt: z.string(),
     updatedAt: z.string(),
     sourceBlueprintId: z.string().optional(),
+    // Optional + absent from every manifest `create_project` writes today: no M1 tool
+    // records screens yet (that lands with `conjure_screen`, M1-21). Optional keeps
+    // existing on-disk manifests parsing unchanged; `get_project` defaults this to `[]`.
+    screens: z.array(projectScreenSchema).optional(),
   })
   .strict();
 
 export type ProjectKind = z.infer<typeof projectKindSchema>;
 export type KitBinding = z.infer<typeof kitBindingSchema>;
+export type ProjectScreen = z.infer<typeof projectScreenSchema>;
 export type CreateProjectArgs = z.infer<typeof createProjectArgsSchema>;
 export type ProjectManifest = z.infer<typeof projectManifestSchema>;
+
+export interface ProjectSummary extends Record<string, unknown> {
+  id: string;
+  name: string;
+  kind: ProjectKind;
+  defaultKitId?: string;
+  kitBindings: KitBinding[];
+  updatedAt: string;
+  canEdit: boolean;
+}
+
+/** Full detail returned by `get_project` — a `ProjectSummary` plus screens and provenance. */
+export interface ProjectDetail extends ProjectSummary {
+  screens: ProjectScreen[];
+  sourceBlueprintId?: string;
+}
+
+/**
+ * Shared output shape for a `ProjectSummary`, consumed by both `list_projects` and
+ * `get_project` so the two tools' schemas can't drift apart (Implementation Notes:
+ * "Share schema helpers with list_projects").
+ */
+export const projectSummaryShape = {
+  id: z.string().regex(PROJECT_ID_PATTERN),
+  name: z.string(),
+  kind: projectKindSchema,
+  defaultKitId: z.string().optional(),
+  kitBindings: z.array(kitBindingSchema),
+  updatedAt: z.string(),
+  canEdit: z.boolean(),
+};
+
+/** Shared output shape for a single recorded screen entry (see `ProjectDetail.screens`). */
+export const projectScreenShape = {
+  id: z.string(),
+  path: z.string(),
+  title: z.string(),
+  updatedAt: z.string(),
+};
 
 export interface CreateProjectResult extends Record<string, unknown> {
   projectId: string;
@@ -49,26 +111,50 @@ export interface CreateProjectResult extends Record<string, unknown> {
 export type ProjectStoreErrorCode =
   | "ERR_PROJECT_EXISTS"
   | "ERR_BLUEPRINT_NOT_FOUND"
-  | "ERR_INVALID_PROJECT_NAME";
+  | "ERR_INVALID_PROJECT_NAME"
+  | "ERR_PROJECT_NOT_FOUND"
+  | "ERR_KIT_NOT_FOUND"
+  | "ERR_PROJECT_READONLY";
 
 export class ProjectStoreError extends Error {
   readonly code: ProjectStoreErrorCode;
   readonly suggestedSlug?: string;
+  readonly projectId?: string;
+  readonly kitId?: string;
 
   constructor(
     code: ProjectStoreErrorCode,
     message: string,
-    options: { suggestedSlug?: string } = {},
+    options: { suggestedSlug?: string; projectId?: string; kitId?: string } = {},
   ) {
     super(message);
     this.name = "ProjectStoreError";
     this.code = code;
     this.suggestedSlug = options.suggestedSlug;
+    this.projectId = options.projectId;
+    this.kitId = options.kitId;
   }
 }
 
+/** Input to `bind_kit` (M1-20) — see `ProjectStore.bindKit`. */
+export interface BindKitArgs {
+  projectId: string;
+  kitId: string;
+  default?: boolean;
+}
+
 export class ProjectStore {
-  constructor(readonly root: string) {}
+  /**
+   * `kitStore` is optional so every existing single-arg `new ProjectStore(root)`
+   * call site (this file's + sibling tools' tests, `server.ts` prior to M1-20)
+   * keeps compiling unchanged. It is required in practice only by `bindKit`,
+   * which asserts its presence at call time — `server.ts` always supplies the
+   * real `LocalFsKitStore` it already constructs for the kit verbs.
+   */
+  constructor(
+    readonly root: string,
+    private readonly kitStore?: KitStore,
+  ) {}
 
   async createProject(args: CreateProjectArgs): Promise<CreateProjectResult> {
     const parsed = createProjectArgsSchema.parse(args);
@@ -118,11 +204,14 @@ export class ProjectStore {
     }
 
     const now = new Date().toISOString();
+    const kitBindings = parsed.kitBindings ?? sourceBlueprint?.kitBindings ?? [];
+    const manifestDefaultKitId = defaultKitId(kitBindings);
     const manifest: ProjectManifest = {
       id: projectId,
       name: parsed.name,
       kind: parsed.kind,
-      kitBindings: parsed.kitBindings ?? sourceBlueprint?.kitBindings ?? [],
+      ...(manifestDefaultKitId ? { defaultKitId: manifestDefaultKitId } : {}),
+      kitBindings,
       createdAt: now,
       updatedAt: now,
       ...(sourceBlueprint ? { sourceBlueprintId: sourceBlueprint.id } : {}),
@@ -130,6 +219,169 @@ export class ProjectStore {
     await this.writeManifest(projectId, manifest);
 
     return { projectId };
+  }
+
+  async listProjects(): Promise<ProjectSummary[]> {
+    await mkdir(this.root, { recursive: true });
+    const entries = await readdir(this.root, { withFileTypes: true });
+    const projects: ProjectSummary[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (!PROJECT_ID_PATTERN.test(entry.name)) continue;
+      const manifest = await this.readListManifest(entry.name);
+      if (!manifest) continue;
+      projects.push(projectSummary(manifest));
+    }
+    return projects.sort(compareProjectSummaries);
+  }
+
+  /**
+   * Get full detail for a single project (workspace or blueprint — same shape,
+   * no special-case tool family; AC4). Throws `ProjectStoreError("ERR_PROJECT_NOT_FOUND")`
+   * with the id echoed (AC5) for a missing, unreadable, or malformed manifest — the same
+   * leniency `readListManifest` already applies when enumerating projects.
+   *
+   * Validates `projectId` against `PROJECT_ID_PATTERN` before any filesystem access —
+   * matching `createProject`/`listProjects`, which only ever touch paths built from
+   * slug-shaped ids. `get_project`'s MCP tool layer already rejects non-slug ids via
+   * its own regex-typed input schema, but `ProjectStore` is a public export and
+   * `getProject` a public method: a direct/programmatic caller (bypassing the MCP
+   * schema) could otherwise pass something like `"../secret"` and probe paths outside
+   * the projects root. Rejecting here, before `readListManifest`/`join()`, closes that
+   * gap without changing the external contract (still `ERR_PROJECT_NOT_FOUND`).
+   */
+  async getProject(projectId: string): Promise<ProjectDetail> {
+    if (!PROJECT_ID_PATTERN.test(projectId)) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_NOT_FOUND",
+        `Project "${projectId}" was not found.`,
+        { projectId },
+      );
+    }
+    const manifest = await this.readListManifest(projectId);
+    if (!manifest) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_NOT_FOUND",
+        `Project "${projectId}" was not found.`,
+        { projectId },
+      );
+    }
+    return {
+      ...projectSummary(manifest),
+      canEdit: !existsSync(join(this.projectRoot(projectId), ".genie", ".readonly")),
+      screens: manifest.screens ?? [],
+      ...(manifest.sourceBlueprintId ? { sourceBlueprintId: manifest.sourceBlueprintId } : {}),
+    };
+  }
+
+  /**
+   * Bind a kit to a project (M1-20). Writes the binding into
+   * `.genie/project.json` and returns the updated summary.
+   *
+   * - AC3: a new `kitId` is appended to `kitBindings`.
+   * - AC4: `default: true` sets `defaultKitId` and clears `default` from every
+   *   other binding, so exactly one binding is ever the default. `default: false`
+   *   clears default status from just this binding (if it held it). Omitting
+   *   `default` entirely preserves whatever this binding's current default
+   *   status already is (or `false` for a brand-new binding) — this is what
+   *   keeps a same-kit re-bind idempotent (AC8) instead of silently demoting an
+   *   existing default on every unrelated re-bind call.
+   * - AC5/AC6: validates the project and kit both exist first — no partial
+   *   writes on a bad reference. `projectId` is also regex-checked up front
+   *   (same defense-in-depth as `getProject`, above) before any filesystem
+   *   access.
+   * - AC7: no blueprint special-case; `createProject` already copies
+   *   `kitBindings` into a workspace instantiated `fromBlueprintId`, so a
+   *   binding recorded here on a blueprint carries forward automatically.
+   * - AC8: re-binding the same `kitId` updates that one entry in place rather
+   *   than appending a duplicate.
+   */
+  async bindKit(args: BindKitArgs): Promise<ProjectSummary> {
+    const { projectId, kitId, default: isDefault } = args;
+
+    // Same defense-in-depth as `getProject` (above): `ProjectStore` is a public
+    // export and `bindKit` a public method, so a direct/programmatic caller
+    // bypassing the MCP schema's regex-typed input could otherwise pass
+    // something like `"../secret"` and probe paths outside the projects root
+    // via `projectRoot()`/`join()` below. Reject before any filesystem access,
+    // same external contract (`ERR_PROJECT_NOT_FOUND`).
+    if (!PROJECT_ID_PATTERN.test(projectId)) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_NOT_FOUND",
+        `Project "${projectId}" was not found.`,
+        { projectId },
+      );
+    }
+
+    const manifest = await this.readListManifest(projectId);
+    if (!manifest) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_NOT_FOUND",
+        `Project "${projectId}" was not found.`,
+        { projectId },
+      );
+    }
+
+    if (existsSync(join(this.projectRoot(projectId), ".genie", ".readonly"))) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_READONLY",
+        `Project "${projectId}" is read-only and cannot be modified.`,
+        { projectId },
+      );
+    }
+
+    await this.assertKitExists(kitId);
+
+    const nextKitBindings = upsertKitBinding(manifest.kitBindings, kitId, isDefault);
+    // Recompute the top-level `defaultKitId` from the new bindings rather than
+    // carrying over `manifest.defaultKitId` — same pattern `createProject` uses
+    // (`defaultKitId(kitBindings)`). Without this, an old default surviving in
+    // the spread below would shadow the newly-bound default in `projectSummary`,
+    // since that helper prefers a truthy stored `defaultKitId` over recomputing.
+    const nextDefaultKitId = defaultKitId(nextKitBindings);
+    const updated: ProjectManifest = {
+      ...manifest,
+      kitBindings: nextKitBindings,
+      ...(nextDefaultKitId ? { defaultKitId: nextDefaultKitId } : { defaultKitId: undefined }),
+      updatedAt: new Date().toISOString(),
+    };
+    await this.writeManifest(projectId, updated);
+    return projectSummary(updated);
+  }
+
+  /**
+   * Verify `kitId` resolves to a writable `GENIE_KIT`, reusing `get_kit`'s own
+   * validation (Implementation Notes: "Reuse get_kit validation before writing
+   * the project manifest") rather than re-deriving kit-lookup semantics here.
+   * Maps every rejection shape `getKit` can throw — a malformed id (Zod), a
+   * missing kit (`ProjectNotFoundError`), or a non-kit project
+   * (`WrongProjectTypeError`) — onto the single `ERR_KIT_NOT_FOUND` code
+   * `bind_kit`'s own AC6 specifies.
+   */
+  private async assertKitExists(kitId: string): Promise<void> {
+    if (!this.kitStore) {
+      // Every production wiring path (server.ts) supplies a KitStore alongside
+      // the ProjectStore. This is only reachable if a caller constructs
+      // `new ProjectStore(root)` (no second arg) and then calls `bindKit`
+      // directly — fail loudly rather than silently skipping kit validation.
+      throw new Error(
+        "ProjectStore.bindKit requires a KitStore: construct with `new ProjectStore(root, kitStore)`.",
+      );
+    }
+    try {
+      await getKit(this.kitStore, { kitId });
+    } catch (error) {
+      if (
+        error instanceof ProjectNotFoundError ||
+        error instanceof WrongProjectTypeError ||
+        error instanceof z.ZodError
+      ) {
+        throw new ProjectStoreError("ERR_KIT_NOT_FOUND", `Kit "${kitId}" was not found.`, {
+          kitId,
+        });
+      }
+      throw error;
+    }
   }
 
   private projectRoot(projectId: string): string {
@@ -168,6 +420,21 @@ export class ProjectStore {
       );
     }
     return manifest;
+  }
+
+  private async readListManifest(projectId: string): Promise<ProjectManifest | undefined> {
+    try {
+      return await this.readManifest(projectId);
+    } catch (error) {
+      if (
+        error instanceof SyntaxError ||
+        error instanceof z.ZodError ||
+        error instanceof ProjectStoreError
+      ) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   private async findExistingProject(
@@ -248,4 +515,73 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 64)
     .replace(/-+$/g, "");
+}
+
+function projectSummary(manifest: ProjectManifest): ProjectSummary {
+  const defaultId = manifest.defaultKitId ?? defaultKitId(manifest.kitBindings);
+  return {
+    id: manifest.id,
+    name: manifest.name,
+    kind: manifest.kind,
+    ...(defaultId ? { defaultKitId: defaultId } : {}),
+    kitBindings: manifest.kitBindings,
+    updatedAt: manifest.updatedAt,
+    canEdit: true,
+  };
+}
+
+function defaultKitId(kitBindings: KitBinding[]): string | undefined {
+  return kitBindings.find((binding) => binding.default)?.kitId;
+}
+
+/**
+ * Insert-or-update a single kit binding by `kitId` (AC8 — re-binding the same
+ * kit updates in place rather than appending a duplicate).
+ *
+ * `isDefault` semantics (AC4):
+ *   - `true`  → this binding becomes the default; `default` is cleared (set to
+ *     `undefined`, not `false` — keeps existing manifests' shape, since a
+ *     fresh binding never had the field at all) on every other binding.
+ *   - `false` → this binding is explicitly marked not-default; every other
+ *     binding's default status is left untouched.
+ *   - `undefined` (omitted) → this binding's default status is left exactly as
+ *     it already was (`false`/absent for a brand-new binding) — this is what
+ *     makes an unrelated re-bind call idempotent instead of demoting an
+ *     existing default as a side effect.
+ */
+function upsertKitBinding(
+  bindings: KitBinding[],
+  kitId: string,
+  isDefault: boolean | undefined,
+): KitBinding[] {
+  const existing = bindings.find((binding) => binding.kitId === kitId);
+  const nextDefault = isDefault ?? existing?.default ?? false;
+  const updatedBinding: KitBinding = { kitId, ...(nextDefault ? { default: true } : {}) };
+
+  // Clear default from every *other* binding when this one becomes the new
+  // default (AC4: "clears default status from any previous binding"); leave
+  // every other binding untouched otherwise. `KitBinding` only ever has
+  // `{ kitId, default? }` (kitBindingShape), so rebuilding with just `kitId`
+  // is exactly "clear default", not a lossy copy.
+  const clearOthersDefault = (binding: KitBinding): KitBinding =>
+    nextDefault && binding.kitId !== kitId ? { kitId: binding.kitId } : binding;
+
+  if (!existing) {
+    return [...bindings.map(clearOthersDefault), updatedBinding];
+  }
+  // Update in place (AC8) — preserves existing binding order instead of
+  // moving the re-bound kit to the end of the array.
+  return bindings.map((binding) =>
+    binding.kitId === kitId ? updatedBinding : clearOthersDefault(binding),
+  );
+}
+
+function compareProjectSummaries(a: ProjectSummary, b: ProjectSummary): number {
+  return compareText(a.kind, b.kind) || compareText(a.name, b.name) || compareText(a.id, b.id);
+}
+
+function compareText(a: string, b: string): number {
+  const aNorm = a.normalize("NFC").toLowerCase();
+  const bNorm = b.normalize("NFC").toLowerCase();
+  return aNorm < bNorm ? -1 : aNorm > bNorm ? 1 : a < b ? -1 : a > b ? 1 : 0;
 }

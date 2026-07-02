@@ -12,6 +12,7 @@ export default tseslint.config(
       "docs/**",
       ".remember/**",
       ".claude/**",
+      ".paperclip-runtime/**",
       "**/*.config.js",
       "**/*.config.ts",
       "eslint.config.js",

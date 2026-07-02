@@ -1,11 +1,18 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { join } from "node:path";
-import {
-  ProjectStore,
-  registerCreateProjectTool,
-} from "./tools/create_project.js";
+import { ProjectStore, registerCreateProjectTool } from "./tools/create_project.js";
+import { registerListProjectsTool } from "./tools/list_projects.js";
+import { registerGetProjectTool } from "./tools/get_project.js";
+import { registerDeleteProjectTool } from "./tools/delete_project.js";
+import { registerBindKitTool } from "./tools/bind_kit.js";
 import { registerCreateKit } from "./tools/create_kit.js";
+import { registerReadFile } from "./tools/read_file.js";
+import { registerValidate } from "./tools/validate.js";
+import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
+import { registerListKits } from "./tools/list_kits.js";
+import { registerListComponents } from "./tools/list_components.js";
 import { LocalFsKitStore } from "./store/local.js";
+import { registerGetKitTool } from "./tools/get_kit.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -30,13 +37,16 @@ export const SERVER_INFO = {
 export interface CreateServerOptions {
   projectsRoot?: string;
   kitsRoot?: string;
+  reportsDir?: string;
 }
 
 export function createServer(options: CreateServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO, {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
-      "harness. (Scaffold build — project creation and the built-in ping tool are registered so far.)",
+      "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
+      "listing, kit creation, kit lookup, file listing, file reading, validation, and project " +
+      "create/list/get/delete/bind_kit.)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -62,22 +72,44 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     }),
   );
 
-  registerCreateProjectTool(
-    server,
-    new ProjectStore(
-      options.projectsRoot ??
-        process.env.GENIE_PROJECTS_ROOT ??
-        join(process.cwd(), ".genie", "projects"),
-    ),
-  );
+  const projectsRoot =
+    options.projectsRoot ??
+    process.env.GENIE_PROJECTS_ROOT ??
+    join(process.cwd(), ".genie", "projects");
+  // Resolve the kits root ONCE so every kit verb agrees on where kits live.
+  // `create_kit` (via LocalFsKitStore) writes here, `read_file` reads here, and
+  // `list_files` (via KitFileStore) walks here — threading the same value into
+  // all of them is what keeps them consistent.
+  const kitsRoot =
+    options.kitsRoot ?? process.env.GENIE_KITS_ROOT ?? join(process.cwd(), ".genie", "kits");
+  // Shared instance: `bind_kit` (via ProjectStore) validates kitId through the
+  // same store `create_kit`/`get_kit` already write through, so a kit created
+  // in this process is immediately bindable without a second construction.
+  const kitStore = new LocalFsKitStore(kitsRoot);
 
-  registerCreateKit(
+  const projectStore = new ProjectStore(projectsRoot, kitStore);
+  registerCreateProjectTool(server, projectStore);
+  registerListProjectsTool(server, projectStore);
+  registerGetProjectTool(server, projectStore);
+  registerDeleteProjectTool(server, projectsRoot);
+  registerBindKitTool(server, projectStore);
+
+  registerListKits(server, kitStore);
+  registerListComponents(server, kitStore);
+  registerCreateKit(server, kitStore);
+  registerGetKitTool(server, kitStore);
+
+  // M1 tools
+  registerReadFile(server, kitsRoot);
+  registerListFilesTool(server, new KitFileStore(kitsRoot));
+
+  // Advisory telemetry facet (M1-12): persists validation counts + emits
+  // Prometheus metrics. No planId required (read-side telemetry).
+  registerValidate(
     server,
-    new LocalFsKitStore(
-      options.kitsRoot ??
-        process.env.GENIE_KITS_ROOT ??
-        join(process.cwd(), ".genie", "kits"),
-    ),
+    options.reportsDir ??
+      process.env.GENIE_REPORTS_DIR ??
+      join(process.cwd(), ".genie", "reports"),
   );
 
   return server;
