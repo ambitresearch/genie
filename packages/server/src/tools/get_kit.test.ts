@@ -113,7 +113,7 @@ describe("mcp__genie__get_kit", () => {
           {
             id: "workspace-project",
             name: "Workspace Project",
-            type: "GENIE_PROJECT" as any, // Simulate a different project type
+            type: "GENIE_PROJECT" as unknown as typeof KIT_TYPE, // Simulate a different project type
             createdAt: "2026-06-01T00:00:00.000Z",
           },
         ],
