@@ -16,13 +16,27 @@
  * new steps this file owns: loading the current source from the kit (AC3) and,
  * when a region is given, rendering a crop of it for vision input (AC4/AC7).
  *
+ * Two DISTINCT retry mechanisms are in play here, at different layers — don't
+ * conflate them when reading this file (same split as `conjure.ts`):
+ *   1. The shared harness's "retries once on validation failure" above (AC6)
+ *      is a structurally-valid-but-wrong-shape reply getting one more attempt
+ *      with the Ajv error fed back into the prompt.
+ *   2. Each of those (up to 2) calls individually goes through M2-06's
+ *      `withRetry(createChatCompletion)` (DRO-253, see `defaultChatCompletion`
+ *      below) for transient network/429/5xx failures — invisible to this
+ *      file's own logic and to the shared harness, handled entirely inside the
+ *      `chat` seam.
+ *
  * ── Import-time safety (same as conjure) ──────────────────────────────────────
  * `../llm/client.js` constructs its `llmClient` singleton eagerly at module load
  * and throws `MissingLLMConfigError` when `GENIE_LLM_*` is unset. So the client
  * is only a *type* import here (erased by `verbatimModuleSyntax`); the default
  * runtime `chat` seam reaches it via a lazy `await import(...)`, touched only
  * when a real `refine` call runs. Tests inject their own `chat` + `kitStore` +
- * `cropper` and never load the client or Playwright.
+ * `cropper` and never load the client or Playwright. (`../llm/retry.js`'s
+ * `withRetry`, by contrast, has no such eager side effect — it's a plain
+ * higher-order function — so it's imported statically below and applied
+ * inside that same lazy seam, same as `conjure.ts`.)
  *
  * ── AC7 region crop is a lazy, OPTIONAL peer dependency ───────────────────────
  * AC7 asks for a headless-Chromium crop via Playwright, and calls Playwright
@@ -62,6 +76,13 @@ import {
   logStderr,
   runComponentGeneration,
 } from "../llm/component-response.js";
+// Value import (not type-only): `retry.ts` has no import-time side effects —
+// unlike `client.ts`, it never touches `GENIE_LLM_*` env or constructs
+// anything eagerly at module load — so wrapping `defaultChatCompletion`
+// below in `withRetry` is safe to do statically (same reasoning as
+// `conjure.ts`; DRO-253 / DRO-618: `refine` shares the exact same gap
+// conjure had — `withRetry` existed but no production call site applied it).
+import { withRetry } from "../llm/retry.js";
 import { KIT_ID_PATTERN } from "./get_kit.js";
 
 export const REFINE_TOOL_NAME = "mcp__genie__refine";
@@ -225,9 +246,24 @@ export class RefineError extends Error {
 
 // ── Default (production) chat impl: lazy client import (same as conjure) ───────
 
+/**
+ * Default `chat` seam: dynamically imports the M2-01 client on first call, so
+ * building the server never eagerly triggers `MissingLLMConfigError` (see module
+ * header). A real `refine` call in a properly-configured deployment resolves
+ * this to `withRetry(createChatCompletion)` (M2-06, DRO-253) — every
+ * production LLM call this tool makes is retry/backoff-wrapped by default,
+ * same as `conjure`; callers (and tests, via `deps.chat`) never need to
+ * remember to apply the wrapper themselves.
+ *
+ * `withRetry` is called fresh on every invocation rather than wrapped once at
+ * module scope: the module-scope `createChatCompletion` binding doesn't exist
+ * until the dynamic import resolves, and re-wrapping a plain async function
+ * is cheap (no state beyond reading `GENIE_LLM_RETRY_MAX` from `process.env`
+ * per call, matching `conjure.ts`'s identical seam).
+ */
 const defaultChatCompletion: ChatCompletionFn = async (input) => {
   const { createChatCompletion } = await import("../llm/client.js");
-  return createChatCompletion(input);
+  return withRetry(createChatCompletion)(input);
 };
 
 // ── Default (production) region cropper: lazy Playwright (AC7) ─────────────────
