@@ -228,6 +228,34 @@ describe("createLLMClient", () => {
     ).toThrow(MissingLLMConfigError);
   });
 
+  it("treats a whitespace-only base URL or API key the same as unset", () => {
+    // Regression guard (Copilot review): a stray "  " from a misconfigured
+    // .env file is truthy and would otherwise slip past the fail-fast guard,
+    // only to fail later with a confusing URL-parse/auth error instead of a
+    // clear MissingLLMConfigError.
+    expect(() =>
+      createLLMClient({
+        [GENIE_LLM_BASE_URL_ENV]: "   ",
+        [GENIE_LLM_API_KEY_ENV]: "sk-test-key",
+      }),
+    ).toThrow(MissingLLMConfigError);
+    expect(() =>
+      createLLMClient({
+        [GENIE_LLM_BASE_URL_ENV]: "http://example.invalid/v1",
+        [GENIE_LLM_API_KEY_ENV]: "\t\n",
+      }),
+    ).toThrow(MissingLLMConfigError);
+  });
+
+  it("trims surrounding whitespace from valid base URL / API key values", () => {
+    const client = createLLMClient({
+      [GENIE_LLM_BASE_URL_ENV]: "  http://example.invalid/v1  ",
+      [GENIE_LLM_API_KEY_ENV]: "  sk-test-key  ",
+    });
+    expect(client.baseURL).toBe("http://example.invalid/v1");
+    expect(client.apiKey).toBe("sk-test-key");
+  });
+
   it("never falls back to a hardcoded default base URL (AC3)", () => {
     // Regression guard: constructing with only an API key must not silently
     // resolve to some baked-in provider URL — it must fail closed, naming
@@ -486,23 +514,30 @@ describe("createChatCompletion", () => {
   });
 
   it("propagates the underlying error untouched on a non-2xx response (no retry/swallow)", async () => {
+    // Regression guard (Copilot review): this must exercise `createChatCompletion`
+    // itself, not just `client.chat.completions.create` — a version that called
+    // the raw SDK method would pass even if createChatCompletion started
+    // wrapping or swallowing errors, since it never actually invokes the
+    // wrapper under test.
     const stub = await startStubServer(() => ({
       status: 500,
       body: { error: { message: "simulated upstream failure" } },
     }));
     try {
-      const client = createLLMClient({
-        [GENIE_LLM_BASE_URL_ENV]: stub.baseURL,
-        [GENIE_LLM_API_KEY_ENV]: "sk-test-key",
-      });
+      vi.resetModules();
+      process.env[BASE_URL_ENV] = stub.baseURL;
+      process.env[API_KEY_ENV] = "sk-test-key-propagate";
+      const fresh = await import("./client.js");
 
       await expect(
-        client.chat.completions.create({
+        fresh.createChatCompletion({
           model: "design-default",
           messages: [{ role: "user", content: "hi" }],
         }),
       ).rejects.toThrow();
     } finally {
+      delete process.env[BASE_URL_ENV];
+      delete process.env[API_KEY_ENV];
       await stub.close();
     }
   });
@@ -514,19 +549,21 @@ describe("createChatCompletion", () => {
     // "max N attempts" and "each attempt logged" acceptance criteria silently
     // undermined by extra attempts happening a layer below where M2-06's
     // wrapper can neither see nor count them. This client must make exactly
-    // one request per call, full stop.
+    // one request per call, full stop — exercised through createChatCompletion
+    // itself (not just the raw SDK method) so this proves the invariant for
+    // the actual call path every generation verb uses.
     const stub = await startStubServer(() => ({
       status: 503,
       body: { error: { message: "simulated transient failure" } },
     }));
     try {
-      const client = createLLMClient({
-        [GENIE_LLM_BASE_URL_ENV]: stub.baseURL,
-        [GENIE_LLM_API_KEY_ENV]: "sk-test-key",
-      });
+      vi.resetModules();
+      process.env[BASE_URL_ENV] = stub.baseURL;
+      process.env[API_KEY_ENV] = "sk-test-key-one-attempt";
+      const fresh = await import("./client.js");
 
       await expect(
-        client.chat.completions.create({
+        fresh.createChatCompletion({
           model: "design-default",
           messages: [{ role: "user", content: "hi" }],
         }),
@@ -534,6 +571,8 @@ describe("createChatCompletion", () => {
 
       expect(stub.requests).toHaveLength(1);
     } finally {
+      delete process.env[BASE_URL_ENV];
+      delete process.env[API_KEY_ENV];
       await stub.close();
     }
   });

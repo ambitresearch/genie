@@ -83,8 +83,13 @@ export function resolveTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
  * module-load side effects.
  */
 export function createLLMClient(env: NodeJS.ProcessEnv = process.env): OpenAI {
-  const baseURL = env[GENIE_LLM_BASE_URL_ENV];
-  const apiKey = env[GENIE_LLM_API_KEY_ENV];
+  // Trim before checking: a whitespace-only value (e.g. a stray "  " from a
+  // misconfigured .env file) is truthy and would otherwise slip past the
+  // `!baseURL`/`!apiKey` checks below, then fail later with a confusing
+  // URL-parse or auth error instead of the clear MissingLLMConfigError this
+  // function exists to raise (AC2/AC3).
+  const baseURL = env[GENIE_LLM_BASE_URL_ENV]?.trim();
+  const apiKey = env[GENIE_LLM_API_KEY_ENV]?.trim();
 
   const missing: string[] = [];
   if (!baseURL) missing.push(GENIE_LLM_BASE_URL_ENV);
