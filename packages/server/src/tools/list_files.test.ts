@@ -112,6 +112,42 @@ describe("listFiles", () => {
     });
   });
 
+  it("streams hashes that are byte-identical to the full-buffer SHA-256 SRI", async () => {
+    const root = await tempKitsRoot();
+    const kitId = "hash-kit";
+    await writeKitFile(root, kitId, ".kit.json", "{}");
+
+    // A file large enough to span several read-stream chunks (default
+    // highWaterMark is 64 KiB), so the incremental `hash.update()` path is
+    // exercised across multiple chunks rather than a single buffer. Content is
+    // deterministic but non-repeating so a chunk-boundary bug would change the
+    // digest.
+    const multiChunk = Buffer.alloc(200 * 1024);
+    for (let i = 0; i < multiChunk.length; i++) multiChunk[i] = (i * 131 + 7) & 0xff;
+
+    // Edge cases: an empty file (zero chunks) and a tiny binary file.
+    const empty = Buffer.alloc(0);
+    const tinyBinary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x10]);
+
+    await writeKitFile(root, kitId, "assets/large.bin", multiChunk);
+    await writeKitFile(root, kitId, "assets/empty.txt", empty);
+    await writeKitFile(root, kitId, "assets/tiny.png", tinyBinary);
+
+    const files = await listFiles(new KitFileStore(root), { kitId });
+    const byPath = new Map(files.map((file) => [file.path, file]));
+
+    // `sriSha256` here is the previous full-buffer implementation
+    // (`createHash().update(entireBuffer).digest("base64")`). The streamed
+    // hash returned by walkFiles must match it exactly.
+    expect(byPath.get("assets/large.bin")?.hash).toBe(sriSha256(multiChunk));
+    expect(byPath.get("assets/empty.txt")?.hash).toBe(sriSha256(empty));
+    expect(byPath.get("assets/tiny.png")?.hash).toBe(sriSha256(tinyBinary));
+
+    // Sizes still come from lstat and must be unaffected by how we hash.
+    expect(byPath.get("assets/large.bin")?.size).toBe(multiChunk.length);
+    expect(byPath.get("assets/empty.txt")?.size).toBe(0);
+  });
+
   it("converts invalid arguments into a ListFilesError (ERR_INVALID_ARGS)", async () => {
     const root = await tempKitsRoot();
     const store = new KitFileStore(root);

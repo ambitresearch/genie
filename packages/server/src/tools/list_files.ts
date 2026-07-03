@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pipeline } from "node:stream/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { isSafeKitId } from "./kit-id.js";
 
 export const LIST_FILES_TOOL_NAME = "mcp__genie__list_files";
 
@@ -49,7 +52,9 @@ export class KitFileStore {
   }
 
   private kitRoot(kitId: string): string {
-    if (kitId === "." || kitId === ".." || kitId.includes("/") || kitId.includes("\\")) {
+    // Shared rule with `read_file` (see `./kit-id.ts`) so the two tools cannot
+    // silently drift: reject a separator or an exact `.`/`..` dot-name.
+    if (!isSafeKitId(kitId)) {
       throw new ListFilesError("ERR_INVALID_KIT_ID", `Invalid kitId "${kitId}".`);
     }
     const resolvedRoot = resolve(this.root);
@@ -160,15 +165,31 @@ async function walkFiles(dir: string, root: string, ignore: IgnoreMatcher): Prom
     }
     if (!entry.isFile()) continue;
 
-    const [stats, bytes] = await Promise.all([lstat(absolutePath), readFile(absolutePath)]);
+    const [stats, hash] = await Promise.all([lstat(absolutePath), hashFile(absolutePath)]);
     files.push({
       path: relativePath,
       size: stats.size,
-      hash: `sha256-${createHash("sha256").update(bytes).digest("base64")}`,
+      hash,
       lastModified: stats.mtime.toISOString(),
     });
   }
   return files;
+}
+
+/**
+ * Compute a file's SHA-256 SRI hash by streaming it through the hash in chunks,
+ * so peak memory stays bounded by the read-stream buffer (default 64 KiB) rather
+ * than the largest single file's size. The digest is byte-identical to hashing
+ * the full buffer with `createHash("sha256").update(bytes)` — piping the stream
+ * feeds the same bytes to the same hash in the same order — which the
+ * "streams hashes that are byte-identical" regression test in `list_files.test.ts`
+ * pins down. `pipeline` propagates stream errors (e.g. a mid-read failure) as a
+ * rejection instead of leaving a dangling stream.
+ */
+async function hashFile(absolutePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  await pipeline(createReadStream(absolutePath), hash);
+  return `sha256-${hash.digest("base64")}`;
 }
 
 function toRelativePath(root: string, absolutePath: string): string {

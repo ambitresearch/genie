@@ -4,6 +4,7 @@ import { lookup } from "mime-types";
 import { z } from "zod";
 import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { isSafeKitId } from "./kit-id.js";
 
 /** 256 KiB in bytes — hard cap per DesignSync contract. */
 export const MAX_FILE_BYTES = 256 * 1024;
@@ -138,8 +139,10 @@ export function registerReadFile(server: McpServer, kitsRoot: string): void {
       },
     },
     async ({ kitId, path: relPath }) => {
-      // Validate kitId does not contain path separators or traversal
-      if (kitId.includes("/") || kitId.includes("\\") || kitId.includes("..")) {
+      // Validate kitId does not contain path separators or traversal. Shared
+      // rule with `list_files` (see `./kit-id.ts`) so the two tools cannot
+      // silently drift: reject a separator or an exact `.`/`..` dot-name.
+      if (!isSafeKitId(kitId)) {
         throw new McpError(
           ErrorCode.InvalidParams,
           `InvalidPathError: invalid kit identifier`,
