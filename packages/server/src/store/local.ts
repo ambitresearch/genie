@@ -7,10 +7,20 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { createReadStream, createWriteStream, type Stats } from "node:fs";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 
 import type {
@@ -25,6 +35,7 @@ import type {
   ProjectId,
   ProjectMeta,
   ProjectStore,
+  WriteOp,
 } from "./interface.js";
 import {
   FileTooLargeError,
@@ -32,6 +43,8 @@ import {
   KIT_TYPE,
   MAX_FILE_BYTES,
   NotFoundError,
+  RollbackIncompleteError,
+  WriteFailedError,
 } from "./interface.js";
 import {
   buildIgnoreMatcher,
@@ -65,9 +78,7 @@ function safePath(baseDir: string, userPath: string): string {
   // The relative path escapes baseDir only when it IS ".." itself,
   // starts with ".." followed by a path separator, or is absolute.
   if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
-    throw new Error(
-      `Path traversal denied: "${userPath}" resolves outside the allowed directory.`,
-    );
+    throw new Error(`Path traversal denied: "${userPath}" resolves outside the allowed directory.`);
   }
   return resolved;
 }
@@ -140,6 +151,233 @@ function isMissingPathError(error: unknown): boolean {
     error instanceof Error &&
     "code" in error &&
     (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
+}
+
+// ─── Atomic write transaction (LocalFsKitStore.writeFiles) ───────────────────
+//
+// Lifted from the shipped fs-native `write_files` tool (M1-08) when its
+// transactional writer moved behind the KitStore seam (DRO-565). The semantics
+// are byte-identical to the pre-store tool — only the destination base changed
+// from the plan's `localDir` to the kit dir (the readable surface list_files/
+// read_file/delete_file already target). Every Copilot review finding baked
+// into the original (staging inside the destination tree for same-filesystem
+// renames, directory-target refusal, collected rollback failures →
+// RollbackIncompleteError) is preserved.
+
+/** One file staged under the per-call temp dir and ready to commit. */
+interface StagedFile {
+  /** Kit-relative path, for error messages. */
+  publicPath: string;
+  /** Absolute destination path under the kit dir. */
+  destPath: string;
+  /** Absolute path of the staged (new) content, inside the call's temp dir. */
+  stagedPath: string;
+}
+
+/**
+ * Stage every op's new content under a fresh `<kitDir>/.genie-tmp/<rand>/`
+ * (streaming `sourcePath` ops through a hash so a large file is never fully
+ * buffered), then commit via rename-to-temp + rename-back. Nothing under
+ * `kitDir` is touched until every op has staged successfully. Staging inside
+ * `kitDir` (not `os.tmpdir()`) is load-bearing: `rename()` is only atomic
+ * within one filesystem, and a kit dir + `/tmp` are commonly different mounts.
+ */
+async function stageAndCommit(kitDir: string, ops: WriteOp[]): Promise<{ writtenPaths: string[] }> {
+  const genieTmpRoot = join(kitDir, ".genie-tmp");
+  await mkdir(genieTmpRoot, { recursive: true });
+  const stagingRoot = await mkdtemp(join(genieTmpRoot, `${randomUUID()}-`));
+  const backupRoot = join(stagingRoot, "backup");
+
+  try {
+    // Phase 1 — stage new content. Real destinations are untouched so far.
+    const staged: StagedFile[] = [];
+    for (const op of ops) {
+      // Defense-in-depth traversal guard: the tool already rejects `..`/absolute
+      // paths, but the store must not trust that blindly (a future direct caller
+      // could bypass the tool). safePath throws if `op.path` escapes kitDir.
+      const destPath = safePath(kitDir, op.path);
+      const stagedPath = join(stagingRoot, `${staged.length}`);
+
+      if ("sourcePath" in op) {
+        await streamCopy(op.sourcePath, stagedPath, op.path);
+      } else {
+        await writeStaged(stagedPath, op.content, op.path);
+      }
+
+      staged.push({ publicPath: op.path, destPath, stagedPath });
+    }
+
+    await commitStaged(staged, backupRoot, kitDir);
+
+    return { writtenPaths: ops.map((o) => o.path) };
+  } finally {
+    await rm(stagingRoot, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Commit every staged file via rename-to-temp + rename-back.
+ * 1. Ensure every destination's parent dir exists.
+ * 2. Back up (rename away) any destination that already exists.
+ * 3. Rename each staged file into its real destination.
+ * 4. On any failure in step 3: remove whatever committed, restore every backup,
+ *    then throw — collecting (never short-circuiting on) rollback failures so a
+ *    second failure surfaces as RollbackIncompleteError rather than masking the
+ *    incomplete restore.
+ */
+async function commitStaged(
+  staged: StagedFile[],
+  backupRoot: string,
+  kitDir: string,
+): Promise<void> {
+  await mkdir(backupRoot, { recursive: true });
+
+  for (const { destPath, publicPath } of staged) {
+    try {
+      await mkdir(dirname(destPath), { recursive: true });
+    } catch (error) {
+      throw new WriteFailedError(
+        publicPath,
+        describeError(error, "failed to create destination directory"),
+      );
+    }
+  }
+
+  const backedUp: { destPath: string; backupPath: string }[] = [];
+  const committed: string[] = [];
+
+  try {
+    for (const { destPath, publicPath } of staged) {
+      const backupPath = join(backupRoot, `${backedUp.length}`);
+      const hadExisting = await tryRenameIfExists(destPath, backupPath, publicPath);
+      if (hadExisting) backedUp.push({ destPath, backupPath });
+    }
+
+    for (const { destPath, stagedPath, publicPath } of staged) {
+      try {
+        await rename(stagedPath, destPath);
+      } catch (error) {
+        throw new WriteFailedError(
+          relativeOrAbsolute(kitDir, destPath, publicPath),
+          describeError(error, "rename failed"),
+        );
+      }
+      committed.push(destPath);
+    }
+  } catch (error) {
+    const rollbackFailures: string[] = [];
+    for (const destPath of committed) {
+      try {
+        await rm(destPath, { force: true });
+      } catch (rmError) {
+        rollbackFailures.push(
+          `failed to remove committed file "${relativeOrAbsolute(kitDir, destPath, destPath)}": ` +
+            describeError(rmError, "unknown error"),
+        );
+      }
+    }
+    for (const { destPath, backupPath } of backedUp) {
+      try {
+        await rename(backupPath, destPath);
+      } catch (restoreError) {
+        rollbackFailures.push(
+          `failed to restore backup for "${relativeOrAbsolute(kitDir, destPath, destPath)}": ` +
+            describeError(restoreError, "unknown error"),
+        );
+      }
+    }
+
+    if (rollbackFailures.length > 0) {
+      throw new RollbackIncompleteError(describeError(error, "commit failed"), rollbackFailures);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Rename `destPath` to `backupPath` if it exists. Returns whether a backup was
+ * made (`false` when `destPath` didn't exist). Refuses (WriteFailedError,
+ * triggering the normal rollback) when `destPath` is a DIRECTORY: `write_files`
+ * writes files, never replaces a directory, and letting a directory move into
+ * the backup slot then be deleted by the caller's cleanup would silently
+ * destroy it (a Copilot review finding on PR #106).
+ */
+async function tryRenameIfExists(
+  destPath: string,
+  backupPath: string,
+  publicPath: string,
+): Promise<boolean> {
+  const existing = await statIfExists(destPath);
+  if (existing?.isDirectory()) {
+    throw new WriteFailedError(
+      publicPath,
+      `destination "${destPath}" already exists and is a directory, not a file`,
+    );
+  }
+
+  try {
+    await rename(destPath, backupPath);
+    return true;
+  } catch (error) {
+    if (isEnoent(error)) return false;
+    throw new WriteFailedError(publicPath, describeError(error, "failed to back up existing file"));
+  }
+}
+
+/** `stat`, or `undefined` if the path doesn't exist. Other errors propagate. */
+async function statIfExists(path: string): Promise<Stats | undefined> {
+  try {
+    return await stat(path);
+  } catch (error) {
+    if (isEnoent(error)) return undefined;
+    throw error;
+  }
+}
+
+function relativeOrAbsolute(baseDir: string, destPath: string, fallback: string): string {
+  const rel = relative(baseDir, destPath);
+  return rel.length > 0 ? rel : fallback;
+}
+
+async function writeStaged(stagedPath: string, content: Buffer, publicPath: string): Promise<void> {
+  try {
+    await writeFile(stagedPath, content);
+  } catch (error) {
+    throw new WriteFailedError(publicPath, describeError(error, "write failed"));
+  }
+}
+
+/**
+ * Stream `sourcePath` into `stagedPath` through a SHA-256 pass-through, so a
+ * `localPath`-sourced write never loads a full file into memory regardless of
+ * size. The hash isn't surfaced (no AC calls for it) but proves the data
+ * genuinely streamed end-to-end rather than being buffered.
+ */
+async function streamCopy(
+  sourcePath: string,
+  stagedPath: string,
+  publicPath: string,
+): Promise<void> {
+  try {
+    const hash = createHash("sha256");
+    const source = createReadStream(sourcePath);
+    const dest = createWriteStream(stagedPath);
+    source.on("data", (chunk) => hash.update(chunk));
+    await pipeline(source, dest);
+  } catch (error) {
+    throw new WriteFailedError(publicPath, describeError(error, "read failed"));
+  }
+}
+
+function describeError(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
+
+function isEnoent(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as { code?: string }).code === "ENOENT"
   );
 }
 
@@ -220,9 +458,7 @@ export class LocalFsKitStore implements KitStore {
     const kits: KitMeta[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const meta = await readMeta<KitMetaFile>(
-        this.kitMetaPath(entry.name),
-      );
+      const meta = await readMeta<KitMetaFile>(this.kitMetaPath(entry.name));
       if (meta?.type === KIT_TYPE) {
         kits.push({
           id: meta.id,
@@ -272,10 +508,7 @@ export class LocalFsKitStore implements KitStore {
     }
   }
 
-  async listComponents(params: {
-    kitId: KitId;
-    group?: string;
-  }): Promise<ComponentEntry[]> {
+  async listComponents(params: { kitId: KitId; group?: string }): Promise<ComponentEntry[]> {
     const { kitId, group } = params;
 
     // Validate kit exists (throws NotFoundError) before touching the manifest,
@@ -353,6 +586,18 @@ export class LocalFsKitStore implements KitStore {
     }
   }
 
+  async writeFiles(kitId: KitId, ops: WriteOp[]): Promise<{ writtenPaths: string[] }> {
+    // Destination = the kit dir (the readable surface list_files/read_file see),
+    // matching how deleteFile targets the same dir. The `write_files` tool has
+    // already glob-gated every path, checked the byte cap, streamed-source
+    // containment, and rejected duplicates — so this only performs the atomic
+    // commit. `ensureDir` (not getKit) because a brand-new kit dir is a valid
+    // write target, and a `sourcePath` op streams rather than buffering.
+    const kitDir = this.kitDir(kitId);
+    await ensureDir(kitDir);
+    return stageAndCommit(kitDir, ops);
+  }
+
   async createKit(name: string, kitId?: string): Promise<KitMeta> {
     const id = kitId ?? randomUUID();
     const dir = this.kitDir(id);
@@ -405,11 +650,7 @@ export class LocalFsKitStore implements KitStore {
     return planId;
   }
 
-  async commitPlan(
-    kitId: KitId,
-    planId: PlanId,
-    ops: FileOp[],
-  ): Promise<void> {
+  async commitPlan(kitId: KitId, planId: PlanId, ops: FileOp[]): Promise<void> {
     const dir = this.planDir(kitId, planId);
     try {
       await stat(dir);
@@ -464,9 +705,7 @@ export class LocalFsProjectStore implements ProjectStore {
     const projects: ProjectMeta[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const meta = await readMeta<ProjectMetaFile>(
-        this.metaPath(entry.name),
-      );
+      const meta = await readMeta<ProjectMetaFile>(this.metaPath(entry.name));
       if (meta) {
         projects.push({
           id: meta.id,

@@ -1,48 +1,39 @@
 /**
- * MCP tool: write_files (M1-08).
+ * MCP tool: write_files (M1-08; re-plumbed onto KitStore in M1-14a-1b / DRO-565).
  *
- * Writes up to 256 files per call. Every `path` must match at least one glob
- * in the plan's `writes`; the plan is resolved via `planId` against the M1-07
- * plan registry (`../plans/index.ts`), which must be live (exists + not
- * expired).
+ * Writes up to 256 files per call into a KIT (the plan's `kitId` — the same
+ * readable surface `read_file`/`list_files`/`delete_files` see). Every `path`
+ * must match at least one glob in the plan's `writes`; the plan is resolved via
+ * `planId` against the M1-07 plan registry (`../plans/index.ts`), which must be
+ * live (exists + not expired).
  *
  * Each file is sourced from exactly one of:
- *   - `localPath` — resolved against the plan's `localDir`; the server reads
- *     the bytes directly from disk, so file contents never enter model
- *     context (the whole point of the localPath indirection).
+ *   - `localPath` — resolved against the plan's `localDir` (the harness-local
+ *     SOURCE base); the server reads the bytes directly from disk, so file
+ *     contents never enter model context (the whole point of the localPath
+ *     indirection). Note the split of roles: `localDir` is where uploads are
+ *     READ FROM; the kit is where they are WRITTEN TO.
  *   - `data` — inline content (utf-8 or base64, per `encoding`), for content
  *     the caller only has in-memory (e.g. LLM-generated text).
  *
- * The call is atomic (AC10), via a rename-to-temp + rename-back transaction:
- *   1. Stage every file's new content into a per-call temp directory first
- *      (streamed for `localPath` sources — never buffering a whole file in
- *      memory). Nothing under the real destination tree is touched yet.
- *   2. For each destination that already exists, rename it into a backup
- *      slot (rename-to-temp) rather than deleting it, so the original bytes
- *      are recoverable.
- *   3. Rename each staged file into its real destination.
- *   4. If every rename in step 3 succeeds, discard the backups — done.
- *   5. If any rename in step 3 fails, remove whatever this call already
- *      committed and rename every backup from step 2 back onto its original
- *      destination (rename-back) — the tree ends up exactly as it was
- *      before the call, and the error propagates. Nothing partially lands.
+ * ── Store re-plumb (DRO-565) ─────────────────────────────────────────────────
+ * This tool used to own an fs-native rename-to-temp/rename-back transaction and
+ * wrote straight into `plan.localDir`. That transaction now lives behind the
+ * `KitStore.writeFiles(kitId, ops)` primitive (`store/interface.ts`), so the
+ * SAME verb runs against `LocalFsKitStore` (disk, rename transaction) or
+ * `GitHostKitStore` (contents-API commit on a branch) with the AC10 atomicity +
+ * rollback contract preserved. The tool keeps ALL plan-gating and per-file
+ * validation (planId, writes-glob membership, duplicate rejection, localPath
+ * containment + streaming decision, byte cap, encoding) and hands the store a
+ * resolved `WriteOp[]` — mirroring how `delete_files` keeps `deletes`-glob
+ * gating tool-side and calls `store.deleteFile(plan.kitId, path)`.
  *
- * Cross-issue note: this issue (M1-08) was specced as "Blocked by: M1-07"
- * (the `plan` tool). Earlier work-in-progress on this branch bundled a
- * stopgap `plan` implementation because M1-07 (GitHub issue #12 / DRO-235)
- * was open, unassigned, and had no PR at the time. M1-07 has since merged
- * (PR #104) with its own — differently shaped — plan registry
- * (`../plans/index.ts`: module-level functions + a singleton in-memory
- * registry, rather than an injectable `PlanStore` class; a single
- * `PlanNotFoundError` covers both "never existed" and "expired", rather than
- * a distinct `PlanExpiredError`). This file consumes that shipped API
- * directly instead of the stopgap, which has been deleted.
+ * The atomicity/streaming/rollback semantics themselves are documented on the
+ * `KitStore.writeFiles` primitive and its two adapters; this file is now the
+ * validation + wire-error-shaping layer in front of them.
  */
-import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream, type Stats } from "node:fs";
-import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
-import { pipeline } from "node:stream/promises";
+import { stat } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
@@ -53,6 +44,8 @@ import {
   pathMatchesGlobs,
   PlanNotFoundError,
 } from "../plans/index.js";
+import type { KitStore, WriteOp } from "../store/interface.js";
+import { RollbackIncompleteError, WriteFailedError } from "../store/interface.js";
 
 export const WRITE_FILES_TOOL_NAME = "mcp__genie__write_files";
 
@@ -196,42 +189,13 @@ export class PayloadTooLargeError extends Error {
   }
 }
 
-/** M1-08 AC10 — a file in the batch could not be written; the whole call rolled back. */
-export class WriteFailedError extends Error {
-  readonly code = "WriteFailedError";
-  constructor(
-    readonly path: string,
-    readonly cause: string,
-  ) {
-    super(`Failed to write "${path}": ${cause}. The call was rolled back; no files were written.`);
-    this.name = "WriteFailedError";
-  }
-}
-
 /**
- * AC10 — a commit failed AND the rollback itself could not fully undo/restore
- * every step, so the destination tree is NOT guaranteed to match its
- * pre-call state (unlike the ordinary `WriteFailedError` path, which
- * guarantees a clean rollback). Surfaced instead of silently swallowing the
- * rollback failure and reporting the original commit error as if the
- * rollback had fully succeeded — a Copilot review finding on PR #106 flagged
- * that the prior code did exactly that, violating AC10's "tree ends up
- * exactly as it was before the call" guarantee without telling the caller.
+ * AC10 write-failure taxonomy now lives in the store layer (`store/interface.ts`),
+ * because the store owns the atomic write transaction after the DRO-565 re-plumb.
+ * Re-exported here so existing importers of these names from `write_files.js`
+ * (tests, in-process callers) keep resolving them.
  */
-export class RollbackIncompleteError extends Error {
-  readonly code = "RollbackIncompleteError";
-  constructor(
-    readonly commitError: string,
-    readonly rollbackFailures: string[],
-  ) {
-    super(
-      `write_files failed (${commitError}) AND rollback could not fully restore the ` +
-        `original tree: ${rollbackFailures.join("; ")}. The destination may be left in ` +
-        "a partially-modified state — verify manually before retrying.",
-    );
-    this.name = "RollbackIncompleteError";
-  }
-}
+export { RollbackIncompleteError, WriteFailedError } from "../store/interface.js";
 
 // ─── Input/output shapes ─────────────────────────────────────────────────────
 
@@ -291,47 +255,53 @@ function toolError(payload: Record<string, unknown>) {
 /**
  * Register the `mcp__genie__write_files` tool.
  *
- * @param server The MCP server to register against. `planId`/`writes`/
- *               `localDir` are validated against the shared M1-07 plan
- *               registry (`../plans/index.ts`) via the M1-13 plan-guard
- *               middleware (`../middleware/plan-guard.ts`) — the guard
- *               owns AC5's planId presence/existence/expiry checks and AC4's
- *               path-vs-`writes`-glob check; this file's own remaining
- *               validation covers per-file structural rules (duplicates,
- *               localPath containment, encoding, byte cap) that the guard
- *               is intentionally tool-agnostic about.
+ * @param server   The MCP server to register against. `planId`/`writes` are
+ *                 validated against the shared M1-07 plan registry
+ *                 (`../plans/index.ts`) via the M1-13 plan-guard middleware
+ *                 (`../middleware/plan-guard.ts`) — the guard owns AC5's planId
+ *                 presence/existence/expiry checks and AC4's path-vs-`writes`-
+ *                 glob check; this file's own remaining validation covers
+ *                 per-file structural rules (duplicates, localPath containment,
+ *                 encoding, byte cap) that the guard is intentionally
+ *                 tool-agnostic about.
+ * @param kitStore The injected kit backend (M1-14a-1b / DRO-565). The physical
+ *                 write is `kitStore.writeFiles(plan.kitId, ops)` — the kit is
+ *                 the destination (same surface read_file/list_files see), and
+ *                 the atomic rename-transaction (LocalFs) / contents-API commit
+ *                 (GitHost) lives behind that primitive. Mirrors how
+ *                 `registerDeleteFilesTool(server, kitStore)` routes deletes.
  */
-export function registerWriteFilesTool(server: McpServer): void {
+export function registerWriteFilesTool(server: McpServer, kitStore: KitStore): void {
   server.registerTool(
     WRITE_FILES_TOOL_NAME,
     {
       title: "Write files",
       description:
-        "Write up to 256 files per call. Every path must match a glob in the plan's " +
-        "writes. Reads content from localPath (resolved against the plan's localDir) " +
-        "so file contents never enter model context, or from inline data for " +
-        "in-memory content. Atomic per call — if any file fails, nothing is written.",
+        "Write up to 256 files per call into the plan's kit. Every path must match a " +
+        "glob in the plan's writes. Reads content from localPath (resolved against the " +
+        "plan's localDir, the local SOURCE base) so file contents never enter model " +
+        "context, or from inline data for in-memory content. Atomic per call — if any " +
+        "file fails, nothing is written.",
       inputSchema: writeFilesInputSchema,
       outputSchema: writeFilesOutputSchema,
     },
     // M1-13 plan-vs-write guard (DRO-239). The middleware validates planId
     // presence/existence/expiry and every file path against the plan's writes
     // globs BEFORE the handler runs, so the four verbs share one identical
-    // plan-boundary check — the write side no longer catches PlanNotFoundError
-    // or PathOutsidePlanError itself for these rejection paths. Rejections
-    // surface as the canonical JSON-RPC `-32602` shape `{ code, message,
-    // data: { reason, planId?, path? } }` and are audit-logged as
-    // `plan.guard.reject` (see plan-guard.ts). The guard hands the resolved
-    // plan through to the handler, avoiding a second getPlan hit.
+    // plan-boundary check. Rejections surface as the canonical JSON-RPC
+    // `-32602` shape and are audit-logged as `plan.guard.reject`. The guard
+    // hands the resolved plan through in `ctx.plan`, so the handler reaches
+    // `plan.kitId` (write destination) and `plan.localDir` (localPath source
+    // base) without a second getPlan hit.
     //
-    // The core `writeFiles(args)` still performs the same plan check as
-    // defense-in-depth (a direct in-process caller — see the "writeFiles
-    // (core logic)" test suite — bypasses the MCP layer and this middleware
-    // with it), so removing the checks from the core would silently open a
-    // gap for those callers.
+    // The core `writeFiles(store, plan, args)` still performs the same plan
+    // check as defense-in-depth (a direct in-process caller — see the
+    // "writeFiles (core logic)" test suite — bypasses the MCP layer and this
+    // middleware with it), so removing the checks from the core would silently
+    // open a gap for those callers.
     withPlanGuard({ mode: "writes" }, async (args: WriteFilesArgs) => {
       try {
-        const result = await writeFiles(args);
+        const result = await writeFiles(kitStore, args);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result) }],
           structuredContent: result,
@@ -437,12 +407,13 @@ export interface WriteFilesResult extends Record<string, unknown> {
 }
 
 /**
- * Validate + execute a `write_files` call against a resolved plan.
+ * Validate + execute a `write_files` call against a resolved plan, committing
+ * the batch into the plan's KIT via the injected store.
  *
- * Order of validation (fails fast, before any filesystem write) — keep this
- * list in lockstep with the code below; downstream steps assume every prior
- * step has passed (e.g. the `resolvedLocalPaths` map keyed by `file.path`
- * assumes step 3 rejected duplicates):
+ * Order of validation (fails fast, before any write) — keep this list in
+ * lockstep with the code below; downstream steps assume every prior step has
+ * passed (e.g. the `resolvedLocalPaths` map keyed by `file.path` assumes step 3
+ * rejected duplicates):
  *   1. AC5           — planId exists + not expired (`getPlan`, from the M1-07
  *                      plan registry — throws `PlanNotFoundError` for either
  *                      failure mode).
@@ -451,18 +422,26 @@ export interface WriteFilesResult extends Record<string, unknown> {
  *                      `path` (`DuplicatePathError`; Copilot review finding
  *                      on PR #106).
  *   4. AC4           — every `path` matches a plan `writes` glob.
- *   5. Security      — every destination `path` resolves inside
- *                      `plan.localDir` (`PathOutsidePlanError` with
- *                      `reason: "escapesLocalDir"`; RFC §10 T-13 — a glob
- *                      match alone doesn't imply containment when the glob
- *                      is permissive and the path is absolute).
+ *   5. Security      — every destination `path` is kit-relative and contained
+ *                      (no absolute path, no `..`/`.` segment). Destinations
+ *                      resolve against the KIT now (not `localDir`), so this is
+ *                      a lexical containment check (`PathOutsidePlanError` with
+ *                      `reason: "escapesLocalDir"`; RFC §10 T-13). The store
+ *                      re-checks via `safePath` as defense-in-depth.
  *   6. AC7           — every file sets exactly one of `localPath` / `data`.
- *   7. AC6           — every `localPath` resolves inside the plan's
- *                      `localDir`.
+ *   7. AC6           — every `localPath` resolves inside the plan's `localDir`
+ *                      (the SOURCE base — where uploads are read from).
  *   8. AC9           — total decoded payload size <= the configured byte cap.
- * Only once every file in the batch passes does staging begin (AC10).
+ * Only once every file in the batch passes is the batch handed to
+ * `store.writeFiles(plan.kitId, ops)` for the atomic commit (AC10).
+ *
+ * @param store The injected kit backend. The destination is `plan.kitId`; the
+ *   physical atomic write (rename transaction on LocalFs / contents-API commit
+ *   on GitHost) lives behind `store.writeFiles`, so this function is now purely
+ *   validation + WriteOp assembly.
  */
 export async function writeFiles(
+  store: KitStore,
   args: WriteFilesArgs,
   env: Record<string, string | undefined> = process.env,
 ): Promise<WriteFilesResult> {
@@ -496,22 +475,17 @@ export async function writeFiles(
   }
 
   // Security (Copilot review finding on PR #106; RFC §10 T-13 — "Path
-  // traversal in write_files overwrites /etc/passwd"): `path` is
-  // matched against the plan's glob patterns above, but a glob match alone
-  // does NOT guarantee the resolved destination stays inside `localDir` — an
-  // absolute path like "/etc/passwd" matches a permissive glob such as `**`
-  // under micromatch (confirmed empirically: `isMatch("/etc/passwd", ["**"])`
-  // is `true`), and `resolve(localDir, "/etc/passwd")` then returns
-  // `/etc/passwd` verbatim, since `path.resolve` treats an absolute second
-  // argument as an override rather than joining it. A `../`-traversal `path`
-  // is already blocked by micromatch's own glob semantics (confirmed: `**`
-  // does not match `../x`), so this second check is specifically the
-  // absolute-path gap, not a redundant traversal re-check. Reuses
-  // `isPathInsideLocalDir` — the same containment helper `localPath` (AC6)
-  // already goes through — so `path` and `localPath` share one containment
-  // guarantee instead of the destination trusting glob-membership alone.
+  // traversal in write_files overwrites /etc/passwd"): a glob match alone does
+  // NOT guarantee the destination stays inside the kit — an absolute path like
+  // "/etc/passwd" matches a permissive glob such as `**` under micromatch, and
+  // resolving it against a kit root would escape. Post-re-plumb the destination
+  // is the KIT (not `localDir`), and the store's `safePath` will reject an
+  // escape too — but we reject up front so the whole call fails before any
+  // WriteOp is built, keeping the all-or-nothing guarantee at the tool
+  // boundary. The check is now purely lexical (kit-relative, no `.`/`..`
+  // segment, not absolute) since the tool no longer holds a concrete kit root.
   for (const file of args.files) {
-    if (!isPathInsideLocalDir(file.path, plan.localDir)) {
+    if (!isKitRelativeContained(file.path)) {
       throw new PathOutsidePlanError(file.path, "escapesLocalDir");
     }
   }
@@ -531,11 +505,11 @@ export async function writeFiles(
     }
   }
 
-  // AC6 — every localPath must resolve inside the plan's localDir. Resolve
-  // once up front (rather than re-resolving during staging) so this check
-  // and the actual read always agree on the same absolute path.
-  // isPathInsideLocalDir(path, localDir) does its own resolution of `path`
-  // against `localDir` (correctly anchoring a relative localPath there,
+  // AC6 — every localPath must resolve inside the plan's localDir (the SOURCE
+  // base). Resolve once up front (rather than re-resolving during the WriteOp
+  // build) so this check and the actual read always agree on the same absolute
+  // path. isPathInsideLocalDir(path, localDir) does its own resolution of
+  // `path` against `localDir` (correctly anchoring a relative localPath there,
   // rather than against process.cwd()) — see plans/index.ts.
   const resolvedLocalPaths = new Map<string, string>();
   for (const file of args.files) {
@@ -567,9 +541,26 @@ export async function writeFiles(
     );
   }
 
-  // AC10 — stage every file into a per-call temp dir first; only rename into
-  // place once every file has staged successfully.
-  return stageAndCommit(args.files, resolvedLocalPaths, plan.localDir);
+  // Build the resolved WriteOp[] — inline `data` becomes `{ path, content }`,
+  // a `localPath` becomes `{ path, sourcePath }` (the store STREAMS from it, so
+  // a large upload never fully buffers here). Then hand the batch to the store
+  // for the atomic commit into the kit (AC10).
+  const ops: WriteOp[] = args.files.map((file): WriteOp => {
+    if (file.localPath !== undefined) {
+      const sourcePath = resolvedLocalPaths.get(file.path);
+      if (sourcePath === undefined) {
+        // Unreachable: every localPath file populated the map above.
+        throw new WriteFailedError(file.path, "internal: unresolved localPath");
+      }
+      return { path: file.path, sourcePath };
+    }
+    return {
+      path: file.path,
+      content: decodeData(file.data as string, file.encoding ?? "utf-8", file.path),
+    };
+  });
+
+  return store.writeFiles(plan.kitId, ops);
 }
 
 /** Decoded byte length of inline `data`, without materializing extra copies for utf-8. */
@@ -596,224 +587,18 @@ async function sizeOf(localPath: string, publicPath: string): Promise<number> {
   }
 }
 
-/** One file staged and ready to commit. */
-interface StagedFile {
-  /** The plan-relative path, for error messages. */
-  publicPath: string;
-  /** Absolute destination path under the plan's localDir. */
-  destPath: string;
-  /** Absolute path of the staged (new) content, inside the call's temp dir. */
-  stagedPath: string;
-}
-
 /**
- * Stage every file's new content under a fresh per-call temp directory
- * (streaming `localPath` sources through a hash so a large file is never
- * fully buffered in memory), then commit via rename-to-temp + rename-back
- * (see the module header). Nothing under `localDir` is touched until every
- * file has staged successfully.
- *
- * Staging lives at `<localDir>/.genie-tmp/<random>/` — inside `localDir`
- * itself, per the issue's own Implementation Notes ("Per-call transaction =
- * write to `<projectRoot>/.genie-tmp/<callId>/` then atomic rename per
- * file"). This is load-bearing, not cosmetic: `rename()` is only atomic
- * within a single filesystem/mount. An earlier version of this code staged
- * under `os.tmpdir()` (`/tmp`), which is commonly a *different* mount than
- * the project/kit directory (e.g. a container with `/tmp` as tmpfs and the
- * project on a bind-mounted volume) — a Copilot review finding on PR #106
- * confirmed the commit-phase `rename()` would then throw `EXDEV` and break
- * the atomic guarantee AC10 depends on. Staging inside `localDir` guarantees
- * same-filesystem renames.
- *
- * Known limitation (v1, matches the issue's own "conflict detection vs
- * concurrent writes... out of scope" note): a concurrent `list_files` call
- * could observe the `.genie-tmp/<random>/` directory mid-write. It is always
- * removed (success or failure) before this function returns, and
- * `randomUUID()`-derived names make a collision between concurrent calls
- * astronomically unlikely, but it is not hidden from a concurrent lister the
- * way `.git`/`node_modules`/`dist` are (see `list_files.ts`'s ignore list) —
- * left as-is rather than expanding this PR's scope into that tool.
+ * True if a destination `path` is a safe kit-relative path: not absolute, and
+ * with no `.`/`..` segment (on either separator). Post-re-plumb the destination
+ * is the kit (the tool holds no concrete kit root), so containment is a lexical
+ * check — a relative path with no dot-segment can never escape the kit root the
+ * store resolves it against, and an absolute path always does. The store's
+ * `safePath` re-verifies as defense-in-depth. Mirrors delete_files' own
+ * kit-relative path guard.
  */
-async function stageAndCommit(
-  files: FileInput[],
-  resolvedLocalPaths: Map<string, string>,
-  localDir: string,
-): Promise<WriteFilesResult> {
-  const genieTmpRoot = join(localDir, ".genie-tmp");
-  await mkdir(genieTmpRoot, { recursive: true });
-  const stagingRoot = await mkdtemp(join(genieTmpRoot, `${randomUUID()}-`));
-  const backupRoot = join(stagingRoot, "backup");
-
-  try {
-    // Phase 1 — stage new content. Real destinations are untouched so far.
-    const staged: StagedFile[] = [];
-    for (const file of files) {
-      const destPath = resolve(localDir, file.path);
-      const stagedPath = join(stagingRoot, `${staged.length}`);
-
-      if (file.localPath !== undefined) {
-        const sourcePath = resolvedLocalPaths.get(file.path);
-        if (sourcePath === undefined) {
-          throw new WriteFailedError(file.path, "internal: unresolved localPath");
-        }
-        await streamCopy(sourcePath, stagedPath, file.path);
-      } else {
-        const buffer = decodeData(file.data as string, file.encoding ?? "utf-8", file.path);
-        await writeStaged(stagedPath, buffer, file.path);
-      }
-
-      staged.push({ publicPath: file.path, destPath, stagedPath });
-    }
-
-    await commitStaged(staged, backupRoot, localDir);
-
-    return { writtenPaths: files.map((f) => f.path) };
-  } finally {
-    await rm(stagingRoot, { recursive: true, force: true });
-  }
-}
-
-/**
- * Commit every staged file via rename-to-temp + rename-back (AC10).
- *
- * 1. Ensure every destination's parent directory exists.
- * 2. Back up (rename away) any destination that already exists.
- * 3. Rename each staged file into its real destination.
- * 4. On any failure in step 3: remove whatever this call already committed,
- *    restore every backup to its original path, then throw. On full
- *    success, the backups are left under `backupRoot` and cleaned up by the
- *    caller's `finally` (removing the whole staging root).
- */
-async function commitStaged(
-  staged: StagedFile[],
-  backupRoot: string,
-  localDir: string,
-): Promise<void> {
-  await mkdir(backupRoot, { recursive: true });
-
-  for (const { destPath, publicPath } of staged) {
-    try {
-      await mkdir(dirname(destPath), { recursive: true });
-    } catch (error) {
-      throw new WriteFailedError(
-        publicPath,
-        describeError(error, "failed to create destination directory"),
-      );
-    }
-  }
-
-  const backedUp: { destPath: string; backupPath: string }[] = [];
-  const committed: string[] = [];
-
-  try {
-    for (const { destPath, publicPath } of staged) {
-      const backupPath = join(backupRoot, `${backedUp.length}`);
-      const hadExisting = await tryRenameIfExists(destPath, backupPath, publicPath);
-      if (hadExisting) backedUp.push({ destPath, backupPath });
-    }
-
-    for (const { destPath, stagedPath, publicPath } of staged) {
-      try {
-        await rename(stagedPath, destPath);
-      } catch (error) {
-        throw new WriteFailedError(
-          relativeOrAbsolute(localDir, destPath, publicPath),
-          describeError(error, "rename failed"),
-        );
-      }
-      committed.push(destPath);
-    }
-  } catch (error) {
-    // Roll back: undo everything this call committed, then restore backups.
-    //
-    // Every step below runs unconditionally (never short-circuits on a prior
-    // failure within this block) and its own failure is collected rather than
-    // thrown immediately — a Copilot review finding on PR #106 flagged that
-    // the previous code did the opposite: `rm(destPath, { force: true })`
-    // could itself throw (e.g. EACCES; `force` only suppresses ENOENT, not
-    // other errors) and abort the `for` loop early, silently skipping BOTH
-    // the remaining commit-undo steps AND the entire backup-restore loop that
-    // used to follow it — while still reporting only the original commit
-    // error, as if rollback had fully succeeded. Collecting failures here
-    // means every step is still attempted even if an earlier one fails.
-    const rollbackFailures: string[] = [];
-    for (const destPath of committed) {
-      try {
-        await rm(destPath, { force: true });
-      } catch (rmError) {
-        rollbackFailures.push(
-          `failed to remove committed file "${relativeOrAbsolute(localDir, destPath, destPath)}": ` +
-            describeError(rmError, "unknown error"),
-        );
-      }
-    }
-    for (const { destPath, backupPath } of backedUp) {
-      try {
-        await rename(backupPath, destPath);
-      } catch (restoreError) {
-        rollbackFailures.push(
-          `failed to restore backup for "${relativeOrAbsolute(localDir, destPath, destPath)}": ` +
-            describeError(restoreError, "unknown error"),
-        );
-      }
-    }
-
-    if (rollbackFailures.length > 0) {
-      throw new RollbackIncompleteError(describeError(error, "commit failed"), rollbackFailures);
-    }
-    throw error;
-  }
-}
-
-/**
- * Rename `destPath` to `backupPath` if it exists. Returns whether a backup
- * was made (`false` when `destPath` didn't exist — nothing to back up).
- *
- * Refuses (via `WriteFailedError`, triggering the normal rollback path) when
- * `destPath` exists as a DIRECTORY rather than a file. `rename()` itself
- * doesn't distinguish files from directories — it would happily move an
- * existing directory into the backup slot, after which a file gets renamed
- * into its place; if the whole call then succeeds, the caller's `finally`
- * (`stageAndCommit`) deletes the entire staging root, backups included,
- * silently destroying whatever tree used to live at `destPath` (a Copilot
- * review finding on PR #106). `write_files` writes FILES, never replaces a
- * directory, so this rejects before the rename is even attempted.
- */
-async function tryRenameIfExists(
-  destPath: string,
-  backupPath: string,
-  publicPath: string,
-): Promise<boolean> {
-  const existing = await statIfExists(destPath);
-  if (existing?.isDirectory()) {
-    throw new WriteFailedError(
-      publicPath,
-      `destination "${destPath}" already exists and is a directory, not a file`,
-    );
-  }
-
-  try {
-    await rename(destPath, backupPath);
-    return true;
-  } catch (error) {
-    if (isEnoent(error)) return false;
-    throw new WriteFailedError(publicPath, describeError(error, "failed to back up existing file"));
-  }
-}
-
-/** `stat`, or `undefined` if the path doesn't exist. Other errors propagate. */
-async function statIfExists(path: string): Promise<Stats | undefined> {
-  try {
-    return await stat(path);
-  } catch (error) {
-    if (isEnoent(error)) return undefined;
-    throw error;
-  }
-}
-
-function relativeOrAbsolute(localDir: string, destPath: string, fallback: string): string {
-  const rel = relative(localDir, destPath);
-  return rel.length > 0 ? rel : fallback;
+function isKitRelativeContained(path: string): boolean {
+  if (isAbsolute(path)) return false;
+  return !path.split(/[/\\]/).some((seg) => seg === "." || seg === "..");
 }
 
 function decodeData(data: string, encoding: "utf-8" | "base64", path: string): Buffer {
@@ -824,44 +609,7 @@ function decodeData(data: string, encoding: "utf-8" | "base64", path: string): B
   }
 }
 
-async function writeStaged(stagedPath: string, content: Buffer, publicPath: string): Promise<void> {
-  try {
-    await writeFile(stagedPath, content);
-  } catch (error) {
-    throw new WriteFailedError(publicPath, describeError(error, "write failed"));
-  }
-}
-
-/**
- * Stream `sourcePath` into `stagedPath` through a SHA-256 hash pass-through,
- * so `write_files` never loads a full file into memory regardless of size
- * (Implementation Notes: "Streaming reads … pipe through hash"). The hash
- * itself isn't surfaced today (no AC calls for it) but proves the data
- * genuinely streamed end-to-end rather than being buffered.
- */
-async function streamCopy(
-  sourcePath: string,
-  stagedPath: string,
-  publicPath: string,
-): Promise<void> {
-  try {
-    const hash = createHash("sha256");
-    const source = createReadStream(sourcePath);
-    const dest = createWriteStream(stagedPath);
-    source.on("data", (chunk) => hash.update(chunk));
-    await pipeline(source, dest);
-  } catch (error) {
-    throw new WriteFailedError(publicPath, describeError(error, "read failed"));
-  }
-}
-
 function describeError(error: unknown, fallback: string): string {
   if (error instanceof Error) return error.message;
   return fallback;
-}
-
-function isEnoent(error: unknown): boolean {
-  return (
-    typeof error === "object" && error !== null && (error as { code?: string }).code === "ENOENT"
-  );
 }

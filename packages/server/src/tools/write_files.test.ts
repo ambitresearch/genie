@@ -7,6 +7,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { createPlan, PlanNotFoundError } from "../plans/index.js";
+import { LocalFsKitStore } from "../store/local.js";
+import type { KitStore } from "../store/interface.js";
 import { registerPlan } from "./plan.js";
 import {
   DEFAULT_WRITE_BYTE_CAP,
@@ -21,16 +23,27 @@ import {
 // own test file both use this literal directly, so this test mirrors that.
 const PLAN_TOOL_NAME = "mcp__genie__plan";
 
+// The kitId every plan in this suite is created against. The destination of a
+// write is the KIT (DRO-565 re-plumb) — `<kitsRoot>/<KIT_ID>/…` — while
+// `localDir` remains only the SOURCE base a `localPath` is read from.
+const KIT_ID = "k";
+
 async function tempDir(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), prefix));
 }
 
 describe("writeFiles (core logic)", () => {
-  let localDir: string;
+  let localDir: string; // localPath SOURCE base
+  let kitsRoot: string; // where kits live
+  let kitDir: string; // write DESTINATION base = <kitsRoot>/<KIT_ID>
+  let store: KitStore;
   let genieHome: string;
 
   beforeEach(async () => {
     localDir = await tempDir("genie-wf-local-");
+    kitsRoot = await tempDir("genie-wf-kits-");
+    kitDir = join(kitsRoot, KIT_ID);
+    store = new LocalFsKitStore(kitsRoot);
     // `plans/index.ts` persists every plan to `${GENIE_HOME}/plans/...` and
     // reads GENIE_HOME fresh on every call (see createPlan/plan.test.ts's own
     // isolation pattern) — scope it to a fresh temp dir per test so this
@@ -42,13 +55,14 @@ describe("writeFiles (core logic)", () => {
   afterEach(async () => {
     delete process.env["GENIE_HOME"];
     await rm(localDir, { recursive: true, force: true });
+    await rm(kitsRoot, { recursive: true, force: true });
     await rm(genieHome, { recursive: true, force: true });
   });
 
   it("AC8 — happy path: writes files from data and returns writtenPaths in input order", async () => {
-    const plan = await createPlan("k", ["components/**/*.html", "tokens.css"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["components/**/*.html", "tokens.css"], [], localDir);
 
-    const result = await writeFiles({
+    const result = await writeFiles(store, {
       planId: plan.planId,
       files: [
         { path: "components/Button.html", data: "<button>Hi</button>" },
@@ -57,45 +71,48 @@ describe("writeFiles (core logic)", () => {
     });
 
     expect(result.writtenPaths).toEqual(["components/Button.html", "tokens.css"]);
-    await expect(readFile(join(localDir, "components", "Button.html"), "utf-8")).resolves.toBe(
+    // Destination is the KIT, not localDir.
+    await expect(readFile(join(kitDir, "components", "Button.html"), "utf-8")).resolves.toBe(
       "<button>Hi</button>",
     );
-    await expect(readFile(join(localDir, "tokens.css"), "utf-8")).resolves.toBe(
+    await expect(readFile(join(kitDir, "tokens.css"), "utf-8")).resolves.toBe(
       ":root { --c: red; }",
     );
   });
 
-  it("writes files from localPath, resolved against the plan's localDir", async () => {
-    const plan = await createPlan("k", ["dest/**"], [], localDir);
+  it("writes files from localPath (source), resolved against the plan's localDir", async () => {
+    const plan = await createPlan(KIT_ID, ["dest/**"], [], localDir);
+    // localPath is read from localDir (the SOURCE base)…
     await mkdir(join(localDir, "src"), { recursive: true });
     await writeFile(join(localDir, "src", "input.html"), "<div>from disk</div>", "utf-8");
 
-    const result = await writeFiles({
+    const result = await writeFiles(store, {
       planId: plan.planId,
       files: [{ path: "dest/input.html", localPath: "src/input.html" }],
     });
 
     expect(result.writtenPaths).toEqual(["dest/input.html"]);
-    await expect(readFile(join(localDir, "dest", "input.html"), "utf-8")).resolves.toBe(
+    // …and written to the KIT (the destination).
+    await expect(readFile(join(kitDir, "dest", "input.html"), "utf-8")).resolves.toBe(
       "<div>from disk</div>",
     );
   });
 
   it("writes base64-encoded inline data, decoded correctly", async () => {
-    const plan = await createPlan("k", ["*.bin"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["*.bin"], [], localDir);
     const base64 = Buffer.from("hello world", "utf-8").toString("base64");
 
-    await writeFiles({
+    await writeFiles(store, {
       planId: plan.planId,
       files: [{ path: "greeting.bin", data: base64, encoding: "base64" }],
     });
 
-    await expect(readFile(join(localDir, "greeting.bin"), "utf-8")).resolves.toBe("hello world");
+    await expect(readFile(join(kitDir, "greeting.bin"), "utf-8")).resolves.toBe("hello world");
   });
 
   it("AC5 — rejects an unknown planId with PlanNotFoundError", async () => {
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: "00000000-0000-4000-8000-000000000000",
         files: [{ path: "a.html", data: "x" }],
       }),
@@ -110,11 +127,11 @@ describe("writeFiles (core logic)", () => {
     // PlanNotFoundError — there's no separate PlanExpiredError.
     process.env["GENIE_PLAN_TTL"] = "50";
     try {
-      const plan = await createPlan("k", ["a.html"], [], localDir);
+      const plan = await createPlan(KIT_ID, ["a.html"], [], localDir);
       await new Promise((r) => setTimeout(r, 150));
 
       await expect(
-        writeFiles({ planId: plan.planId, files: [{ path: "a.html", data: "x" }] }),
+        writeFiles(store, { planId: plan.planId, files: [{ path: "a.html", data: "x" }] }),
       ).rejects.toBeInstanceOf(PlanNotFoundError);
     } finally {
       delete process.env["GENIE_PLAN_TTL"];
@@ -122,13 +139,13 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("AC3 — rejects more than 256 files with TooManyFilesError", async () => {
-    const plan = await createPlan("k", ["*.html"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["*.html"], [], localDir);
     const files = Array.from({ length: MAX_FILES_PER_CALL + 1 }, (_, i) => ({
       path: `f${i}.html`,
       data: "x",
     }));
 
-    await expect(writeFiles({ planId: plan.planId, files })).rejects.toMatchObject({
+    await expect(writeFiles(store, { planId: plan.planId, files })).rejects.toMatchObject({
       code: "TooManyFilesError",
       count: MAX_FILES_PER_CALL + 1,
       max: MAX_FILES_PER_CALL,
@@ -136,26 +153,25 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("accepts exactly 256 files (boundary)", async () => {
-    const plan = await createPlan("k", ["*.html"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["*.html"], [], localDir);
     const files = Array.from({ length: MAX_FILES_PER_CALL }, (_, i) => ({
       path: `f${i}.html`,
       data: "x",
     }));
 
-    const result = await writeFiles({ planId: plan.planId, files });
+    const result = await writeFiles(store, { planId: plan.planId, files });
     expect(result.writtenPaths).toHaveLength(MAX_FILES_PER_CALL);
   });
 
   it("rejects a call with two files targeting the same path with DuplicatePathError (Copilot review finding)", async () => {
-    // Regression guard: without this check, resolvedLocalPaths (keyed by
-    // file.path) would silently drop the first entry's localPath in favor
-    // of the second's, and writtenPaths would list the same path twice as
-    // if two distinct files had committed — when in fact only one, whichever
-    // committed last, actually landed.
-    const plan = await createPlan("k", ["*.txt"], [], localDir);
+    // Regression guard: without this check, the WriteOp for the first entry
+    // would be silently superseded by the second's, and writtenPaths would list
+    // the same path twice as if two distinct files had committed — when in fact
+    // only one, whichever committed last, actually landed.
+    const plan = await createPlan(KIT_ID, ["*.txt"], [], localDir);
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [
           { path: "a.txt", data: "first" },
@@ -165,15 +181,15 @@ describe("writeFiles (core logic)", () => {
     ).rejects.toMatchObject({ code: "DuplicatePathError", path: "a.txt" });
 
     // Nothing lands — rejected before any staging begins.
-    await expect(stat(join(localDir, "a.txt"))).rejects.toThrow();
+    await expect(stat(join(kitDir, "a.txt"))).rejects.toThrow();
   });
 
   it("rejects duplicate paths even when sourced differently (data vs. localPath)", async () => {
-    const plan = await createPlan("k", ["*.txt"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["*.txt"], [], localDir);
     await writeFile(join(localDir, "src.txt"), "from disk", "utf-8");
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [
           { path: "a.txt", data: "inline" },
@@ -184,10 +200,10 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("AC4 — rejects a path outside the plan's writes with PathOutsidePlanError (reason: glob)", async () => {
-    const plan = await createPlan("k", ["components/**"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["components/**"], [], localDir);
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [{ path: "secrets/token.txt", data: "x" }],
       }),
@@ -199,10 +215,10 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("AC4 — no file lands when even one path in the batch is outside the plan (all-or-nothing)", async () => {
-    const plan = await createPlan("k", ["components/**"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["components/**"], [], localDir);
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [
           { path: "components/Good.html", data: "ok" },
@@ -211,32 +227,31 @@ describe("writeFiles (core logic)", () => {
       }),
     ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
 
-    await expect(stat(join(localDir, "components", "Good.html"))).rejects.toThrow();
+    await expect(stat(join(kitDir, "components", "Good.html"))).rejects.toThrow();
   });
 
-  it("AC4 — rejects an absolute path that matches a permissive glob but escapes localDir (Copilot review finding)", async () => {
+  it("AC4 — rejects an absolute path that matches a permissive glob but escapes the kit (Copilot review finding)", async () => {
     // Regression guard: a glob match alone does not guarantee containment.
     // "**" matches the literal string "/etc/passwd" under micromatch (an
-    // absolute path is still just a string to the glob matcher), and
-    // `resolve(localDir, "/etc/passwd")` returns "/etc/passwd" verbatim since
-    // `path.resolve` treats an absolute second argument as an override rather
-    // than joining it — so without the isPathInsideLocalDir check, this call
-    // would have written outside localDir entirely, ignoring the plan's
-    // containment guarantee.
-    const plan = await createPlan("k", ["**"], [], localDir);
+    // absolute path is still just a string to the glob matcher), so without the
+    // kit-relative containment check this call would have written outside the
+    // kit entirely, ignoring the plan's containment guarantee.
+    const plan = await createPlan(KIT_ID, ["**"], [], localDir);
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [{ path: "/etc/passwd-genie-test-should-not-write", data: "pwned" }],
       }),
     ).rejects.toMatchObject({
+      // reason: "escapesLocalDir" (not "glob") — the error message previously
+      // always claimed a glob mismatch even when the true cause was the
+      // containment check; this path DOES match the "**" glob, so a plain
+      // glob-mismatch message would be actively misleading. (The reason code is
+      // kept verbatim from the pre-store-replumb contract even though the
+      // destination is now the kit — the semantics "escaped the write-scope"
+      // are the same.)
       code: "PathOutsidePlanError",
-      // reason: "escapesLocalDir" (not "glob") — a Copilot review finding
-      // flagged that the error message previously always claimed a glob
-      // mismatch even when the true cause was the containment check; this
-      // path DOES match the "**" glob, so a plain glob-mismatch message
-      // would have been actively misleading for debugging.
       reason: "escapesLocalDir",
     });
 
@@ -245,12 +260,12 @@ describe("writeFiles (core logic)", () => {
 
   it("AC4 — rejects a path containing a parent-traversal segment even under a permissive glob", async () => {
     // Belt-and-suspenders: micromatch's own semantics already reject "../x"
-    // against "**", but assert it explicitly so a future glob-library swap
-    // can't silently reopen this.
-    const plan = await createPlan("k", ["**"], [], localDir);
+    // against "**", but the kit-relative containment check rejects any `..`
+    // segment explicitly so a future glob-library swap can't silently reopen it.
+    const plan = await createPlan(KIT_ID, ["**"], [], localDir);
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [{ path: "../escaped.html", data: "x" }],
       }),
@@ -258,7 +273,7 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("AC6 — rejects a localPath that escapes the plan's localDir (parent traversal)", async () => {
-    const plan = await createPlan("k", ["dest/**"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["dest/**"], [], localDir);
     // A sibling directory outside localDir with a file we must not be able to read.
     const secretsDir = await tempDir("genie-wf-secret-");
     await writeFile(join(secretsDir, "secret.txt"), "top secret", "utf-8");
@@ -268,7 +283,7 @@ describe("writeFiles (core logic)", () => {
     const escapePath = join("..", basename(secretsDir), "secret.txt");
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [{ path: "dest/leak.txt", localPath: escapePath }],
       }),
@@ -278,10 +293,10 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("AC6 — rejects an absolute localPath outside localDir", async () => {
-    const plan = await createPlan("k", ["dest/**"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["dest/**"], [], localDir);
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [{ path: "dest/leak.txt", localPath: "/etc/hostname" }],
       }),
@@ -289,11 +304,11 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("AC6 — accepts a localPath inside a nested subdirectory of localDir", async () => {
-    const plan = await createPlan("k", ["dest/**"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["dest/**"], [], localDir);
     await mkdir(join(localDir, "a", "b", "c"), { recursive: true });
     await writeFile(join(localDir, "a", "b", "c", "deep.html"), "deep", "utf-8");
 
-    const result = await writeFiles({
+    const result = await writeFiles(store, {
       planId: plan.planId,
       files: [{ path: "dest/deep.html", localPath: "a/b/c/deep.html" }],
     });
@@ -301,19 +316,19 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("AC7 — rejects a file with neither localPath nor data", async () => {
-    const plan = await createPlan("k", ["*.html"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["*.html"], [], localDir);
 
     await expect(
-      writeFiles({ planId: plan.planId, files: [{ path: "a.html" }] }),
+      writeFiles(store, { planId: plan.planId, files: [{ path: "a.html" }] }),
     ).rejects.toMatchObject({ code: "InvalidFileInputError", path: "a.html" });
   });
 
   it("AC7 — rejects a file with BOTH localPath and data set", async () => {
-    const plan = await createPlan("k", ["*.html"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["*.html"], [], localDir);
     await writeFile(join(localDir, "src.html"), "from disk", "utf-8");
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [{ path: "a.html", localPath: "src.html", data: "inline" }],
       }),
@@ -321,10 +336,10 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("rejects invalid base64 data when encoding: base64 is declared", async () => {
-    const plan = await createPlan("k", ["*.bin"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["*.bin"], [], localDir);
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [{ path: "a.bin", data: "not valid base64!!!", encoding: "base64" }],
       }),
@@ -332,11 +347,12 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("AC9 — rejects a payload exceeding the configured byte cap with PayloadTooLargeError", async () => {
-    const plan = await createPlan("k", ["*.txt"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["*.txt"], [], localDir);
     const big = "x".repeat(1000);
 
     await expect(
       writeFiles(
+        store,
         { planId: plan.planId, files: [{ path: "a.txt", data: big }] },
         { GENIE_WRITE_BYTE_CAP: "500" },
       ),
@@ -348,18 +364,18 @@ describe("writeFiles (core logic)", () => {
     });
 
     // Nothing landed.
-    await expect(stat(join(localDir, "a.txt"))).rejects.toThrow();
+    await expect(stat(join(kitDir, "a.txt"))).rejects.toThrow();
   });
 
   it("AC9 — retryMaxFiles halves the file count from the failing call", async () => {
-    const plan = await createPlan("k", ["*.txt"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["*.txt"], [], localDir);
     const files = Array.from({ length: 10 }, (_, i) => ({
       path: `f${i}.txt`,
       data: "x".repeat(100),
     }));
 
     await expect(
-      writeFiles({ planId: plan.planId, files }, { GENIE_WRITE_BYTE_CAP: "500" }),
+      writeFiles(store, { planId: plan.planId, files }, { GENIE_WRITE_BYTE_CAP: "500" }),
     ).rejects.toMatchObject({ code: "PayloadTooLargeError", retryMaxFiles: 5 });
   });
 
@@ -368,11 +384,12 @@ describe("writeFiles (core logic)", () => {
   });
 
   it("sums localPath file sizes toward the byte cap without loading them into memory", async () => {
-    const plan = await createPlan("k", ["dest/**"], [], localDir);
+    const plan = await createPlan(KIT_ID, ["dest/**"], [], localDir);
     await writeFile(join(localDir, "big.txt"), "y".repeat(1000), "utf-8");
 
     await expect(
       writeFiles(
+        store,
         { planId: plan.planId, files: [{ path: "dest/big.txt", localPath: "big.txt" }] },
         { GENIE_WRITE_BYTE_CAP: "500" },
       ),
@@ -381,20 +398,21 @@ describe("writeFiles (core logic)", () => {
 
   it("AC10 — rolls back the whole call if one file fails to commit, restoring the pre-existing file", async () => {
     if (platform() === "win32") return; // permission-based fault injection is POSIX-only
-    const plan = await createPlan("k", ["dest/**"], [], localDir);
-    // "dest/existing.html" already has content the failed call must not disturb.
-    await mkdir(join(localDir, "dest"), { recursive: true });
-    await writeFile(join(localDir, "dest", "existing.html"), "original content", "utf-8");
+    const plan = await createPlan(KIT_ID, ["dest/**"], [], localDir);
+    // "dest/existing.html" already exists IN THE KIT with content the failed
+    // call must not disturb.
+    await mkdir(join(kitDir, "dest"), { recursive: true });
+    await writeFile(join(kitDir, "dest", "existing.html"), "original content", "utf-8");
 
     // Make the destination directory for the SECOND file read-only, so its
     // commit-phase rename fails after the first file already renamed clean.
-    const lockedDir = join(localDir, "dest", "locked");
+    const lockedDir = join(kitDir, "dest", "locked");
     await mkdir(lockedDir, { recursive: true });
     await chmod(lockedDir, 0o555);
 
     try {
       await expect(
-        writeFiles({
+        writeFiles(store, {
           planId: plan.planId,
           files: [
             { path: "dest/existing.html", data: "new content" }, // would succeed alone
@@ -408,23 +426,23 @@ describe("writeFiles (core logic)", () => {
 
     // Rollback: the pre-existing file must be back to its ORIGINAL content,
     // not the new content from the failed call.
-    await expect(readFile(join(localDir, "dest", "existing.html"), "utf-8")).resolves.toBe(
+    await expect(readFile(join(kitDir, "dest", "existing.html"), "utf-8")).resolves.toBe(
       "original content",
     );
     // The blocked file must not exist.
-    await expect(stat(join(localDir, "dest", "locked", "blocked.html"))).rejects.toThrow();
+    await expect(stat(join(kitDir, "dest", "locked", "blocked.html"))).rejects.toThrow();
   });
 
   it("AC10 — rolls back cleanly when NONE of the destinations pre-existed", async () => {
     if (platform() === "win32") return;
-    const plan = await createPlan("k", ["dest/**"], [], localDir);
-    const lockedDir = join(localDir, "dest", "locked");
+    const plan = await createPlan(KIT_ID, ["dest/**"], [], localDir);
+    const lockedDir = join(kitDir, "dest", "locked");
     await mkdir(lockedDir, { recursive: true });
     await chmod(lockedDir, 0o555);
 
     try {
       await expect(
-        writeFiles({
+        writeFiles(store, {
           planId: plan.planId,
           files: [
             { path: "dest/fresh.html", data: "new" },
@@ -437,7 +455,7 @@ describe("writeFiles (core logic)", () => {
     }
 
     // Nothing from this call should have landed.
-    await expect(stat(join(localDir, "dest", "fresh.html"))).rejects.toThrow();
+    await expect(stat(join(kitDir, "dest", "fresh.html"))).rejects.toThrow();
   });
 
   it("AC10 — refuses to overwrite a destination that already exists as a directory (Copilot review finding)", async () => {
@@ -447,13 +465,13 @@ describe("writeFiles (core logic)", () => {
     // renamed a FILE into its place. Since the call would otherwise succeed,
     // the backup (containing the original directory) gets deleted by the
     // caller's cleanup — silently destroying the directory and its contents.
-    const plan = await createPlan("k", ["dest/**"], [], localDir);
-    const existingDir = join(localDir, "dest", "existing");
+    const plan = await createPlan(KIT_ID, ["dest/**"], [], localDir);
+    const existingDir = join(kitDir, "dest", "existing");
     await mkdir(existingDir, { recursive: true });
     await writeFile(join(existingDir, "precious.txt"), "do not delete me", "utf-8");
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [{ path: "dest/existing", data: "this should never land" }],
       }),
@@ -467,18 +485,18 @@ describe("writeFiles (core logic)", () => {
     );
   });
 
-  it("does not mutate the destination tree at all when plan/schema validation fails before staging", async () => {
-    const plan = await createPlan("k", ["components/**"], [], localDir);
+  it("does not mutate the kit at all when plan/schema validation fails before staging", async () => {
+    const plan = await createPlan(KIT_ID, ["components/**"], [], localDir);
 
     await expect(
-      writeFiles({
+      writeFiles(store, {
         planId: plan.planId,
         files: [{ path: "outside/nope.html", data: "x" }],
       }),
     ).rejects.toThrow();
 
-    const entries = await readdir(localDir);
-    expect(entries).toEqual([]);
+    // The kit dir was never even created (nothing staged).
+    await expect(readdir(kitDir)).rejects.toThrow();
   });
 });
 
@@ -487,6 +505,8 @@ describe("writeFiles (core logic)", () => {
 interface WireHarness {
   client: Client;
   localDir: string;
+  kitsRoot: string;
+  kitDir: string;
   genieHome: string;
   close: () => Promise<void>;
 }
@@ -495,9 +515,12 @@ async function makeWireHarness(): Promise<WireHarness> {
   const genieHome = await tempDir("genie-wf-wire-home-");
   process.env["GENIE_HOME"] = genieHome;
   const localDir = await tempDir("genie-wf-wire-local-");
+  const kitsRoot = await tempDir("genie-wf-wire-kits-");
+  const kitDir = join(kitsRoot, KIT_ID);
+  const kitStore = new LocalFsKitStore(kitsRoot);
   const server = new McpServer({ name: "genie-test", version: "0" });
   registerPlan(server);
-  registerWriteFilesTool(server);
+  registerWriteFilesTool(server, kitStore);
 
   const client = new Client({ name: "test", version: "0" });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
@@ -506,11 +529,14 @@ async function makeWireHarness(): Promise<WireHarness> {
   return {
     client,
     localDir,
+    kitsRoot,
+    kitDir,
     genieHome,
     close: async () => {
       await client.close();
       delete process.env["GENIE_HOME"];
       await rm(localDir, { recursive: true, force: true });
+      await rm(kitsRoot, { recursive: true, force: true });
       await rm(genieHome, { recursive: true, force: true });
     },
   };
@@ -541,7 +567,7 @@ describe("mcp__genie__write_files tool (MCP wire level)", () => {
   it("AC8 — end-to-end: plan then write_files returns writtenPaths in order", async () => {
     const planResult = await h.client.callTool({
       name: PLAN_TOOL_NAME,
-      arguments: { kitId: "k", writes: ["*.html"], localDir: h.localDir },
+      arguments: { kitId: KIT_ID, writes: ["*.html"], localDir: h.localDir },
     });
     const { planId } = planResult.structuredContent as { planId: string };
 
@@ -558,8 +584,9 @@ describe("mcp__genie__write_files tool (MCP wire level)", () => {
 
     expect(writeResult.isError).toBeFalsy();
     expect(writeResult.structuredContent).toEqual({ writtenPaths: ["a.html", "b.html"] });
-    await expect(readFile(join(h.localDir, "a.html"), "utf-8")).resolves.toBe("A");
-    await expect(readFile(join(h.localDir, "b.html"), "utf-8")).resolves.toBe("B");
+    // Files landed in the KIT (destination), not localDir (source base).
+    await expect(readFile(join(h.kitDir, "a.html"), "utf-8")).resolves.toBe("A");
+    await expect(readFile(join(h.kitDir, "b.html"), "utf-8")).resolves.toBe("B");
   });
 
   it("AC5 — an unknown planId returns a canonical -32602 plan-guard rejection (M1-13)", async () => {
@@ -591,7 +618,7 @@ describe("mcp__genie__write_files tool (MCP wire level)", () => {
     // `data.reason` + `data.path` rather than the old code-name string.
     const planResult = await h.client.callTool({
       name: PLAN_TOOL_NAME,
-      arguments: { kitId: "k", writes: ["components/**"], localDir: h.localDir },
+      arguments: { kitId: KIT_ID, writes: ["components/**"], localDir: h.localDir },
     });
     const { planId } = planResult.structuredContent as { planId: string };
 
@@ -609,7 +636,7 @@ describe("mcp__genie__write_files tool (MCP wire level)", () => {
   it("AC9 — payload-too-large surfaces code -32099 with retryWith.maxFiles in data", async () => {
     const planResult = await h.client.callTool({
       name: PLAN_TOOL_NAME,
-      arguments: { kitId: "k", writes: ["*.txt"], localDir: h.localDir },
+      arguments: { kitId: KIT_ID, writes: ["*.txt"], localDir: h.localDir },
     });
     const { planId } = planResult.structuredContent as { planId: string };
 
@@ -636,7 +663,7 @@ describe("mcp__genie__write_files tool (MCP wire level)", () => {
   it("AC3 — more than 256 files surfaces TooManyFilesError", async () => {
     const planResult = await h.client.callTool({
       name: PLAN_TOOL_NAME,
-      arguments: { kitId: "k", writes: ["*.html"], localDir: h.localDir },
+      arguments: { kitId: KIT_ID, writes: ["*.html"], localDir: h.localDir },
     });
     const { planId } = planResult.structuredContent as { planId: string };
     const files = Array.from({ length: MAX_FILES_PER_CALL + 1 }, (_, i) => ({

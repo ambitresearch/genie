@@ -6,6 +6,7 @@ import { registerGetProjectTool } from "./tools/get_project.js";
 import { registerDeleteProjectTool } from "./tools/delete_project.js";
 import { registerBindKitTool } from "./tools/bind_kit.js";
 import { LocalScaffoldScreenGenerator, registerConjureScreenTool } from "./tools/conjure_screen.js";
+import { registerConjureTool } from "./tools/conjure.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
 import { registerValidate } from "./tools/validate.js";
@@ -81,8 +82,9 @@ export interface CreateServerOptions {
    * still to-build (tracked follow-up); this seam is what lets it be dropped in
    * once it exists, and lets tests substitute a fake. `delete_project` now
    * routes through this store too (M1-14a-1 / DRO-531); the kit-file verbs
-   * (`read_file`/`list_files`/`delete_files`) route through `kitStore` as of
-   * M1-14a-1a / DRO-540, leaving `write_files` (kitsRoot) as the last holdout.
+   * (`read_file`/`list_files`/`delete_files` via DRO-540, and `write_files` via
+   * M1-14a-1b / DRO-565) all now route through `kitStore` — no fs-native holdout
+   * remains.
    */
   projectStore?: ProjectStore;
 }
@@ -93,7 +95,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
       "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
-      "create/list/get/delete/bind_kit, conjure_screen, plan creation (the capability-grant " +
+      "create/list/get/delete/bind_kit, conjure_screen, conjure (LLM component generation), " +
+      "plan creation (the capability-grant " +
       "boundary for write/delete verbs), write_files, and delete_files. write_files and " +
       "delete_files share one plan-boundary validation middleware — every call is checked " +
       "for planId presence/existence/expiry and per-path glob membership before the tool " +
@@ -170,6 +173,15 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     generator: new LocalScaffoldScreenGenerator(),
   });
 
+  // conjure (M2-03): genie's headline verb — real LLM component generation
+  // against the caller's UI kit. Calls the configured OpenAI-compatible endpoint
+  // (M2-01 client) with a COMPONENT_SCHEMA json_schema response_format (M2-02),
+  // validates the reply with Ajv, and retries once on a validation failure. Pure
+  // generation: it does NOT write files (AC9) and takes no store — the default
+  // `chat` seam lazily imports the LLM client only on first call, so registering
+  // it here never requires GENIE_LLM_* to be set just to build the server.
+  registerConjureTool(server);
+
   registerListKits(server, kitStore);
   registerListComponents(server, kitStore);
   registerCreateKit(server, kitStore);
@@ -194,10 +206,13 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // plan tool.
   registerPlan(server);
 
-  // write_files (M1-08): validates planId + writes-glob membership via the
-  // M1-13 plan-guard middleware (one shared seam with delete_files, below),
-  // then commits atomically. Blocked-by M1-07, now shipped.
-  registerWriteFilesTool(server);
+  // write_files (M1-08; store-routed in M1-14a-1b / DRO-565): validates planId +
+  // writes-glob membership via the M1-13 plan-guard middleware (one shared seam
+  // with delete_files, below), then commits the batch atomically into the kit
+  // via the injected `kitStore.writeFiles(plan.kitId, ops)` — the same store the
+  // read/list/delete verbs route through. `plan.localDir` is now only the
+  // local SOURCE base for `localPath` reads; the kit is the write destination.
+  registerWriteFilesTool(server, kitStore);
 
   // Advisory telemetry facet (M1-12): persists validation counts + emits
   // Prometheus metrics. No planId required (read-side telemetry).

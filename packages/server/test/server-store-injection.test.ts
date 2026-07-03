@@ -9,15 +9,16 @@
  * re-confirms against a real Gitea when Docker is present.
  *
  * Scope note: the `KitStore`-interface metadata verbs (`create_kit`,
- * `list_kits`, `get_kit`, `list_components`) and — as of DRO-540 — the kit-FILE
- * verbs `read_file`/`list_files`/`delete_files` are all asserted here against
- * the injected `GitHostKitStore` (see the "kit-FILE walk" test below). The lone
- * remaining filesystem-bound holdout is `write_files` (tracked as DRO-565); the
- * rich project family beyond create/get/list/bind/delete is a further follow-up
- * (see `CreateServerOptions.kitStore`'s doc comment). What this test locks down
- * is that the seam exists and is honestly wired: a kit created through the MCP
- * surface lands in the git host (not local disk), and every routed verb reads it
- * back from there.
+ * `list_kits`, `get_kit`, `list_components`), the kit-FILE verbs
+ * `read_file`/`list_files`/`delete_files` (DRO-540), and — as of DRO-565 —
+ * `write_files` are ALL asserted here against the injected `GitHostKitStore`
+ * (see the "kit-FILE walk" and "write_files … routes through the injected
+ * store" tests below). No fs-native kit holdout remains; the rich project
+ * family beyond create/get/list/bind/delete is a further follow-up (see
+ * `CreateServerOptions.kitStore`'s doc comment). What this test locks down is
+ * that the seam exists and is honestly wired: a kit created through the MCP
+ * surface lands in the git host (not local disk), and every routed verb reads
+ * or writes it there.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -138,7 +139,10 @@ describe("createServer store-injection seam — kitStore routes to GitHostKitSto
     const seed = async (path: string, content: string) => {
       const res = await globalThis.fetch(
         `https://mock-git-host.test/api/v1/repos/test-org/${kitId}/contents/${path}`,
-        { method: "POST", body: JSON.stringify({ content: Buffer.from(content).toString("base64") }) },
+        {
+          method: "POST",
+          body: JSON.stringify({ content: Buffer.from(content).toString("base64") }),
+        },
       );
       expect(res.ok, `seed ${path}`).toBe(true);
     };
@@ -189,6 +193,52 @@ describe("createServer store-injection seam — kitStore routes to GitHostKitSto
     );
     expect(relistedPaths).not.toContain("stale.txt");
     expect(relistedPaths).toContain("components/Button.tsx");
+  });
+
+  it("write_files (plan-gated) routes through the injected store and commits into the git host (DRO-565)", async () => {
+    // DRO-565: write_files is the last fs-native holdout re-plumbed onto the
+    // injected KitStore. Prove the MCP verb commits into the git host (not local
+    // disk) through the seam — plan → write_files → read_file/list_files, all
+    // against the injected GitHostKitStore.
+    const created = await call("mcp__genie__create_kit", { name: "Write Walk Kit" });
+    expect(created.isError, JSON.stringify(created)).toBeFalsy();
+    const { kitId } = payload(created) as { kitId: string };
+
+    // Plan authorizes writes into the kit. localDir is only the localPath
+    // source base here; this call sources from inline `data`, so any existing
+    // dir works — point it at cwd to keep the plan's localDir-exists check happy.
+    const planResult = await call("mcp__genie__plan", {
+      kitId,
+      writes: ["components/**/*.html", "tokens.css"],
+      localDir: process.cwd(),
+    });
+    expect(planResult.isError, JSON.stringify(planResult)).toBeFalsy();
+    const { planId } = payload(planResult) as { planId: string };
+
+    const writeResult = await call("mcp__genie__write_files", {
+      planId,
+      files: [
+        { path: "components/Button.html", data: "<button>Hi</button>" },
+        { path: "tokens.css", data: ":root { --c: red; }" },
+      ],
+    });
+    expect(writeResult.isError, JSON.stringify(writeResult)).toBeFalsy();
+    expect(payload(writeResult)).toEqual({
+      writtenPaths: ["components/Button.html", "tokens.css"],
+    });
+
+    // Durable on the git host: read them back directly from the injected store,
+    // proving the write went through the store to Gitea, not to a local kitsRoot.
+    expect((await kitStore.readFile(kitId, "components/Button.html")).content).toBe(
+      "<button>Hi</button>",
+    );
+    expect((await kitStore.readFile(kitId, "tokens.css")).content).toBe(":root { --c: red; }");
+
+    // ...and list_files through the MCP surface sees them on the git host too.
+    const listed = await call("mcp__genie__list_files", { kitId });
+    const listedPaths = (payload(listed) as { files: { path: string }[] }).files.map((f) => f.path);
+    expect(listedPaths).toContain("components/Button.html");
+    expect(listedPaths).toContain("tokens.css");
   });
 
   it("default construction (no kitStore) still uses LocalFsKitStore — no git-host calls", async () => {
