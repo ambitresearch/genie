@@ -191,31 +191,41 @@ describe("createServer store-injection seam — kitStore routes to GitHostKitSto
 
   it("default construction (no kitStore) still uses LocalFsKitStore — no git-host calls", async () => {
     // Guard the "no change to existing callers" half of AC1: with no injection,
-    // create_kit must NOT hit the git host. We assert by pointing the default
-    // server at a throwaway kitsRoot and confirming a create_kit succeeds while
-    // the git-host mock records nothing under its owner.
+    // create_kit must NOT hit the git host. We point the default server at a
+    // *throwaway* kitsRoot so the test is hermetic (no artifact left under the
+    // real cwd) and — crucially — assert the create_kit genuinely SUCCEEDS
+    // through the default LocalFsKitStore. Without that success assertion the
+    // gitHostHits===0 check could pass vacuously if create_kit errored early in
+    // a read-only sandbox (no fetch happens because nothing happens).
     let gitHostHits = 0;
     globalThis.fetch = ((url: string, init?: RequestInit) => {
       gitHostHits += 1;
       return createMockGitHostFetch()(url, init);
     }) as typeof fetch;
 
-    const localServer = createServer(); // default LocalFsKitStore
-    const localClient = new Client({ name: "seam-default", version: "0" });
-    const [c, s] = InMemoryTransport.createLinkedPair();
-    await Promise.all([localServer.connect(s), localClient.connect(c)]);
+    const kitsRoot = await mkdtemp(join(tmpdir(), "genie-seam-default-"));
+    try {
+      const localServer = createServer({ kitsRoot }); // default LocalFsKitStore, throwaway root
+      const localClient = new Client({ name: "seam-default", version: "0" });
+      const [c, s] = InMemoryTransport.createLinkedPair();
+      await Promise.all([localServer.connect(s), localClient.connect(c)]);
 
-    const created = (await localClient.callTool({
-      name: "mcp__genie__create_kit",
-      arguments: { name: "Local Default Kit" },
-    })) as ToolResult;
-    // create_kit against the real local FS may succeed or (in a sandbox with no
-    // writable cwd/.genie) fail — either way, the invariant under test is that
-    // the DEFAULT path never reaches out to the git host.
-    expect(gitHostHits).toBe(0);
-    void created;
+      const created = (await localClient.callTool({
+        name: "mcp__genie__create_kit",
+        arguments: { name: "Local Default Kit" },
+      })) as ToolResult;
+      // Real end-to-end success through the default LocalFsKitStore — not a
+      // vacuous pass — is what makes the gitHostHits assertion meaningful.
+      expect(created.isError, JSON.stringify(created)).toBeFalsy();
+      const { kitId } = payload(created) as { kitId: string };
+      expect(kitId).toMatch(/^local-default-kit-[0-9a-f]{6}$/);
+      // And the DEFAULT path must never reach out to the git host.
+      expect(gitHostHits).toBe(0);
 
-    await localClient.close();
+      await localClient.close();
+    } finally {
+      await rm(kitsRoot, { recursive: true, force: true });
+    }
   });
 });
 
