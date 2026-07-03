@@ -33,6 +33,7 @@
   "author": "Roshan Gautam",
   "devDependencies": {
     "@types/micromatch": "^4.0.10",
-    "@types/mime-types": "^3.0.1"
+    "@types/mime-types": "^3.0.1",
+    "yaml": "^2.9.0"
   }
 }
