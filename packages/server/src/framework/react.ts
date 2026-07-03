@@ -54,17 +54,29 @@ import {
  * Why globals (not externals, not an inlined copy):
  *   - **FR-056 / PRD §6.6.** The on-disk layout vendors
  *     `_vendor/react.production.min.js` + `_vendor/react-dom.production.min.js`
- *     (the classic UMD builds, which publish `window.React` / `window.ReactDOM`),
  *     and describes `<Name>.jsx` as an "IIFE stub re-exporting from window global"
  *     — i.e. the contract is explicitly global-based. This adapter implements
  *     exactly that shape.
  *   - **One React instance.** Every card in the grid shares the host's single
  *     React, rather than each preview inlining ~140 KB of its own copy.
  *
- * The UMD `react.production.min.js` global exposes `React.createElement` /
- * `React.Fragment` but NOT the automatic-runtime `react/jsx-runtime` module — so
- * the plugin bridges `jsx`/`jsxs`/`Fragment` to `React.createElement` rather than
- * to a (non-existent) jsx-runtime global.
+ * What the vendored `_vendor/*` files MUST publish (the M4/sync vendoring step
+ * owns *producing* them; this adapter owns the *shape* they must satisfy):
+ *   - `window.React`    — at least `createElement` + `Fragment` (what the jsx shim
+ *     below calls). Hooks etc. ride along for components that use them.
+ *   - `window.ReactDOM` — at least `createRoot` (React 18+ client API; the host's
+ *     mount step calls `ReactDOM.createRoot(el).render(…)`).
+ *   NB React 18+ dropped the legacy in-package UMD bundles, and 19 ships no
+ *   official UMD at all — so "vendored `_vendor/*.js`" means *a build that assigns
+ *   those globals* (e.g. a tiny IIFE wrapper: `window.React = <react>`,
+ *   `window.ReactDOM = <react-dom/client>`), not necessarily a file lifted
+ *   verbatim from the npm package. The global *names* are the contract; how the
+ *   file is produced is M4/sync's choice.
+ *
+ * The React global exposes `createElement` / `Fragment` but NOT the
+ * automatic-runtime `react/jsx-runtime` module — so the plugin bridges
+ * `jsx`/`jsxs`/`Fragment` to `React.createElement` rather than to a (non-existent)
+ * jsx-runtime global.
  */
 
 /**
@@ -80,7 +92,7 @@ export const PREVIEW_GLOBAL_NAME = "GenieComponent";
 
 /**
  * The host globals the preview bundle resolves React / ReactDOM from — the
- * `window.<name>` published by the vendored UMD builds (see {@link REACT_VENDOR_FILES}).
+ * `window.<name>` the vendored `_vendor/*` files publish (see {@link REACT_VENDOR_FILES}).
  * Exported so M4's host page and the execution test reference the same names the
  * bundle was compiled against, with no drift.
  */
@@ -101,7 +113,7 @@ export const REACT_VENDOR_FILES = [
  * The React module specifiers the preview bundle imports and the plugin rewrites
  * to host globals. `react` / `react-dom` (+ `react-dom/client`) map to their
  * `window.*` global; the two automatic-runtime jsx modules are bridged to
- * `React.createElement` (the UMD global has no jsx-runtime export).
+ * `React.createElement` (the host React global has no jsx-runtime export).
  */
 const REACT_HOST_MODULE_FILTER = /^(react|react-dom)(\/(client|jsx-runtime|jsx-dev-runtime))?$/;
 const JSX_RUNTIME_SPECIFIERS = new Set(["react/jsx-runtime", "react/jsx-dev-runtime"]);
@@ -120,8 +132,8 @@ const REACT_HOST_NAMESPACE = "genie-react-host-global";
  *     `react/jsx-dev-runtime`        → a shim mapping `jsx`/`jsxs`/`jsxDEV`/`Fragment`
  *                                       onto `window.React.createElement` / `.Fragment`
  *
- * The jsx shim exists because the vendored UMD `react.production.min.js` publishes
- * `window.React` but not a `react/jsx-runtime` module; `jsx(type, config, key)` is
+ * The jsx shim exists because the host `window.React` global publishes
+ * `createElement` but not a `react/jsx-runtime` module; `jsx(type, config, key)` is
  * a stable React signature (key arrives as a positional 3rd arg, folded into props).
  * It also marks each produced element key-validated (`_store.validated`) — matching
  * the real automatic runtime, whose whole point over `createElement` is that the
@@ -139,7 +151,7 @@ function reactHostGlobalPlugin(): import("esbuild").Plugin {
       }));
       build.onLoad({ filter: /.*/, namespace: REACT_HOST_NAMESPACE }, (args) => {
         if (JSX_RUNTIME_SPECIFIERS.has(args.path)) {
-          // Bridge the automatic JSX runtime onto the UMD global's createElement.
+          // Bridge the automatic JSX runtime onto the host global's createElement.
           return {
             loader: "js",
             contents: [
