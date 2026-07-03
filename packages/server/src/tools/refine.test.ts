@@ -8,6 +8,8 @@
  * region text, vision crop part, retry feedback) can be asserted independently
  * of whatever component the scripted reply returns.
  */
+import { createServer as createHttpServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -607,6 +609,125 @@ describe("tool boundary", () => {
     } finally {
       await client.close();
       await server.close();
+    }
+  });
+});
+
+// ── Production wiring — defaultChatCompletion is retry-wrapped (M2-06, DRO-253) ──
+//
+// Every other describe block above injects `deps.chat` and never touches
+// `defaultChatCompletion` at all — the same gap a Copilot review on PR #126
+// caught in `conjure.ts` (this file's sibling, sharing the same
+// `component-response.ts` harness): the module docstring can claim `refine`
+// retry-wraps its production LLM call, but nothing would fail if `withRetry`
+// were silently dropped from the default seam, because `deps.chat` bypasses
+// it entirely. These tests go around `deps.chat` on purpose and drive a real
+// HTTP stub server through `defaultChatCompletion`, the same pattern
+// `conjure.test.ts`'s own "production wiring" block and `retry.test.ts`'s
+// "integration with createChatCompletion against a real stub" block use.
+//
+// `kitStore` is still stubbed (in-memory, no network) — only `chat` is
+// omitted from `deps`, since `defaultChatCompletion` is what's under test.
+
+describe("production wiring — defaultChatCompletion applies withRetry (M2-06)", () => {
+  const BASE_URL_ENV = "GENIE_LLM_BASE_URL";
+  const API_KEY_ENV = "GENIE_LLM_API_KEY";
+
+  function refinedComponentBody(): { status: number; body: unknown } {
+    return {
+      status: 200,
+      body: {
+        id: "chatcmpl-refine-prod-wiring",
+        object: "chat.completion",
+        created: 1_700_000_000,
+        model: "design-default",
+        choices: [
+          {
+            index: 0,
+            finish_reason: "stop",
+            message: { role: "assistant", content: JSON.stringify(refinedComponent()) },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      },
+    };
+  }
+
+  async function startStubServer(
+    handler: (callNumber: number) => { status: number; body: unknown },
+  ): Promise<{ baseURL: string; calls: number; close: () => Promise<void> }> {
+    let calls = 0;
+    const server: Server = createHttpServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        calls += 1;
+        const { status, body } = handler(calls);
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify(body));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    return {
+      baseURL: `http://127.0.0.1:${address.port}/v1`,
+      get calls() {
+        return calls;
+      },
+      close: () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((err) => (err ? reject(err) : resolve()));
+        }),
+    };
+  }
+
+  it("recovers a mid-flight 503 without deps.chat — proves the DEFAULT seam retries, not just the injectable one", async () => {
+    // A version of refine.ts that dropped `withRetry` from
+    // `defaultChatCompletion` (regressing back to a bare `createChatCompletion`)
+    // would make exactly one request here and reject on the first 503 — this
+    // test would fail, whereas every `deps.chat`-injecting test above would
+    // keep passing, since none of them touch the default seam at all.
+    const stub = await startStubServer((call) =>
+      call === 1
+        ? { status: 503, body: { error: { message: "simulated transient upstream failure" } } }
+        : refinedComponentBody(),
+    );
+    try {
+      vi.resetModules();
+      process.env[BASE_URL_ENV] = stub.baseURL;
+      process.env[API_KEY_ENV] = "sk-refine-prod-wiring";
+      const fresh = await import("./refine.js");
+
+      // No `chat` in deps — exercises `defaultChatCompletion` for real.
+      // `kitStore` is still the in-memory stub (no network involved there).
+      const result = await fresh.refine({ kitStore: stubKitStore() }, args());
+
+      expect(result.componentName).toBe("Button");
+      expect(stub.calls).toBe(2); // 1 failed + 1 retried — proves a retry happened.
+    } finally {
+      delete process.env[BASE_URL_ENV];
+      delete process.env[API_KEY_ENV];
+      await stub.close();
+    }
+  });
+
+  it("does not retry a permanent 400 through the default seam (AC6 still holds in production)", async () => {
+    const stub = await startStubServer(() => ({
+      status: 400,
+      body: { error: { message: "simulated bad request" } },
+    }));
+    try {
+      vi.resetModules();
+      process.env[BASE_URL_ENV] = stub.baseURL;
+      process.env[API_KEY_ENV] = "sk-refine-prod-wiring-400";
+      const fresh = await import("./refine.js");
+
+      await expect(fresh.refine({ kitStore: stubKitStore() }, args())).rejects.toThrow();
+      expect(stub.calls).toBe(1); // no retry budget spent on a non-retryable error.
+    } finally {
+      delete process.env[BASE_URL_ENV];
+      delete process.env[API_KEY_ENV];
+      await stub.close();
     }
   });
 });
