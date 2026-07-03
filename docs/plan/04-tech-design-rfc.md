@@ -1889,14 +1889,41 @@ a stray stdout log line would corrupt every client's message framing.
   "output": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["writtenPaths", "totalBytes"],
+    "required": ["writtenPaths"],
     "properties": {
-      "writtenPaths": { "type": "array", "items": { "type": "string" } },
-      "totalBytes": { "type": "integer", "minimum": 0 }
+      "writtenPaths": { "type": "array", "items": { "type": "string" } }
     }
   }
 }
 ```
+
+Shipped M1-08 (#106) output is `{ writtenPaths }` only, matching the issue's own
+AC8 verbatim ("Returns `{ writtenPaths: string[] }` matching input order") — this
+section previously also required a `totalBytes` field on the success output,
+which was never part of the graded contract and isn't returned. `totalBytes`
+_does_ appear, but only inside the AC9 byte-cap-exceeded error's `data` payload
+(`{ retryWith: { maxFiles }, totalBytes, maxBytes }`), alongside a separate
+numbering note: this issue's AC9 specifies the JSON-RPC-equivalent error code
+`-32099` literally, which the implementation follows, even though it collides
+with this RFC's own §6.2 taxonomy (`-32099` reserved for `genie.internal`;
+byte-cap overflow assigned `-32031`/`genie.byteCapExceeded`). Flagged on the PR
+for reconciliation in a future error-code pass; not fixed here to avoid
+silently overriding the issue's literal graded AC.
+
+Error responses (`isError: true`, `content[0].text` is JSON):
+
+| `error` | Cause |
+| --- | --- |
+| `TooManyFilesError` | `files.length > 256`. Payload includes `count`, `max`. |
+| `DuplicatePathError` | Two or more files in the call target the same `path`. Payload includes `path`. |
+| `PathOutsidePlanError` | A `path` doesn't match any `writes` glob (`reason: "glob"`), or resolves outside `localDir` even if the glob matched (`reason: "escapesLocalDir"` — e.g. an absolute path under a permissive `**`). Payload includes `path`, `reason`. |
+| `PlanNotFoundError` | `planId` doesn't exist or has expired (M1-07's `getPlan` collapses both cases). Payload includes `planId`. |
+| `LocalPathEscapeError` | A `localPath` resolves outside the plan's `localDir`. Payload includes `localPath`, `localDir`. |
+| `InvalidFileInputError` | A file set both `localPath` and `data`, or neither. Payload includes `path`. |
+| `InvalidEncodingError` | `data` isn't valid base64 when `encoding: "base64"` is declared. Payload includes `path`. |
+| `-32099` (`PayloadTooLargeError`) | Total decoded payload exceeds the configured byte cap (`GENIE_WRITE_BYTE_CAP`, default 16 MiB). Payload includes `data.retryWith.maxFiles`, `data.totalBytes`, `data.maxBytes` — see numbering note above. |
+| `WriteFailedError` | A file failed to write/rename mid-commit (including a destination that already exists as a directory) — the whole call is rolled back (AC10). Payload includes `path`, `cause`. |
+| `RollbackIncompleteError` | A commit failed AND the rollback itself could not fully undo/restore every step (e.g. a permission error during the undo pass) — unlike `WriteFailedError`, this does NOT guarantee the tree matches its pre-call state. Payload includes `commitError`, `rollbackFailures`. |
 
 ### 9.8 `mcp__genie__delete_files`
 
