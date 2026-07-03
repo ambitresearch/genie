@@ -20,6 +20,8 @@ import {
   DEFAULT_MODEL,
   REF_URL_WARN_BYTES,
   conjure,
+  isSafeRefUrl,
+  truncateUtf8,
   registerConjureTool,
   ConjureError,
   type ChatCompletionFn,
@@ -310,6 +312,56 @@ describe("AC7 — reference URL fetch + inline", () => {
     const res = await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/missing" }));
     expect(res.componentName).toBe("Button");
     expect(stderrLines().some((l) => l.event === "conjure.ref_url.skip")).toBe(true);
+  });
+
+  it("truncates an oversize body on a UTF-8 byte boundary (not a char count)", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    // Multi-byte chars: a char-count slice at REF_URL_WARN_BYTES would keep
+    // ~3× the byte budget (€ is 3 bytes); a byte-correct slice must land within
+    // the cap plus only the small fixed message preamble/marker.
+    const multibyte = "€".repeat(REF_URL_WARN_BYTES); // 3 bytes each → ~3 MB
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => multibyte }));
+    await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/utf8" }));
+    const sent = chat.calls[0]!.messages[1]!.content as string;
+    // The whole message (preamble + capped reference + marker) stays within the
+    // cap plus a small fixed overhead — i.e. the 3 MB body was truncated, not
+    // sent whole (which would be ~3× the cap).
+    expect(Buffer.byteLength(sent, "utf-8")).toBeLessThan(REF_URL_WARN_BYTES + 4096);
+  });
+
+  it("truncateUtf8 caps by bytes on a codepoint boundary (no U+FFFD)", () => {
+    const cap = 10;
+    // 4 × "€" (3 bytes each) = 12 bytes; cap 10 must drop to 3 chars (9 bytes),
+    // never splitting the 4th char into a replacement character.
+    const out = truncateUtf8("€€€€", cap);
+    expect(Buffer.byteLength(out, "utf-8")).toBeLessThanOrEqual(cap);
+    expect(out).toBe("€€€");
+    expect(out).not.toContain("�");
+    // ASCII under the cap is returned unchanged.
+    expect(truncateUtf8("hello", 100)).toBe("hello");
+  });
+
+  it("rejects an SSRF-risky refUrl (file:, localhost, private/link-local) at the boundary", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    for (const bad of [
+      "http://localhost/x",
+      "http://127.0.0.1/x",
+      "http://169.254.169.254/latest/meta-data",
+      "http://192.168.1.1/x",
+      "http://10.0.0.5/x",
+      "ftp://example.com/x",
+    ]) {
+      await expect(conjure({ chat }, args({ refUrl: bad }))).rejects.toThrow();
+    }
+  });
+
+  it("accepts a public http(s) refUrl", () => {
+    expect(isSafeRefUrl("https://example.com/page")).toBe(true);
+    expect(isSafeRefUrl("http://93.184.216.34/x")).toBe(true); // public IP literal
+    expect(isSafeRefUrl("http://localhost/x")).toBe(false);
+    expect(isSafeRefUrl("file:///etc/passwd")).toBe(false);
+    expect(isSafeRefUrl("http://172.16.0.1/x")).toBe(false);
+    expect(isSafeRefUrl("http://172.32.0.1/x")).toBe(true); // .32 is outside 16-31 private range
   });
 });
 

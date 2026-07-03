@@ -68,6 +68,68 @@ export const DEFAULT_MODEL = "design-default";
  * inlining, so a giant page can't blow the request's token budget. */
 export const REF_URL_WARN_BYTES = 1024 * 1024; // 1 MB
 
+/**
+ * SSRF guard for `refUrl` (Copilot review): `conjure` fetches this URL
+ * server-side, so an unrestricted URL is a server-side request forgery / local
+ * file exfiltration vector in any non-local deployment. Allow only `http`/`https`
+ * and reject hosts that resolve to the loopback / link-local / private ranges or
+ * obvious internal names. This is a syntactic pre-filter (a determined attacker
+ * can still hide a private IP behind DNS) — defense in depth, not a complete
+ * SSRF solution — but it closes the trivial `file:`, `ftp:`, `http://localhost`,
+ * and `http://169.254.169.254/…` (cloud metadata) holes at the tool boundary.
+ * Exported so a future network-egress policy can reuse the exact same rule.
+ */
+export function isSafeRefUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+
+  const host = url.hostname.toLowerCase();
+  // Named internal hosts.
+  if (host === "localhost" || host === "ip6-localhost" || host.endsWith(".localhost")) return false;
+  if (host === "" || host === "[::1]" || host === "::1") return false;
+
+  // IPv4 literal → block loopback/private/link-local/CGNAT ranges.
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (ipv4) {
+    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    if (a === 127 || a === 10 || a === 0) return false; // loopback / private / this-host
+    if (a === 169 && b === 254) return false; // link-local incl. 169.254.169.254 metadata
+    if (a === 192 && b === 168) return false; // private
+    if (a === 172 && b >= 16 && b <= 31) return false; // private
+    if (a === 100 && b >= 64 && b <= 127) return false; // CGNAT
+  }
+  // Bare IPv6 loopback/link-local/unique-local.
+  if (host.startsWith("[")) {
+    const inner = host.replace(/^\[|\]$/g, "");
+    if (
+      inner === "::1" ||
+      inner.startsWith("fe80:") ||
+      inner.startsWith("fc") ||
+      inner.startsWith("fd")
+    )
+      return false;
+  }
+  return true;
+}
+
+/** Reusable Zod schema for `refUrl`: a bounded http(s) URL that passes the SSRF
+ * guard. Shared by `conjureArgsSchema` and the MCP tool `inputSchema` so the
+ * declared tool contract and runtime validation cannot drift (Copilot review). */
+const refUrlSchema = z
+  .string()
+  .url()
+  .max(2048)
+  .refine(isSafeRefUrl, {
+    message:
+      "refUrl must be an http(s) URL to a public host — file:/ftp:/data: schemes and " +
+      "localhost/private/link-local addresses are rejected (SSRF guard).",
+  });
+
 // ── Input schema (AC2) ────────────────────────────────────────────────────────
 //
 // { kitId, kit, prompt, group?, refImageDataUrl?, refUrl?, framework?, model? }.
@@ -75,30 +137,34 @@ export const REF_URL_WARN_BYTES = 1024 * 1024; // 1 MB
 // house style) — a free-form string, generously bounded. `refImageDataUrl` must
 // be an actual `data:` URL (AC6 attaches it as a vision input); a bare http URL
 // belongs in `refUrl` (AC7) instead.
-const conjureArgsSchema = z
-  .object({
-    kitId: z
-      .string()
-      .regex(
-        KIT_ID_PATTERN,
-        "kitId must be a 3-64 character slug of lowercase letters, numbers, and hyphens.",
-      ),
-    kit: z.string().min(1).max(100_000),
-    prompt: z.string().min(3).max(8192),
-    group: z
-      .string()
-      .regex(/^[a-z0-9-]{1,32}$/, "group must be kebab-case: 1-32 chars of [a-z0-9-].")
-      .optional(),
-    refImageDataUrl: z
-      .string()
-      .max(8_000_000)
-      .regex(/^data:/, "refImageDataUrl must be a data: URL; use refUrl for an http(s) reference.")
-      .optional(),
-    refUrl: z.string().url().max(2048).optional(),
-    framework: z.enum(CONJURE_FRAMEWORKS).default(DEFAULT_FRAMEWORK),
-    model: z.string().min(1).max(128).default(DEFAULT_MODEL),
-  })
-  .strict();
+//
+// Defined as ONE field map reused by both `conjureArgsSchema` (runtime parse)
+// and the MCP tool `inputSchema` (declared contract), so the two can never drift
+// (Copilot review: keep the tool-boundary schema aligned with runtime validation).
+const conjureInputShape = {
+  kitId: z
+    .string()
+    .regex(
+      KIT_ID_PATTERN,
+      "kitId must be a 3-64 character slug of lowercase letters, numbers, and hyphens.",
+    ),
+  kit: z.string().min(1).max(100_000),
+  prompt: z.string().min(3).max(8192),
+  group: z
+    .string()
+    .regex(/^[a-z0-9-]{1,32}$/, "group must be kebab-case: 1-32 chars of [a-z0-9-].")
+    .optional(),
+  refImageDataUrl: z
+    .string()
+    .max(8_000_000)
+    .regex(/^data:/, "refImageDataUrl must be a data: URL; use refUrl for an http(s) reference.")
+    .optional(),
+  refUrl: refUrlSchema.optional(),
+  framework: z.enum(CONJURE_FRAMEWORKS).default(DEFAULT_FRAMEWORK),
+  model: z.string().min(1).max(128).default(DEFAULT_MODEL),
+} as const;
+
+const conjureArgsSchema = z.object(conjureInputShape).strict();
 
 export type ConjureArgs = z.infer<typeof conjureArgsSchema>;
 
@@ -140,10 +206,13 @@ export interface ConjureDeps {
   loadSystemPrompt?: () => LoadedPrompt;
 }
 
-/** Typed failure surfaced to the tool boundary (mapped to an MCP error result). */
+/** Typed failure surfaced to the tool boundary (mapped to an MCP error result).
+ * One code: an empty reply is just one way output can be invalid, so it folds
+ * into `ERR_LLM_OUTPUT_INVALID` rather than being its own code (Copilot review —
+ * keep the public error surface to codes this file actually throws). */
 export class ConjureError extends Error {
   constructor(
-    readonly code: "ERR_LLM_OUTPUT_INVALID" | "ERR_LLM_EMPTY_RESPONSE",
+    readonly code: "ERR_LLM_OUTPUT_INVALID",
     message: string,
     readonly details?: Record<string, unknown>,
   ) {
@@ -154,10 +223,13 @@ export class ConjureError extends Error {
 
 // ── Structured-output validation (AC8) ────────────────────────────────────────
 //
-// Compile the validator once against COMPONENT_SCHEMA. Same Ajv the schema's
-// own tests (and M2-07's future `validateComponent`) use. `allErrors` so the
-// retry prompt can name *every* problem, not just the first.
-const ajv = new Ajv({ allErrors: true });
+// Compile the validator once against COMPONENT_SCHEMA. Same Ajv *configuration*
+// the schema's own tests (and M2-07's future `validateComponent`) use —
+// `{ strict: true, allErrors: true }` (Copilot review: don't diverge from the
+// strict-mode compile the rest of the repo validates under). `strict: true`
+// surfaces schema-keyword mistakes at compile time; `allErrors` lets the retry
+// prompt name *every* problem, not just the first.
+const ajv = new Ajv({ strict: true, allErrors: true });
 const validateComponent: ValidateFunction<ValidatedComponent> =
   ajv.compile<ValidatedComponent>(COMPONENT_SCHEMA);
 
@@ -209,6 +281,24 @@ function logStderr(payload: Record<string, unknown>): void {
 }
 
 /**
+ * Truncate `text` so its UTF-8 encoding is at most `maxBytes` bytes, cutting on
+ * a codepoint boundary (Copilot review: `String.slice` cuts UTF-16 code units,
+ * so a non-ASCII page could still blow the byte cap). We encode, slice the byte
+ * buffer at the cap, then drop any trailing bytes that form a partial multi-byte
+ * sequence so the decoded result carries no U+FFFD replacement char and is
+ * guaranteed ≤ `maxBytes`.
+ */
+export function truncateUtf8(text: string, maxBytes: number): string {
+  const buf = Buffer.from(text, "utf-8");
+  if (buf.length <= maxBytes) return text;
+  let end = maxBytes;
+  // A UTF-8 continuation byte matches 0b10xxxxxx (0x80–0xBF); back up off any
+  // partial sequence at the cut so we never split a codepoint.
+  while (end > 0 && (buf[end]! & 0xc0) === 0x80) end -= 1;
+  return buf.subarray(0, end).toString("utf-8");
+}
+
+/**
  * Fetch `refUrl` and return its body for inlining (AC7). Warns (does not throw)
  * when the body exceeds 1 MB and truncates it, so a huge page degrades to a
  * bounded excerpt rather than a runaway request. A network/HTTP failure is
@@ -226,8 +316,9 @@ async function fetchReference(fetchImpl: FetchFn, refUrl: string): Promise<strin
     const bytes = Buffer.byteLength(body, "utf-8");
     if (bytes > REF_URL_WARN_BYTES) {
       logStderr({ event: "conjure.ref_url.oversize", refUrl, bytes, capBytes: REF_URL_WARN_BYTES });
-      // Truncate to the cap (byte-safe enough for warn purposes) + a marker.
-      return body.slice(0, REF_URL_WARN_BYTES) + "\n<!-- …reference truncated by genie (>1 MB) -->";
+      return (
+        truncateUtf8(body, REF_URL_WARN_BYTES) + "\n<!-- …reference truncated by genie (>1 MB) -->"
+      );
     }
     return body;
   } catch (err) {
@@ -471,23 +562,9 @@ export function registerConjureTool(server: McpServer, deps: ConjureDeps = {}): 
         "{ componentName, group, files, manifestEntry } — validated against the schema (retried " +
         "once on a validation failure). Pure generation: it does NOT write the files; committing " +
         "them to a kit is the caller's separate, plan-gated step.",
-      inputSchema: {
-        kitId: z.string().regex(KIT_ID_PATTERN),
-        kit: z.string().min(1).max(100_000),
-        prompt: z.string().min(3).max(8192),
-        group: z
-          .string()
-          .regex(/^[a-z0-9-]{1,32}$/)
-          .optional(),
-        refImageDataUrl: z
-          .string()
-          .max(8_000_000)
-          .regex(/^data:/)
-          .optional(),
-        refUrl: z.string().url().max(2048).optional(),
-        framework: z.enum(CONJURE_FRAMEWORKS).default(DEFAULT_FRAMEWORK),
-        model: z.string().min(1).max(128).default(DEFAULT_MODEL),
-      },
+      // Reuse the exact same field map the runtime parser uses (incl. the
+      // SSRF-guarded refUrl) — no second, drift-prone copy (Copilot review).
+      inputSchema: conjureInputShape,
       outputSchema: conjureOutputShape,
     },
     async (args) => {
