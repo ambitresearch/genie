@@ -39,3 +39,32 @@ Covers:
 - Reference-image and reference-page handling.
 - Retry behavior: on a re-send with an appended validation error, fix exactly
   what the error names and return corrected JSON (supports AC8's retry-once).
+
+## refine-component.system.md
+
+### v1 — 2026-07-03 (M2-04 / DRO-251)
+
+Initial hand-authored system prompt for `refine` — the iterate-on-an-existing-
+component verb. Shares `conjure`'s output contract (the same `COMPONENT_SCHEMA`
+shape: top-level `componentName` / `group` / `files` / `manifestEntry`, the
+`components/<group>/<Name>/` layout, the `@genie` first-line marker, and the
+embedded-tier `default-src 'none'` CSP), because `refine` returns the same kind
+of artifact `conjure` does — a full, validated component — just derived from
+existing source plus an instruction rather than from a blank-slate prompt.
+
+Where it deliberately diverges from `generate-component.system.md`:
+
+- **Edit, don't rewrite.** The cardinal rule: change only what the `instruction`
+  requires and return everything else byte-for-byte. Keep the same
+  `componentName`/`group` (renaming is not a refinement), preserve unrelated
+  markup/props/whitespace, and don't drop files — so the unified diff the tool
+  computes (AC5) shows only the requested change, nothing incidental.
+- **Whole files, not a patch.** The model still returns the COMPONENT_SCHEMA
+  file set (full updated contents), never a diff — the tool derives the
+  informational diff itself (AC5: "files are the source of truth").
+- **Region scoping.** When a region crop (vision) or its coordinates are
+  attached, the instruction is scoped to that rectangle: edit there, leave the
+  rest untouched (AC4/AC7).
+- Retry behavior mirrors `conjure` (AC6 "same retry-once pattern as M2-03"):
+  on a re-send with an appended validation error, fix exactly what it names —
+  including a changed `componentName`/`group` — and return corrected JSON.

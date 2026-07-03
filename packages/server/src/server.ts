@@ -7,6 +7,7 @@ import { registerDeleteProjectTool } from "./tools/delete_project.js";
 import { registerBindKitTool } from "./tools/bind_kit.js";
 import { LocalScaffoldScreenGenerator, registerConjureScreenTool } from "./tools/conjure_screen.js";
 import { registerConjureTool } from "./tools/conjure.js";
+import { registerRefineTool } from "./tools/refine.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
 import { registerValidate } from "./tools/validate.js";
@@ -96,6 +97,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
       "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
       "create/list/get/delete/bind_kit, conjure_screen, conjure (LLM component generation), " +
+      "refine (LLM component iteration — diff + updated files against existing kit source), " +
       "plan creation (the capability-grant " +
       "boundary for write/delete verbs), write_files, and delete_files. write_files and " +
       "delete_files share one plan-boundary validation middleware — every call is checked " +
@@ -181,6 +183,17 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // `chat` seam lazily imports the LLM client only on first call, so registering
   // it here never requires GENIE_LLM_* to be set just to build the server.
   registerConjureTool(server);
+
+  // refine (M2-04): iterate on an existing component. Loads the component's
+  // current files from the kit (`kitStore.listFiles`/`readFile`), sends them plus
+  // a free-form instruction (and, for a canvas-style edit, an optional region
+  // rect rendered as a crop) to the configured endpoint behind the SAME
+  // request/validate/retry harness `conjure` uses, and returns a unified diff +
+  // the full updated files. The region crop uses Playwright as an OPTIONAL peer
+  // dependency (M3-02's validator setup) via a lazy import that degrades
+  // gracefully when absent, so registering it here never requires Playwright or
+  // GENIE_LLM_* to be set just to build the server.
+  registerRefineTool(server, { kitStore });
 
   registerListKits(server, kitStore);
   registerListComponents(server, kitStore);

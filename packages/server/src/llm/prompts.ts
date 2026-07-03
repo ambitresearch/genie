@@ -38,6 +38,11 @@ const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "prompts");
 /** The system prompt for `conjure` (AC5). */
 export const GENERATE_COMPONENT_SYSTEM_PROMPT_FILE = "generate-component.system.md";
 
+/** The system prompt for `refine` (M2-04 · DRO-251). Loaded + versioned by the
+ * exact same machinery as the `conjure` prompt — `refine` logs its git blob hash
+ * as `promptVersion` on every model call too. */
+export const REFINE_COMPONENT_SYSTEM_PROMPT_FILE = "refine-component.system.md";
+
 /** A loaded prompt: its text and the content-address logged as its version. */
 export interface LoadedPrompt {
   /** The prompt's file name (e.g. `generate-component.system.md`). */
@@ -87,4 +92,9 @@ export function loadPrompt(file: string): LoadedPrompt {
 /** Convenience: load the `conjure` system prompt (AC5). */
 export function loadGenerateComponentSystemPrompt(): LoadedPrompt {
   return loadPrompt(GENERATE_COMPONENT_SYSTEM_PROMPT_FILE);
+}
+
+/** Convenience: load the `refine` system prompt (M2-04 · DRO-251). */
+export function loadRefineComponentSystemPrompt(): LoadedPrompt {
+  return loadPrompt(REFINE_COMPONENT_SYSTEM_PROMPT_FILE);
 }

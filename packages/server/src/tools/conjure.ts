@@ -30,18 +30,9 @@
  * stable request/validate/retry harness around it.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-// Named `Ajv` import (not default): ajv@8 is CJS (`module.exports = Ajv` +
-// `module.exports.Ajv = Ajv`) with a `.d.ts` `export declare class Ajv`. Under
-// this repo's `verbatimModuleSyntax` + NodeNext, the *default* import resolves
-// to the module namespace object (TS2351 "not constructable"); the *named* `Ajv`
-// is both a constructable typed class and a cjs-module-lexer-detectable runtime
-// export, so it typechecks under `tsc` and runs under both vite (tests) and node
-// (compiled dist). (`schema.test.ts` uses the default form but `.test.ts` is
-// excluded from `tsc`, so its form was never typechecked.)
-import { Ajv, type ValidateFunction, type ErrorObject } from "ajv";
 import { z } from "zod";
 
-import { COMPONENT_SCHEMA, type ValidatedComponent } from "../llm/schema.js";
+import { type ValidatedComponent } from "../llm/schema.js";
 import {
   GENERATE_COMPONENT_SYSTEM_PROMPT_FILE,
   loadPrompt,
@@ -50,8 +41,25 @@ import {
 // Type-only (erased at build): importing the *values* from client.js would
 // trip its eager MissingLLMConfigError singleton at server-build time (see
 // module header). The default chat impl reaches these lazily via dynamic import.
-import type { ChatCompletionInput, ChatCompletionResult } from "../llm/client.js";
+import type { ChatCompletionInput } from "../llm/client.js";
+// The shared request/validate/retry harness (M2-03/M2-04). The Ajv compile,
+// fence-stripper, response_format envelope, retry-feedback wording, and the
+// two-attempt loop all live here so `conjure` and `refine` share ONE copy —
+// see llm/component-response.ts's header.
+import {
+  type ChatCompletionFn,
+  type RetryContext,
+  type UsageInfo,
+  appendRetryFeedback,
+  logStderr,
+  runComponentGeneration,
+} from "../llm/component-response.js";
 import { KIT_ID_PATTERN } from "./get_kit.js";
+
+// Re-exported so existing importers (and conjure.test.ts) keep resolving these
+// through `conjure.js` after the harness extraction — the symbols moved, the
+// public entry point did not.
+export type { ChatCompletionFn, UsageInfo } from "../llm/component-response.js";
 
 export const CONJURE_TOOL_NAME = "mcp__genie__conjure";
 
@@ -182,18 +190,6 @@ export interface ConjureResult extends Record<string, unknown> {
   usage: UsageInfo;
 }
 
-/** Token/cost accounting summed across the (up to two) model calls. */
-export interface UsageInfo {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-}
-
-/** The chat-completion seam (AC4). Production supplies `defaultChatCompletion`
- * (a lazy wrapper over the M2-01 `createChatCompletion`); tests inject a stub so
- * no real endpoint or `GENIE_LLM_*` env is needed. */
-export type ChatCompletionFn = (input: ChatCompletionInput) => Promise<ChatCompletionResult>;
-
 /** The URL-fetch seam (AC7). Defaults to the global `fetch`; injectable for tests. */
 export type FetchFn = (
   url: string,
@@ -221,64 +217,7 @@ export class ConjureError extends Error {
   }
 }
 
-// ── Structured-output validation (AC8) ────────────────────────────────────────
-//
-// Compile the validator once against COMPONENT_SCHEMA. Same Ajv *configuration*
-// the schema's own tests (and M2-07's future `validateComponent`) use —
-// `{ strict: true, allErrors: true }` (Copilot review: don't diverge from the
-// strict-mode compile the rest of the repo validates under). `strict: true`
-// surfaces schema-keyword mistakes at compile time; `allErrors` lets the retry
-// prompt name *every* problem, not just the first.
-const ajv = new Ajv({ strict: true, allErrors: true });
-const validateComponent: ValidateFunction<ValidatedComponent> =
-  ajv.compile<ValidatedComponent>(COMPONENT_SCHEMA);
-
-/** Render Ajv errors as a compact, model-readable bullet list for the retry. */
-function formatAjvErrors(errors: ErrorObject[] | null | undefined): string {
-  if (!errors || errors.length === 0) return "(no detail)";
-  return errors
-    .map((e) => `- ${e.instancePath || "(root)"} ${e.message ?? "is invalid"}`)
-    .join("\n");
-}
-
-/**
- * Some endpoints wrap JSON in a ```json fence despite `response_format`. Strip a
- * single leading/trailing fence defensively before parsing so a cosmetically
- * fenced-but-valid reply doesn't cost a retry.
- */
-function stripJsonFence(raw: string): string {
-  const trimmed = raw.trim();
-  const fence = /^```(?:json)?\s*\n([\s\S]*?)\n```$/;
-  const m = fence.exec(trimmed);
-  return m ? m[1]!.trim() : trimmed;
-}
-
-/** Parse + schema-validate one model reply. Returns the component or a reason. */
-function parseAndValidate(
-  raw: string | null | undefined,
-): { ok: true; component: ValidatedComponent } | { ok: false; reason: string } {
-  if (!raw || raw.trim() === "") {
-    return { ok: false, reason: "The response was empty — return a JSON object." };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stripJsonFence(raw));
-  } catch (err) {
-    return { ok: false, reason: `The response was not valid JSON (${String(err)}).` };
-  }
-  if (validateComponent(parsed)) {
-    return { ok: true, component: parsed };
-  }
-  return { ok: false, reason: formatAjvErrors(validateComponent.errors) };
-}
-
 // ── Reference handling ────────────────────────────────────────────────────────
-
-/** Structured warn/telemetry to stderr — never stdout (stdio transport is the
- * JSON-RPC stream; same convention as client.ts / plan.ts). */
-function logStderr(payload: Record<string, unknown>): void {
-  process.stderr.write(JSON.stringify(payload) + "\n");
-}
 
 /**
  * Truncate `text` so its UTF-8 encoding is at most `maxBytes` bytes, cutting on
@@ -369,16 +308,11 @@ function buildMessages(
   systemPrompt: string,
   args: ConjureArgs,
   referenceHtml: string | undefined,
-  retry: { reason: string; previous: string } | undefined,
+  retry: RetryContext | undefined,
 ): ChatCompletionInput["messages"] {
   let userText = buildUserText(args, referenceHtml);
   if (retry) {
-    userText +=
-      "\n\n## Your previous attempt failed schema validation\n" +
-      "Fix exactly these problems and return corrected JSON — nothing else:\n" +
-      retry.reason +
-      "\n\n### Your previous (invalid) output\n" +
-      retry.previous;
+    userText = appendRetryFeedback(userText, retry);
   }
 
   const userContent: ChatCompletionInput["messages"][number]["content"] = args.refImageDataUrl
@@ -392,26 +326,6 @@ function buildMessages(
     { role: "system", content: systemPrompt },
     { role: "user", content: userContent },
   ];
-}
-
-/** The `response_format` demanded on every call (AC4). Wraps COMPONENT_SCHEMA in
- * the OpenAI structured-output envelope `{ name, description, schema }` — the
- * real wire shape a compliant endpoint (and LiteLLM's passthrough) expects. */
-function buildResponseFormat(): ChatCompletionInput["response_format"] {
-  return {
-    type: "json_schema",
-    json_schema: {
-      name: "GenieComponent",
-      description: COMPONENT_SCHEMA.description,
-      schema: COMPONENT_SCHEMA as unknown as Record<string, unknown>,
-    },
-  };
-}
-
-function addUsage(into: UsageInfo, completion: ChatCompletionResult): void {
-  into.promptTokens += completion.usage?.prompt_tokens ?? 0;
-  into.completionTokens += completion.usage?.completion_tokens ?? 0;
-  into.totalTokens += completion.usage?.total_tokens ?? 0;
 }
 
 // ── Default (production) chat impl: lazy client import ─────────────────────────
@@ -434,11 +348,13 @@ const defaultFetch: FetchFn = (url) => fetch(url);
 /**
  * Generate one component. Pure (AC9): validates + returns, never writes.
  *
- * Flow: resolve args → optionally fetch `refUrl` (AC7) → build messages
- * (+vision, AC6) → call the endpoint with the json_schema response_format (AC4)
- * → validate against COMPONENT_SCHEMA (AC8); on failure, retry ONCE with the
- * error appended → return `{ componentName, group, files, manifestEntry, usage }`
- * (AC9) and log a per-call line (AC10).
+ * Flow: resolve args → optionally fetch `refUrl` (AC7) → run the shared
+ * request/validate/retry loop (build messages +vision AC6, call the endpoint
+ * with the json_schema response_format AC4, validate against COMPONENT_SCHEMA
+ * AC8, retry ONCE on failure) → return
+ * `{ componentName, group, files, manifestEntry, usage }` (AC9) and log a
+ * per-call line (AC10). The loop itself lives in `component-response.ts`, shared
+ * with `refine` (M2-04).
  */
 export async function conjure(deps: ConjureDeps, args: unknown): Promise<ConjureResult> {
   const parsed = conjureArgsSchema.parse(args);
@@ -449,36 +365,14 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
   )();
 
   const startedAt = performance.now();
-  const usage: UsageInfo = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
   const referenceHtml = parsed.refUrl ? await fetchReference(fetchImpl, parsed.refUrl) : undefined;
-  const responseFormat = buildResponseFormat();
 
-  // Attempt 1.
-  const first = await chat({
+  const { outcome, usage, attempts } = await runComponentGeneration({
+    chat,
     model: parsed.model,
-    messages: buildMessages(systemPrompt.text, parsed, referenceHtml, undefined),
-    response_format: responseFormat,
+    buildMessages: (retry) => buildMessages(systemPrompt.text, parsed, referenceHtml, retry),
   });
-  addUsage(usage, first);
-  const firstRaw = first.choices[0]?.message?.content ?? null;
-  let outcome = parseAndValidate(firstRaw);
-  let attempts = 1;
-
-  // Attempt 2 (retry once, AC8) — feed the validation error + prior output back.
-  if (!outcome.ok) {
-    const second = await chat({
-      model: parsed.model,
-      messages: buildMessages(systemPrompt.text, parsed, referenceHtml, {
-        reason: outcome.reason,
-        previous: firstRaw ?? "(empty)",
-      }),
-      response_format: responseFormat,
-    });
-    addUsage(usage, second);
-    attempts = 2;
-    outcome = parseAndValidate(second.choices[0]?.message?.content ?? null);
-  }
 
   const latencyMs = Math.round(performance.now() - startedAt);
 

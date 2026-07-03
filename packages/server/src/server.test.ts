@@ -34,6 +34,9 @@ describe("createServer", () => {
     expect(names).toContain("mcp__genie__get_project");
     expect(names).toContain("mcp__genie__list_files");
     expect(names).toContain("mcp__genie__bind_kit");
+    // M2 generation surface: conjure (M2-03) + refine (M2-04) are wired in.
+    expect(names).toContain("mcp__genie__conjure");
+    expect(names).toContain("mcp__genie__refine");
 
     await client.close();
   });
