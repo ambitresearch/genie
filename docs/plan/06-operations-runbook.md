@@ -551,7 +551,7 @@ litellm --config deploy/litellm/config.yaml
 docker compose restart litellm
 ```
 
-**Verify**: `curl -fsS "$GENIE_LLM_BASE_URL/v1/models" | jq -r '.data[].id'` —
+**Verify**: `curl -fsS -H "Authorization: Bearer $GENIE_LLM_API_KEY" "$GENIE_LLM_BASE_URL/v1/models" | jq -r '.data[].id'` —
 expect the three alias names among the results (§12.15 walks the failure
 mode where they go missing).
 
