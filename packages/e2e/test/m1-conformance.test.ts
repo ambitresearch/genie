@@ -15,24 +15,23 @@
  *
  *   Merged & driven live here:
  *     create_kit, list_files, list_components, read_file, validate,
- *     create_project, list_projects, get_project, delete_project, (get_kit, list_kits)
+ *     create_project, list_projects, get_project, delete_project, (get_kit, list_kits),
+ *     bind_kit, conjure_screen
  *
  *   In_review / not yet registered — stubbed as it.todo, wired to their issue:
  *     plan            DRO-235 (M1-07)
  *     write_files     DRO-236 (M1-08)
  *     delete_files    DRO-236 (M1-08) / M1-09
- *     bind_kit        DRO-246 (M1-11)
- *     conjure_screen  M1-21
  *     GitHostStore/Gitea parity (AC5) — testcontainers infra, M1-01 git-host path
  *
  * ── Acceptance criteria map ─────────────────────────────────────────────────
  *   AC1  file path (this file)                              ✓ satisfied
  *   AC2  in-process SDK test transport                      ✓ live
  *   AC3  kit protocol walk                                  ◑ prefix live, write-half todo (DRO-235/236)
- *   AC4  project/blueprint walk                             ◑ CRUD+blueprint live, bind_kit/conjure todo
+ *   AC4  project/blueprint walk                             ✓ CRUD+blueprint+conjure_screen live
  *   AC5  GitHostStore/Gitea parity                          ○ todo (infra)
  *   AC6  negative: write without/outside planId → -32602    ○ todo (DRO-236)
- *   AC7  negative: conjure_screen no kit → ERR_PROJECT_KIT_REQUIRED  ○ todo (M1-21)
+ *   AC7  negative: conjure_screen no kit → ERR_PROJECT_KIT_REQUIRED  ✓ live (M1-21)
  *   AC8  test report uploaded as CI artefact                — CI wiring (see .github/workflows)
  *   AC9  suite < 60 s wall-clock                            ✓ live walk is ~ms; guarded below
  */
@@ -123,6 +122,8 @@ describe("AC2 — MCP server boots in-process over the SDK test transport", () =
       "mcp__genie__list_projects",
       "mcp__genie__get_project",
       "mcp__genie__delete_project",
+      "mcp__genie__bind_kit",
+      "mcp__genie__conjure_screen",
     ]) {
       expect(names, `expected ${merged} to be registered`).toContain(merged);
     }
@@ -285,8 +286,41 @@ describe("AC4 — project / blueprint workflow", () => {
   // Dedicated bind_kit tool round-trip — needs DRO-246 (M1-11).
   it.todo("bind_kit(project, kit) then get_project reflects the binding [blocked by DRO-246]");
 
-  // conjure_screen with a stubbed model endpoint — needs M1-21.
-  it.todo("conjure_screen with a stubbed model appends a screen to the project [blocked by M1-21]");
+  // conjure_screen with the offline scaffold generator (M1-21): binding a kit,
+  // conjuring a screen against it, and confirming the screen is appended to the
+  // project manifest that get_project returns. No model call — the M1 generator
+  // is the deterministic LocalScaffoldScreenGenerator (AC8).
+  it("conjure_screen against a bound kit appends a recorded screen to the project", async () => {
+    const kitResult = await harness.call("mcp__genie__create_kit", { name: "Screen Kit" });
+    expect(kitResult.isError, JSON.stringify(kitResult)).toBeFalsy();
+    const { kitId } = payload(kitResult) as { kitId: string };
+
+    const projectId = await createProject({
+      name: "Screen Workspace",
+      kind: "workspace",
+      kitBindings: [{ kitId, default: true }],
+    });
+
+    const conjured = await harness.call("mcp__genie__conjure_screen", {
+      projectId,
+      prompt: "A dashboard overview page with cards",
+    });
+    expect(conjured.isError, JSON.stringify(conjured)).toBeFalsy();
+    const body = payload(conjured) as {
+      screenId: string;
+      files: { path: string; content: string; encoding: string }[];
+      usage: { totalTokens: number };
+    };
+    expect(body.screenId).toMatch(/^[a-z0-9-]{3,64}$/);
+    expect(body.files[0]?.path).toBe(`screens/${body.screenId}/index.tsx`);
+    // Offline M1 generator → zero usage (AC8).
+    expect(body.usage.totalTokens).toBe(0);
+
+    // The screen is now recorded in the project manifest get_project returns (AC7).
+    const detail = await harness.call("mcp__genie__get_project", { projectId });
+    const screens = (payload(detail) as { screens: { id: string; path: string }[] }).screens;
+    expect(screens.map((s) => s.id)).toContain(body.screenId);
+  });
 });
 
 // ── AC6 — negative: planId enforcement ────────────────────────────────────────
@@ -297,9 +331,45 @@ describe("AC6 — write path enforces a valid planId", () => {
 
 // ── AC7 — negative: conjure requires a bound kit ──────────────────────────────
 describe("AC7 — conjure_screen requires a bound kit", () => {
-  it.todo(
-    "conjure_screen with a kit-specific prompt and no bound kit returns ERR_PROJECT_KIT_REQUIRED [blocked by M1-21]",
-  );
+  it("conjure_screen with a kit-specific prompt and no bound kit returns ERR_PROJECT_KIT_REQUIRED", async () => {
+    // A kitless workspace + a prompt that names kit-level components must stop
+    // rather than invent a kit (D-F ladder step 4; DS-026).
+    const create = await harness.call("mcp__genie__create_project", {
+      name: "Kitless Workspace",
+      kind: "workspace",
+    });
+    expect(create.isError, JSON.stringify(create)).toBeFalsy();
+    const { projectId } = payload(create) as { projectId: string };
+
+    const result = await harness.call("mcp__genie__conjure_screen", {
+      projectId,
+      prompt: "A checkout page with a primary Button and a Card",
+    });
+
+    expect(result.isError).toBe(true);
+    const err = parseText(result) as { code: string; projectId?: string };
+    expect(err.code).toBe("ERR_PROJECT_KIT_REQUIRED");
+    expect(err.projectId).toBe(projectId);
+  });
+
+  it("conjure_screen with a basic-structure prompt and no kit still succeeds (AC5)", async () => {
+    // The permissive half of the same gate: a purely structural prompt may
+    // generate a framework-neutral scaffold without a kit.
+    const create = await harness.call("mcp__genie__create_project", {
+      name: "Kitless Structure Workspace",
+      kind: "workspace",
+    });
+    const { projectId } = payload(create) as { projectId: string };
+
+    const result = await harness.call("mcp__genie__conjure_screen", {
+      projectId,
+      prompt: "A landing page with a header, a hero section, and a footer",
+    });
+
+    expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    const body = payload(result) as { screenId: string };
+    expect(body.screenId).toMatch(/^[a-z0-9-]{3,64}$/);
+  });
 });
 
 // ── AC5 — GitHostStore / Gitea parity ─────────────────────────────────────────

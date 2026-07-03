@@ -114,7 +114,13 @@ export type ProjectStoreErrorCode =
   | "ERR_INVALID_PROJECT_NAME"
   | "ERR_PROJECT_NOT_FOUND"
   | "ERR_KIT_NOT_FOUND"
-  | "ERR_PROJECT_READONLY";
+  | "ERR_PROJECT_READONLY"
+  // `conjure_screen` (M1-21) raises this when a prompt asks for kit-specific
+  // components on a project with no resolvable kit — genie stops instead of
+  // inventing one (D-F resolution ladder, step 4: "none / ambiguous → stop
+  // and ask"). Owned here (not in `conjure_screen.ts`) so every
+  // `ProjectStoreError` code lives in one place.
+  | "ERR_PROJECT_KIT_REQUIRED";
 
 export class ProjectStoreError extends Error {
   readonly code: ProjectStoreErrorCode;
@@ -141,6 +147,18 @@ export interface BindKitArgs {
   projectId: string;
   kitId: string;
   default?: boolean;
+}
+
+/**
+ * Input to `ProjectStore.recordScreen` (M1-21) — the durable *reference* a
+ * generated screen leaves in `.genie/project.json`. The artifact bytes
+ * themselves (`files`) are returned to the caller as an artifact set;
+ * `updatedAt` is stamped by the store, not supplied here.
+ */
+export interface RecordScreenInput {
+  id: string;
+  path: string;
+  title: string;
 }
 
 export class ProjectStore {
@@ -347,6 +365,71 @@ export class ProjectStore {
     };
     await this.writeManifest(projectId, updated);
     return projectSummary(updated);
+  }
+
+  /**
+   * Record a generated screen artifact reference into `.genie/project.json`
+   * (M1-21, `conjure_screen` → AC7). Appends to `manifest.screens` (the array
+   * `get_project` surfaces and defaults to `[]`) and bumps `updatedAt`, then
+   * returns the stored entry with its server-stamped `updatedAt`.
+   *
+   * Mirrors `bindKit`'s write-path guards exactly:
+   *   - `projectId` is regex-checked before any filesystem access (same
+   *     defense-in-depth as `getProject`/`bindKit`: `ProjectStore` is a public
+   *     export and this a public method, so a direct caller bypassing the MCP
+   *     schema could otherwise pass `"../secret"` into `projectRoot()`/`join()`).
+   *   - a missing/malformed manifest → `ERR_PROJECT_NOT_FOUND` (id echoed).
+   *   - a read-only project → `ERR_PROJECT_READONLY`; no partial write.
+   *
+   * The store persists only the *reference* (id/path/title/updatedAt); the
+   * artifact bytes are returned to the caller as an artifact set (Issue
+   * "Keep output as an artifact set"), never inlined into the manifest.
+   */
+  async recordScreen(input: {
+    projectId: string;
+    screen: RecordScreenInput;
+  }): Promise<ProjectScreen> {
+    const { projectId, screen } = input;
+
+    if (!PROJECT_ID_PATTERN.test(projectId)) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_NOT_FOUND",
+        `Project "${projectId}" was not found.`,
+        { projectId },
+      );
+    }
+
+    const manifest = await this.readListManifest(projectId);
+    if (!manifest) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_NOT_FOUND",
+        `Project "${projectId}" was not found.`,
+        { projectId },
+      );
+    }
+
+    if (existsSync(join(this.projectRoot(projectId), ".genie", ".readonly"))) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_READONLY",
+        `Project "${projectId}" is read-only and cannot be modified.`,
+        { projectId },
+      );
+    }
+
+    const now = new Date().toISOString();
+    const recorded: ProjectScreen = {
+      id: screen.id,
+      path: screen.path,
+      title: screen.title,
+      updatedAt: now,
+    };
+    const updated: ProjectManifest = {
+      ...manifest,
+      screens: [...(manifest.screens ?? []), recorded],
+      updatedAt: now,
+    };
+    await this.writeManifest(projectId, updated);
+    return recorded;
   }
 
   /**
