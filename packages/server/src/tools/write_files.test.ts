@@ -146,7 +146,44 @@ describe("writeFiles (core logic)", () => {
     expect(result.writtenPaths).toHaveLength(MAX_FILES_PER_CALL);
   });
 
-  it("AC4 — rejects a path outside the plan's writes with PathOutsidePlanError", async () => {
+  it("rejects a call with two files targeting the same path with DuplicatePathError (Copilot review finding)", async () => {
+    // Regression guard: without this check, resolvedLocalPaths (keyed by
+    // file.path) would silently drop the first entry's localPath in favor
+    // of the second's, and writtenPaths would list the same path twice as
+    // if two distinct files had committed — when in fact only one, whichever
+    // committed last, actually landed.
+    const plan = await createPlan("k", ["*.txt"], [], localDir);
+
+    await expect(
+      writeFiles({
+        planId: plan.planId,
+        files: [
+          { path: "a.txt", data: "first" },
+          { path: "a.txt", data: "second" },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "DuplicatePathError", path: "a.txt" });
+
+    // Nothing lands — rejected before any staging begins.
+    await expect(stat(join(localDir, "a.txt"))).rejects.toThrow();
+  });
+
+  it("rejects duplicate paths even when sourced differently (data vs. localPath)", async () => {
+    const plan = await createPlan("k", ["*.txt"], [], localDir);
+    await writeFile(join(localDir, "src.txt"), "from disk", "utf-8");
+
+    await expect(
+      writeFiles({
+        planId: plan.planId,
+        files: [
+          { path: "a.txt", data: "inline" },
+          { path: "a.txt", localPath: "src.txt" },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "DuplicatePathError", path: "a.txt" });
+  });
+
+  it("AC4 — rejects a path outside the plan's writes with PathOutsidePlanError (reason: glob)", async () => {
     const plan = await createPlan("k", ["components/**"], [], localDir);
 
     await expect(
@@ -154,7 +191,11 @@ describe("writeFiles (core logic)", () => {
         planId: plan.planId,
         files: [{ path: "secrets/token.txt", data: "x" }],
       }),
-    ).rejects.toMatchObject({ code: "PathOutsidePlanError", path: "secrets/token.txt" });
+    ).rejects.toMatchObject({
+      code: "PathOutsidePlanError",
+      path: "secrets/token.txt",
+      reason: "glob",
+    });
   });
 
   it("AC4 — no file lands when even one path in the batch is outside the plan (all-or-nothing)", async () => {
@@ -189,7 +230,15 @@ describe("writeFiles (core logic)", () => {
         planId: plan.planId,
         files: [{ path: "/etc/passwd-genie-test-should-not-write", data: "pwned" }],
       }),
-    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+    ).rejects.toMatchObject({
+      code: "PathOutsidePlanError",
+      // reason: "escapesLocalDir" (not "glob") — a Copilot review finding
+      // flagged that the error message previously always claimed a glob
+      // mismatch even when the true cause was the containment check; this
+      // path DOES match the "**" glob, so a plain glob-mismatch message
+      // would have been actively misleading for debugging.
+      reason: "escapesLocalDir",
+    });
 
     await expect(stat("/etc/passwd-genie-test-should-not-write")).rejects.toThrow();
   });
