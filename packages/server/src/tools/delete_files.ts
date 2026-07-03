@@ -77,6 +77,24 @@ export function sortPathsLongestFirst(paths: string[]): string[] {
   );
 }
 
+/**
+ * Reject any path containing a `.` or `..` segment (on either separator).
+ *
+ * `pathMatchesGlobs` checks the RAW request string, but deletion resolves it
+ * (`resolve(kitRoot, path)`). Those two views can disagree: a dot-segment input
+ * like `allowed/../secret.txt` matches a glob such as `allowed/../*.txt` yet
+ * resolves to `kitRoot/secret.txt` — a file the plan never meant to authorize.
+ * (Plain `allowed/**` does not match it under micromatch's default handling of
+ * `..`, but relying on that incidental behaviour is brittle across micromatch
+ * versions and glob shapes.) Normalizing dot-segments away *before* both the
+ * glob check and the resolve makes plan gating depend only on the literal
+ * authorized path — never on how micromatch or `path.resolve` treats traversal.
+ * Mirrors the read side, where `read_file` rejects a `kitId` containing `..`.
+ */
+function hasDotSegment(path: string): boolean {
+  return path.split(/[/\\]/).some((segment) => segment === "." || segment === "..");
+}
+
 /** ENOENT (missing file) and ENOTDIR (a parent component is a file) both mean
  * "the path is not there" — the silent-retry case, not a hard failure. */
 function isMissingPathError(error: unknown): boolean {
@@ -148,6 +166,17 @@ export async function deleteFiles(
   //    sibling down with it. A traversal path is, by definition, outside the
   //    plan → the same PathOutsidePlanError.
   for (const path of uniquePaths) {
+    // 4a. Normalize-first defense: a `.`/`..` segment lets the raw-string glob
+    //     check and the resolved unlink target disagree (see hasDotSegment).
+    //     Reject before matching so gating never depends on how micromatch or
+    //     path.resolve treats traversal.
+    if (hasDotSegment(path)) {
+      throw new DeleteFilesError(
+        "PathOutsidePlanError",
+        `Path "${path}" contains a "." or ".." segment.`,
+        path,
+      );
+    }
     if (!pathMatchesGlobs(path, plan.deletes)) {
       throw new DeleteFilesError(
         "PathOutsidePlanError",

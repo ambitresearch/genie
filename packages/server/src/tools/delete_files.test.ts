@@ -182,6 +182,35 @@ describe("deleteFiles", () => {
     expect(existsSync(outsideFile)).toBe(true);
   });
 
+  it("AC3 — a dot-segment path is rejected before glob-match/resolve even when a glob would match it", async () => {
+    // Plan gating checks the RAW string but deletion resolves it, so the two
+    // views can disagree. A glob authored with a literal `..` segment
+    // (`inside/../*.txt`) DOES micromatch-match `inside/../secret.txt`, which
+    // resolves to `kitRoot/secret.txt` — inside kitRoot, so the containment
+    // check alone would pass and unlink a file the plan never meant to name.
+    // Rejecting any `.`/`..` segment up front closes that gap.
+    await seed(harness.kitDir, "secret.txt");
+    const planId = await seedPlan(["inside/../*.txt"]);
+
+    await expect(
+      deleteFiles(harness.kitsRoot, { planId, paths: ["inside/../secret.txt"] }),
+    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+
+    // The resolved-but-unauthorized file must survive untouched.
+    expect(existsSync(join(harness.kitDir, "secret.txt"))).toBe(true);
+  });
+
+  it("AC3 — a `.` (current-dir) segment is rejected too", async () => {
+    await seed(harness.kitDir, "a.txt");
+    const planId = await seedPlan(["**/*"]);
+
+    await expect(
+      deleteFiles(harness.kitsRoot, { planId, paths: ["./a.txt"] }),
+    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+
+    expect(existsSync(join(harness.kitDir, "a.txt"))).toBe(true);
+  });
+
   it("AC6 — a non-ENOENT failure (directory target) fails the whole call", async () => {
     // Directory delete is out of scope; unlink on a directory throws EISDIR/EPERM,
     // which must surface as a hard error rather than being swallowed as not-found.

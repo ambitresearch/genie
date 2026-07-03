@@ -47,7 +47,12 @@ describe("plans/index micromatch ESM interop (native-loader guard)", () => {
         process.exit(7);
       });`;
 
-    const result = spawnSync("npx", ["tsx", "-e", script], {
+    // Invoke the workspace toolchain explicitly via `pnpm exec` rather than
+    // `npx tsx`. `tsx` is a devDependency of the workspace ROOT, not of
+    // `@genie/server`; `npx` from the package dir may try a network download or
+    // fail to resolve the binary in a pnpm workspace. `pnpm exec` resolves the
+    // hoisted workspace binary offline and deterministically.
+    const result = spawnSync("pnpm", ["exec", "tsx", "-e", script], {
       cwd: packageRoot,
       encoding: "utf8",
       timeout: 60_000,
