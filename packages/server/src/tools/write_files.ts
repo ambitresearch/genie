@@ -90,11 +90,47 @@ export class TooManyFilesError extends Error {
   }
 }
 
-/** M1-08 AC4 — a file's `path` does not match any glob in the plan's `writes`. */
+/**
+ * Two or more files in the same call target the same `path` (Copilot review
+ * finding on PR #106). Without this check, `resolvedLocalPaths` — keyed by
+ * `file.path` — would silently drop all but the last entry's `localPath`
+ * (so an earlier duplicate would stage the WRONG file's bytes), and
+ * `writtenPaths` would list the same path twice as if two distinct files had
+ * been written, when in fact whichever entry committed last (an unspecified,
+ * input-order-dependent race between the two renames) is the only one that
+ * survives. Rejected up front, before any per-file validation, so partial
+ * ambiguity is never staged.
+ */
+export class DuplicatePathError extends Error {
+  readonly code = "DuplicatePathError";
+  constructor(readonly path: string) {
+    super(`Path "${path}" appears more than once in this write_files call; every path must be unique.`);
+    this.name = "DuplicatePathError";
+  }
+}
+
+/**
+ * M1-08 AC4 — a file's `path` is rejected by the plan boundary: either it
+ * doesn't match any glob in the plan's `writes` (`reason: "glob"`), or it
+ * resolves outside the plan's `localDir` even though a glob DID match
+ * (`reason: "escapesLocalDir"` — e.g. an absolute path under a permissive
+ * `**`; see the containment check in `writeFiles`). Both failure modes share
+ * one error class/code (`PathOutsidePlanError`) so callers can branch on a
+ * single `code`, but the message and `reason` field distinguish them —
+ * a Copilot review finding on PR #106 flagged the message as misleadingly
+ * glob-specific even when the actual cause was the containment check.
+ */
 export class PathOutsidePlanError extends Error {
   readonly code = "PathOutsidePlanError";
-  constructor(readonly path: string) {
-    super(`Path "${path}" does not match any pattern in the plan's writes.`);
+  constructor(
+    readonly path: string,
+    readonly reason: "glob" | "escapesLocalDir" = "glob",
+  ) {
+    super(
+      reason === "escapesLocalDir"
+        ? `Path "${path}" resolves outside the plan's localDir, even though it may match a writes pattern.`
+        : `Path "${path}" does not match any pattern in the plan's writes.`,
+    );
     this.name = "PathOutsidePlanError";
   }
 }
@@ -161,6 +197,31 @@ export class WriteFailedError extends Error {
   ) {
     super(`Failed to write "${path}": ${cause}. The call was rolled back; no files were written.`);
     this.name = "WriteFailedError";
+  }
+}
+
+/**
+ * AC10 — a commit failed AND the rollback itself could not fully undo/restore
+ * every step, so the destination tree is NOT guaranteed to match its
+ * pre-call state (unlike the ordinary `WriteFailedError` path, which
+ * guarantees a clean rollback). Surfaced instead of silently swallowing the
+ * rollback failure and reporting the original commit error as if the
+ * rollback had fully succeeded — a Copilot review finding on PR #106 flagged
+ * that the prior code did exactly that, violating AC10's "tree ends up
+ * exactly as it was before the call" guarantee without telling the caller.
+ */
+export class RollbackIncompleteError extends Error {
+  readonly code = "RollbackIncompleteError";
+  constructor(
+    readonly commitError: string,
+    readonly rollbackFailures: string[],
+  ) {
+    super(
+      `write_files failed (${commitError}) AND rollback could not fully restore the ` +
+        `original tree: ${rollbackFailures.join("; ")}. The destination may be left in ` +
+        "a partially-modified state — verify manually before retrying.",
+    );
+    this.name = "RollbackIncompleteError";
   }
 }
 
@@ -290,12 +351,25 @@ export function registerWriteFilesTool(server: McpServer): void {
             planId: error.planId,
           });
         }
+        if (error instanceof RollbackIncompleteError) {
+          // AC10's rollback guarantee could not be fully honored — this is
+          // more severe than a plain WriteFailedError (which promises a
+          // clean, fully-restored tree), so it gets its own code rather than
+          // being silently folded into that message.
+          return toolError({
+            code: "RollbackIncompleteError",
+            message: error.message,
+            commitError: error.commitError,
+            rollbackFailures: error.rollbackFailures,
+          });
+        }
         if (
           error instanceof PathOutsidePlanError ||
           error instanceof LocalPathEscapeError ||
           error instanceof InvalidFileInputError ||
           error instanceof InvalidEncodingError ||
-          error instanceof WriteFailedError
+          error instanceof WriteFailedError ||
+          error instanceof DuplicatePathError
         ) {
           return toolError({ code: error.code, message: error.message, ...errorFields(error) });
         }
@@ -307,12 +381,19 @@ export function registerWriteFilesTool(server: McpServer): void {
 
 /** Extra structured fields per own-error-type, beyond `code`/`message` (for client consumption). */
 function errorFields(
-  error: PathOutsidePlanError | LocalPathEscapeError | InvalidFileInputError | InvalidEncodingError | WriteFailedError,
+  error:
+    | PathOutsidePlanError
+    | LocalPathEscapeError
+    | InvalidFileInputError
+    | InvalidEncodingError
+    | WriteFailedError
+    | DuplicatePathError,
 ): Record<string, unknown> {
-  if (error instanceof PathOutsidePlanError) return { path: error.path };
+  if (error instanceof PathOutsidePlanError) return { path: error.path, reason: error.reason };
   if (error instanceof LocalPathEscapeError) return { localPath: error.localPath, localDir: error.localDir };
   if (error instanceof InvalidFileInputError) return { path: error.path };
   if (error instanceof InvalidEncodingError) return { path: error.path };
+  if (error instanceof DuplicatePathError) return { path: error.path };
   return { path: error.path, cause: error.cause }; // WriteFailedError
 }
 
@@ -347,6 +428,20 @@ export async function writeFiles(
     throw new TooManyFilesError(args.files.length, MAX_FILES_PER_CALL);
   }
 
+  // Structural check (Copilot review finding on PR #106): reject duplicate
+  // destination `path`s before any per-file validation depends on paths
+  // being unique. `resolvedLocalPaths` below is keyed by `file.path` — a
+  // second entry with the same path would silently overwrite the first's
+  // resolved `localPath` source, and `writtenPaths` would otherwise list the
+  // same path twice as if two distinct files had committed.
+  const seenPaths = new Set<string>();
+  for (const file of args.files) {
+    if (seenPaths.has(file.path)) {
+      throw new DuplicatePathError(file.path);
+    }
+    seenPaths.add(file.path);
+  }
+
   // AC4 — every path must match the plan's writes globs.
   for (const file of args.files) {
     if (!pathMatchesGlobs(file.path, plan.writes)) {
@@ -371,7 +466,7 @@ export async function writeFiles(
   // guarantee instead of the destination trusting glob-membership alone.
   for (const file of args.files) {
     if (!isPathInsideLocalDir(file.path, plan.localDir)) {
-      throw new PathOutsidePlanError(file.path);
+      throw new PathOutsidePlanError(file.path, "escapesLocalDir");
     }
   }
 
@@ -584,14 +679,41 @@ async function commitStaged(
     }
   } catch (error) {
     // Roll back: undo everything this call committed, then restore backups.
+    //
+    // Every step below runs unconditionally (never short-circuits on a prior
+    // failure within this block) and its own failure is collected rather than
+    // thrown immediately — a Copilot review finding on PR #106 flagged that
+    // the previous code did the opposite: `rm(destPath, { force: true })`
+    // could itself throw (e.g. EACCES; `force` only suppresses ENOENT, not
+    // other errors) and abort the `for` loop early, silently skipping BOTH
+    // the remaining commit-undo steps AND the entire backup-restore loop that
+    // used to follow it — while still reporting only the original commit
+    // error, as if rollback had fully succeeded. Collecting failures here
+    // means every step is still attempted even if an earlier one fails.
+    const rollbackFailures: string[] = [];
     for (const destPath of committed) {
-      await rm(destPath, { force: true });
+      try {
+        await rm(destPath, { force: true });
+      } catch (rmError) {
+        rollbackFailures.push(
+          `failed to remove committed file "${relativeOrAbsolute(localDir, destPath, destPath)}": ` +
+            describeError(rmError, "unknown error"),
+        );
+      }
     }
     for (const { destPath, backupPath } of backedUp) {
-      await rename(backupPath, destPath).catch(() => {
-        // Best-effort: if even the restore fails, the original error below
-        // is still the one surfaced to the caller.
-      });
+      try {
+        await rename(backupPath, destPath);
+      } catch (restoreError) {
+        rollbackFailures.push(
+          `failed to restore backup for "${relativeOrAbsolute(localDir, destPath, destPath)}": ` +
+            describeError(restoreError, "unknown error"),
+        );
+      }
+    }
+
+    if (rollbackFailures.length > 0) {
+      throw new RollbackIncompleteError(describeError(error, "commit failed"), rollbackFailures);
     }
     throw error;
   }
