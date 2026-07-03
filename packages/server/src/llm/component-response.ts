@@ -19,7 +19,16 @@
  * the whole point of the difference between the two verbs) and its own per-call
  * structured log + typed error (their AC10/AC8 field sets differ). This module
  * owns everything between "here are the messages" and "here is a validated
- * component or a reason it failed".
+ * component or a reason it failed" — INCLUDING, as of M2-06 review round 2, the
+ * one production `chat` seam both verbs default to (`defaultChatCompletion`
+ * below). Before this fix, `conjure.ts` and `refine.ts` each hand-rolled their
+ * own identical `defaultChatCompletion`, and NEITHER applied `withRetry` (M2-06,
+ * DRO-253) around `createChatCompletion` — a Copilot review on PR #126 caught
+ * that `withRetry` only ever appeared in comments/tests, never at a real call
+ * site, so retry/backoff had zero effect on any production LLM call. Defining
+ * the retry-wrapped default exactly once here — rather than fixing it twice,
+ * once per tool file — means a THIRD verb reusing this harness in the future
+ * inherits the fix automatically instead of needing to remember it a third time.
  */
 // Named `Ajv` import (not default): ajv@8 is CJS (`module.exports = Ajv` +
 // `module.exports.Ajv = Ajv`) with a `.d.ts` `export declare class Ajv`. Under
@@ -33,9 +42,15 @@ import { Ajv, type ValidateFunction, type ErrorObject } from "ajv";
 
 import { COMPONENT_SCHEMA, type ValidatedComponent } from "./schema.js";
 // Type-only (erased at build): importing the *values* from client.js would trip
-// its eager MissingLLMConfigError singleton at server-build time. The tools'
-// default chat impls reach the client lazily via dynamic import.
+// its eager MissingLLMConfigError singleton at server-build time. The default
+// chat impl below reaches the client lazily via dynamic import (see
+// `defaultChatCompletion`).
 import type { ChatCompletionInput, ChatCompletionResult } from "./client.js";
+// Value import (not type-only): `retry.ts` has no import-time side effects —
+// unlike `client.ts`, it never touches `GENIE_LLM_*` env or constructs anything
+// eagerly at module load — so wrapping `defaultChatCompletion` in `withRetry` is
+// safe to do statically.
+import { withRetry } from "./retry.js";
 
 /** Token/cost accounting summed across the (up to two) model calls. */
 export interface UsageInfo {
@@ -60,6 +75,28 @@ export function addUsage(into: UsageInfo, completion: ChatCompletionResult): voi
  * `createChatCompletion`; tests inject a stub so no real endpoint or
  * `GENIE_LLM_*` env is needed. Shared by both generation verbs. */
 export type ChatCompletionFn = (input: ChatCompletionInput) => Promise<ChatCompletionResult>;
+
+/**
+ * The default (production) `chat` seam every generation verb falls back to
+ * when its `deps.chat` is omitted (M2-06, DRO-253). Dynamically imports the
+ * M2-01 client on first call, so building the server (`createServer()`, which
+ * CI does with no LLM endpoint configured) never eagerly triggers
+ * `MissingLLMConfigError` — same reasoning `conjure.ts` originally documented
+ * before this seam moved here. `withRetry` wraps `createChatCompletion` on
+ * every call, so retry/backoff for transient failures (429 / 5xx /
+ * `ECONNRESET` / `ETIMEDOUT`) is the default behaviour for every verb built on
+ * this harness, not something each tool file has to remember to apply itself.
+ *
+ * `withRetry` is invoked fresh per call rather than wrapped once at module
+ * scope: the module-scope `createChatCompletion` binding doesn't exist until
+ * the dynamic import resolves, and re-wrapping a plain async function is cheap
+ * (no state beyond reading `GENIE_LLM_RETRY_MAX` from `process.env`, matching
+ * every other per-request env read on this path).
+ */
+export const defaultChatCompletion: ChatCompletionFn = async (input) => {
+  const { createChatCompletion } = await import("./client.js");
+  return withRetry(createChatCompletion)(input);
+};
 
 /** Structured warn/telemetry to stderr — never stdout (the stdio transport's
  * stdout IS the JSON-RPC stream; same convention as client.ts / plan.ts). */

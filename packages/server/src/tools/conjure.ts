@@ -9,6 +9,17 @@
  * against `COMPONENT_SCHEMA` with Ajv, and retries once with the validation
  * error fed back on failure.
  *
+ * Two DISTINCT retry mechanisms are in play here, at different layers — don't
+ * conflate them when reading this file:
+ *   1. The "retries once on validation failure" above is `component-response.ts`'s
+ *      schema-repair loop (AC8): a structurally-valid-but-wrong-shape reply
+ *      gets one more attempt with the Ajv error fed back into the prompt.
+ *   2. Each of those (up to 2) calls individually goes through M2-06's
+ *      `withRetry(createChatCompletion)` (DRO-253) for transient network/429/5xx
+ *      failures — invisible to this file, applied inside
+ *      `component-response.ts`'s shared `defaultChatCompletion` (below the
+ *      `chat` seam this file falls back to when `deps.chat` is omitted).
+ *
  * `conjure` is deliberately **pure generation** (AC9): it never calls
  * `write_files`. It hands the caller a validated component; committing it to a
  * kit is a separate, plan-gated step the caller owns. That keeps generation
@@ -20,9 +31,10 @@
  * AC1/AC2). If this module imported it *statically*, merely building the server
  * (`createServer()`) — which CI does with no LLM endpoint configured — would
  * throw. So the client is a **type-only** import here (erased by
- * `verbatimModuleSyntax`), and the default runtime path reaches it via a lazy
- * `await import(...)` inside `defaultChatCompletion`, touched only when an actual
- * `conjure` call runs. Tests inject their own `chat` and never load the client.
+ * `verbatimModuleSyntax`); the default runtime path reaches it via
+ * `component-response.ts`'s shared `defaultChatCompletion`, whose own lazy
+ * `await import(...)` is touched only when an actual `conjure` call runs. Tests
+ * inject their own `chat` and never load the client.
  *
  * §6 honest uncertainty (from the issue): the exact prompt shape / generation
  * loop is unspecified R&D. The system prompt (`prompts/generate-component.system.md`,
@@ -43,14 +55,16 @@ import {
 // module header). The default chat impl reaches these lazily via dynamic import.
 import type { ChatCompletionInput } from "../llm/client.js";
 // The shared request/validate/retry harness (M2-03/M2-04). The Ajv compile,
-// fence-stripper, response_format envelope, retry-feedback wording, and the
-// two-attempt loop all live here so `conjure` and `refine` share ONE copy —
-// see llm/component-response.ts's header.
+// fence-stripper, response_format envelope, retry-feedback wording, the
+// two-attempt loop, AND the retry-wrapped production `chat` default (M2-06,
+// DRO-253) all live here so `conjure` and `refine` share ONE copy — see
+// llm/component-response.ts's header.
 import {
   type ChatCompletionFn,
   type RetryContext,
   type UsageInfo,
   appendRetryFeedback,
+  defaultChatCompletion,
   logStderr,
   runComponentGeneration,
 } from "../llm/component-response.js";
@@ -327,19 +341,6 @@ function buildMessages(
     { role: "user", content: userContent },
   ];
 }
-
-// ── Default (production) chat impl: lazy client import ─────────────────────────
-
-/**
- * Default `chat` seam: dynamically imports the M2-01 client on first call, so
- * building the server never eagerly triggers `MissingLLMConfigError` (see module
- * header). A real `conjure` call in a properly-configured deployment resolves
- * this to `createChatCompletion`.
- */
-const defaultChatCompletion: ChatCompletionFn = async (input) => {
-  const { createChatCompletion } = await import("../llm/client.js");
-  return createChatCompletion(input);
-};
 
 const defaultFetch: FetchFn = (url) => fetch(url);
 
