@@ -54,6 +54,19 @@ import {
   logStderr,
   runComponentGeneration,
 } from "../llm/component-response.js";
+// Framework adapter seam (M2-08 · DRO-255). `conjure` picks the adapter from its
+// `framework` input (AC4) and reads the adapter's `promptDirective` — the one
+// framework-specific bit generation carries. `interface.js` has no heavy imports
+// at module top (esbuild/ts-morph load lazily inside the React adapter, reached
+// only via `getAdapter`'s dynamic import), so this static import is server-build
+// safe. The framework enum + default live in the adapter module as the single
+// source of truth; `conjure` re-exports them under their established names.
+import {
+  FRAMEWORKS,
+  DEFAULT_FRAMEWORK as ADAPTER_DEFAULT_FRAMEWORK,
+  getAdapter,
+  type Framework,
+} from "../framework/interface.js";
 import { KIT_ID_PATTERN } from "./get_kit.js";
 
 // Re-exported so existing importers (and conjure.test.ts) keep resolving these
@@ -63,13 +76,15 @@ export type { ChatCompletionFn, UsageInfo } from "../llm/component-response.js";
 
 export const CONJURE_TOOL_NAME = "mcp__genie__conjure";
 
-/** Target framework for the generated component (AC2/AC3). */
-export const CONJURE_FRAMEWORKS = ["react", "vue", "html"] as const;
-export type ConjureFramework = (typeof CONJURE_FRAMEWORKS)[number];
+/** Target framework for the generated component (AC2/AC3). Re-exported from the
+ * M2-08 adapter module so the tool contract and the adapter registry share one
+ * source of truth (`framework/interface.ts#FRAMEWORKS`). */
+export const CONJURE_FRAMEWORKS = FRAMEWORKS;
+export type ConjureFramework = Framework;
 
 /** Default framework + model routing alias (AC3). `design-default` is resolved
  * to a concrete provider model by the configured endpoint/gateway (M2-05). */
-export const DEFAULT_FRAMEWORK: ConjureFramework = "react";
+export const DEFAULT_FRAMEWORK: ConjureFramework = ADAPTER_DEFAULT_FRAMEWORK;
 export const DEFAULT_MODEL = "design-default";
 
 /** `refUrl` bodies larger than this are warned about (AC7) and truncated before
@@ -269,10 +284,17 @@ async function fetchReference(fetchImpl: FetchFn, refUrl: string): Promise<strin
 // ── Prompt / message assembly ─────────────────────────────────────────────────
 
 /** Build the natural-language user instruction block (everything except the
- * optional vision image, which is attached as a separate content part). */
-function buildUserText(args: ConjureArgs, referenceHtml: string | undefined): string {
+ * optional vision image, which is attached as a separate content part).
+ * `frameworkDirective` is the target-framework instruction the selected adapter
+ * owns (AC4) — it begins with `Target framework: <framework>` and adds the
+ * per-framework source-shape guidance. */
+function buildUserText(
+  args: ConjureArgs,
+  frameworkDirective: string,
+  referenceHtml: string | undefined,
+): string {
   const lines = [
-    `Target framework: ${args.framework}`,
+    frameworkDirective,
     args.group
       ? `Kit category (group): ${args.group}`
       : `Kit category (group): (choose the best fit)`,
@@ -307,10 +329,11 @@ function buildUserText(args: ConjureArgs, referenceHtml: string | undefined): st
 function buildMessages(
   systemPrompt: string,
   args: ConjureArgs,
+  frameworkDirective: string,
   referenceHtml: string | undefined,
   retry: RetryContext | undefined,
 ): ChatCompletionInput["messages"] {
-  let userText = buildUserText(args, referenceHtml);
+  let userText = buildUserText(args, frameworkDirective, referenceHtml);
   if (retry) {
     userText = appendRetryFeedback(userText, retry);
   }
@@ -366,12 +389,21 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
 
   const startedAt = performance.now();
 
+  // AC4 — pick the framework adapter from the validated `framework` input. The
+  // adapter owns the framework-specific prompt directive (the one such bit
+  // `conjure` carried inline). Selection works for every framework, including
+  // the Vue/HTML stubs: their codegen is stubbed, but `promptDirective` is
+  // metadata the model reads, so pure generation still targets them.
+  const adapter = await getAdapter(parsed.framework);
+  const frameworkDirective = adapter.promptDirective;
+
   const referenceHtml = parsed.refUrl ? await fetchReference(fetchImpl, parsed.refUrl) : undefined;
 
   const { outcome, usage, attempts } = await runComponentGeneration({
     chat,
     model: parsed.model,
-    buildMessages: (retry) => buildMessages(systemPrompt.text, parsed, referenceHtml, retry),
+    buildMessages: (retry) =>
+      buildMessages(systemPrompt.text, parsed, frameworkDirective, referenceHtml, retry),
   });
 
   const latencyMs = Math.round(performance.now() - startedAt);

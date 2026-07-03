@@ -212,6 +212,38 @@ describe("AC3 — defaults", () => {
   });
 });
 
+// ── M2-08 AC4 — conjure picks the framework adapter ───────────────────────────
+
+describe("M2-08 AC4 — adapter selection drives the framework directive", () => {
+  it("injects the React adapter's directive (source-shape guidance, not just the label)", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    await conjure({ chat }, args({ framework: "react" }));
+    const userContent = JSON.stringify(chat.calls[0]!.messages[1]!.content);
+    expect(userContent).toContain("Target framework: react");
+    // The directive is sourced from ReactAdapter.promptDirective — it carries
+    // React-specific guidance the old inline `Target framework:` line never had.
+    expect(userContent).toContain(".tsx");
+  });
+
+  it("injects the Vue adapter's directive when framework=vue (pure generation still works)", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const res = await conjure({ chat }, args({ framework: "vue" }));
+    const userContent = JSON.stringify(chat.calls[0]!.messages[1]!.content);
+    expect(userContent).toContain("Target framework: vue");
+    expect(userContent).toContain("Single File Component");
+    // conjure is pure generation — targeting vue does NOT invoke stubbed codegen.
+    expect(res.componentName).toBe("Button");
+  });
+
+  it("injects the HTML adapter's directive when framework=html", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    await conjure({ chat }, args({ framework: "html" }));
+    const userContent = JSON.stringify(chat.calls[0]!.messages[1]!.content);
+    expect(userContent).toContain("Target framework: html");
+    expect(userContent).toContain("vanilla");
+  });
+});
+
 // ── AC4 — response_format json_schema ─────────────────────────────────────────
 
 describe("AC4 — structured output request", () => {
