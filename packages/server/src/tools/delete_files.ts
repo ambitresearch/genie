@@ -1,14 +1,20 @@
 /**
- * MCP tool: delete_files (M1-09).
+ * MCP tool: delete_files (M1-09; re-plumbed onto KitStore in M1-14a-1a / DRO-540).
  *
  * The plan-gated companion to `write_files`. Every requested path must be
  * covered by a glob in the plan's `deletes` list (locked at `plan` time) —
  * otherwise the whole call is rejected with `PathOutsidePlanError` and nothing
- * is touched. A path that is authorized but no longer exists on disk is NOT an
- * error: it is recorded in `notFoundPaths` and the call still succeeds. This is
- * the "known-good failure to silently retry past" from the research report —
- * e.g. deleting a floor-card component's `_preview/*.html` that was never
- * generated remotely.
+ * is touched. A path that is authorized but no longer exists is NOT an error:
+ * it is recorded in `notFoundPaths` and the call still succeeds. This is the
+ * "known-good failure to silently retry past" from the research report — e.g.
+ * deleting a floor-card component's `_preview/*.html` that was never generated
+ * remotely.
+ *
+ * Plan-gating stays here (planId → `deletes` globs is a genie concept, not a
+ * store concept). The physical removal is delegated to the injected
+ * `KitStore.deleteFile`, so the SAME verb deletes from a `LocalFsKitStore` (fs
+ * unlink) or a `GitHostKitStore` (contents-API DELETE on the default branch)
+ * with identical gating and result shaping.
  *
  * Input:  { planId: string, paths: string[] }
  * Output: { deletedPaths: string[], notFoundPaths: string[] }
@@ -19,10 +25,10 @@
  * name files. A directory target surfaces as a hard `DeleteFailed` error.)
  */
 
-import { unlink } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import type { KitStore } from "../store/interface.js";
 import { withPlanGuard } from "../middleware/plan-guard.js";
 import { getPlan, pathMatchesGlobs, PlanNotFoundError } from "../plans/index.js";
 
@@ -79,43 +85,45 @@ export function sortPathsLongestFirst(paths: string[]): string[] {
 }
 
 /**
- * Reject any path containing a `.` or `..` segment (on either separator).
+ * True if any `/`- or `\`-separated segment is `.` or `..`.
  *
- * `pathMatchesGlobs` checks the RAW request string, but deletion resolves it
- * (`resolve(kitRoot, path)`). Those two views can disagree: a dot-segment input
- * like `allowed/../secret.txt` matches a glob such as `allowed/../*.txt` yet
- * resolves to `kitRoot/secret.txt` — a file the plan never meant to authorize.
- * (Plain `allowed/**` does not match it under micromatch's default handling of
- * `..`, but relying on that incidental behaviour is brittle across micromatch
- * versions and glob shapes.) Normalizing dot-segments away *before* both the
- * glob check and the resolve makes plan gating depend only on the literal
- * authorized path — never on how micromatch or `path.resolve` treats traversal.
- * Mirrors the read side, where `read_file` rejects a `kitId` containing `..`.
+ * `pathMatchesGlobs` checks the RAW request string, but a store resolves it
+ * against the kit root. Those two views can disagree: a dot-segment input like
+ * `allowed/../secret.txt` matches a glob such as `allowed/../*.txt` yet resolves
+ * to `kitRoot/secret.txt` — a file the plan never meant to authorize. Rejecting
+ * any dot-segment BEFORE both the glob check and the store call makes plan
+ * gating depend only on the literal authorized path.
  */
 function hasDotSegment(path: string): boolean {
   return path.split(/[/\\]/).some((segment) => segment === "." || segment === "..");
 }
 
-/** ENOENT (missing file) and ENOTDIR (a parent component is a file) both mean
- * "the path is not there" — the silent-retry case, not a hard failure. */
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error.code === "ENOENT" || error.code === "ENOTDIR")
-  );
+/**
+ * True if a kitId is path-shaped (contains a separator or a `..`). The tool no
+ * longer holds a `kitsRoot`, so it cannot re-derive the on-disk kit root to
+ * prove containment; instead it rejects a traversal-shaped kitId outright.
+ *
+ * `plan` accepts `kitId: z.string().min(1)` with no traversal guard and stores
+ * it verbatim, so a plan authored with e.g. `kitId: ".."` could otherwise make
+ * a LocalFs store resolve a kit dir OUTSIDE the kits root (defense in depth,
+ * mirroring read_file's kitId check). A store guards internally too, but this
+ * keeps the whole-call rejection at the atomic pre-flight, before anything is
+ * deleted.
+ */
+function isPathShapedKitId(kitId: string): boolean {
+  return kitId.includes("/") || kitId.includes("\\") || kitId.includes("..");
 }
 
 /**
  * Delete every `path` in `args.paths` from the plan's kit, subject to the
  * plan's `deletes` allow-list.
  *
- * @param kitsRoot The directory kits live under (the SAME value `createServer`
- *   threads into `read_file`/`list_files`), so deletes hit exactly the tree
- *   those verbs read. The concrete kit root is `resolve(kitsRoot, plan.kitId)`.
+ * @param store The injected kit backend (M1-14a-1a / DRO-540). The concrete kit
+ *   is `plan.kitId`; the physical removal is `store.deleteFile(plan.kitId, path)`
+ *   — LocalFs unlink or git-host contents-API delete, behind one interface.
  */
 export async function deleteFiles(
-  kitsRoot: string,
+  store: KitStore,
   args: DeleteFilesArgs,
 ): Promise<DeleteFilesResult> {
   // 1. Validate argument shape (AC2). A malformed planId / empty paths array is
@@ -137,22 +145,15 @@ export async function deleteFiles(
   // 2. Resolve the plan. Unknown / expired / malformed-UUID planIds throw
   //    PlanNotFoundError (surfaced to the client, not swallowed here).
   const plan = await getPlan(parsed.planId);
-  const resolvedKitsRoot = resolve(kitsRoot);
-  const kitRoot = resolve(resolvedKitsRoot, plan.kitId);
 
-  // 2a. Defense in depth: `plan` accepts `kitId: z.string().min(1)` with no
-  //     traversal guard (unlike read_file's kitId check) and createPlan stores
-  //     it verbatim, so a plan authored with e.g. `kitId: ".."` resolves a
-  //     kitRoot OUTSIDE kitsRoot. Every per-path containment check below is
-  //     computed relative to kitRoot, so an escaped kitRoot would let in-bounds
-  //     paths unlink files outside the kit tree. As the first destructive
-  //     consumer, verify kitRoot stays within kitsRoot before deleting anything.
-  const kitRel = relative(resolvedKitsRoot, kitRoot);
-  const kitRootEscapes = kitRel === ".." || kitRel.startsWith(`..${sep}`) || isAbsolute(kitRel);
-  if (kitRootEscapes) {
+  // 2a. Defense in depth: a plan authored with a traversal-shaped kitId (e.g.
+  //     "..") could make a LocalFs store resolve a kit dir outside the kits
+  //     root. As the first destructive consumer, reject it before deleting
+  //     anything (mirrors read_file's kitId guard).
+  if (isPathShapedKitId(plan.kitId)) {
     throw new DeleteFilesError(
       "PathOutsidePlanError",
-      `Plan kitId "${plan.kitId}" resolves outside the kits root.`,
+      `Plan kitId "${plan.kitId}" is not a valid kit identifier.`,
       plan.kitId,
     );
   }
@@ -164,17 +165,24 @@ export async function deleteFiles(
   // 4. Atomic pre-flight (AC3). EVERY path must both (a) match a `deletes` glob
   //    and (b) stay inside the kit root. If any path fails, throw before
   //    deleting anything — so an out-of-plan path can never take an in-plan
-  //    sibling down with it. A traversal path is, by definition, outside the
-  //    plan → the same PathOutsidePlanError.
+  //    sibling down with it. The containment check is purely lexical now (the
+  //    tool holds no kits root): a relative path with no `.`/`..` segment can
+  //    never escape the kit root, and an absolute path always does.
   for (const path of uniquePaths) {
     // 4a. Normalize-first defense: a `.`/`..` segment lets the raw-string glob
-    //     check and the resolved unlink target disagree (see hasDotSegment).
-    //     Reject before matching so gating never depends on how micromatch or
-    //     path.resolve treats traversal.
+    //     check and the resolved delete target disagree (see hasDotSegment).
     if (hasDotSegment(path)) {
       throw new DeleteFilesError(
         "PathOutsidePlanError",
         `Path "${path}" contains a "." or ".." segment.`,
+        path,
+      );
+    }
+    // 4b. An absolute path escapes any kit root by definition.
+    if (isAbsolute(path)) {
+      throw new DeleteFilesError(
+        "PathOutsidePlanError",
+        `Path "${path}" is absolute and resolves outside the kit root.`,
         path,
       );
     }
@@ -185,34 +193,23 @@ export async function deleteFiles(
         path,
       );
     }
-    const target = resolve(kitRoot, path);
-    const rel = relative(kitRoot, target);
-    const escapes = rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
-    if (escapes) {
-      throw new DeleteFilesError(
-        "PathOutsidePlanError",
-        `Path "${path}" resolves outside the kit root.`,
-        path,
-      );
-    }
   }
 
-  // 5. Delete longest-first (files before their containing directories).
+  // 5. Delete longest-first (files before their containing directories), via the
+  //    injected store. `{ existed: false }` is the AC5 silent-retry case; a hard
+  //    store error (a directory target, permission denied, …) fails the whole
+  //    call (AC6) rather than being swallowed.
   const deleted = new Set<string>();
   const notFound = new Set<string>();
   for (const path of sortPathsLongestFirst(uniquePaths)) {
-    const target = resolve(kitRoot, path);
     try {
-      await unlink(target);
-      deleted.add(path);
-    } catch (error) {
-      if (isMissingPathError(error)) {
-        // AC5 — authorized but absent: a non-error, retry past it.
-        notFound.add(path);
-        continue;
+      const { existed } = await store.deleteFile(plan.kitId, path);
+      if (existed) {
+        deleted.add(path);
+      } else {
+        notFound.add(path); // AC5 — authorized but absent: a non-error.
       }
-      // AC6 — permission denied, a directory target (EISDIR), etc. fail the
-      // whole call rather than being silently dropped.
+    } catch (error) {
       const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
       throw new DeleteFilesError("DeleteFailed", `Failed to delete "${path}": ${code}.`, path);
     }
@@ -243,7 +240,7 @@ export async function deleteFiles(
  * in `deleteFiles` itself — the guard is intentionally tool-agnostic about
  * those.
  */
-export function registerDeleteFilesTool(server: McpServer, kitsRoot: string): void {
+export function registerDeleteFilesTool(server: McpServer, store: KitStore): void {
   server.registerTool(
     DELETE_FILES_TOOL_NAME,
     {
@@ -281,7 +278,7 @@ export function registerDeleteFilesTool(server: McpServer, kitsRoot: string): vo
     // that path for those callers.
     withPlanGuard({ mode: "deletes", pathsKey: "paths" }, async (args) => {
       try {
-        const result = await deleteFiles(kitsRoot, args as DeleteFilesArgs);
+        const result = await deleteFiles(store, args);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result) }],
           structuredContent: result,

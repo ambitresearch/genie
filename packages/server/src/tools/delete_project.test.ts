@@ -16,7 +16,7 @@ describe("deleteProject", () => {
     const store = new ProjectStore(root);
     const { projectId } = await store.createProject({ name: "Test Workspace", kind: "workspace" });
 
-    const result = await deleteProject(root, { projectId });
+    const result = await deleteProject(store, { projectId });
 
     expect(result.deletedProjectId).toBe(projectId);
     expect(existsSync(join(root, projectId))).toBe(false);
@@ -27,7 +27,7 @@ describe("deleteProject", () => {
     const store = new ProjectStore(root);
     const { projectId } = await store.createProject({ name: "Test Blueprint", kind: "blueprint" });
 
-    const result = await deleteProject(root, { projectId });
+    const result = await deleteProject(store, { projectId });
 
     expect(result.deletedProjectId).toBe(projectId);
     expect(existsSync(join(root, projectId))).toBe(false);
@@ -36,7 +36,7 @@ describe("deleteProject", () => {
   it("succeeds idempotently for missing projects and reports warning", async () => {
     const root = await tempProjectsRoot();
 
-    const result = await deleteProject(root, { projectId: "no-such-project" });
+    const result = await deleteProject(new ProjectStore(root), { projectId: "no-such-project" });
 
     expect(result.deletedProjectId).toBe("no-such-project");
     expect(result._meta?.warnings).toContain(
@@ -64,7 +64,7 @@ describe("deleteProject", () => {
       fromBlueprintId: blueprint.projectId,
     });
 
-    const result = await deleteProject(root, { projectId: blueprint.projectId });
+    const result = await deleteProject(store, { projectId: blueprint.projectId });
 
     expect(result.deletedProjectId).toBe(blueprint.projectId);
     expect(existsSync(join(root, blueprint.projectId))).toBe(false);
@@ -82,7 +82,7 @@ describe("deleteProject", () => {
     // Simulate a read-only project by adding the readonly marker
     await writeFile(join(root, projectId, ".genie", ".readonly"), "", "utf8");
 
-    await expect(deleteProject(root, { projectId })).rejects.toMatchObject({
+    await expect(deleteProject(store, { projectId })).rejects.toMatchObject({
       code: ERR_PROJECT_READONLY,
     });
   });
@@ -107,7 +107,7 @@ describe("deleteProject", () => {
       await mkdir(sentinelDir, { recursive: true });
       await writeFile(join(sentinelDir, "keep.txt"), "do-not-delete", "utf8");
 
-      await expect(deleteProject(root, { projectId })).rejects.toMatchObject({
+      await expect(deleteProject(new ProjectStore(root), { projectId })).rejects.toMatchObject({
         code: ERR_INVALID_PROJECT_ID,
       });
 

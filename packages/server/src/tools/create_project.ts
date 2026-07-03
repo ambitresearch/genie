@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -290,6 +290,59 @@ export class ProjectStore {
       screens: manifest.screens ?? [],
       ...(manifest.sourceBlueprintId ? { sourceBlueprintId: manifest.sourceBlueprintId } : {}),
     };
+  }
+
+  /**
+   * Delete a project directory (M1-14a-1 / DRO-531 — the `delete_project`
+   * store-injection re-plumb). Owns the *persistence policy* the
+   * `delete_project` tool previously reached into the filesystem for directly,
+   * so the verb now routes through the injected `ProjectStore` (LocalFs by
+   * default, a git-host backend when one exists) instead of a raw `projectsRoot`
+   * path + `node:fs`.
+   *
+   * Semantics (preserved verbatim from the pre-seam tool):
+   *   - Missing project → NOT an error. Returns `{ existed: false }` so the tool
+   *     can report the idempotent "already deleted" warning. A caller re-running
+   *     a delete after a crash must not see a hard failure.
+   *   - Read-only project (`.genie/.readonly` marker present) → throws
+   *     `ProjectStoreError("ERR_PROJECT_READONLY")`; nothing is removed. Same
+   *     guard `bindKit`/`recordScreen` apply on the write path.
+   *   - Otherwise removes the project tree recursively and returns
+   *     `{ existed: true }`. Deleting a blueprint does NOT touch workspaces
+   *     instantiated from it — those were copied at create time and live in
+   *     their own directories.
+   *
+   * `projectId` is regex-checked before any filesystem access (same
+   * defense-in-depth as `getProject`/`bindKit`/`recordScreen`: `ProjectStore` is
+   * a public export and this a public method, so a direct caller bypassing the
+   * tool's Zod schema could otherwise pass `"../secret"` into `projectRoot()`).
+   * A malformed id resolves nothing to delete → `{ existed: false }`, never an
+   * `rm` outside the projects root.
+   */
+  async deleteProject(projectId: string): Promise<{ existed: boolean }> {
+    if (!PROJECT_ID_PATTERN.test(projectId)) {
+      // Defense in depth: a non-slug id never names a real project directory.
+      // Treat as "nothing here" rather than resolving a traversal path — the
+      // tool's Zod schema is the primary gate and already rejects these with
+      // ERR_INVALID_PROJECT_ID before the store is reached.
+      return { existed: false };
+    }
+
+    const root = this.projectRoot(projectId);
+    if (!existsSync(root)) {
+      return { existed: false };
+    }
+
+    if (existsSync(join(root, ".genie", ".readonly"))) {
+      throw new ProjectStoreError(
+        "ERR_PROJECT_READONLY",
+        `Project "${projectId}" is read-only and cannot be deleted.`,
+        { projectId },
+      );
+    }
+
+    await rm(root, { recursive: true, force: true });
+    return { existed: true };
   }
 
   /**
