@@ -54,6 +54,35 @@ export const MAX_DELAY_MS = 30_000;
 export const JITTER_RATIO = 0.2;
 
 /**
+ * Hard ceiling on an upstream-honoured `Retry-After` value once it's used as
+ * an actual `sleep()` duration (Copilot review on PR #126 / DRO-253).
+ * `MAX_DELAY_MS` only bounds OUR OWN computed exponential backoff — a value
+ * entirely within this module's control — but an honoured `Retry-After` is
+ * trusted verbatim by `parseRetryAfter`. A misconfigured or hostile upstream
+ * sending e.g. `Retry-After: 86400` (one day) would otherwise stall the
+ * in-flight call — and on the stdio MCP transport, the whole in-flight
+ * request — for that entire duration: `GENIE_LLM_REQUEST_TIMEOUT_MS` only
+ * bounds each individual HTTP request, not the sleep between retries.
+ *
+ * Set to 60 s — double `MAX_DELAY_MS` — so an explicit upstream signal is
+ * still granted more deference than our own guessed-at exponential
+ * schedule, while remaining bounded to a duration reasonable for a
+ * synchronous MCP tool call. (The reviewer described this figure as the
+ * `openai` SDK's own clamp; the SDK actually applies no such clamp — see
+ * `retryRequest`/`calculateDefaultRetryTimeoutMillis` in
+ * `openai/client.js`, which honours an unclamped `Retry-After` exactly as
+ * this module did before this fix. 60 s is picked on its own merits here,
+ * not inherited from upstream SDK behaviour.)
+ *
+ * Only the `sleep()` duration is clamped. `RateLimitedError.retryAfterMs`
+ * (surfaced to the caller on exhaustion, see `withRetry` below)
+ * deliberately keeps the TRUE, unclamped upstream value — that field's
+ * contract is "what did the upstream ask for" (e.g. so a UI layer can show
+ * "come back tomorrow"), not "how long did we actually wait".
+ */
+export const MAX_RETRY_AFTER_MS = 60_000;
+
+/**
  * Node socket / DNS error codes that indicate a transient network failure
  * worth retrying (AC2). Kept intentionally narrow — ECONNREFUSED is
  * deliberately NOT here (a refused connection usually means the endpoint is
@@ -445,9 +474,22 @@ export function withRetry<A extends readonly unknown[], R>(
         const status = statusOf(error);
         const retryAfterMs = retryAfterOf(error);
         // 1-indexed attempt number for the audit log (attempt=1 is the
-        // first retry, i.e. the second call overall).
+        // first retry, i.e. the second call overall). Logged verbatim
+        // (unclamped) — the log's `retryAfter` field records what the
+        // upstream actually asked for, same contract as
+        // `RateLimitedError.retryAfterMs` below.
         logRetry(attempt + 1, status, retryAfterMs);
-        const delayMs = retryAfterMs ?? jitteredBackoff(attempt + 1, random);
+        // Clamp only the value actually slept on (MAX_RETRY_AFTER_MS):
+        // `retryAfterMs` is trusted verbatim from the upstream response, so
+        // an unclamped sleep here would let a misconfigured or hostile
+        // upstream (e.g. `Retry-After: 86400`) stall this call — and, on
+        // the stdio MCP transport, the whole in-flight request — for that
+        // full duration. `jitteredBackoff` is already self-capping at
+        // MAX_DELAY_MS, so the clamp below is a no-op on that branch.
+        const delayMs = Math.min(
+          retryAfterMs ?? jitteredBackoff(attempt + 1, random),
+          MAX_RETRY_AFTER_MS,
+        );
         await sleep(delayMs);
       }
     }

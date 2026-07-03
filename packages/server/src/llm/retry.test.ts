@@ -48,6 +48,7 @@ const {
   BASE_DELAY_MS,
   MAX_DELAY_MS,
   JITTER_RATIO,
+  MAX_RETRY_AFTER_MS,
 } = await import("./retry.js");
 delete process.env[BASE_URL_ENV];
 delete process.env[API_KEY_ENV];
@@ -176,6 +177,13 @@ describe("retry module constants", () => {
   });
   it("exposes RETRY_MAX_ENV = 'GENIE_LLM_RETRY_MAX' (AC5)", () => {
     expect(RETRY_MAX_ENV_CONST).toBe("GENIE_LLM_RETRY_MAX");
+  });
+  it("caps honoured Retry-After sleep at MAX_RETRY_AFTER_MS = 60_000 (Copilot review on PR #126)", () => {
+    // 60 s is a design decision: it's double MAX_DELAY_MS (30 s), so an
+    // explicit upstream signal still outranks our own jittered guess, but
+    // a misconfigured/hostile upstream can't hang the whole MCP request
+    // for hours. See the constant's JSDoc for the full rationale.
+    expect(MAX_RETRY_AFTER_MS).toBe(60_000);
   });
 });
 
@@ -801,6 +809,79 @@ describe("withRetry — backoff scheduling (AC4)", () => {
     await wrapped({});
     // 5s Retry-After beats the 1s jittered exponential value.
     expect(sleep).toHaveBeenCalledWith(5_000);
+  });
+
+  it("clamps an honoured Retry-After to MAX_RETRY_AFTER_MS instead of sleeping the full upstream value", async () => {
+    // Regression guard (Copilot review, PR #126): a misconfigured or
+    // hostile upstream sending e.g. `Retry-After: 86400` (one day) must not
+    // stall the caller for that long — `MAX_DELAY_MS` only bounds our own
+    // computed exponential backoff, so without a separate clamp on the
+    // honoured-Retry-After path this sleep was unbounded.
+    const openai = await import("openai");
+    const err = new openai.RateLimitError(
+      429,
+      { error: { message: "rate limited" } },
+      "rate limited",
+      new Headers({ "retry-after": "86400" }), // 1 day, in seconds
+    );
+    const handler = vi.fn().mockRejectedValueOnce(err).mockResolvedValueOnce({ ok: true });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const wrapped = withRetry(handler, { sleep, random: () => 0.5 });
+    await wrapped({});
+    expect(sleep).toHaveBeenCalledWith(MAX_RETRY_AFTER_MS);
+  });
+
+  it("does not clamp a Retry-After value already within MAX_RETRY_AFTER_MS", async () => {
+    const openai = await import("openai");
+    const err = new openai.RateLimitError(
+      429,
+      { error: { message: "rate limited" } },
+      "rate limited",
+      new Headers({ "retry-after": "45" }), // 45s — under the 60s ceiling.
+    );
+    const handler = vi.fn().mockRejectedValueOnce(err).mockResolvedValueOnce({ ok: true });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const wrapped = withRetry(handler, { sleep, random: () => 0.5 });
+    await wrapped({});
+    expect(sleep).toHaveBeenCalledWith(45_000);
+  });
+
+  it("preserves the TRUE unclamped Retry-After on RateLimitedError.retryAfterMs even though the sleep was clamped", async () => {
+    // The clamp only bounds what we actually sleep for — the exhaustion
+    // error's `retryAfterMs` field still reports what the upstream asked
+    // for verbatim, so a caller/UI can show the real wait time.
+    const openai = await import("openai");
+    const err = new openai.RateLimitError(
+      429,
+      { error: { message: "still rate limited" } },
+      "rate limited",
+      new Headers({ "retry-after": "86400" }),
+    );
+    const handler = vi.fn().mockRejectedValue(err);
+    const wrapped = withRetry(handler, { sleep: () => Promise.resolve(), maxRetries: 0 });
+    let caught: unknown;
+    try {
+      await wrapped({});
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(RateLimitedError);
+    expect((caught as InstanceType<typeof RateLimitedError>).retryAfterMs).toBe(86_400_000);
+  });
+
+  it("also clamps the retry-after-ms (millisecond precision) variant", async () => {
+    const openai = await import("openai");
+    const err = new openai.RateLimitError(
+      429,
+      { error: { message: "rate limited" } },
+      "rate limited",
+      new Headers({ "retry-after-ms": "120000" }), // 120s, well over the 60s ceiling.
+    );
+    const handler = vi.fn().mockRejectedValueOnce(err).mockResolvedValueOnce({ ok: true });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const wrapped = withRetry(handler, { sleep, random: () => 0.5 });
+    await wrapped({});
+    expect(sleep).toHaveBeenCalledWith(MAX_RETRY_AFTER_MS);
   });
 });
 
