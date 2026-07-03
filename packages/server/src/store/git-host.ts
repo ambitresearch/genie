@@ -36,6 +36,7 @@ import {
 import {
   buildIgnoreMatcher,
   classifyFileContent,
+  isSafeKitId,
   parseGenieignore,
   sriSha256,
 } from "./kit-files.js";
@@ -280,6 +281,12 @@ export class GitHostKitStore implements KitStore {
   }
 
   async listFiles(kitId: KitId): Promise<KitFileEntry[]> {
+    // Same shared kitId rule LocalFs applies, so the two adapters cannot drift
+    // (AC1). A git host maps each kit to a SEPARATE repo — `repoPath("")` is a
+    // nonexistent repo, not a shared-root escape — so an unsafe id is simply a
+    // missing kit here; rejecting it up front keeps the contract identical
+    // (NotFoundError) without an extra 404 round-trip.
+    if (!isSafeKitId(kitId)) throw new NotFoundError("Kit", kitId);
     // Repo metadata doubles as the kit-existence check AND the `lastModified`
     // parity source (updated_at → created_at). See KitFileEntry's doc comment
     // for why git-host entries carry a per-repo, not per-file, timestamp.
@@ -425,6 +432,10 @@ export class GitHostKitStore implements KitStore {
   }
 
   async readFile(kitId: KitId, path: string): Promise<KitFileContent> {
+    // Reject an unsafe kitId up front, mirroring LocalFs (AC1/AC-SEC). Each kit
+    // is its own repo here so `""` cannot cross kits, but keeping the SAME guard
+    // on both adapters is what prevents the rule from silently drifting.
+    if (!isSafeKitId(kitId)) throw new NotFoundError("Kit", kitId);
     const entry = await this.fetchContentEntry(kitId, path);
 
     // Validate that this is a file, not a directory

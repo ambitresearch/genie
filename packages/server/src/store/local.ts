@@ -6,10 +6,12 @@
  * Each plan is a temp staging directory.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import type {
   ComponentEntry,
@@ -34,8 +36,8 @@ import {
 import {
   buildIgnoreMatcher,
   classifyFileContent,
+  isSafeKitId,
   parseGenieignore,
-  sriSha256,
   type IgnoreMatcher,
 } from "./kit-files.js";
 import { MANIFEST_PATH, selectComponents } from "./manifest.js";
@@ -93,15 +95,42 @@ async function walkKitFiles(
       continue;
     }
     if (!entry.isFile()) continue;
-    const [stats, bytes] = await Promise.all([stat(absolutePath), readFile(absolutePath)]);
+    // Size comes from stat; the SRI hash is STREAMED (createReadStream piped
+    // through the hash) rather than read into a full buffer, so peak hashing
+    // memory is bounded by the stream's highWaterMark (~64 KiB), not the
+    // largest file's size (AC2, DRO-581). The digest is byte-identical to the
+    // prior `sriSha256(await readFile(...))` — same bytes, same hash, same
+    // order — which the streamed-vs-full-buffer regression test pins down.
+    const [stats, hash] = await Promise.all([stat(absolutePath), hashFileStream(absolutePath)]);
     files.push({
       path: relativePath,
       size: stats.size,
-      hash: sriSha256(bytes),
+      hash,
       lastModified: stats.mtime.toISOString(),
     });
   }
   return files;
+}
+
+/**
+ * Compute a file's `sha256-<base64>` SRI hash by STREAMING it through the hash
+ * in chunks, so peak memory stays bounded by the read-stream buffer (default
+ * highWaterMark, ~64 KiB) rather than the largest single file's size (AC2).
+ *
+ * The digest is byte-identical to hashing the full buffer with
+ * `createHash("sha256").update(bytes)` (i.e. the shared `sriSha256(bytes)`):
+ * piping the stream feeds the SAME bytes to the SAME hash in the SAME order, so
+ * a >64 KiB multi-chunk file, an empty file (zero chunks), and a binary file
+ * all produce the identical digest — pinned by the streamed-vs-full-buffer
+ * regression test. `pipeline` surfaces a mid-read stream error as a rejection
+ * instead of leaving a dangling read stream. RFC G-5's byte-identical-across-
+ * adapters contract is preserved because the git-host adapter still calls
+ * `sriSha256` over the same bytes, and both forms yield the same string.
+ */
+async function hashFileStream(absolutePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  await pipeline(createReadStream(absolutePath), hash);
+  return `sha256-${hash.digest("base64")}`;
 }
 
 /** ENOENT (missing file) and ENOTDIR (a parent component is a file) both mean
@@ -156,6 +185,27 @@ export class LocalFsKitStore implements KitStore {
     return join(this.baseDir, kitId);
   }
 
+  /**
+   * Resolve a kitId to its on-disk directory for the READ verbs
+   * (`listFiles`/`readFile`), rejecting unsafe ids BEFORE the join (AC-SEC,
+   * DRO-581). This is the store-layer half of the shared `isSafeKitId` rule and
+   * the defense-in-depth guard behind each tool's own kitId check: a
+   * programmatic caller that bypasses the tool must not be able to pass `""`
+   * (whose `join(baseDir, "")` is the kits ROOT — letting a crafted `path` like
+   * `other-kit/secret.txt` read a SIBLING kit), `.`/`..`, or a separator.
+   *
+   * An unsafe id names no valid kit, so it surfaces as the SAME `NotFoundError`
+   * a genuinely-missing kit would — this never leaks a sibling's bytes and adds
+   * no new error type to the `KitStore` contract (AC4). The write/plan verbs
+   * (`createKit`/`deleteFile`/`openPlan`) keep using `kitDir` directly: their
+   * ids are server-minted or already plan-gated, and their behavior is
+   * unchanged.
+   */
+  private safeKitDir(kitId: KitId): string {
+    if (!isSafeKitId(kitId)) throw new NotFoundError("Kit", kitId);
+    return this.kitDir(kitId);
+  }
+
   private kitMetaPath(kitId: KitId): string {
     return join(this.kitDir(kitId), ".kit.json");
   }
@@ -197,7 +247,7 @@ export class LocalFsKitStore implements KitStore {
   }
 
   async listFiles(kitId: KitId): Promise<KitFileEntry[]> {
-    const dir = this.kitDir(kitId);
+    const dir = this.safeKitDir(kitId);
     try {
       await stat(dir);
     } catch {
@@ -257,8 +307,9 @@ export class LocalFsKitStore implements KitStore {
   }
 
   async readFile(kitId: KitId, path: string): Promise<KitFileContent> {
-    // First check if kit exists
-    const kitDir = this.kitDir(kitId);
+    // Reject an unsafe kitId (incl. "" → the kits root, which would let `path`
+    // read across sibling kits) BEFORE resolving the kit dir (AC-SEC).
+    const kitDir = this.safeKitDir(kitId);
     try {
       await stat(kitDir);
     } catch {

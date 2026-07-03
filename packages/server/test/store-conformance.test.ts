@@ -148,6 +148,27 @@ function kitStoreContract(
       await expect(store.readFile(kit.id, "nope.txt")).rejects.toThrow(NotFoundError);
     });
 
+    // AC-SEC (DRO-581): an empty or otherwise-unsafe kitId must never resolve to
+    // the kits root (LocalFs) or a stray repo (GitHost) and leak a SIBLING kit's
+    // bytes. On LocalFs, `kitDir("")` === the kits root, so a crafted `path`
+    // like `victim/secret.txt` would escape into the sibling; on GitHost each
+    // kit is its own repo so `""` is simply missing — both adapters must reject
+    // identically with NotFoundError and surface none of the secret.
+    it("rejects an empty/unsafe kitId instead of reading across sibling kits", async () => {
+      const victim = await store.createKit("victim-kit");
+      await seedFile(victim.id, "secret.txt", "cross-kit-secret");
+
+      for (const kitId of ["", ".", "..", "a/b", "..\\x"]) {
+        // Aim `path` straight at the sibling so a root-resolving kitId WOULD
+        // reach it if the guard were absent.
+        await expect(store.readFile(kitId, `${victim.id}/secret.txt`)).rejects.toThrow(
+          NotFoundError,
+        );
+        // listFiles shares the same guard.
+        await expect(store.listFiles(kitId)).rejects.toThrow(NotFoundError);
+      }
+    });
+
     // AC9 — both LocalFsStore and GitHostStore implement listComponents with
     // identical empty/not-found semantics. (Populated-manifest ordering is
     // covered per-adapter: the tool suite for LocalFs, a git-host-specific test
