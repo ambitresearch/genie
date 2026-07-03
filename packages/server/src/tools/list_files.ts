@@ -180,6 +180,15 @@ function buildIgnoreMatcher(patterns: string[]): IgnoreMatcher {
     segmentMatcher("node_modules"),
     segmentMatcher(".git"),
     segmentMatcher("dist"),
+    // write_files (M1-08) stages its per-call atomic-rename scratch space at
+    // `<localDir>/.genie-tmp/<random>/` (moved inside localDir, rather than
+    // os.tmpdir(), specifically so the commit-phase rename() stays on one
+    // filesystem — see write_files.ts's stageAndCommit doc comment). It is
+    // always removed once the call finishes, but hiding it here means a kit
+    // listing taken during a large concurrent write (or after a hard crash
+    // mid-call, which would leave an orphaned subdir behind) never surfaces
+    // genie's own bookkeeping as if it were kit content.
+    segmentMatcher(".genie-tmp"),
     ...patterns.map(patternMatcher),
   ];
   return (path) => matchers.some((matcher) => matcher(path));

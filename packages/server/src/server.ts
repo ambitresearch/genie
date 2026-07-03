@@ -14,6 +14,7 @@ import { registerListKits } from "./tools/list_kits.js";
 import { registerListComponents } from "./tools/list_components.js";
 import { registerPlan } from "./tools/plan.js";
 import { registerDeleteFilesTool } from "./tools/delete_files.js";
+import { registerWriteFilesTool } from "./tools/write_files.js";
 import { LocalFsKitStore } from "./store/local.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
 
@@ -50,7 +51,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
       "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
       "create/list/get/delete/bind_kit, conjure_screen, plan creation (the capability-grant " +
-      "boundary for write/delete verbs), and delete_files (plan-gated file deletion).)",
+      "boundary for write/delete verbs), write_files, and delete_files.)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -119,6 +120,17 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   registerReadFile(server, kitsRoot);
   registerListFilesTool(server, new KitFileStore(kitsRoot));
 
+  // Plan capability-grant boundary (M1-07). Locks writes/deletes/localDir and
+  // issues a planId; write_files (below) validates every call against it.
+  // `plans/index.ts` owns its own persistence root (`${GENIE_HOME}/plans`) and
+  // TTL (`GENIE_PLAN_TTL`) internally, so there's no store instance to thread
+  // through here — both tools import the same module singleton.
+  registerPlan(server);
+
+  // write_files (M1-08): validates planId + writes-glob membership via
+  // `plans/index.ts`, then commits atomically. Blocked-by M1-07, now shipped.
+  registerWriteFilesTool(server);
+
   // Advisory telemetry facet (M1-12): persists validation counts + emits
   // Prometheus metrics. No planId required (read-side telemetry).
   registerValidate(
@@ -126,10 +138,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     options.reportsDir ?? process.env.GENIE_REPORTS_DIR ?? join(process.cwd(), ".genie", "reports"),
   );
 
-  registerPlan(server);
-
-  // Plan-gated destructive verb: deletes are authorized by a plan's `deletes`
-  // globs and hit the SAME kit tree read_file/list_files read (kitsRoot).
+  // Plan-gated destructive verb (M1-09): deletes are authorized by a plan's
+  // `deletes` globs and hit the SAME kit tree read_file/list_files read
+  // (kitsRoot). Shares the M1-07 plan boundary already registered above.
   registerDeleteFilesTool(server, kitsRoot);
 
   return server;
