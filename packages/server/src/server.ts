@@ -82,8 +82,9 @@ export interface CreateServerOptions {
    * still to-build (tracked follow-up); this seam is what lets it be dropped in
    * once it exists, and lets tests substitute a fake. `delete_project` now
    * routes through this store too (M1-14a-1 / DRO-531); the kit-file verbs
-   * (`read_file`/`list_files`/`delete_files`) route through `kitStore` as of
-   * M1-14a-1a / DRO-540, leaving `write_files` (kitsRoot) as the last holdout.
+   * (`read_file`/`list_files`/`delete_files` via DRO-540, and `write_files` via
+   * M1-14a-1b / DRO-565) all now route through `kitStore` — no fs-native holdout
+   * remains.
    */
   projectStore?: ProjectStore;
 }
@@ -205,10 +206,13 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // plan tool.
   registerPlan(server);
 
-  // write_files (M1-08): validates planId + writes-glob membership via the
-  // M1-13 plan-guard middleware (one shared seam with delete_files, below),
-  // then commits atomically. Blocked-by M1-07, now shipped.
-  registerWriteFilesTool(server);
+  // write_files (M1-08; store-routed in M1-14a-1b / DRO-565): validates planId +
+  // writes-glob membership via the M1-13 plan-guard middleware (one shared seam
+  // with delete_files, below), then commits the batch atomically into the kit
+  // via the injected `kitStore.writeFiles(plan.kitId, ops)` — the same store the
+  // read/list/delete verbs route through. `plan.localDir` is now only the
+  // local SOURCE base for `localPath` reads; the kit is the write destination.
+  registerWriteFilesTool(server, kitStore);
 
   // Advisory telemetry facet (M1-12): persists validation counts + emits
   // Prometheus metrics. No planId required (read-side telemetry).

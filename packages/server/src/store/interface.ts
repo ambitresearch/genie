@@ -104,6 +104,26 @@ export type FileOp =
   | { kind: "write"; path: string; content: string }
   | { kind: "delete"; path: string };
 
+/**
+ * A single already-authorized file write for `KitStore.writeFiles`.
+ *
+ * The `write_files` TOOL resolves and validates every input before building
+ * these ops — glob-gating against the plan's `writes`, duplicate-path
+ * rejection, the byte-cap, and `localPath` containment/streaming decisions all
+ * happen tool-side (mirroring how `delete_files` keeps plan-gating out of the
+ * store). By the time an op reaches the store it is a bare "put these bytes at
+ * this kit-relative path", sourced one of two ways:
+ *   - `content`    — inline bytes already in memory (decoded from `data`).
+ *   - `sourcePath` — an ABSOLUTE, already-containment-checked path the store
+ *     streams from (`createReadStream`), so a large `localPath` upload is never
+ *     fully buffered in memory (the LocalFs "streaming" property the issue
+ *     calls out). The tool guarantees `sourcePath` is inside the plan's
+ *     `localDir`; the store trusts it and only streams.
+ * `path` is kit-relative (no leading slash, no `..` segment — the tool rejects
+ * those); the store additionally guards traversal as defense-in-depth.
+ */
+export type WriteOp = { path: string; content: Buffer } | { path: string; sourcePath: string };
+
 // ─── Error types ─────────────────────────────────────────────────────────────
 
 /** Thrown when a kit already exists with the given ID. */
@@ -120,9 +140,7 @@ export class FileTooLargeError extends Error {
     public readonly path: string,
     public readonly actualBytes: number,
   ) {
-    super(
-      `File "${path}" is ${actualBytes} bytes, exceeding the 256 KiB (262144 bytes) limit.`,
-    );
+    super(`File "${path}" is ${actualBytes} bytes, exceeding the 256 KiB (262144 bytes) limit.`);
     this.name = "FileTooLargeError";
   }
 }
@@ -146,6 +164,51 @@ export class MissingCredentialError extends Error {
         `Set it as an environment variable before starting genie.`,
     );
     this.name = "MissingCredentialError";
+  }
+}
+
+/**
+ * A file in a `KitStore.writeFiles` batch could not be committed; the whole
+ * call was rolled back and the kit tree restored to its pre-call state.
+ *
+ * Lives in the store layer (not the tool) because the store now owns the
+ * atomic write transaction — `LocalFsKitStore` throws this from its
+ * rename-to-temp/rename-back commit, `GitHostKitStore` from a failed
+ * contents-API write it then unwinds. The `write_files` tool imports it to map
+ * onto its wire-error taxonomy (code `WriteFailedError`).
+ */
+export class WriteFailedError extends Error {
+  readonly code = "WriteFailedError";
+  constructor(
+    public readonly path: string,
+    public readonly cause: string,
+  ) {
+    super(`Failed to write "${path}": ${cause}. The call was rolled back; no files were written.`);
+    this.name = "WriteFailedError";
+  }
+}
+
+/**
+ * A `KitStore.writeFiles` commit failed AND the rollback itself could not fully
+ * undo/restore every step, so the kit tree is NOT guaranteed to match its
+ * pre-call state (unlike the ordinary `WriteFailedError` path, which guarantees
+ * a clean rollback). Surfaced instead of silently swallowing the rollback
+ * failure and reporting the original commit error as if rollback had fully
+ * succeeded (a Copilot review finding on PR #106, preserved through the store
+ * re-plumb).
+ */
+export class RollbackIncompleteError extends Error {
+  readonly code = "RollbackIncompleteError";
+  constructor(
+    public readonly commitError: string,
+    public readonly rollbackFailures: string[],
+  ) {
+    super(
+      `write_files failed (${commitError}) AND rollback could not fully restore the ` +
+        `original tree: ${rollbackFailures.join("; ")}. The destination may be left in ` +
+        "a partially-modified state — verify manually before retrying.",
+    );
+    this.name = "RollbackIncompleteError";
   }
 }
 
@@ -188,10 +251,7 @@ export interface KitStore {
    * Returns an array of component metadata sorted by group ASC, then name ASC, then path ASC (for deterministic ordering when group + name collide).
    * Throws NotFoundError if the kit does not exist.
    */
-  listComponents(params: {
-    kitId: KitId;
-    group?: string;
-  }): Promise<ComponentEntry[]>;
+  listComponents(params: { kitId: KitId; group?: string }): Promise<ComponentEntry[]>;
 
   /**
    * Read a file from a kit as rich content (content + encoding + mimeType).
@@ -221,6 +281,40 @@ export interface KitStore {
   deleteFile(kitId: KitId, path: string): Promise<{ existed: boolean }>;
 
   /**
+   * Atomically write a batch of files into a kit's readable surface (the
+   * LocalFs kit dir / the git-host default branch — the SAME surface
+   * `readFile`/`listFiles`/`deleteFile` see, NOT a plan branch). Returns the
+   * kit-relative paths written, in input order.
+   *
+   * All-or-nothing (the shipped `write_files` AC10 contract, preserved through
+   * the store re-plumb): either every op lands, or the kit tree is restored to
+   * its exact pre-call state and the failure is surfaced. Two failure shapes:
+   *   - `WriteFailedError`        — a file could not be committed AND rollback
+   *     fully restored the tree (clean failure; nothing landed).
+   *   - `RollbackIncompleteError` — the commit failed AND rollback could not
+   *     fully restore the tree (the kit may be partially modified).
+   *
+   * Per-adapter realization:
+   *   - `LocalFsKitStore`  — stage every op under `<kitDir>/.genie-tmp/<rand>/`,
+   *     back up existing destinations, rename staged files in, and on any
+   *     failure remove what committed + rename the backups back (same-filesystem
+   *     rename = atomic). Streams `sourcePath` ops so large uploads never fully
+   *     buffer.
+   *   - `GitHostKitStore`  — commit each op to the default branch via the
+   *     contents API, capturing prior blob state first; on failure, re-PUT the
+   *     captured state / delete created files to unwind. A git host has no
+   *     rename transaction, so atomicity is best-effort-with-surfaced-failures
+   *     rather than filesystem-atomic — the same contract shape, honoured with
+   *     the primitive the host offers.
+   *
+   * Plan-gating (which paths may be written, the byte cap, `localPath`
+   * containment, duplicate rejection) is NOT a store concern — it stays in the
+   * `write_files` tool, exactly as `deleteFile` keeps `deletes`-glob gating in
+   * `delete_files`. The store trusts the resolved `WriteOp[]` and only commits.
+   */
+  writeFiles(kitId: KitId, ops: WriteOp[]): Promise<{ writtenPaths: string[] }>;
+
+  /**
    * Create a new kit with the given name and metadata. Returns its metadata.
    * Throws KitAlreadyExistsError if a kit with the same ID already exists.
    */
@@ -230,10 +324,7 @@ export interface KitStore {
    * Open a plan (staging area) for a kit. Applies initial writes/deletes.
    * Returns a planId that can be used with commitPlan/closePlan.
    */
-  openPlan(
-    kitId: KitId,
-    ops: FileOp[],
-  ): Promise<PlanId>;
+  openPlan(kitId: KitId, ops: FileOp[]): Promise<PlanId>;
 
   /**
    * Commit additional file operations to an existing plan.

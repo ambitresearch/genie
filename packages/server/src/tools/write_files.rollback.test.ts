@@ -1,19 +1,22 @@
 /**
  * Regression coverage for a Copilot review finding on PR #106: the rollback
- * path in `commitStaged` (write_files.ts) could itself fail partway through
- * (e.g. `rm()`/`rename()` hitting a permission error during undo/restore),
- * and the original code silently swallowed that second failure — aborting
- * the rollback loop early and reporting only the original commit error, as
- * if AC10's "tree ends up exactly as it was before the call" guarantee had
- * been honored when it may not have been.
+ * path in the write transaction could itself fail partway through (e.g.
+ * `rm()`/`rename()` hitting a permission error during undo/restore), and the
+ * original code silently swallowed that second failure — aborting the rollback
+ * loop early and reporting only the original commit error, as if AC10's "tree
+ * ends up exactly as it was before the call" guarantee had been honored when it
+ * may not have been.
  *
- * This needs a SECOND, independently-triggerable filesystem failure during
- * the rollback loop itself (on top of the first failure that triggers the
- * rollback in the first place) — real-fs permission bits alone can't easily
- * target "fail only this specific undo step," so this file uses `vi.mock`
- * to inject a precise, path-targeted failure into `node:fs/promises.rm`.
- * Kept in its own file (rather than write_files.test.ts) because `vi.mock`
- * at module scope would otherwise affect every other test in that file.
+ * Post-DRO-565 the transaction lives in `LocalFsKitStore` (store/local.ts),
+ * which still imports `rm` from `node:fs/promises` — so the same `vi.mock`
+ * fault injection reaches it. This needs a SECOND, independently-triggerable
+ * filesystem failure during the rollback loop itself (on top of the first
+ * failure that triggers the rollback in the first place) — real-fs permission
+ * bits alone can't easily target "fail only this specific undo step," so this
+ * file uses `vi.mock` to inject a precise, path-targeted failure into
+ * `node:fs/promises.rm`. Kept in its own file (rather than write_files.test.ts)
+ * because `vi.mock` at module scope would otherwise affect every other test in
+ * that file.
  */
 import { mkdtemp, rm as realRm, mkdir, writeFile, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -40,17 +43,26 @@ vi.mock("node:fs/promises", async () => {
 
 const { createPlan } = await import("../plans/index.js");
 const { writeFiles } = await import("./write_files.js");
+const { LocalFsKitStore } = await import("../store/local.js");
+
+const KIT_ID = "k";
 
 async function tempDir(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), prefix));
 }
 
 describe("writeFiles — rollback-incomplete path (Copilot review finding)", () => {
-  let localDir: string;
+  let localDir: string; // localPath source base
+  let kitsRoot: string;
+  let kitDir: string; // write destination = <kitsRoot>/<KIT_ID>
+  let store: InstanceType<typeof LocalFsKitStore>;
   let genieHome: string;
 
   beforeEach(async () => {
     localDir = await tempDir("genie-wf-rb-local-");
+    kitsRoot = await tempDir("genie-wf-rb-kits-");
+    kitDir = join(kitsRoot, KIT_ID);
+    store = new LocalFsKitStore(kitsRoot);
     genieHome = await tempDir("genie-wf-rb-home-");
     process.env["GENIE_HOME"] = genieHome;
     failRmOnce = new Set();
@@ -60,19 +72,20 @@ describe("writeFiles — rollback-incomplete path (Copilot review finding)", () 
     delete process.env["GENIE_HOME"];
     // Use the real rm directly (not the mocked module) for guaranteed cleanup.
     await realRm(localDir, { recursive: true, force: true });
+    await realRm(kitsRoot, { recursive: true, force: true });
     await realRm(genieHome, { recursive: true, force: true });
   });
 
   it("surfaces RollbackIncompleteError when undoing a committed file fails, instead of reporting a clean rollback", async () => {
-    const plan = await createPlan("k", ["dest/**"], [], localDir);
-    await mkdir(join(localDir, "dest"), { recursive: true });
+    const plan = await createPlan(KIT_ID, ["dest/**"], [], localDir);
+    await mkdir(join(kitDir, "dest"), { recursive: true });
 
     // Neither destination pre-exists, so the backup phase is a no-op for
     // both — isolating this test to exactly one failure mode: undoing an
     // already-committed file (the `rm(destPath, ...)` call in the rollback
     // loop), independent of the separate backup-restore failure mode.
-    const committedPath = join(localDir, "dest", "a.html"); // commits, then rollback tries to rm() it
-    const failingPath = join(localDir, "dest", "b.html"); // fails to commit, triggering rollback
+    const committedPath = join(kitDir, "dest", "a.html"); // commits, then rollback tries to rm() it
+    const failingPath = join(kitDir, "dest", "b.html"); // fails to commit, triggering rollback
 
     // b.html's destination directory doesn't exist as a normal dir write
     // target we can easily break via chmod without also breaking a.html
@@ -81,7 +94,7 @@ describe("writeFiles — rollback-incomplete path (Copilot review finding)", () 
     // independent failures (commit failure, then rollback failure) each
     // deterministic and clearly attributable.
     const { chmod } = await import("node:fs/promises");
-    const lockedDir = join(localDir, "dest", "locked");
+    const lockedDir = join(kitDir, "dest", "locked");
     await mkdir(lockedDir, { recursive: true });
     await chmod(lockedDir, 0o555);
 
@@ -91,7 +104,7 @@ describe("writeFiles — rollback-incomplete path (Copilot review finding)", () 
 
     try {
       await expect(
-        writeFiles({
+        writeFiles(store, {
           planId: plan.planId,
           files: [
             { path: "dest/a.html", data: "new a" }, // commits successfully
@@ -117,18 +130,18 @@ describe("writeFiles — rollback-incomplete path (Copilot review finding)", () 
     // WriteFailedError (already covered via chmod-based fault injection in
     // write_files.test.ts's AC10 tests) — RollbackIncompleteError must not
     // fire when rollback genuinely succeeds in full.
-    const plan = await createPlan("k", ["dest/**"], [], localDir);
-    await mkdir(join(localDir, "dest"), { recursive: true });
-    await writeFile(join(localDir, "dest", "a.html"), "original a", "utf-8");
+    const plan = await createPlan(KIT_ID, ["dest/**"], [], localDir);
+    await mkdir(join(kitDir, "dest"), { recursive: true });
+    await writeFile(join(kitDir, "dest", "a.html"), "original a", "utf-8");
 
     const { chmod } = await import("node:fs/promises");
-    const lockedDir = join(localDir, "dest", "locked");
+    const lockedDir = join(kitDir, "dest", "locked");
     await mkdir(lockedDir, { recursive: true });
     await chmod(lockedDir, 0o555);
 
     try {
       await expect(
-        writeFiles({
+        writeFiles(store, {
           planId: plan.planId,
           files: [
             { path: "dest/a.html", data: "new a" },
@@ -141,6 +154,6 @@ describe("writeFiles — rollback-incomplete path (Copilot review finding)", () 
     }
 
     // Full rollback succeeded: original content restored, no leftover.
-    await expect(readFile(join(localDir, "dest", "a.html"), "utf-8")).resolves.toBe("original a");
+    await expect(readFile(join(kitDir, "dest", "a.html"), "utf-8")).resolves.toBe("original a");
   });
 });
