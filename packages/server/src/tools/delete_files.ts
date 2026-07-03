@@ -20,10 +20,11 @@
  */
 
 import { unlink } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getPlan, pathMatchesGlobs, PlanNotFoundError } from "../plans/index.js";
+import { PlanNotFoundError } from "../plans/index.js";
+import { PlanGuardError, runPlanGuard } from "../middleware/plan-guard.js";
 
 export const DELETE_FILES_TOOL_NAME = "mcp__genie__delete_files";
 
@@ -78,21 +79,29 @@ export function sortPathsLongestFirst(paths: string[]): string[] {
 }
 
 /**
- * Reject any path containing a `.` or `..` segment (on either separator).
+ * Map a shared plan-guard failure onto delete_files' own error taxonomy, so the
+ * tool's public contract is unchanged after the M1-13 refactor. The guard's
+ * per-path reasons (dot-segment, not-in-plan, escapes-boundary) and the
+ * kitId-escape case all surface as this tool's `PathOutsidePlanError`; a
+ * plan-not-found/expired surfaces as `PlanNotFoundError` (the same type the
+ * MCP handler already renders). A missing planId can't occur here (the Zod
+ * schema requires it before this runs) but is mapped defensively.
  *
- * `pathMatchesGlobs` checks the RAW request string, but deletion resolves it
- * (`resolve(kitRoot, path)`). Those two views can disagree: a dot-segment input
- * like `allowed/../secret.txt` matches a glob such as `allowed/../*.txt` yet
- * resolves to `kitRoot/secret.txt` — a file the plan never meant to authorize.
- * (Plain `allowed/**` does not match it under micromatch's default handling of
- * `..`, but relying on that incidental behaviour is brittle across micromatch
- * versions and glob shapes.) Normalizing dot-segments away *before* both the
- * glob check and the resolve makes plan gating depend only on the literal
- * authorized path — never on how micromatch or `path.resolve` treats traversal.
- * Mirrors the read side, where `read_file` rejects a `kitId` containing `..`.
+ * Any non-guard error is returned unchanged for the caller to rethrow.
  */
-function hasDotSegment(path: string): boolean {
-  return path.split(/[/\\]/).some((segment) => segment === "." || segment === "..");
+function mapGuardError(error: unknown): Error {
+  if (!(error instanceof PlanGuardError)) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+  switch (error.reason) {
+    case "PLAN_NOT_FOUND":
+    case "MISSING_PLAN_ID":
+      return new PlanNotFoundError(error.path ?? "");
+    case "PATH_DOT_SEGMENT":
+    case "PATH_NOT_IN_PLAN":
+    case "PATH_ESCAPES_PLAN":
+      return new DeleteFilesError("PathOutsidePlanError", error.message, error.path);
+  }
 }
 
 /** ENOENT (missing file) and ENOTDIR (a parent component is a file) both mean
@@ -118,7 +127,8 @@ export async function deleteFiles(
   args: DeleteFilesArgs,
 ): Promise<DeleteFilesResult> {
   // 1. Validate argument shape (AC2). A malformed planId / empty paths array is
-  //    an InvalidArguments error, never a silent no-op.
+  //    an InvalidArguments error, never a silent no-op. (Shape validation stays
+  //    here — the plan-guard middleware validates plan+paths, not arg schema.)
   let parsed: DeleteFilesArgs;
   try {
     parsed = deleteFilesArgsSchema.parse(args);
@@ -133,68 +143,32 @@ export async function deleteFiles(
     throw error;
   }
 
-  // 2. Resolve the plan. Unknown / expired / malformed-UUID planIds throw
-  //    PlanNotFoundError (surfaced to the client, not swallowed here).
-  const plan = await getPlan(parsed.planId);
+  // 2. Plan + path authorization (M1-13 AC4): funnel through the SHARED
+  //    plan-guard middleware so write_files and delete_files enforce identical
+  //    plan semantics. The guard resolves the plan (unknown/expired →
+  //    PLAN_NOT_FOUND), verifies the kit root stays inside kitsRoot (defence in
+  //    depth against a traversal kitId), and checks every path: no dot-segment,
+  //    matches the plan's `deletes`, resolves inside the kit root. We map its
+  //    typed reasons back onto delete_files' own error taxonomy so the tool's
+  //    public contract (PathOutsidePlanError / PlanNotFoundError shapes the
+  //    conformance suite asserts) is unchanged.
   const resolvedKitsRoot = resolve(kitsRoot);
+  let guarded;
+  try {
+    guarded = await runPlanGuard(parsed, {
+      kind: "delete",
+      getPlanId: (a) => a.planId,
+      getPaths: (a) => a.paths,
+      resolveBoundary: (plan) => resolve(resolvedKitsRoot, plan.kitId),
+      rootForBoundary: resolvedKitsRoot,
+    });
+  } catch (error) {
+    throw mapGuardError(error);
+  }
+
+  const plan = guarded.plan;
   const kitRoot = resolve(resolvedKitsRoot, plan.kitId);
-
-  // 2a. Defense in depth: `plan` accepts `kitId: z.string().min(1)` with no
-  //     traversal guard (unlike read_file's kitId check) and createPlan stores
-  //     it verbatim, so a plan authored with e.g. `kitId: ".."` resolves a
-  //     kitRoot OUTSIDE kitsRoot. Every per-path containment check below is
-  //     computed relative to kitRoot, so an escaped kitRoot would let in-bounds
-  //     paths unlink files outside the kit tree. As the first destructive
-  //     consumer, verify kitRoot stays within kitsRoot before deleting anything.
-  const kitRel = relative(resolvedKitsRoot, kitRoot);
-  const kitRootEscapes = kitRel === ".." || kitRel.startsWith(`..${sep}`) || isAbsolute(kitRel);
-  if (kitRootEscapes) {
-    throw new DeleteFilesError(
-      "PathOutsidePlanError",
-      `Plan kitId "${plan.kitId}" resolves outside the kits root.`,
-      plan.kitId,
-    );
-  }
-
-  // 3. De-duplicate while preserving first-seen order — a path repeated in the
-  //    request must not appear twice in the result, nor in both result arrays.
-  const uniquePaths = [...new Set(parsed.paths)];
-
-  // 4. Atomic pre-flight (AC3). EVERY path must both (a) match a `deletes` glob
-  //    and (b) stay inside the kit root. If any path fails, throw before
-  //    deleting anything — so an out-of-plan path can never take an in-plan
-  //    sibling down with it. A traversal path is, by definition, outside the
-  //    plan → the same PathOutsidePlanError.
-  for (const path of uniquePaths) {
-    // 4a. Normalize-first defense: a `.`/`..` segment lets the raw-string glob
-    //     check and the resolved unlink target disagree (see hasDotSegment).
-    //     Reject before matching so gating never depends on how micromatch or
-    //     path.resolve treats traversal.
-    if (hasDotSegment(path)) {
-      throw new DeleteFilesError(
-        "PathOutsidePlanError",
-        `Path "${path}" contains a "." or ".." segment.`,
-        path,
-      );
-    }
-    if (!pathMatchesGlobs(path, plan.deletes)) {
-      throw new DeleteFilesError(
-        "PathOutsidePlanError",
-        `Path "${path}" is not covered by the plan's deletes.`,
-        path,
-      );
-    }
-    const target = resolve(kitRoot, path);
-    const rel = relative(kitRoot, target);
-    const escapes = rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
-    if (escapes) {
-      throw new DeleteFilesError(
-        "PathOutsidePlanError",
-        `Path "${path}" resolves outside the kit root.`,
-        path,
-      );
-    }
-  }
+  const uniquePaths = guarded.paths;
 
   // 5. Delete longest-first (files before their containing directories).
   const deleted = new Set<string>();

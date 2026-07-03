@@ -1462,6 +1462,40 @@ The server validates the LLM endpoint response against this schema after parsing
 - There are no asset-registration verbs to track — the `@genie` marker is the
   registration (D-A); `register_assets` / `unregister_assets` are dropped.
 
+#### 7.6.1 Plan-vs-write guard middleware (M1-13)
+
+Every plan-gated verb (`write_files`, `delete_files`, and any future
+`register`/`unregister`) must answer the same question before it acts: *is this
+`planId` valid, and does every requested path stay inside what the plan
+authorised?* Reimplementing that per verb lets the contract drift — and, worse,
+lets a security fix to one verb silently fail to protect the others (the
+dot-segment traversal guard first shipped inline in `delete_files` is exactly
+this hazard). M1-13 centralises the check into one module:
+`packages/server/src/middleware/plan-guard.ts`.
+
+- **`runPlanGuard(args, options)`** is the single implementation of the four
+  checks: (a) `planId` present, (b) it resolves to a live plan, (c) that plan is
+  unexpired (b+c delegated to M1-07's `getPlan`), and (d) every de-duplicated
+  path has no `.`/`..` segment, matches the relevant allow-list (`writes` for
+  write-class verbs, `deletes` for delete-class), and resolves **inside** the
+  plan boundary (`localDir` for writes, `resolve(kitsRoot, kitId)` for deletes).
+  A delete-class guard also verifies the kit root itself hasn't escaped
+  `kitsRoot` via a traversal `kitId` (defence in depth). It returns a validated
+  `{ plan, paths }` context so the caller never re-resolves or re-checks.
+- **`withPlanGuard(handler, options)`** is the higher-order wrapper (AC1): it
+  runs the guard, logs on rejection, then either invokes `handler(args, ctx)` or
+  short-circuits with an error.
+- **Error mapping.** `write_files` and `delete_files` ship security-reviewed,
+  test-locked error contracts (a path outside the plan is a structured
+  `PathOutsidePlanError`, not a bare `-32602`). So the guard throws a typed
+  `PlanGuardError { reason, path? }`, and each tool maps that reason back onto
+  its own taxonomy — the public contract is unchanged. Verbs with no legacy
+  contract can instead take the middleware's default rendering: MCP `-32602`
+  (`InvalidParams`) with a machine-readable `data.reason`.
+- **Audit.** Every rejection emits a structured `plan.guard.reject` line to
+  **stderr** (never stdout — that is the JSON-RPC stream on the stdio
+  transport), carrying `{ planId, reason, path? }` and never any file contents.
+
 ### 7.7 Git host conventions
 
 Reference values for the **git-host** StorageProvider (any git host — local FS /

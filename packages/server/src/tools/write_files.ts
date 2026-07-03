@@ -46,7 +46,8 @@ import { pipeline } from "node:stream/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { getPlan, isPathInsideLocalDir, pathMatchesGlobs, PlanNotFoundError } from "../plans/index.js";
+import { isPathInsideLocalDir, PlanNotFoundError } from "../plans/index.js";
+import { PlanGuardError, runPlanGuard } from "../middleware/plan-guard.js";
 
 export const WRITE_FILES_TOOL_NAME = "mcp__genie__write_files";
 
@@ -211,6 +212,32 @@ interface WriteFilesArgs {
   files: FileInput[];
 }
 
+/**
+ * Map a shared plan-guard failure onto write_files' own error taxonomy, so the
+ * tool's public contract is unchanged after the M1-13 refactor. A guard
+ * plan-not-found/expired (and, defensively, a missing planId — which the Zod
+ * schema normally rejects first) becomes `PlanNotFoundError`; every per-path
+ * reason (dot-segment, not-in-plan, escapes-localDir) becomes
+ * `PathOutsidePlanError` with the offending path — exactly the errors this
+ * tool's handler and conformance tests already expect.
+ *
+ * Any non-guard error is returned unchanged for the caller to rethrow.
+ */
+function mapGuardError(error: unknown): Error {
+  if (!(error instanceof PlanGuardError)) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+  switch (error.reason) {
+    case "PLAN_NOT_FOUND":
+    case "MISSING_PLAN_ID":
+      return new PlanNotFoundError(error.path ?? "");
+    case "PATH_DOT_SEGMENT":
+    case "PATH_NOT_IN_PLAN":
+    case "PATH_ESCAPES_PLAN":
+      return new PathOutsidePlanError(error.path ?? "");
+  }
+}
+
 /** Structured tool-error payload shape shared by every branch below. */
 function toolError(payload: Record<string, unknown>) {
   return {
@@ -339,41 +366,35 @@ export async function writeFiles(
   args: WriteFilesArgs,
   env: Record<string, string | undefined> = process.env,
 ): Promise<WriteFilesResult> {
-  // AC5 — planId must exist and be unexpired. Propagates PlanNotFoundError as-is.
-  const plan = await getPlan(args.planId);
-
-  // AC3 — file-count ceiling, before any per-file validation.
+  // AC3 — file-count ceiling, before any per-file validation or plan work. A
+  // batch over the cap is a TooManyFilesError regardless of plan validity.
   if (args.files.length > MAX_FILES_PER_CALL) {
     throw new TooManyFilesError(args.files.length, MAX_FILES_PER_CALL);
   }
 
-  // AC4 — every path must match the plan's writes globs.
-  for (const file of args.files) {
-    if (!pathMatchesGlobs(file.path, plan.writes)) {
-      throw new PathOutsidePlanError(file.path);
-    }
+  // AC4/AC5 + security: plan resolution and every `path`'s authorization funnel
+  // through the SHARED plan-guard middleware (M1-13) so write_files and
+  // delete_files enforce identical plan semantics from ONE implementation. The
+  // guard checks: planId exists + unexpired (→ PLAN_NOT_FOUND), and for every
+  // path — no dot-segment, matches the plan's `writes`, and resolves INSIDE the
+  // plan's localDir. That last containment check is the Copilot PR #106 finding
+  // (a permissive glob like `**` matches "/etc/passwd", but resolve(localDir,
+  // "/etc/passwd") escapes localDir) — now enforced centrally for both verbs.
+  // Guard reasons map back onto write_files' own taxonomy (PathOutsidePlanError
+  // / PlanNotFoundError) so the tool's public contract is byte-for-byte
+  // unchanged and its conformance assertions still hold.
+  let guarded;
+  try {
+    guarded = await runPlanGuard(args, {
+      kind: "write",
+      getPlanId: (a) => a.planId,
+      getPaths: (a) => a.files.map((f) => f.path),
+      resolveBoundary: (plan) => resolve(plan.localDir),
+    });
+  } catch (error) {
+    throw mapGuardError(error);
   }
-
-  // Security (Copilot review finding on PR #106; RFC §10 T-13 — "Path
-  // traversal in write_files overwrites /etc/passwd"): `path` is
-  // matched against the plan's glob patterns above, but a glob match alone
-  // does NOT guarantee the resolved destination stays inside `localDir` — an
-  // absolute path like "/etc/passwd" matches a permissive glob such as `**`
-  // under micromatch (confirmed empirically: `isMatch("/etc/passwd", ["**"])`
-  // is `true`), and `resolve(localDir, "/etc/passwd")` then returns
-  // `/etc/passwd` verbatim, since `path.resolve` treats an absolute second
-  // argument as an override rather than joining it. A `../`-traversal `path`
-  // is already blocked by micromatch's own glob semantics (confirmed: `**`
-  // does not match `../x`), so this second check is specifically the
-  // absolute-path gap, not a redundant traversal re-check. Reuses
-  // `isPathInsideLocalDir` — the same containment helper `localPath` (AC6)
-  // already goes through — so `path` and `localPath` share one containment
-  // guarantee instead of the destination trusting glob-membership alone.
-  for (const file of args.files) {
-    if (!isPathInsideLocalDir(file.path, plan.localDir)) {
-      throw new PathOutsidePlanError(file.path);
-    }
-  }
+  const plan = guarded.plan;
 
   // AC7 — exactly one of localPath/data per file.
   for (const file of args.files) {
