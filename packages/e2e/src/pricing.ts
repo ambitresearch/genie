@@ -41,8 +41,12 @@ export interface ModelPricing {
 
 /** The model alias `conjure`/`refine` default to (`DEFAULT_MODEL` in both
  * tools) — re-declared as a literal here (not imported from `@genie/server`)
- * so this pricing module has zero runtime dependency on the server package;
- * `pricing.test.ts` pins that the two names can't silently drift apart. */
+ * so this pricing module has zero RUNTIME dependency on the server package.
+ * `pricing.test.ts` closes the drift gap that zero-runtime-dependency choice
+ * opens: it imports `conjure.ts`/`refine.ts`'s actual `DEFAULT_MODEL` exports
+ * (a type-checked, test-time-only import) and asserts both equal this literal
+ * — so a future change to either tool's default that isn't mirrored here
+ * fails that test, not silently. */
 export const DEFAULT_MODEL_ALIAS = "design-default";
 
 /**

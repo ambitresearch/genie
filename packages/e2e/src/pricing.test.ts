@@ -8,6 +8,9 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_MODEL as CONJURE_DEFAULT_MODEL } from "../../server/src/tools/conjure.js";
+import { DEFAULT_MODEL as REFINE_DEFAULT_MODEL } from "../../server/src/tools/refine.js";
+
 import {
   DEFAULT_MODEL_ALIAS,
   FALLBACK_PRICING,
@@ -16,6 +19,20 @@ import {
 } from "./pricing.js";
 
 describe("PRICING_TABLE", () => {
+  it("DEFAULT_MODEL_ALIAS matches conjure.ts/refine.ts DEFAULT_MODEL (Copilot #136)", () => {
+    // pricing.ts's DEFAULT_MODEL_ALIAS is a re-declared literal, not an import
+    // from @genie/server (pricing.ts stays runtime-dependency-free — see its
+    // module doc). That means nothing enforces the two stay in sync EXCEPT
+    // this assertion: import the tools' real exported constants directly (by
+    // relative source path, same as m2-generation.test.ts — both conjure.js
+    // and refine.js only *type*-import the LLM client, so this has no eager
+    // GENIE_LLM_* side effect) and pin equality. If a future change to either
+    // tool's default model alias isn't mirrored here, this test — not just
+    // the "has an entry" check below — fails.
+    expect(DEFAULT_MODEL_ALIAS).toBe(CONJURE_DEFAULT_MODEL);
+    expect(DEFAULT_MODEL_ALIAS).toBe(REFINE_DEFAULT_MODEL);
+  });
+
   it("has an entry for every model alias conjure/refine accept by default", () => {
     // conjure.ts / refine.ts DEFAULT_MODEL — the alias AC3 requires the 5
     // components to be generated against. Pinned as a literal (not imported
