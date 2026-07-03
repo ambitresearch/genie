@@ -16,6 +16,7 @@ import { registerPlan } from "./tools/plan.js";
 import { registerDeleteFilesTool } from "./tools/delete_files.js";
 import { registerWriteFilesTool } from "./tools/write_files.js";
 import { LocalFsKitStore } from "./store/local.js";
+import type { KitStore } from "./store/interface.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
 
 /** Server identity. Bumped independently of the workspace version. */
@@ -42,6 +43,48 @@ export interface CreateServerOptions {
   projectsRoot?: string;
   kitsRoot?: string;
   reportsDir?: string;
+  /**
+   * Injectable kit-metadata backend (AC1 / DRO-523). When supplied, the
+   * kit-*metadata* verbs — `create_kit`, `get_kit`, `list_kits`,
+   * `list_components`, and `conjure_screen`'s explicit-kitId validation, plus
+   * `bind_kit`'s kit-existence check — route through this store instead of the
+   * default `LocalFsKitStore(kitsRoot)`. Defaulting to LocalFs keeps every
+   * existing caller (`createServer()`, `createServer({ kitsRoot })`) byte-for-
+   * byte unchanged.
+   *
+   * IMPORTANT — partial seam (tracked, see below). This injects ONLY the
+   * `KitStore`-interface consumers. The file-content verbs (`read_file`,
+   * `list_files`, `write_files`, `delete_files`) and the whole rich project
+   * family (`create_project`/`get_project`/`bind_kit` write side/
+   * `delete_project`/`recordScreen`) still bind to `kitsRoot`/`projectsRoot`
+   * filesystem paths and the on-disk plan registry — they were never written
+   * against the `KitStore`/`ProjectStore` interfaces. So injecting a
+   * `GitHostKitStore` today makes the metadata verbs talk to the git host while
+   * the file/project verbs still hit local disk (a deliberately-scoped split).
+   * Re-plumbing those verbs onto the store interfaces — and building a rich
+   * `GitHostProjectStore` — is the real remainder of the end-to-end AC5 walk
+   * and is tracked as its own follow-up issue(s), kept out of this seam PR so
+   * the fs-native tool contracts (atomic rename, streaming, base64/MIME, SHA
+   * hashes) aren't rewritten under a test-only change.
+   */
+  kitStore?: KitStore;
+  /**
+   * Injectable project backend (AC1 / DRO-523). When supplied, the project
+   * family (`create_project`, `list_projects`, `get_project`, `bind_kit`, and
+   * `conjure_screen`'s project read/record) route through this store instead of
+   * the default `new ProjectStore(projectsRoot, kitStore)`. Defaulting to the
+   * LocalFs-backed `ProjectStore` keeps every existing caller unchanged.
+   *
+   * Same partial-seam caveat as `kitStore`: this is the concrete
+   * fs-backed `ProjectStore` class (create_project.ts), which owns blueprints,
+   * kitBindings, screens, and `canEdit` — capabilities the thin
+   * `GitHostProjectStore` in the store layer does NOT yet implement. So a
+   * git-host project backend that satisfies the full tool-surface contract is
+   * still to-build (tracked follow-up); this seam is what lets it be dropped in
+   * once it exists, and lets tests substitute a fake. `delete_project` still
+   * takes `projectsRoot` directly (its own tracked holdout).
+   */
+  projectStore?: ProjectStore;
 }
 
 export function createServer(options: CreateServerOptions = {}): McpServer {
@@ -90,9 +133,18 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // Shared instance: `bind_kit` (via ProjectStore) validates kitId through the
   // same store `create_kit`/`get_kit` already write through, so a kit created
   // in this process is immediately bindable without a second construction.
-  const kitStore = new LocalFsKitStore(kitsRoot);
+  //
+  // AC1 (DRO-523): an injected `options.kitStore` overrides the default so an
+  // in-process MCP walk can be pointed at `GitHostKitStore` (or any KitStore).
+  // Absent injection, this is exactly the pre-seam `new LocalFsKitStore(kitsRoot)`.
+  const kitStore = options.kitStore ?? new LocalFsKitStore(kitsRoot);
 
-  const projectStore = new ProjectStore(projectsRoot, kitStore);
+  // AC1 (DRO-523): an injected `options.projectStore` overrides the default so
+  // the project family can be pointed at an alternate backend. Absent injection
+  // this is exactly the pre-seam `new ProjectStore(projectsRoot, kitStore)` —
+  // sharing the same `kitStore` above so `bind_kit`/`conjure_screen` validate
+  // kitIds through the store `create_kit` writes to.
+  const projectStore = options.projectStore ?? new ProjectStore(projectsRoot, kitStore);
   registerCreateProjectTool(server, projectStore);
   registerListProjectsTool(server, projectStore);
   registerGetProjectTool(server, projectStore);

@@ -18,16 +18,17 @@
  *     write_files, delete_files, create_project, list_projects, get_project,
  *     delete_project, get_kit, list_kits, bind_kit, conjure_screen
  *
- *   Still `it.todo` — blocked on infra/upstream work, wired to its blocker:
- *     GitHostStore/Gitea parity (AC5) — needs a createServer store-injection
- *     seam + a Docker/testcontainers Gitea instance in CI (see the AC5 block).
+ *   AC5 (GitHostStore/Gitea) is now a live, Docker-gated walk: the kit-metadata
+ *   MCP verbs run against a `gitea/gitea` testcontainer via the createServer
+ *   store-injection seam (DRO-523 AC1). It auto-skips when no Docker daemon is
+ *   present, so the LocalFs path stays green without Docker.
  *
  * ── Acceptance criteria map ─────────────────────────────────────────────────
  *   AC1  file path (this file)                              ✓ satisfied
  *   AC2  in-process SDK test transport                      ✓ live
  *   AC3  kit protocol walk                                  ✓ read+plan+write_files+delete_files live
  *   AC4  project/blueprint walk                             ✓ CRUD+blueprint+bind_kit tool+conjure_screen all live
- *   AC5  GitHostStore/Gitea parity                          ○ todo — blocked (store-injection seam + Docker CI infra)
+ *   AC5  GitHostStore/Gitea parity                          ● live (Docker-gated: kit-metadata verbs via store-injection seam; auto-skips w/o Docker)
  *   AC6  negative: write without/outside planId → -32602    ✓ live (DRO-236)
  *   AC7  negative: conjure_screen no kit → ERR_PROJECT_KIT_REQUIRED  ✓ live (M1-21)
  *   AC8  test report uploaded as CI artefact                ✓ junit reporter (vitest.config) + upload step (ci.yml)
@@ -36,10 +37,33 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../../server/src/server.js";
+import { GitHostKitStore } from "../../server/src/store/git-host.js";
+import { isDockerAvailable, startGitea, type GiteaFixture } from "./support/gitea-fixture.js";
+
+// AC5 gate — resolve container-runtime availability ONCE, before suite
+// collection, so the whole AC5 `describe` is statically skipped when Docker is
+// absent (the common local case). Top-level await is supported in vitest ESM
+// test modules.
+const ac5DockerAvailable = await isDockerAvailable();
+if (!ac5DockerAvailable) {
+  // Visible breadcrumb so a green "skipped" isn't mistaken for "ran and passed".
+  console.info(
+    "[m1-conformance AC5] no container runtime detected — skipping the Gitea MCP-surface walk " +
+      "(set up Docker to run it; CI's Docker leg runs it for real).",
+  );
+}
+// Fail loudly on the CI Docker leg if it lost its daemon, rather than passing by
+// skipping (a green-but-vacuous leg). Local runs leave GENIE_REQUIRE_DOCKER unset.
+if (!ac5DockerAvailable && process.env.GENIE_REQUIRE_DOCKER === "1") {
+  throw new Error(
+    "GENIE_REQUIRE_DOCKER=1 but no container runtime is reachable — the CI Docker leg must run " +
+      "the AC5 Gitea MCP-surface walk, not skip it.",
+  );
+}
 
 // ── Harness ──────────────────────────────────────────────────────────────────
 
@@ -646,27 +670,108 @@ describe("AC9 — the end-to-end walk stays well within the 60 s suite budget", 
 
 // ── AC5 — GitHostStore / Gitea parity ─────────────────────────────────────────
 //
-// AC5 repeats the *MCP-tool* walks above against a `GitHostStore` backend, with
-// a Docker-Compose `gitea/gitea` instance as the reference git host (testcontainers).
-// It stays `it.todo` because it is blocked on two concrete, tracked prerequisites
-// — not on anything in this suite:
+// AC5 repeats the *MCP-tool* kit-metadata walk above against a `GitHostStore`
+// backend, with a `gitea/gitea` container as the reference git host
+// (testcontainers). It is driven through the SAME in-process MCP client the
+// LocalFs walks use — the only difference is `createServer({ kitStore })` is
+// handed a `GitHostKitStore` pointed at the live container (the DRO-523 AC1
+// store-injection seam).
 //
-//   1. Store-injection seam. `createServer()` hard-wires `LocalFsKitStore`, and
-//      the file verbs (`read_file`, `delete_files`) + the whole project family
-//      take a filesystem *path*, not an injected `KitStore`/`ProjectStore`. Until
-//      `createServer` accepts a store backend, the in-process MCP walk cannot be
-//      pointed at `GitHostStore`. (The store *contract* itself already has parity
-//      coverage — `packages/server/test/store-conformance.test.ts` runs the shared
-//      KitStore/ProjectStore contract against both `LocalFs*` and `GitHost*` via a
-//      mocked fetch. AC5 is the missing end-to-end *tool-surface* half.)
-//   2. CI infra. A `gitea/gitea:latest` testcontainer needs a Docker daemon on the
-//      runner; the sandbox this suite is authored in has neither Docker nor an
-//      installable `testcontainers` under the frozen lockfile.
+// ── Scope of this live walk (deliberate, and load-bearing) ────────────────────
+// Only the `KitStore`-interface verbs run against Gitea here: create_kit,
+// list_kits, get_kit, list_components. The file-content verbs
+// (read_file/list_files/write_files/delete_files) and the rich project family
+// remain filesystem-bound — they were never written against the
+// KitStore/ProjectStore interfaces, so the seam does not (yet) carry them onto
+// the git host. Re-plumbing those verbs + building a rich GitHostProjectStore is
+// the tracked remainder (see the follow-up issues referenced in the PR). The
+// store *contract* itself (incl. plan-branch isolation, project CRUD, bindKit)
+// is separately proven end-to-end against this same Gitea container at the store
+// layer in `packages/e2e/test/gitea-conformance.test.ts`. Together they cover
+// AC5's "same outcomes as the LocalFs walks" for every surface that is
+// git-host-ready today, and name exactly what is not.
 //
-// Tracked as its own child issue (#111) so it lands with the seam it depends on,
-// rather than smuggling a server refactor into this test-only PR.
-describe("AC5 — the suite repeats against GitHostStore (Gitea reference host)", () => {
-  it.todo(
-    "run the kit + project MCP walks against GitHostStore via a testcontainers gitea/gitea instance [blocked by #111: createServer store-injection seam + Docker/testcontainers CI infra]",
-  );
-});
+// ── Docker-absent skip ───────────────────────────────────────────────────────
+// The whole block is `describe.skipIf(!dockerAvailable)`, so a local `pnpm test`
+// with no container runtime stays green (AC: "skipped automatically when no
+// Docker daemon is present"). CI's Docker leg runs it for real and sets
+// GENIE_REQUIRE_DOCKER=1 so a leg that lost its daemon fails loudly instead of
+// passing vacuously.
+describe.skipIf(!ac5DockerAvailable)(
+  "AC5 — the suite repeats against GitHostStore (Gitea reference host)",
+  () => {
+    let gitea: GiteaFixture;
+    let ac5Client: Client;
+    let ac5Server: ReturnType<typeof createServer>;
+
+    const call = (name: string, args: Record<string, unknown>) =>
+      ac5Client.callTool({ name, arguments: args }) as Promise<ToolResult>;
+
+    beforeAll(async () => {
+      gitea = await startGitea();
+      // The seam (AC1): point the kit-metadata verbs at the live Gitea via a
+      // GitHostKitStore. Everything else (projects/files) keeps its default
+      // LocalFs wiring — see the scope note above.
+      const kitStore = new GitHostKitStore({
+        baseUrl: gitea.baseUrl,
+        owner: gitea.owner,
+        token: gitea.token,
+      });
+      ac5Server = createServer({ kitStore });
+      ac5Client = new Client({ name: "m1-conformance-ac5", version: "0" });
+      const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+      await Promise.all([ac5Server.connect(serverT), ac5Client.connect(clientT)]);
+    }, 240_000); // cold-image pull + DB migration budget.
+
+    afterAll(async () => {
+      await ac5Client?.close();
+      await gitea?.stop();
+    });
+
+    it("create_kit through the MCP surface persists into Gitea and round-trips via get_kit", async () => {
+      const created = await call("mcp__genie__create_kit", { name: "Gitea Walk Kit" });
+      expect(created.isError, JSON.stringify(created)).toBeFalsy();
+      const { kitId } = payload(created) as { kitId: string };
+      // Same slug contract as the LocalFs walk (AC3's create_kit assertion).
+      expect(kitId).toMatch(/^gitea-walk-kit-[0-9a-f]{6}$/);
+
+      // get_kit reads the record back — from Gitea, through the same tool the
+      // LocalFs walk uses. The human name comes from the base64 .kit.json that
+      // round-tripped through Gitea's contents API.
+      const got = await call("mcp__genie__get_kit", { kitId });
+      expect(got.isError, JSON.stringify(got)).toBeFalsy();
+      expect(payload(got)).toMatchObject({
+        id: kitId,
+        name: "Gitea Walk Kit",
+        type: "GENIE_KIT",
+      });
+    });
+
+    it("list_kits surfaces a kit created through the MCP surface", async () => {
+      const created = await call("mcp__genie__create_kit", { name: "Gitea Listed Kit" });
+      expect(created.isError, JSON.stringify(created)).toBeFalsy();
+      const { kitId } = payload(created) as { kitId: string };
+
+      const listed = await call("mcp__genie__list_kits", {});
+      expect(listed.isError, JSON.stringify(listed)).toBeFalsy();
+      const ids = (payload(listed) as { kits: { id: string }[] }).kits.map((k) => k.id);
+      expect(ids).toContain(kitId);
+    });
+
+    it("list_components validates the kit through Gitea and returns the (pre-M3) empty set", async () => {
+      const created = await call("mcp__genie__create_kit", { name: "Gitea Components Kit" });
+      expect(created.isError, JSON.stringify(created)).toBeFalsy();
+      const { kitId } = payload(created) as { kitId: string };
+
+      const components = await call("mcp__genie__list_components", { kitId });
+      expect(components.isError, JSON.stringify(components)).toBeFalsy();
+      // Same outcome as the LocalFs walk: empty until the M3-03 manifest compiler.
+      expect((payload(components) as { components: unknown[] }).components).toEqual([]);
+    });
+
+    it("get_kit on a kit that never existed in Gitea is rejected (parity with the LocalFs negative)", async () => {
+      const got = await call("mcp__genie__get_kit", { kitId: "ghost-kit-000000" });
+      expect(got.isError).toBe(true);
+    });
+  },
+);
