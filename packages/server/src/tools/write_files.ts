@@ -46,7 +46,13 @@ import { pipeline } from "node:stream/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { getPlan, isPathInsideLocalDir, pathMatchesGlobs, PlanNotFoundError } from "../plans/index.js";
+import { withPlanGuard } from "../middleware/plan-guard.js";
+import {
+  getPlan,
+  isPathInsideLocalDir,
+  pathMatchesGlobs,
+  PlanNotFoundError,
+} from "../plans/index.js";
 
 export const WRITE_FILES_TOOL_NAME = "mcp__genie__write_files";
 
@@ -104,7 +110,9 @@ export class TooManyFilesError extends Error {
 export class DuplicatePathError extends Error {
   readonly code = "DuplicatePathError";
   constructor(readonly path: string) {
-    super(`Path "${path}" appears more than once in this write_files call; every path must be unique.`);
+    super(
+      `Path "${path}" appears more than once in this write_files call; every path must be unique.`,
+    );
     this.name = "DuplicatePathError";
   }
 }
@@ -285,8 +293,13 @@ function toolError(payload: Record<string, unknown>) {
  *
  * @param server The MCP server to register against. `planId`/`writes`/
  *               `localDir` are validated against the shared M1-07 plan
- *               registry (`../plans/index.ts`'s module-level `getPlan`) —
- *               there is no separate store instance to thread through.
+ *               registry (`../plans/index.ts`) via the M1-13 plan-guard
+ *               middleware (`../middleware/plan-guard.ts`) — the guard
+ *               owns AC5's planId presence/existence/expiry checks and AC4's
+ *               path-vs-`writes`-glob check; this file's own remaining
+ *               validation covers per-file structural rules (duplicates,
+ *               localPath containment, encoding, byte cap) that the guard
+ *               is intentionally tool-agnostic about.
  */
 export function registerWriteFilesTool(server: McpServer): void {
   server.registerTool(
@@ -301,7 +314,22 @@ export function registerWriteFilesTool(server: McpServer): void {
       inputSchema: writeFilesInputSchema,
       outputSchema: writeFilesOutputSchema,
     },
-    async (args: WriteFilesArgs) => {
+    // M1-13 plan-vs-write guard (DRO-239). The middleware validates planId
+    // presence/existence/expiry and every file path against the plan's writes
+    // globs BEFORE the handler runs, so the four verbs share one identical
+    // plan-boundary check — the write side no longer catches PlanNotFoundError
+    // or PathOutsidePlanError itself for these rejection paths. Rejections
+    // surface as the canonical JSON-RPC `-32602` shape `{ code, message,
+    // data: { reason, planId?, path? } }` and are audit-logged as
+    // `plan.guard.reject` (see plan-guard.ts). The guard hands the resolved
+    // plan through to the handler, avoiding a second getPlan hit.
+    //
+    // The core `writeFiles(args)` still performs the same plan check as
+    // defense-in-depth (a direct in-process caller — see the "writeFiles
+    // (core logic)" test suite — bypasses the MCP layer and this middleware
+    // with it), so removing the checks from the core would silently open a
+    // gap for those callers.
+    withPlanGuard({ mode: "writes" }, async (args: WriteFilesArgs) => {
       try {
         const result = await writeFiles(args);
         return {
@@ -341,10 +369,14 @@ export function registerWriteFilesTool(server: McpServer): void {
           });
         }
         if (error instanceof PlanNotFoundError) {
-          // M1-07's getPlan collapses "never existed" and "expired" into one
-          // PlanNotFoundError (no separate PlanExpiredError) — see the module
-          // header. AC5 asks for "existence + not-expired" validation; both
-          // failure modes surface identically here, matching shipped M1-07.
+          // Ordinarily unreachable at the wire level — the M1-13 plan-guard
+          // middleware (above) catches PlanNotFoundError first and returns
+          // the canonical -32602 shape. Kept as a belt-and-suspenders branch
+          // in case `writeFiles` throws it from a code path the middleware
+          // didn't traverse (e.g. a future refactor that bypasses the guard,
+          // or a race where a plan expires between the guard's getPlan and
+          // the core's getPlan). Behaviour matches shipped M1-07: same
+          // PlanNotFoundError for "never existed" and "expired".
           return toolError({
             code: "PlanNotFoundError",
             message: error.message,
@@ -375,7 +407,7 @@ export function registerWriteFilesTool(server: McpServer): void {
         }
         throw error;
       }
-    },
+    }),
   );
 }
 
@@ -390,7 +422,8 @@ function errorFields(
     | DuplicatePathError,
 ): Record<string, unknown> {
   if (error instanceof PathOutsidePlanError) return { path: error.path, reason: error.reason };
-  if (error instanceof LocalPathEscapeError) return { localPath: error.localPath, localDir: error.localDir };
+  if (error instanceof LocalPathEscapeError)
+    return { localPath: error.localPath, localDir: error.localDir };
   if (error instanceof InvalidFileInputError) return { path: error.path };
   if (error instanceof InvalidEncodingError) return { path: error.path };
   if (error instanceof DuplicatePathError) return { path: error.path };
