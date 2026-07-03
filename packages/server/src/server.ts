@@ -5,6 +5,7 @@ import { registerListProjectsTool } from "./tools/list_projects.js";
 import { registerGetProjectTool } from "./tools/get_project.js";
 import { registerDeleteProjectTool } from "./tools/delete_project.js";
 import { registerBindKitTool } from "./tools/bind_kit.js";
+import { LocalScaffoldScreenGenerator, registerConjureScreenTool } from "./tools/conjure_screen.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
 import { registerValidate } from "./tools/validate.js";
@@ -48,8 +49,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
       "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
-      "create/list/get/delete/bind_kit, plan creation, and write_files (the capability-grant " +
-      "boundary and its file-mutation verb — delete_files lands in a later issue).)",
+      "create/list/get/delete/bind_kit, plan creation, write_files (the capability-grant " +
+      "boundary and its file-mutation verb — delete_files lands in a later issue), and " +
+      "conjure_screen.)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -97,6 +99,18 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   registerDeleteProjectTool(server, projectsRoot);
   registerBindKitTool(server, projectStore);
 
+  // conjure_screen (M1-21): project-aware screen generation. The M1 generator is
+  // an offline deterministic scaffold (LocalScaffoldScreenGenerator) — no model
+  // call, so it runs in CI unchanged; M2 swaps in the real endpoint client
+  // behind the same ScreenGenerator seam. It shares the same projectStore
+  // (screen recording) and kitStore (explicit-kitId validation) the project and
+  // kit verbs already use.
+  registerConjureScreenTool(server, {
+    projectStore,
+    kitStore,
+    generator: new LocalScaffoldScreenGenerator(),
+  });
+
   registerListKits(server, kitStore);
   registerListComponents(server, kitStore);
   registerCreateKit(server, kitStore);
@@ -121,9 +135,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // Prometheus metrics. No planId required (read-side telemetry).
   registerValidate(
     server,
-    options.reportsDir ??
-      process.env.GENIE_REPORTS_DIR ??
-      join(process.cwd(), ".genie", "reports"),
+    options.reportsDir ?? process.env.GENIE_REPORTS_DIR ?? join(process.cwd(), ".genie", "reports"),
   );
 
   return server;
