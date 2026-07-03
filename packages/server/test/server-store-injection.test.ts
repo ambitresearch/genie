@@ -8,14 +8,16 @@
  * needing a Docker daemon, which the testcontainers `gitea/gitea` leg then
  * re-confirms against a real Gitea when Docker is present.
  *
- * Scope note (deliberate): only the `KitStore`-interface verbs are asserted
- * here — `create_kit`, `list_kits`, `get_kit`, `list_components`. The file
- * verbs (`read_file`/`list_files`/`write_files`/`delete_files`) and the rich
- * project family remain filesystem-bound (see `CreateServerOptions.kitStore`'s
- * doc comment); driving those onto the git host is the tracked follow-up. What
- * this test locks down is that the seam exists and is honestly wired: a kit
- * created through the MCP surface lands in the git host (not local disk), and
- * every metadata verb reads it back from there.
+ * Scope note: the `KitStore`-interface metadata verbs (`create_kit`,
+ * `list_kits`, `get_kit`, `list_components`) and — as of DRO-540 — the kit-FILE
+ * verbs `read_file`/`list_files`/`delete_files` are all asserted here against
+ * the injected `GitHostKitStore` (see the "kit-FILE walk" test below). The lone
+ * remaining filesystem-bound holdout is `write_files` (tracked as DRO-565); the
+ * rich project family beyond create/get/list/bind/delete is a further follow-up
+ * (see `CreateServerOptions.kitStore`'s doc comment). What this test locks down
+ * is that the seam exists and is honestly wired: a kit created through the MCP
+ * surface lands in the git host (not local disk), and every routed verb reads it
+ * back from there.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
