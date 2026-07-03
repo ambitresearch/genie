@@ -213,9 +213,7 @@ describe("AC3 — kit protocol walk (read → plan → write/delete)", () => {
 
     const listed = await harness.call("mcp__genie__list_files", { kitId });
     expect(listed.isError).toBeFalsy();
-    const listedPaths = (payload(listed) as { files: { path: string }[] }).files.map(
-      (f) => f.path,
-    );
+    const listedPaths = (payload(listed) as { files: { path: string }[] }).files.map((f) => f.path);
     for (const f of files) {
       expect(listedPaths).toContain(f.path);
     }
@@ -261,12 +259,20 @@ describe("AC3 — kit protocol walk (read → plan → write/delete)", () => {
     });
 
     // An out-of-plan path rejects the whole call and touches nothing.
+    // Post-M1-13 (DRO-239) the response is the plan-guard middleware's
+    // canonical `-32602` envelope with `data.reason: "pathOutsidePlan"`,
+    // shared across write_files / delete_files instead of each verb's own
+    // error-name-string ("PathOutsidePlanError") — the whole point of the
+    // middleware is one shape at the plan boundary.
     const rejected = await harness.call("mcp__genie__delete_files", {
       planId,
       paths: ["keep.txt"],
     });
     expect(rejected.isError).toBe(true);
-    expect(rejected.content?.[0]?.text ?? "").toContain("PathOutsidePlanError");
+    expect(payload(rejected)).toMatchObject({
+      code: -32602,
+      data: { reason: "pathOutsidePlan", path: "keep.txt" },
+    });
 
     // keep.txt survived; the deleted file is gone from list_files.
     const listed = await harness.call("mcp__genie__list_files", { kitId });
@@ -457,9 +463,14 @@ describe("AC6 — write path enforces a valid planId", () => {
       files: [{ path: "outside/evil.html", data: "x" }],
     });
     expect(result.isError).toBe(true);
+    // Post-M1-13 (DRO-239) the plan-guard middleware wraps this rejection in
+    // the canonical `-32602` envelope with `data.reason: "pathOutsidePlan"`
+    // and the offending `data.path`. The old per-tool `code:
+    // "PathOutsidePlanError"` string is now only surfaced by the direct
+    // in-process `writeFiles(...)` core (bypassing MCP + middleware).
     expect(payload(result)).toMatchObject({
-      code: "PathOutsidePlanError",
-      path: "outside/evil.html",
+      code: -32602,
+      data: { reason: "pathOutsidePlan", path: "outside/evil.html" },
     });
   });
 });

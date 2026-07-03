@@ -51,7 +51,10 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
       "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
       "create/list/get/delete/bind_kit, conjure_screen, plan creation (the capability-grant " +
-      "boundary for write/delete verbs), write_files, and delete_files.)",
+      "boundary for write/delete verbs), write_files, and delete_files. write_files and " +
+      "delete_files share one plan-boundary validation middleware — every call is checked " +
+      "for planId presence/existence/expiry and per-path glob membership before the tool " +
+      "handler runs.)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -121,14 +124,17 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   registerListFilesTool(server, new KitFileStore(kitsRoot));
 
   // Plan capability-grant boundary (M1-07). Locks writes/deletes/localDir and
-  // issues a planId; write_files (below) validates every call against it.
+  // issues a planId; write_files (below) validates every call against it via
+  // the M1-13 plan-guard middleware (`middleware/plan-guard.ts`).
   // `plans/index.ts` owns its own persistence root (`${GENIE_HOME}/plans`) and
   // TTL (`GENIE_PLAN_TTL`) internally, so there's no store instance to thread
-  // through here — both tools import the same module singleton.
+  // through here — the module singleton is shared across the guard and the
+  // plan tool.
   registerPlan(server);
 
-  // write_files (M1-08): validates planId + writes-glob membership via
-  // `plans/index.ts`, then commits atomically. Blocked-by M1-07, now shipped.
+  // write_files (M1-08): validates planId + writes-glob membership via the
+  // M1-13 plan-guard middleware (one shared seam with delete_files, below),
+  // then commits atomically. Blocked-by M1-07, now shipped.
   registerWriteFilesTool(server);
 
   // Advisory telemetry facet (M1-12): persists validation counts + emits
@@ -140,7 +146,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   // Plan-gated destructive verb (M1-09): deletes are authorized by a plan's
   // `deletes` globs and hit the SAME kit tree read_file/list_files read
-  // (kitsRoot). Shares the M1-07 plan boundary already registered above.
+  // (kitsRoot). Shares the M1-07 plan boundary and the M1-13 plan-guard
+  // middleware (`middleware/plan-guard.ts`) with write_files so the two
+  // verbs enforce plan authorization through one identical validation seam.
   registerDeleteFilesTool(server, kitsRoot);
 
   return server;
