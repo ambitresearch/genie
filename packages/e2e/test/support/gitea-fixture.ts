@@ -130,11 +130,7 @@ async function giteaFetch(
 
 /** Retry an async step against a freshly-booted Gitea whose API may need a
  *  beat to settle even after `/api/healthz` reports healthy. */
-async function withRetries<T>(
-  label: string,
-  attempts: number,
-  fn: () => Promise<T>,
-): Promise<T> {
+async function withRetries<T>(label: string, attempts: number, fn: () => Promise<T>): Promise<T> {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
@@ -145,9 +141,7 @@ async function withRetries<T>(
       await new Promise((r) => setTimeout(r, 500));
     }
   }
-  throw new Error(
-    `${label} failed after ${attempts} attempts: ${String(lastErr)}`,
-  );
+  throw new Error(`${label} failed after ${attempts} attempts: ${String(lastErr)}`);
 }
 
 /**

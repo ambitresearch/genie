@@ -235,9 +235,7 @@ describe("AC3 — kit protocol walk (read → plan → write/delete)", () => {
 
     const listed = await harness.call("mcp__genie__list_files", { kitId });
     expect(listed.isError).toBeFalsy();
-    const listedPaths = (payload(listed) as { files: { path: string }[] }).files.map(
-      (f) => f.path,
-    );
+    const listedPaths = (payload(listed) as { files: { path: string }[] }).files.map((f) => f.path);
     for (const f of files) {
       expect(listedPaths).toContain(f.path);
     }

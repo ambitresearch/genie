@@ -25,14 +25,8 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import {
-  GitHostKitStore,
-  GitHostProjectStore,
-} from "../../server/src/store/git-host.js";
-import {
-  KitAlreadyExistsError,
-  NotFoundError,
-} from "../../server/src/store/interface.js";
+import { GitHostKitStore, GitHostProjectStore } from "../../server/src/store/git-host.js";
+import { KitAlreadyExistsError, NotFoundError } from "../../server/src/store/interface.js";
 
 import { isDockerAvailable, startGitea, type GiteaFixture } from "./support/gitea-fixture.js";
 

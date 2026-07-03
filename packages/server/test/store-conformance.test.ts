@@ -125,16 +125,12 @@ function kitStoreContract(
       expect(Array.isArray(files)).toBe(true);
 
       // readFile must reject for content that was only ever in the plan.
-      await expect(store.readFile(kit.id, "test.txt")).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.readFile(kit.id, "test.txt")).rejects.toThrow(NotFoundError);
     });
 
     it("readFile throws NotFoundError for missing file", async () => {
       const kit = await store.createKit("read-miss-kit");
-      await expect(store.readFile(kit.id, "nope.txt")).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.readFile(kit.id, "nope.txt")).rejects.toThrow(NotFoundError);
     });
 
     it("openPlan + commitPlan + closePlan lifecycle", async () => {
@@ -145,9 +141,7 @@ function kitStoreContract(
       expect(planId).toBeTruthy();
 
       // commitPlan adds more ops
-      await store.commitPlan(kit.id, planId, [
-        { kind: "write", path: "b.txt", content: "second" },
-      ]);
+      await store.commitPlan(kit.id, planId, [{ kind: "write", path: "b.txt", content: "second" }]);
 
       // closePlan cleans up
       await store.closePlan(kit.id, planId);
@@ -157,16 +151,12 @@ function kitStoreContract(
     });
 
     it("openPlan throws NotFoundError for non-existent kit", async () => {
-      await expect(
-        store.openPlan("ghost-kit", []),
-      ).rejects.toThrow(NotFoundError);
+      await expect(store.openPlan("ghost-kit", [])).rejects.toThrow(NotFoundError);
     });
 
     it("commitPlan throws NotFoundError for non-existent plan", async () => {
       const kit = await store.createKit("commit-miss-kit");
-      await expect(
-        store.commitPlan(kit.id, "no-such-plan", []),
-      ).rejects.toThrow(NotFoundError);
+      await expect(store.commitPlan(kit.id, "no-such-plan", [])).rejects.toThrow(NotFoundError);
     });
   });
 }
@@ -218,23 +208,17 @@ function projectStoreContract(
     });
 
     it("getProject throws NotFoundError for non-existent project", async () => {
-      await expect(store.getProject("no-such-project")).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.getProject("no-such-project")).rejects.toThrow(NotFoundError);
     });
 
     it("deleteProject removes the project", async () => {
       const project = await store.createProject("del-me");
       await store.deleteProject(project.id);
-      await expect(store.getProject(project.id)).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.getProject(project.id)).rejects.toThrow(NotFoundError);
     });
 
     it("deleteProject throws NotFoundError for non-existent project", async () => {
-      await expect(store.deleteProject("nope")).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.deleteProject("nope")).rejects.toThrow(NotFoundError);
     });
 
     it("bindKit sets kitId on the project", async () => {
@@ -246,9 +230,7 @@ function projectStoreContract(
     });
 
     it("bindKit throws NotFoundError for non-existent project", async () => {
-      await expect(store.bindKit("ghost", "kit")).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.bindKit("ghost", "kit")).rejects.toThrow(NotFoundError);
     });
 
     it("recordScreen appends screen ref", async () => {
@@ -259,9 +241,7 @@ function projectStoreContract(
     });
 
     it("recordScreen throws NotFoundError for non-existent project", async () => {
-      await expect(
-        store.recordScreen("ghost", "img.png"),
-      ).rejects.toThrow(NotFoundError);
+      await expect(store.recordScreen("ghost", "img.png")).rejects.toThrow(NotFoundError);
     });
   });
 }
@@ -394,9 +374,7 @@ describe("LocalFsKitStore — adapter-specific", () => {
     const bigContent = "x".repeat(MAX_FILE_BYTES + 1);
     await writeFile(join(kitDir, "big.bin"), bigContent);
 
-    await expect(store.readFile(kit.id, "big.bin")).rejects.toThrow(
-      FileTooLargeError,
-    );
+    await expect(store.readFile(kit.id, "big.bin")).rejects.toThrow(FileTooLargeError);
 
     try {
       await store.readFile(kit.id, "big.bin");
@@ -453,17 +431,15 @@ describe("LocalFsKitStore — adapter-specific", () => {
 
   it("readFile denies path traversal attacks", async () => {
     const kit = await store.createKit("traversal-kit");
-    await expect(
-      store.readFile(kit.id, "../../etc/passwd"),
-    ).rejects.toThrow("Path traversal denied");
+    await expect(store.readFile(kit.id, "../../etc/passwd")).rejects.toThrow(
+      "Path traversal denied",
+    );
   });
 
   it("openPlan denies path traversal in file ops", async () => {
     const kit = await store.createKit("traversal-plan-kit");
     await expect(
-      store.openPlan(kit.id, [
-        { kind: "write", path: "../../../tmp/evil.txt", content: "pwned" },
-      ]),
+      store.openPlan(kit.id, [{ kind: "write", path: "../../../tmp/evil.txt", content: "pwned" }]),
     ).rejects.toThrow("Path traversal denied");
   });
 });
@@ -542,9 +518,7 @@ describe("GitHostStore — credential check (AC6)", () => {
     const origToken = process.env["GENIE_GIT_TOKEN"];
     delete process.env["GENIE_GIT_TOKEN"];
     try {
-      const { MissingCredentialError } = await import(
-        "../src/store/interface.js"
-      );
+      const { MissingCredentialError } = await import("../src/store/interface.js");
       const { GitHostKitStore } = await import("../src/store/git-host.js");
 
       expect(
