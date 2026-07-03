@@ -224,6 +224,21 @@ describe("resolveRetryMax", () => {
     expect(resolveRetryMax({ [RETRY_MAX_ENV]: "   " })).toBe(DEFAULT_RETRY_MAX);
   });
 
+  it("falls back to the default for a partially-numeric value (Copilot review on PR #126)", () => {
+    // `parseInt` alone silently accepts a leading-numeric prefix —
+    // `parseInt("5s", 10)` === 5 and `parseInt("3.5", 10)` === 3 — despite
+    // neither being a clean integer. That contradicts this function's own
+    // "non-numeric → default" contract and would silently misconfigure an
+    // operator who fat-fingered the env var (e.g. copy-pasted a value with
+    // a trailing unit, or a decimal). The regex guard must reject both.
+    expect(resolveRetryMax({ [RETRY_MAX_ENV]: "5s" })).toBe(DEFAULT_RETRY_MAX);
+    expect(resolveRetryMax({ [RETRY_MAX_ENV]: "3.5" })).toBe(DEFAULT_RETRY_MAX);
+    expect(resolveRetryMax({ [RETRY_MAX_ENV]: "5 " })).toBe(5); // trimmed first, then all-digit — still valid
+    expect(resolveRetryMax({ [RETRY_MAX_ENV]: "+5" })).toBe(DEFAULT_RETRY_MAX);
+    expect(resolveRetryMax({ [RETRY_MAX_ENV]: "0x5" })).toBe(DEFAULT_RETRY_MAX);
+    expect(resolveRetryMax({ [RETRY_MAX_ENV]: "5e2" })).toBe(DEFAULT_RETRY_MAX);
+  });
+
   it("defaults its env argument to process.env when called with none", () => {
     const prev = process.env[RETRY_MAX_ENV];
     try {
@@ -741,6 +756,101 @@ describe("withRetry — network errors (AC2)", () => {
     const te = caught as InstanceType<typeof TransientError>;
     expect(te.attempts).toBe(2);
     expect(te.cause).toBe(err);
+  });
+});
+
+describe("withRetry — permanent connection failures (AC2, Copilot review on PR #126)", () => {
+  // `classifyError` narrows `APIConnectionError` with a DENYLIST
+  // (`PERMANENT_CONNECTION_CODES`): retry by default, but stop immediately
+  // for the two well-understood permanent cases below, because retrying
+  // them just burns the whole budget on a call that will never succeed.
+  let stderrSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+  afterEach(() => {
+    stderrSpy.mockRestore();
+  });
+
+  it("does NOT retry an APIConnectionError wrapping ECONNREFUSED — nothing is listening", async () => {
+    const openai = await import("openai");
+    const rootCause = Object.assign(new Error("connect ECONNREFUSED"), {
+      code: "ECONNREFUSED",
+    });
+    const fetchWrap = new TypeError("fetch failed", { cause: rootCause });
+    const err = new openai.APIConnectionError({
+      message: "Connection error.",
+      cause: fetchWrap,
+    });
+    const handler = vi.fn().mockRejectedValue(err);
+    const wrapped = withRetry(handler, { sleep: () => Promise.resolve() });
+    await expect(wrapped({})).rejects.toBe(err);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT retry an APIConnectionError wrapping ENOTFOUND — DNS has no record", async () => {
+    const openai = await import("openai");
+    const rootCause = Object.assign(new Error("getaddrinfo ENOTFOUND"), {
+      code: "ENOTFOUND",
+    });
+    const fetchWrap = new TypeError("fetch failed", { cause: rootCause });
+    const err = new openai.APIConnectionError({
+      message: "Connection error.",
+      cause: fetchWrap,
+    });
+    const handler = vi.fn().mockRejectedValue(err);
+    const wrapped = withRetry(handler, { sleep: () => Promise.resolve() });
+    await expect(wrapped({})).rejects.toBe(err);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("still retries an APIConnectionError wrapping EAI_AGAIN (transient DNS failure, distinct from ENOTFOUND)", async () => {
+    const openai = await import("openai");
+    const rootCause = Object.assign(new Error("getaddrinfo EAI_AGAIN"), {
+      code: "EAI_AGAIN",
+    });
+    const fetchWrap = new TypeError("fetch failed", { cause: rootCause });
+    const err = new openai.APIConnectionError({
+      message: "Connection error.",
+      cause: fetchWrap,
+    });
+    const handler = vi.fn().mockRejectedValueOnce(err).mockResolvedValueOnce({ ok: true });
+    const wrapped = withRetry(handler, { sleep: () => Promise.resolve() });
+    await wrapped({});
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it("still retries an APIConnectionError with no discoverable cause code (safe default)", async () => {
+    // No `.code` anywhere in the cause chain — e.g. a bare TLS handshake
+    // rejection. Falls through to the safe "retry by default" behaviour
+    // like any other unrecognised code, matching this module's original,
+    // evidence-backed stance.
+    const openai = await import("openai");
+    const err = new openai.APIConnectionError({
+      message: "Connection error.",
+      cause: new Error("self-signed certificate"),
+    });
+    const handler = vi.fn().mockRejectedValueOnce(err).mockResolvedValueOnce({ ok: true });
+    const wrapped = withRetry(handler, { sleep: () => Promise.resolve() });
+    await wrapped({});
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it("on immediate ECONNREFUSED, does not sleep or log a retry line", async () => {
+    const openai = await import("openai");
+    const rootCause = Object.assign(new Error("connect ECONNREFUSED"), {
+      code: "ECONNREFUSED",
+    });
+    const err = new openai.APIConnectionError({
+      message: "Connection error.",
+      cause: new TypeError("fetch failed", { cause: rootCause }),
+    });
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const handler = vi.fn().mockRejectedValue(err);
+    const wrapped = withRetry(handler, { sleep });
+    await expect(wrapped({})).rejects.toBe(err);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(stderrSpy).not.toHaveBeenCalled();
   });
 });
 

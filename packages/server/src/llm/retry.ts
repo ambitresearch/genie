@@ -84,12 +84,47 @@ export const MAX_RETRY_AFTER_MS = 60_000;
 
 /**
  * Node socket / DNS error codes that indicate a transient network failure
- * worth retrying (AC2). Kept intentionally narrow — ECONNREFUSED is
- * deliberately NOT here (a refused connection usually means the endpoint is
- * mis-configured or down, not that a retry would help; misconfiguration
- * would just burn the whole retry budget silently).
+ * worth retrying (AC2), when found on a RAW node error that bypasses the
+ * openai SDK's own error classes entirely (see the fallback branch at the
+ * bottom of `classifyError`). Kept intentionally narrow.
  */
 const RETRYABLE_NETWORK_CODES: ReadonlySet<string> = new Set(["ECONNRESET", "ETIMEDOUT"]);
+
+/**
+ * Node error codes that indicate a PERMANENT connection failure on an
+ * `APIConnectionError` — retrying won't help because the target
+ * fundamentally isn't reachable, as opposed to a transient peer reset or
+ * timeout (Copilot review on PR #126 / DRO-253). Used as a DENYLIST
+ * (exclude these, retry everything else) rather than an allowlist,
+ * deliberately:
+ *
+ * An earlier version of this fix tried the allowlist shape — only retry
+ * `APIConnectionError` when its cause code is in `RETRYABLE_NETWORK_CODES`
+ * — and it broke this file's OWN real-socket-destroy integration test
+ * (`recovers from a mid-flight socket destroy`, see `retry.test.ts`): a
+ * genuine peer-reset under Node's real `fetch`/undici stack surfaces as
+ * `SocketError` with code `UND_ERR_SOCKET`, one cause-level shallower than
+ * — and spelled entirely differently from — the `ECONNRESET` the mocked
+ * unit tests assume. An allowlist keyed on the wrong/incomplete code set
+ * would silently stop retrying the exact real-world failure this
+ * middleware exists to recover from. A denylist degrades safely instead:
+ * an unrecognised or future code still retries (matching this module's
+ * original, evidence-backed default), while the two well-understood
+ * permanent cases below stop burning the retry budget on a call that will
+ * never succeed:
+ *   - `ECONNREFUSED` — nothing is listening at the target address; a
+ *     retry a second later won't change that.
+ *   - `ENOTFOUND` — DNS has no record for the hostname at all (distinct
+ *     from `EAI_AGAIN`, "temporary failure in name resolution", which IS
+ *     transient by definition and deliberately stays off this list).
+ *
+ * TLS handshake rejection is NOT enumerated here: unlike the two codes
+ * above, there's no single stable, version-independent error code to key
+ * on across Node/undici/OpenSSL versions — guessing one wrong would give
+ * false confidence rather than real protection. It falls through to the
+ * safe "retry by default" behaviour like any other unrecognised code.
+ */
+const PERMANENT_CONNECTION_CODES: ReadonlySet<string> = new Set(["ECONNREFUSED", "ENOTFOUND"]);
 
 // ─── Errors ──────────────────────────────────────────────────────────────
 
@@ -147,13 +182,25 @@ export class TransientError extends Error {
  * — and must NOT be collapsed with "unset". An operator running against a
  * test lab where they own the retry policy externally sets 0 and expects
  * exactly 1 attempt, not 4.
+ *
+ * Requires the trimmed value to be ENTIRELY digits (Copilot review on PR
+ * #126 / DRO-253): `parseInt` alone silently accepts a leading-numeric
+ * prefix — `parseInt("5s", 10)` and `parseInt("3.5", 10)` both parse as
+ * valid (5 and 3 respectively) despite neither being a clean integer,
+ * contradicting this function's own "non-numeric → default" contract and
+ * silently misconfiguring an operator who fat-fingered the env var (e.g.
+ * copy-pasted a value with a trailing unit). The regex guard rejects
+ * anything that isn't purely `[0-9]+` before `parseInt` ever sees it.
  */
 export function resolveRetryMax(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env[RETRY_MAX_ENV];
-  if (raw !== undefined && raw.trim() !== "") {
-    const parsed = parseInt(raw.trim(), 10);
-    if (!isNaN(parsed) && parsed >= 0) {
-      return parsed;
+  if (raw !== undefined) {
+    const trimmed = raw.trim();
+    if (/^\d+$/.test(trimmed)) {
+      const parsed = parseInt(trimmed, 10);
+      if (!isNaN(parsed) && parsed >= 0) {
+        return parsed;
+      }
     }
   }
   return DEFAULT_RETRY_MAX;
@@ -284,18 +331,26 @@ type RetryKind = "rateLimit" | "transient" | "nonRetryable";
 function classifyError(error: unknown): RetryKind {
   if (error instanceof RateLimitError) return "rateLimit";
   if (error instanceof InternalServerError) return "transient";
+  // Checked BEFORE the general APIConnectionError branch below because
+  // APIConnectionTimeoutError extends APIConnectionError — a client-side
+  // timeout has no wire-response context to inspect a cause code from, and
+  // maps directly to AC2's "ETIMEDOUT" bucket, so it's unconditionally
+  // retryable without needing the narrower cause-code check the plain
+  // APIConnectionError branch below applies.
   if (error instanceof APIConnectionTimeoutError) return "transient";
   if (error instanceof APIConnectionError) {
-    // Every APIConnectionError is treated as retryable — the SDK only
-    // raises this class for wire-level failures where the request never
-    // reached a productive response (socket reset, TLS handshake reject,
-    // pre-request DNS failure, …). A permanent DNS failure will just burn
-    // through the budget and surface as TransientError, which is the
-    // correct disposition; the alternative (introspecting `cause.code` to
-    // decide which subtypes to skip) risks classifying a genuinely
-    // transient reset as "don't retry" and hurts the happy-path recovery
-    // this middleware exists for.
-    return "transient";
+    // Deny-list, not allow-list (Copilot review on PR #126 / DRO-253 asked
+    // for *some* narrowing here — see `PERMANENT_CONNECTION_CODES`'s
+    // docstring for why an allowlist keyed on `RETRYABLE_NETWORK_CODES`
+    // broke this file's own real-socket-destroy integration test). Retry
+    // by default — matching this module's original, evidence-backed
+    // stance that the SDK only raises this class for wire-level failures
+    // where the request never reached a productive response — UNLESS the
+    // cause chain names one of the two well-understood permanent codes,
+    // in which case stop burning the retry budget on a call that will
+    // never succeed.
+    const networkCode = findCauseCode(error);
+    return networkCode && PERMANENT_CONNECTION_CODES.has(networkCode) ? "nonRetryable" : "transient";
   }
   // Non-openai APIError with a 5xx status (defensive — future SDK versions
   // may add subclasses we haven't enumerated).
