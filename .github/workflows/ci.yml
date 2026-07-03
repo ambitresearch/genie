@@ -39,7 +39,15 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # Retry with a hardlink import fallback to ride out ERR_PNPM_EAGAIN — a
+        # transient `copyfile` race in pnpm's store hydration seen on the
+        # self-hosted runner, made likelier by the ~100 packages testcontainers
+        # pulls in (M1-14a). `--package-import-method=hardlink` avoids the
+        # copyfile path entirely; the retry covers any residual flake.
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
 
       - name: Run ${{ matrix.task }}
         # VITEST_JUNIT makes vitest.config.ts add the `junit` reporter and write
@@ -106,7 +114,11 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # Same ERR_PNPM_EAGAIN hardlink-fallback retry as the matrix legs above.
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
 
       - name: Run Gitea conformance walk
         # GENIE_REQUIRE_DOCKER makes the suite FAIL (not skip) if no daemon is
