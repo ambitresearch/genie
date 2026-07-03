@@ -137,6 +137,28 @@ function kitStoreContract(
       );
     });
 
+    // AC9 — both LocalFsStore and GitHostStore implement listComponents with
+    // identical empty/not-found semantics. (Populated-manifest ordering is
+    // covered per-adapter: the tool suite for LocalFs, a git-host-specific test
+    // below for the git host.)
+    it("listComponents returns [] for a kit with no manifest (AC8)", async () => {
+      const kit = await store.createKit("no-manifest-kit");
+      await expect(store.listComponents({ kitId: kit.id })).resolves.toEqual([]);
+    });
+
+    it("listComponents returns [] when the group filter matches nothing (AC8)", async () => {
+      const kit = await store.createKit("group-miss-kit");
+      await expect(
+        store.listComponents({ kitId: kit.id, group: "nope" }),
+      ).resolves.toEqual([]);
+    });
+
+    it("listComponents throws NotFoundError for a non-existent kit", async () => {
+      await expect(
+        store.listComponents({ kitId: "ghost-kit" }),
+      ).rejects.toThrow(NotFoundError);
+    });
+
     it("openPlan + commitPlan + closePlan lifecycle", async () => {
       const kit = await store.createKit("plan-kit");
       const planId = await store.openPlan(kit.id, [
@@ -554,6 +576,66 @@ async function createGitHostProjectFactory() {
 // Run conformance tests against GitHostStore
 kitStoreContract("GitHostKitStore", createGitHostKitFactory);
 projectStoreContract("GitHostProjectStore", createGitHostProjectFactory);
+
+// ─── Adapter-specific tests: GitHostKitStore.listComponents (AC9) ─────────────
+
+describe("GitHostKitStore — listComponents parses a seeded manifest", () => {
+  let originalFetch: typeof globalThis.fetch;
+  let store: GitHostKitStore;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = createMockGitHostFactory() as typeof fetch;
+    store = new GitHostKitStore({
+      baseUrl: "https://mock-git-host.test/api/v1",
+      owner: "test-org",
+      token: "mock-token",
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** Write a file to the kit's default branch via the mock contents API. */
+  async function seedFile(kitId: string, path: string, content: string): Promise<void> {
+    const res = await fetch(
+      `https://mock-git-host.test/api/v1/repos/test-org/${kitId}/contents/${path}`,
+      {
+        method: "POST",
+        headers: { Authorization: "token mock-token", "Content-Type": "application/json" },
+        body: JSON.stringify({ content: Buffer.from(content, "utf-8").toString("base64") }),
+      },
+    );
+    if (!res.ok) throw new Error(`seedFile failed: ${res.status}`);
+  }
+
+  it("fetches .genie/manifest.json, parses it, and sorts deterministically (AC6)", async () => {
+    const kit = await store.createKit("git-manifest-kit");
+    // Deliberately out of AC6 order on disk to prove the store re-sorts.
+    const manifest = {
+      version: 1,
+      components: [
+        { name: "Select", group: "forms", path: "forms/select.html", viewport: "desktop", hash: "sha256-c", lastModified: "2026-07-01T00:00:00.000Z" },
+        { name: "Button", group: "actions", path: "actions/button.html", viewport: "desktop", hash: "sha256-a", lastModified: "2026-07-01T00:00:00.000Z" },
+        { name: "Anchor", group: "actions", path: "actions/anchor.html", viewport: "375x812", hash: "sha256-b", lastModified: "2026-07-01T00:00:00.000Z" },
+      ],
+    };
+    await seedFile(kit.id, ".genie/manifest.json", JSON.stringify(manifest));
+
+    const out = await store.listComponents({ kitId: kit.id });
+    expect(out.map((c) => `${c.group}/${c.name}`)).toEqual([
+      "actions/Anchor",
+      "actions/Button",
+      "forms/Select",
+    ]);
+
+    // Group filter narrows to the exact group (AC4).
+    const actions = await store.listComponents({ kitId: kit.id, group: "actions" });
+    expect(actions).toHaveLength(2);
+    expect(actions.every((c) => c.group === "actions")).toBe(true);
+  });
+});
 
 // ─── Adapter-specific tests: LocalFsKitStore ─────────────────────────────────
 
