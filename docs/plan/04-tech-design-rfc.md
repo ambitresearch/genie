@@ -1430,7 +1430,7 @@ own ACs (`componentName`/`group`/`files[].mimeType`/`manifestEntry`) are the shi
     }
   },
   "properties": {
-    "componentName": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]{0,63}$" },
+    "componentName": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]{1,63}$" },
     "group": { "type": "string", "pattern": "^[a-z0-9-]{1,32}$" },
     "files": {
       "type": "array",

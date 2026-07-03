@@ -327,7 +327,7 @@ describe("COMPONENT_SCHEMA", () => {
     },
   );
 
-  it.each(["button", "2Button", "", "B", "Button Name", "a".repeat(65)])(
+  it.each(["button", "2Button", "", "B", "Button Name", "A" + "a".repeat(64)])(
     "rejects an invalid componentName %s",
     (componentName) => {
       const fixture = { ...goodFixture(), componentName };
