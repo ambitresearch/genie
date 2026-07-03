@@ -385,6 +385,7 @@ describe("AC4 — project / blueprint workflow", () => {
     const projectId = await createProject({ name: "Bindable Workspace", kind: "workspace" });
 
     const preBind = await harness.call("mcp__genie__get_project", { projectId });
+    expect(preBind.isError, JSON.stringify(preBind)).toBeFalsy();
     expect((payload(preBind) as { kitBindings: unknown[] }).kitBindings).toEqual([]);
 
     // bind_kit returns the updated ProjectSummary directly (its own contract).
@@ -531,6 +532,7 @@ describe("AC7 — conjure_screen requires a bound kit", () => {
       name: "Kitless Structure Workspace",
       kind: "workspace",
     });
+    expect(create.isError, JSON.stringify(create)).toBeFalsy();
     const { projectId } = payload(create) as { projectId: string };
 
     const result = await harness.call("mcp__genie__conjure_screen", {
@@ -597,6 +599,7 @@ describe("AC9 — the end-to-end walk stays well within the 60 s suite budget", 
       writes: ["**/*"],
       deletes: ["components/Budget0.html"],
     });
+    expect(delPlan.isError, JSON.stringify(delPlan)).toBeFalsy();
     const { planId: delPlanId } = payload(delPlan) as { planId: string };
     const del = await harness.call("mcp__genie__delete_files", {
       planId: delPlanId,

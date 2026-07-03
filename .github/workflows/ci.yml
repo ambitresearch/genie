@@ -59,12 +59,14 @@ jobs:
 
       # AC8 — archive the M1 conformance (and full suite) JUnit report as a CI
       # artefact. Runs even when the suite fails so a red run still ships its
-      # report for triage.
+      # report for triage. `warn` (not `error`) on a missing report so a crash
+      # before the reporter flushes surfaces the real test failure rather than a
+      # secondary upload error that masks it.
       - name: Upload test report
         if: matrix.task == 'test' && !cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: test-report-node-${{ matrix.node }}
           path: reports/junit.xml
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
