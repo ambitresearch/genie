@@ -118,7 +118,25 @@ export async function deleteFiles(
   // 2. Resolve the plan. Unknown / expired / malformed-UUID planIds throw
   //    PlanNotFoundError (surfaced to the client, not swallowed here).
   const plan = await getPlan(parsed.planId);
-  const kitRoot = resolve(kitsRoot, plan.kitId);
+  const resolvedKitsRoot = resolve(kitsRoot);
+  const kitRoot = resolve(resolvedKitsRoot, plan.kitId);
+
+  // 2a. Defense in depth: `plan` accepts `kitId: z.string().min(1)` with no
+  //     traversal guard (unlike read_file's kitId check) and createPlan stores
+  //     it verbatim, so a plan authored with e.g. `kitId: ".."` resolves a
+  //     kitRoot OUTSIDE kitsRoot. Every per-path containment check below is
+  //     computed relative to kitRoot, so an escaped kitRoot would let in-bounds
+  //     paths unlink files outside the kit tree. As the first destructive
+  //     consumer, verify kitRoot stays within kitsRoot before deleting anything.
+  const kitRel = relative(resolvedKitsRoot, kitRoot);
+  const kitRootEscapes = kitRel === ".." || kitRel.startsWith(`..${sep}`) || isAbsolute(kitRel);
+  if (kitRootEscapes) {
+    throw new DeleteFilesError(
+      "PathOutsidePlanError",
+      `Plan kitId "${plan.kitId}" resolves outside the kits root.`,
+      plan.kitId,
+    );
+  }
 
   // 3. De-duplicate while preserving first-seen order — a path repeated in the
   //    request must not appear twice in the result, nor in both result arrays.

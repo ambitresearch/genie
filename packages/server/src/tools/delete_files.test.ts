@@ -158,6 +158,30 @@ describe("deleteFiles", () => {
     expect(existsSync(sentinel)).toBe(true);
   });
 
+  it("AC3 — a plan whose kitId escapes kitsRoot cannot delete outside the kit tree (defense in depth)", async () => {
+    // `plan` accepts kitId: z.string().min(1) with NO traversal guard, and
+    // createPlan stores it verbatim. A plan authored with a traversal kitId
+    // (e.g. "..") resolves a kitRoot OUTSIDE kitsRoot; a path that is in-bounds
+    // *relative to that escaped root* would then pass the per-path containment
+    // check and unlink a file outside the kit tree. delete_files is the first
+    // destructive consumer, so it must verify the resolved kitRoot stays within
+    // kitsRoot before deleting anything.
+    const outsideFile = join(harness.home, "outside-secret.txt");
+    await writeFile(outsideFile, "do-not-delete", "utf8");
+
+    // kitsRoot is `${home}/kits`; kitId ".." escapes to `${home}`, so
+    // `outside-secret.txt` sits directly in the escaped kitRoot. The plan
+    // authorizes deleting it by name.
+    const state = await createPlan("..", ["**/*"], ["outside-secret.txt"], process.cwd());
+
+    await expect(
+      deleteFiles(harness.kitsRoot, { planId: state.planId, paths: ["outside-secret.txt"] }),
+    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+
+    // The file outside the kit tree must survive.
+    expect(existsSync(outsideFile)).toBe(true);
+  });
+
   it("AC6 — a non-ENOENT failure (directory target) fails the whole call", async () => {
     // Directory delete is out of scope; unlink on a directory throws EISDIR/EPERM,
     // which must surface as a hard error rather than being swallowed as not-found.
