@@ -8,13 +8,16 @@
  * validated `COMPONENT_SCHEMA` file set (source + `<Name>.html` preview + manifest
  * metadata), and `conjure` never post-processes it. The *only* framework-specific
  * bit `conjure` carries today is the "Target framework: …" prompt directive. This
- * adapter owns that directive (via {@link FrameworkAdapter.framework}) plus the
- * three codegen operations a *future* pipeline (M4 preview compile, refine
+ * adapter owns that directive (via {@link FrameworkAdapter.promptDirective}) plus
+ * the three codegen operations a *future* pipeline (M4 preview compile, refine
  * post-processing) will need per framework:
  *
  *   - {@link FrameworkAdapter.renderSource}  — the canonical source file
  *   - {@link FrameworkAdapter.renderPreview} — a browser-ready preview bundle (IIFE)
  *   - {@link FrameworkAdapter.extractDts}    — the component's `.d.ts` typings
+ *
+ * plus one piece of sizing metadata (not codegen):
+ *
  *   - {@link FrameworkAdapter.defaultViewport} — the card size for this framework
  *
  * Cribs the staged-IR shape from `Kinglions/ui-design-to-code-mcp` (research §5

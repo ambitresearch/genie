@@ -133,11 +133,23 @@ describe("AC2 — ReactAdapter", () => {
     expect(file.content).toContain("button");
   });
 
-  it("renderPreview does not inline React (host provides it as an external)", async () => {
+  it("renderPreview does not inline React (host provides it via the window global)", async () => {
     const file = await react.renderPreview(input());
-    // React is external → its source is not bundled in. A crude but effective
-    // check: the whole of react-dom's internals never appear.
+    // React is resolved from the host `window.React` (DRO-624 contract), not
+    // inlined. A crude but effective check: react-dom's internals never appear.
     expect(file.content).not.toContain("react-dom.production");
+  });
+
+  it("renderPreview resolves React from the host global — no Dynamic require (DRO-624)", async () => {
+    const file = await react.renderPreview(input());
+    // The regression: `external: [react]` made esbuild emit `require("react")`,
+    // which throws `Dynamic require of "react" is not supported` in an iframe.
+    // The execution test (react-preview-execution.test.ts) proves it *runs*;
+    // this asserts the bundle shape so a conformance-only run still catches it.
+    expect(file.content).not.toContain("Dynamic require");
+    expect(file.content).not.toMatch(/\brequire\((['"])react\1\)/);
+    // …and that it references React through the documented host global instead.
+    expect(file.content).toContain("window.React");
   });
 
   it("extractDts emits a <Name>.d.ts with the component's exported types", async () => {
