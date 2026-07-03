@@ -1,0 +1,99 @@
+# genie — reference LiteLLM proxy config (M2-05 / DRO-252)
+#
+# This is a REFERENCE example, not a required dependency. Per D-H
+# (docs/plan/00-decisions.md), genie calls a configurable OpenAI-compatible
+# `/chat/completions` endpoint (`GENIE_LLM_BASE_URL` / `GENIE_LLM_API_KEY`,
+# see packages/server/src/llm/client.ts). LiteLLM is the reference gateway
+# because it fronts Anthropic / OpenAI / Ollama behind one such endpoint and
+# gives operators per-key budgets + rate limits — but any OpenAI-compatible
+# gateway (or a provider's endpoint directly) works the same way.
+#
+# genie's generation verbs (`conjure` / `refine`) request one of three
+# aliases, never a raw provider model id (RFC 04-tech-design §"Model alias
+# resolution"):
+#   - design-default → a Sonnet-class model (conjure's default)
+#   - design-best    → an Opus-class model (slower, higher quality)
+#   - design-local   → a local/offline model (no per-token cost, lower quality)
+#
+# Operators map these three names to whatever their own endpoint actually
+# serves — the names are the contract, not the underlying provider model.
+#
+# AC0 (confirm the real catalog before shipping aliases): the issue's own
+# placeholder ids were checked, on 2026-07-03, against the two catalogs that
+# actually apply to them:
+#   - `claude-sonnet-4-6` and `claude-opus-4-8` were confirmed present via a
+#     live operator gateway's `/v1/models` (both exist verbatim — kept below).
+#   - `qwen3-coder:32b` (design-local) could not be checked the same way: a
+#     shared multi-tenant gateway has no reason to proxy a raw Ollama
+#     passthrough for this alias — "local" here means the *operator's own*
+#     Ollama install, which is inherently per-deployment and not something a
+#     shared reference gateway serves. What the issue's placeholder tag *can*
+#     be checked against is Ollama's own published tag catalog, and there it
+#     does not exist: Ollama publishes `qwen3-coder:30b` (MoE, ~19GB Q4) and
+#     `qwen3-coder:480b` — no `32b` tag has ever existed. This config uses
+#     `qwen3-coder:30b`, the real published tag closest to the issue's intent
+#     (a mid-size local coding model). Its `api_base` comes from
+#     `OLLAMA_API_BASE`, never hardcoded.
+# Whatever your endpoint actually serves WILL differ from both the issue's
+# placeholders and this file's picks — re-run the AC0 check below (and, for
+# design-local, confirm the tag against your own `ollama list`) before
+# deploying.
+#
+#   curl -fsS "$GENIE_LLM_BASE_URL/v1/models" \
+#     -H "Authorization: Bearer $GENIE_LLM_API_KEY" | jq -r '.data[].id'
+#
+# Secrets: no key or private URL is hardcoded anywhere in this file (CLAUDE.md
+# hard rule 5 / AGENTS.md hard rule 4). Every credential and endpoint uses
+# LiteLLM's `os.environ/<VAR>` substitution, resolved from the *proxy host's*
+# environment at LiteLLM startup — a separate process from genie, so these
+# are not the same `GENIE_LLM_*` vars genie itself reads (genie only ever
+# talks to whatever `GENIE_LLM_BASE_URL` fronts, e.g. this LiteLLM proxy).
+
+model_list:
+  - model_name: design-default
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: design-best
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: design-local
+    litellm_params:
+      # ollama_chat/ (not ollama/) is LiteLLM's recommended prefix for
+      # multi-turn chat/tool-calling traffic — genie's `conjure`/`refine`
+      # always send `/chat/completions`-shaped requests, never legacy FIM
+      # completions, so this is the correct prefix for this alias.
+      model: ollama_chat/qwen3-coder:30b
+      api_base: os.environ/OLLAMA_API_BASE
+
+# AC3 / AC4 — per-key budget + rate limit.
+#
+# LiteLLM's config.yaml does not expose a single "apply to every future key"
+# budget+rate-limit block (checked against docs.litellm.ai/docs/proxy/users
+# and /docs/proxy/virtual_keys, 2026-07-03) — `max_internal_user_budget` /
+# `internal_user_budget_duration` only cover internal-user-role keys, and
+# `upperbound_key_generate_params` is a ceiling a request can't exceed, not a
+# value applied when the request omits the field. The values below are
+# therefore the exact body every MCP-server caller's key must be created
+# with — see the `/key/generate` call in the runbook (docs/plan/
+# 06-operations-runbook.md §7.1) — and `upperbound_key_generate_params` pins
+# that ceiling in config so a future `/key/generate` call can't accidentally
+# grant a larger budget or looser rate limit than this reference intends.
+litellm_settings:
+  upperbound_key_generate_params:
+    max_budget: 50 # USD hard cap (AC3) — see /key/generate below
+    budget_duration: "30d" # resets monthly (AC3)
+    rpm_limit: 20 # AC4 — matches claude-sonnet-4-6 tier defaults
+    tpm_limit: 200000 # AC4 — 200 KTPM (no `_` separator: YAML's core int
+    # schema doesn't reliably parse underscore-grouped digits as a number
+    # across parsers — some read `200_000` back as the *string* "200_000"
+    # instead of the integer 200000).
+
+general_settings:
+  # Every non-master call must present a virtual key — no anonymous access to
+  # the proxy. Set via LITELLM_MASTER_KEY on the proxy host's environment,
+  # never hardcoded here (same secrets rule as above).
+  master_key: os.environ/LITELLM_MASTER_KEY
