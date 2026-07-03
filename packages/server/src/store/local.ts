@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type {
+  ComponentEntry,
   FileOp,
   KitId,
   KitMeta,
@@ -28,6 +29,7 @@ import {
   MAX_FILE_BYTES,
   NotFoundError,
 } from "./interface.js";
+import { MANIFEST_PATH, selectComponents } from "./manifest.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -173,22 +175,35 @@ export class LocalFsKitStore implements KitStore {
   async listComponents(params: {
     kitId: KitId;
     group?: string;
-  }): Promise<import("./interface.js").ComponentEntry[]> {
+  }): Promise<ComponentEntry[]> {
     const { kitId, group } = params;
 
-    // Validate kit exists and is properly configured (matches GitHostKitStore behavior)
+    // Validate kit exists (throws NotFoundError) before touching the manifest,
+    // so "kit missing" and "kit present but no components yet" stay distinct.
     await this.getKit(kitId);
 
-    // For now, return empty array as M3-03 manifest compiler is not yet implemented
-    // TODO: After M3-03 lands, read from .genie/manifest.json
-    const components: import("./interface.js").ComponentEntry[] = [];
-
-    // Filter by group if specified (use explicit undefined check to handle empty string correctly)
-    if (group !== undefined) {
-      return components.filter((c) => c.group === group);
+    // The compiled card index (D-D). Absent until the M3-03 compiler writes it
+    // (or on a brand-new kit) → selectComponents maps `undefined` to [] (AC8).
+    // A path-traversal-safe join is unnecessary here: MANIFEST_PATH is a fixed
+    // constant, not user input.
+    const manifestFile = join(this.kitDir(kitId), MANIFEST_PATH);
+    let raw: string | undefined;
+    try {
+      raw = await readFile(manifestFile, "utf-8");
+    } catch (err) {
+      // Only a genuinely-absent manifest (ENOENT) means "no components yet" →
+      // undefined, which selectComponents maps to [] (AC8). Any other IO error
+      // (EACCES, EISDIR, transient failures) is a real operability problem and
+      // must propagate rather than be masked as a silently-empty listing. This
+      // mirrors GitHostStore, which only maps NotFoundError (404) to undefined.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        raw = undefined;
+      } else {
+        throw err;
+      }
     }
 
-    return components;
+    return selectComponents(kitId, raw, group);
   }
 
   async readFile(kitId: KitId, path: string): Promise<string> {
