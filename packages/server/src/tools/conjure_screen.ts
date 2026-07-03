@@ -256,7 +256,11 @@ export function deriveScreenTitle(prompt: string): string {
  * to "screen" when the title has no slug-able characters or is too short. */
 function slugifyScreen(title: string): string {
   const slug = title
-    .toLocaleLowerCase()
+    // Locale-independent: `toLocaleLowerCase()` would fold letters per the host
+    // locale (e.g. Turkish `I`→`ı`), making the same title yield different ids
+    // on different servers and breaking the `[a-z0-9]` slug. determinism is the
+    // contract here, so use the Unicode-default `toLowerCase()`.
+    .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 64)
