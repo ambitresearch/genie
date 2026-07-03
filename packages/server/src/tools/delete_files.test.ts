@@ -13,6 +13,7 @@ import {
   sortPathsLongestFirst,
 } from "./delete_files.js";
 import { createPlan, PlanNotFoundError } from "../plans/index.js";
+import { LocalFsKitStore } from "../store/local.js";
 
 const KIT_ID = "kit-test";
 
@@ -20,6 +21,8 @@ interface Harness {
   home: string;
   kitsRoot: string;
   kitDir: string;
+  /** The injected kit backend the re-plumbed tool deletes through (DRO-540). */
+  store: LocalFsKitStore;
 }
 
 async function setup(): Promise<Harness> {
@@ -28,7 +31,10 @@ async function setup(): Promise<Harness> {
   const kitsRoot = join(home, "kits");
   const kitDir = join(kitsRoot, KIT_ID);
   await mkdir(kitDir, { recursive: true });
-  return { home, kitsRoot, kitDir };
+  // The tool now deletes via KitStore.deleteFile; a LocalFsKitStore rooted at
+  // kitsRoot resolves `<kitsRoot>/<kitId>/<path>` — exactly where `seed` writes.
+  const store = new LocalFsKitStore(kitsRoot);
+  return { home, kitsRoot, kitDir, store };
 }
 
 async function seed(kitDir: string, relPath: string, content = "x"): Promise<void> {
@@ -84,7 +90,7 @@ describe("deleteFiles", () => {
     await seed(harness.kitDir, "old/b.txt");
     const planId = await seedPlan(["old/*.txt"]);
 
-    const result = await deleteFiles(harness.kitsRoot, {
+    const result = await deleteFiles(harness.store, {
       planId,
       paths: ["old/a.txt", "old/b.txt"],
     });
@@ -98,7 +104,7 @@ describe("deleteFiles", () => {
   it("AC5 — a missing path is a non-error and lands in notFoundPaths (silent retry)", async () => {
     const planId = await seedPlan(["_preview/*.html"]);
 
-    const result = await deleteFiles(harness.kitsRoot, {
+    const result = await deleteFiles(harness.store, {
       planId,
       paths: ["_preview/Button.html"],
     });
@@ -111,7 +117,7 @@ describe("deleteFiles", () => {
     await seed(harness.kitDir, "keep/present.txt");
     const planId = await seedPlan(["keep/*.txt"]);
 
-    const result = await deleteFiles(harness.kitsRoot, {
+    const result = await deleteFiles(harness.store, {
       planId,
       paths: ["keep/present.txt", "keep/absent.txt"],
     });
@@ -127,7 +133,7 @@ describe("deleteFiles", () => {
     const planId = await seedPlan(["old/*.txt"]);
 
     await expect(
-      deleteFiles(harness.kitsRoot, { planId, paths: ["old/a.txt", "secret.txt"] }),
+      deleteFiles(harness.store, { planId, paths: ["old/a.txt", "secret.txt"] }),
     ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
 
     // Atomic pre-flight: the in-plan sibling must NOT have been deleted.
@@ -140,7 +146,7 @@ describe("deleteFiles", () => {
     const planId = await seedPlan([]);
 
     await expect(
-      deleteFiles(harness.kitsRoot, { planId, paths: ["a.txt"] }),
+      deleteFiles(harness.store, { planId, paths: ["a.txt"] }),
     ).rejects.toBeInstanceOf(DeleteFilesError);
     expect(existsSync(join(harness.kitDir, "a.txt"))).toBe(true);
   });
@@ -152,7 +158,7 @@ describe("deleteFiles", () => {
     const planId = await seedPlan(["**/*"]);
 
     await expect(
-      deleteFiles(harness.kitsRoot, { planId, paths: ["../sentinel.txt"] }),
+      deleteFiles(harness.store, { planId, paths: ["../sentinel.txt"] }),
     ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
 
     expect(existsSync(sentinel)).toBe(true);
@@ -175,7 +181,7 @@ describe("deleteFiles", () => {
     const state = await createPlan("..", ["**/*"], ["outside-secret.txt"], process.cwd());
 
     await expect(
-      deleteFiles(harness.kitsRoot, { planId: state.planId, paths: ["outside-secret.txt"] }),
+      deleteFiles(harness.store, { planId: state.planId, paths: ["outside-secret.txt"] }),
     ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
 
     // The file outside the kit tree must survive.
@@ -193,7 +199,7 @@ describe("deleteFiles", () => {
     const planId = await seedPlan(["inside/../*.txt"]);
 
     await expect(
-      deleteFiles(harness.kitsRoot, { planId, paths: ["inside/../secret.txt"] }),
+      deleteFiles(harness.store, { planId, paths: ["inside/../secret.txt"] }),
     ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
 
     // The resolved-but-unauthorized file must survive untouched.
@@ -205,7 +211,7 @@ describe("deleteFiles", () => {
     const planId = await seedPlan(["**/*"]);
 
     await expect(
-      deleteFiles(harness.kitsRoot, { planId, paths: ["./a.txt"] }),
+      deleteFiles(harness.store, { planId, paths: ["./a.txt"] }),
     ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
 
     expect(existsSync(join(harness.kitDir, "a.txt"))).toBe(true);
@@ -218,7 +224,7 @@ describe("deleteFiles", () => {
     await seed(harness.kitDir, "adir/inner.txt");
     const planId = await seedPlan(["adir", "adir/*.txt"]);
 
-    await expect(deleteFiles(harness.kitsRoot, { planId, paths: ["adir"] })).rejects.toBeInstanceOf(
+    await expect(deleteFiles(harness.store, { planId, paths: ["adir"] })).rejects.toBeInstanceOf(
       DeleteFilesError,
     );
     expect(existsSync(join(harness.kitDir, "adir"))).toBe(true);
@@ -229,7 +235,7 @@ describe("deleteFiles", () => {
     await seed(harness.kitDir, "nested/deep/other.txt");
     const planId = await seedPlan(["nested/**/*.txt"]);
 
-    const result = await deleteFiles(harness.kitsRoot, {
+    const result = await deleteFiles(harness.store, {
       planId,
       paths: ["nested/deep/file.txt", "nested/deep/other.txt"],
     });
@@ -243,7 +249,7 @@ describe("deleteFiles", () => {
     await seed(harness.kitDir, "dup.txt");
     const planId = await seedPlan(["dup.txt"]);
 
-    const result = await deleteFiles(harness.kitsRoot, {
+    const result = await deleteFiles(harness.store, {
       planId,
       paths: ["dup.txt", "dup.txt"],
     });
@@ -254,7 +260,7 @@ describe("deleteFiles", () => {
 
   it("rejects an unknown / expired planId with PlanNotFoundError", async () => {
     await expect(
-      deleteFiles(harness.kitsRoot, {
+      deleteFiles(harness.store, {
         planId: "00000000-0000-0000-0000-000000000000",
         paths: ["a.txt"],
       }),
@@ -263,13 +269,13 @@ describe("deleteFiles", () => {
 
   it("rejects a malformed planId (AC2 shape) with InvalidArguments", async () => {
     await expect(
-      deleteFiles(harness.kitsRoot, { planId: "", paths: ["a.txt"] }),
+      deleteFiles(harness.store, { planId: "", paths: ["a.txt"] }),
     ).rejects.toMatchObject({ code: "InvalidArguments" });
   });
 
   it("rejects an empty paths array (AC2 shape) with InvalidArguments", async () => {
     const planId = await seedPlan(["*.txt"]);
-    await expect(deleteFiles(harness.kitsRoot, { planId, paths: [] })).rejects.toMatchObject({
+    await expect(deleteFiles(harness.store, { planId, paths: [] })).rejects.toMatchObject({
       code: "InvalidArguments",
     });
   });

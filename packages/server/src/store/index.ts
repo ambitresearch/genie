@@ -4,7 +4,11 @@ export type {
   PlanId,
   KitMeta,
   ProjectMeta,
+  ComponentEntry,
   FileOp,
+  FileEncoding,
+  KitFileContent,
+  KitFileEntry,
   KitStore,
   ProjectStore,
 } from "./interface.js";

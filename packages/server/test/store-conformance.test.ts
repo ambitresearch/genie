@@ -24,18 +24,33 @@ import { LocalFsKitStore, LocalFsProjectStore } from "../src/store/local.js";
 
 // ─── Shared contract tests ───────────────────────────────────────────────────
 
+/**
+ * Seed a file onto a kit's READABLE surface (LocalFs kit dir / git-host default
+ * branch) — distinct from `openPlan`, which stages onto an isolated plan
+ * branch/dir. Lets the shared contract exercise readFile/listFiles/deleteFile
+ * identically on both adapters (DRO-540: the new {content,encoding,mimeType} /
+ * {path,size,hash,lastModified} shapes are proven on LocalFs AND GitHost).
+ */
+type SeedFile = (kitId: string, path: string, content: Buffer | string) => Promise<void>;
+
 function kitStoreContract(
   name: string,
-  factory: () => Promise<{ store: KitStore; cleanup: () => Promise<void> }>,
+  factory: () => Promise<{
+    store: KitStore;
+    cleanup: () => Promise<void>;
+    seedFile: SeedFile;
+  }>,
 ) {
   describe(`KitStore contract — ${name}`, () => {
     let store: KitStore;
     let cleanup: () => Promise<void>;
+    let seedFile: SeedFile;
 
     beforeEach(async () => {
       const ctx = await factory();
       store = ctx.store;
       cleanup = ctx.cleanup;
+      seedFile = ctx.seedFile;
     });
 
     afterEach(async () => {
@@ -158,6 +173,71 @@ function kitStoreContract(
       const kit = await store.createKit("commit-miss-kit");
       await expect(store.commitPlan(kit.id, "no-such-plan", [])).rejects.toThrow(NotFoundError);
     });
+
+    // ── File-content contract (DRO-540) ──────────────────────────────────────
+    // readFile → { content, encoding, mimeType }; listFiles → rich entries;
+    // deleteFile → { existed }. Run against BOTH adapters so the shapes are
+    // byte-identical across LocalFs and GitHost.
+
+    it("readFile returns { content, encoding: 'utf-8', mimeType } for a text file", async () => {
+      const kit = await store.createKit("rich-read-kit");
+      await seedFile(kit.id, "hello.txt", "hello world");
+
+      const file = await store.readFile(kit.id, "hello.txt");
+      expect(file).toEqual({
+        content: "hello world",
+        encoding: "utf-8",
+        mimeType: "text/plain",
+      });
+    });
+
+    it("readFile returns base64 for a binary file (PNG header)", async () => {
+      const kit = await store.createKit("rich-read-bin-kit");
+      // PNG magic bytes — a binary MIME (image/png), so the store must base64 it.
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      await seedFile(kit.id, "icon.png", png);
+
+      const file = await store.readFile(kit.id, "icon.png");
+      expect(file.encoding).toBe("base64");
+      expect(file.mimeType).toBe("image/png");
+      expect(Buffer.from(file.content, "base64").equals(png)).toBe(true);
+    });
+
+    it("readFile throws FileTooLargeError above the 256 KiB cap", async () => {
+      const kit = await store.createKit("rich-read-big-kit");
+      await seedFile(kit.id, "big.bin", "x".repeat(MAX_FILE_BYTES + 1));
+      await expect(store.readFile(kit.id, "big.bin")).rejects.toThrow(FileTooLargeError);
+    });
+
+    it("listFiles returns rich entries (path + size + sha256 SRI + lastModified)", async () => {
+      const kit = await store.createKit("rich-list-kit");
+      await seedFile(kit.id, "components/Button.tsx", "export const Button = 1;\n");
+
+      const files = await store.listFiles(kit.id);
+      const entry = files.find((f) => f.path === "components/Button.tsx");
+      expect(entry).toBeDefined();
+      expect(entry!.size).toBe(Buffer.byteLength("export const Button = 1;\n"));
+      expect(entry!.hash).toMatch(/^sha256-[A-Za-z0-9+/]+=*$/);
+      // ISO-8601 round-trips.
+      expect(new Date(entry!.lastModified).toISOString()).toBe(entry!.lastModified);
+      // The .kit.json marker is never surfaced as kit content.
+      expect(files.map((f) => f.path)).not.toContain(".kit.json");
+    });
+
+    it("deleteFile removes a file (existed: true) then is an idempotent no-op (existed: false)", async () => {
+      const kit = await store.createKit("rich-del-kit");
+      await seedFile(kit.id, "stale.txt", "stale");
+
+      expect(await store.deleteFile(kit.id, "stale.txt")).toEqual({ existed: true });
+      expect((await store.listFiles(kit.id)).map((f) => f.path)).not.toContain("stale.txt");
+      // Second delete: already gone → not an error, just existed: false.
+      expect(await store.deleteFile(kit.id, "stale.txt")).toEqual({ existed: false });
+    });
+
+    it("deleteFile on a file that never existed is existed: false", async () => {
+      const kit = await store.createKit("rich-del-absent-kit");
+      expect(await store.deleteFile(kit.id, "never-here.txt")).toEqual({ existed: false });
+    });
   });
 }
 
@@ -259,6 +339,13 @@ async function createLocalFsKitFactory() {
   const store = new LocalFsKitStore(tmpDir);
   return {
     store,
+    // Seed writes straight into the kit dir — the readable surface listFiles/
+    // readFile/deleteFile operate on (vs openPlan, which stages elsewhere).
+    seedFile: async (kitId: string, path: string, content: Buffer | string) => {
+      const full = join(tmpDir, kitId, ...path.split("/"));
+      await mkdir(join(full, ".."), { recursive: true });
+      await writeFile(full, content);
+    },
     cleanup: async () => {
       // Restore env var carefully: assigning `undefined` to process.env coerces
       // to the literal string "undefined" and would leak into other tests.
@@ -318,6 +405,19 @@ async function createGitHostKitFactory() {
 
   return {
     store,
+    // Seed onto the DEFAULT branch (no `branch` in the body → the mock writes to
+    // the repo's default branch), which is the readable surface readFile/
+    // listFiles/deleteFile see — NOT a plan branch. Content is base64, exactly
+    // as the real Gitea contents API expects.
+    seedFile: async (kitId: string, path: string, content: Buffer | string) => {
+      const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+      const base64 = Buffer.from(content).toString("base64");
+      const res = await mockFetch(
+        `https://mock-git-host.test/api/v1/repos/test-org/${kitId}/contents/${encodedPath}`,
+        { method: "POST", body: JSON.stringify({ content: base64 }) },
+      );
+      if (!res.ok) throw new Error(`seedFile failed: ${res.status}`);
+    },
     cleanup: async () => {
       globalThis.fetch = originalFetch;
     },
@@ -392,11 +492,15 @@ describe("LocalFsKitStore — adapter-specific", () => {
     const kitDir = join(tmpDir, kit.id);
     await writeFile(join(kitDir, "hello.txt"), "hello world");
 
-    const content = await store.readFile(kit.id, "hello.txt");
-    expect(content).toBe("hello world");
+    const file = await store.readFile(kit.id, "hello.txt");
+    expect(file).toEqual({
+      content: "hello world",
+      encoding: "utf-8",
+      mimeType: "text/plain",
+    });
   });
 
-  it("listFiles returns all files (excluding .kit.json)", async () => {
+  it("listFiles returns rich entries (path + size + SRI hash + lastModified), excluding .kit.json", async () => {
     const kit = await store.createKit("multi-file-kit");
     const kitDir = join(tmpDir, kit.id);
     await mkdir(join(kitDir, "sub"), { recursive: true });
@@ -404,9 +508,30 @@ describe("LocalFsKitStore — adapter-specific", () => {
     await writeFile(join(kitDir, "sub", "b.txt"), "b");
 
     const files = await store.listFiles(kit.id);
-    expect(files).toContain("a.txt");
-    expect(files).toContain(join("sub", "b.txt"));
-    expect(files).not.toContain(".kit.json");
+    const paths = files.map((f) => f.path);
+    // Paths are kit-root-relative, forward-slash, and .kit.json is hidden.
+    expect(paths).toContain("a.txt");
+    expect(paths).toContain("sub/b.txt");
+    expect(paths).not.toContain(".kit.json");
+
+    const a = files.find((f) => f.path === "a.txt")!;
+    expect(a.size).toBe(1);
+    expect(a.hash).toMatch(/^sha256-[A-Za-z0-9+/]+=*$/);
+    // ISO-8601 round-trips.
+    expect(new Date(a.lastModified).toISOString()).toBe(a.lastModified);
+  });
+
+  it("deleteFile removes a file and is idempotent past an absent one", async () => {
+    const kit = await store.createKit("del-file-kit");
+    const kitDir = join(tmpDir, kit.id);
+    await writeFile(join(kitDir, "gone.txt"), "bye");
+
+    // Present → existed: true, and it disappears from the listing.
+    expect(await store.deleteFile(kit.id, "gone.txt")).toEqual({ existed: true });
+    expect((await store.listFiles(kit.id)).map((f) => f.path)).not.toContain("gone.txt");
+
+    // Absent (already deleted) → existed: false, a non-error idempotent no-op.
+    expect(await store.deleteFile(kit.id, "gone.txt")).toEqual({ existed: false });
   });
 
   it("listFiles throws NotFoundError for non-existent kit", async () => {

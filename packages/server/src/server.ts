@@ -9,7 +9,7 @@ import { LocalScaffoldScreenGenerator, registerConjureScreenTool } from "./tools
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
 import { registerValidate } from "./tools/validate.js";
-import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
+import { registerListFilesTool } from "./tools/list_files.js";
 import { registerListKits } from "./tools/list_kits.js";
 import { registerListComponents } from "./tools/list_components.js";
 import { registerPlan } from "./tools/plan.js";
@@ -44,28 +44,26 @@ export interface CreateServerOptions {
   kitsRoot?: string;
   reportsDir?: string;
   /**
-   * Injectable kit-metadata backend (AC1 / DRO-523). When supplied, the
-   * kit-*metadata* verbs — `create_kit`, `get_kit`, `list_kits`,
-   * `list_components`, and `conjure_screen`'s explicit-kitId validation, plus
-   * `bind_kit`'s kit-existence check — route through this store instead of the
-   * default `LocalFsKitStore(kitsRoot)`. Defaulting to LocalFs keeps every
-   * existing caller (`createServer()`, `createServer({ kitsRoot })`) byte-for-
-   * byte unchanged.
+   * Injectable kit backend (AC1 / DRO-523; kit-file verbs added in
+   * M1-14a-1a / DRO-540). When supplied, the kit verbs route through this store
+   * instead of the default `LocalFsKitStore(kitsRoot)`:
+   *   - metadata: `create_kit`, `get_kit`, `list_kits`, `list_components`,
+   *     plus `conjure_screen`'s explicit-kitId validation and `bind_kit`'s
+   *     kit-existence check (via `KitStore.getKit`/`listKits`/`createKit`/…);
+   *   - files: `read_file`, `list_files`, `delete_files` (via
+   *     `KitStore.readFile`/`listFiles`/`deleteFile`).
+   * Defaulting to LocalFs keeps every existing caller (`createServer()`,
+   * `createServer({ kitsRoot })`) byte-for-byte unchanged, so injecting a
+   * `GitHostKitStore` points the whole kit surface at the git host.
    *
-   * IMPORTANT — partial seam (tracked, see below). This injects ONLY the
-   * `KitStore`-interface consumers. The file-content verbs (`read_file`,
-   * `list_files`, `write_files`, `delete_files`) and the whole rich project
-   * family (`create_project`/`get_project`/`bind_kit` write side/
-   * `delete_project`/`recordScreen`) still bind to `kitsRoot`/`projectsRoot`
-   * filesystem paths and the on-disk plan registry — they were never written
-   * against the `KitStore`/`ProjectStore` interfaces. So injecting a
-   * `GitHostKitStore` today makes the metadata verbs talk to the git host while
-   * the file/project verbs still hit local disk (a deliberately-scoped split).
-   * Re-plumbing those verbs onto the store interfaces — and building a rich
-   * `GitHostProjectStore` — is the real remainder of the end-to-end AC5 walk
-   * and is tracked as its own follow-up issue(s), kept out of this seam PR so
-   * the fs-native tool contracts (atomic rename, streaming, base64/MIME, SHA
-   * hashes) aren't rewritten under a test-only change.
+   * Remaining holdout (tracked, deliberately out of scope here): `write_files`
+   * still binds to `kitsRoot` + the on-disk plan registry — its atomic
+   * rename-to-temp / streaming / rollback transaction doesn't map onto the
+   * git-host REST model without its own design, so it is a sibling follow-up.
+   * The rich project family (`create_project`/`get_project`/`bind_kit` write
+   * side/`recordScreen`) also still uses the concrete fs-backed `ProjectStore`
+   * (see `projectStore` below); `delete_project` already routes through it
+   * (M1-14a-1 / DRO-531).
    */
   kitStore?: KitStore;
   /**
@@ -82,9 +80,9 @@ export interface CreateServerOptions {
    * git-host project backend that satisfies the full tool-surface contract is
    * still to-build (tracked follow-up); this seam is what lets it be dropped in
    * once it exists, and lets tests substitute a fake. `delete_project` now
-   * routes through this store too (M1-14a-1 / DRO-531); the remaining holdouts
-   * are the fs-native kit-file verbs (`read_file`/`list_files`/`delete_files`),
-   * which still bind to `kitsRoot` (see `kitStore` above).
+   * routes through this store too (M1-14a-1 / DRO-531); the kit-file verbs
+   * (`read_file`/`list_files`/`delete_files`) route through `kitStore` as of
+   * M1-14a-1a / DRO-540, leaving `write_files` (kitsRoot) as the last holdout.
    */
   projectStore?: ProjectStore;
 }
@@ -128,8 +126,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     join(process.cwd(), ".genie", "projects");
   // Resolve the kits root ONCE so every kit verb agrees on where kits live.
   // `create_kit` (via LocalFsKitStore) writes here, `read_file` reads here, and
-  // `list_files` (via KitFileStore) walks here — threading the same value into
-  // all of them is what keeps them consistent.
+  // `list_files` walks here — threading the same value into all of them (via the
+  // shared kitStore below) is what keeps them consistent.
   const kitsRoot =
     options.kitsRoot ?? process.env.GENIE_KITS_ROOT ?? join(process.cwd(), ".genie", "kits");
   // Shared instance: `bind_kit` (via ProjectStore) validates kitId through the
@@ -174,9 +172,15 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   registerCreateKit(server, kitStore);
   registerGetKitTool(server, kitStore);
 
-  // M1 tools
-  registerReadFile(server, kitsRoot);
-  registerListFilesTool(server, new KitFileStore(kitsRoot));
+  // M1 kit-file verbs. Re-plumbed onto the injected `kitStore` (M1-14a-1a /
+  // DRO-540): `read_file`, `list_files`, and `delete_files` now route through
+  // `KitStore.readFile`/`listFiles`/`deleteFile` instead of a raw `kitsRoot`
+  // path, so injecting a `GitHostKitStore` carries these verbs onto the git
+  // host too (not just the metadata verbs). The store owns MIME/encoding, the
+  // 256 KiB cap, SRI hashing, and `.genieignore`/default-dir exclusion; the
+  // tools keep plan-gating (delete_files) and request-shape guards.
+  registerReadFile(server, kitStore);
+  registerListFilesTool(server, kitStore);
 
   // Plan capability-grant boundary (M1-07). Locks writes/deletes/localDir and
   // issues a planId; write_files (below) validates every call against it.
@@ -197,9 +201,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   );
 
   // Plan-gated destructive verb (M1-09): deletes are authorized by a plan's
-  // `deletes` globs and hit the SAME kit tree read_file/list_files read
-  // (kitsRoot). Shares the M1-07 plan boundary already registered above.
-  registerDeleteFilesTool(server, kitsRoot);
+  // `deletes` globs and hit the SAME kit tree read_file/list_files read (via
+  // the shared `kitStore`). Shares the M1-07 plan boundary registered above.
+  registerDeleteFilesTool(server, kitStore);
 
   return server;
 }

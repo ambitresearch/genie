@@ -120,6 +120,75 @@ describe("createServer store-injection seam — kitStore routes to GitHostKitSto
     expect(got.isError).toBe(true);
   });
 
+  it("the kit-FILE walk (list_files → read_file → delete_files) runs against the git host (DRO-540)", async () => {
+    // AC3 of DRO-540: the re-plumbed fs-native kit-file verbs now route through
+    // the injected KitStore too, so a GitHostKitStore carries them onto the git
+    // host — not just the metadata verbs. Prove it end-to-end through the MCP
+    // surface, Docker-free, against the in-memory Gitea mock.
+    const created = await call("mcp__genie__create_kit", { name: "File Walk Kit" });
+    expect(created.isError, JSON.stringify(created)).toBeFalsy();
+    const { kitId } = payload(created) as { kitId: string };
+
+    // Seed two files directly onto the git host's DEFAULT branch (the readable
+    // surface) via the same mock fetch createServer's store talks to — no
+    // `branch` in the body → default branch. This is the git-host analogue of
+    // writing into a LocalFs kit dir.
+    const seed = async (path: string, content: string) => {
+      const res = await globalThis.fetch(
+        `https://mock-git-host.test/api/v1/repos/test-org/${kitId}/contents/${path}`,
+        { method: "POST", body: JSON.stringify({ content: Buffer.from(content).toString("base64") }) },
+      );
+      expect(res.ok, `seed ${path}`).toBe(true);
+    };
+    await seed("components/Button.tsx", "export const Button = 1;\n");
+    await seed("stale.txt", "remove me");
+
+    // list_files surfaces the git-host tree as rich entries (path/size/hash/
+    // lastModified) — proof the walk ran against Gitea, not local disk.
+    const listed = await call("mcp__genie__list_files", { kitId });
+    expect(listed.isError, JSON.stringify(listed)).toBeFalsy();
+    const files = (payload(listed) as { files: { path: string; hash: string }[] }).files;
+    const paths = files.map((f) => f.path);
+    expect(paths).toContain("components/Button.tsx");
+    expect(paths).toContain("stale.txt");
+    expect(paths).not.toContain(".kit.json");
+    expect(files.find((f) => f.path === "stale.txt")!.hash).toMatch(/^sha256-/);
+
+    // read_file round-trips a file's content off the git host.
+    const read = await call("mcp__genie__read_file", {
+      kitId,
+      path: "components/Button.tsx",
+    });
+    expect(read.isError, JSON.stringify(read)).toBeFalsy();
+    expect(payload(read)).toMatchObject({
+      content: "export const Button = 1;\n",
+      encoding: "utf-8",
+      mimeType: "text/tsx",
+    });
+
+    // delete_files (plan-gated) removes a file from the git host and reports it.
+    const planResult = await call("mcp__genie__plan", {
+      kitId,
+      writes: ["**/*"],
+      deletes: ["stale.txt"],
+    });
+    expect(planResult.isError, JSON.stringify(planResult)).toBeFalsy();
+    const { planId } = payload(planResult) as { planId: string };
+
+    const del = await call("mcp__genie__delete_files", { planId, paths: ["stale.txt"] });
+    expect(del.isError, JSON.stringify(del)).toBeFalsy();
+    expect(payload(del)).toEqual({ deletedPaths: ["stale.txt"], notFoundPaths: [] });
+
+    // ...and the deletion is durable on the git host: a fresh list no longer
+    // shows it, while the untouched file survives.
+    const relisted = await call("mcp__genie__list_files", { kitId });
+    const relistedPaths = (payload(relisted) as { files: { path: string }[] }).files.map(
+      (f) => f.path,
+    );
+    expect(relistedPaths).not.toContain("stale.txt");
+    expect(relistedPaths).toContain("components/Button.tsx");
+  });
+
   it("default construction (no kitStore) still uses LocalFsKitStore — no git-host calls", async () => {
     // Guard the "no change to existing callers" half of AC1: with no injection,
     // create_kit must NOT hit the git host. We assert by pointing the default

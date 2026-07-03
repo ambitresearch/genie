@@ -178,7 +178,7 @@ export function createMockGitHostFetch(): MockFetch {
       const repoFiles = filesFor(key, branch);
 
       if (method === "GET") {
-        // Build a name field from the last path segment for directory entries.
+        // Build a `file` entry for a full path.
         const entryFor = (path: string) => ({
           type: "file" as const,
           name: path.split("/").pop()!,
@@ -187,26 +187,43 @@ export function createMockGitHostFetch(): MockFetch {
           size: Buffer.from(repoFiles.get(path)!.content, "base64").length,
         });
 
-        // If filePath is empty, return all files at root level
+        // Immediate children of `prefix` (""=root): direct files as `file`
+        // entries, and first-level subdirectories as unique `dir` entries. The
+        // real Gitea contents API returns BOTH at each directory level, which is
+        // what GitHostKitStore.listTree recurses through — a files-only mock
+        // would silently hide every nested file.
+        const listDir = (prefix: string) => {
+          const base = prefix ? `${prefix}/` : "";
+          const files: Array<ReturnType<typeof entryFor>> = [];
+          const dirs = new Map<string, { type: "dir"; name: string; path: string }>();
+          for (const path of repoFiles.keys()) {
+            if (base && !path.startsWith(base)) continue;
+            const rest = path.substring(base.length);
+            if (!rest) continue;
+            const slash = rest.indexOf("/");
+            if (slash === -1) {
+              files.push(entryFor(path));
+            } else {
+              const dirName = rest.substring(0, slash);
+              const dirPath = `${base}${dirName}`;
+              if (!dirs.has(dirPath)) {
+                dirs.set(dirPath, { type: "dir", name: dirName, path: dirPath });
+              }
+            }
+          }
+          return [...files, ...dirs.values()];
+        };
+
+        // If filePath is empty, return the root directory listing.
         if (!filePath || filePath === "") {
-          const entries = Array.from(repoFiles.keys())
-            .filter((path) => !path.includes("/"))
-            .map(entryFor);
-          return new Response(JSON.stringify(entries), { status: 200 });
+          return new Response(JSON.stringify(listDir("")), { status: 200 });
         }
-        // Check if this is a directory path (has children)
-        const children = Array.from(repoFiles.keys()).filter((path) =>
+        // A directory path has children under `filePath/`.
+        const hasChildren = Array.from(repoFiles.keys()).some((path) =>
           path.startsWith(filePath + "/"),
         );
-        if (children.length > 0) {
-          // Return directory listing
-          const entries = children
-            .filter((path) => {
-              const relativePath = path.substring(filePath.length + 1);
-              return !relativePath.includes("/");
-            })
-            .map(entryFor);
-          return new Response(JSON.stringify(entries), { status: 200 });
+        if (hasChildren && !repoFiles.has(filePath)) {
+          return new Response(JSON.stringify(listDir(filePath)), { status: 200 });
         }
         // It's a file
         if (!repoFiles.has(filePath)) {
