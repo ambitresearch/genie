@@ -14,20 +14,18 @@
  * rest of M1 — nothing is silently skipped.
  *
  *   Merged & driven live here:
- *     create_kit, list_files, list_components, read_file, validate,
- *     create_project, list_projects, get_project, delete_project, (get_kit, list_kits),
- *     bind_kit, conjure_screen
+ *     create_kit, list_files, list_components, read_file, validate, plan,
+ *     delete_files, create_project, list_projects, get_project, delete_project,
+ *     (get_kit, list_kits), bind_kit, conjure_screen
  *
  *   In_review / not yet registered — stubbed as it.todo, wired to their issue:
- *     plan            DRO-235 (M1-07)
  *     write_files     DRO-236 (M1-08)
- *     delete_files    DRO-236 (M1-08) / M1-09
  *     GitHostStore/Gitea parity (AC5) — testcontainers infra, M1-01 git-host path
  *
  * ── Acceptance criteria map ─────────────────────────────────────────────────
  *   AC1  file path (this file)                              ✓ satisfied
  *   AC2  in-process SDK test transport                      ✓ live
- *   AC3  kit protocol walk                                  ◑ prefix live, write-half todo (DRO-235/236)
+ *   AC3  kit protocol walk                                  ◑ read+plan+delete live, write-half todo (DRO-236)
  *   AC4  project/blueprint walk                             ✓ CRUD+blueprint+conjure_screen live
  *   AC5  GitHostStore/Gitea parity                          ○ todo (infra)
  *   AC6  negative: write without/outside planId → -32602    ○ todo (DRO-236)
@@ -35,7 +33,7 @@
  *   AC8  test report uploaded as CI artefact                — CI wiring (see .github/workflows)
  *   AC9  suite < 60 s wall-clock                            ✓ live walk is ~ms; guarded below
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -118,6 +116,8 @@ describe("AC2 — MCP server boots in-process over the SDK test transport", () =
       "mcp__genie__list_files",
       "mcp__genie__list_components",
       "mcp__genie__validate",
+      "mcp__genie__plan",
+      "mcp__genie__delete_files",
       "mcp__genie__create_project",
       "mcp__genie__list_projects",
       "mcp__genie__get_project",
@@ -182,10 +182,51 @@ describe("AC3 — kit protocol walk (read → plan → write/delete)", () => {
     expect(payload(result)).toEqual({});
   });
 
-  // Write-half of AC3 — needs `plan` (DRO-235) + `write_files` / `delete_files` (DRO-236).
-  it.todo(
-    "plan → write_files(5) → list_files(5) → read_file round-trip → delete_files [blocked by DRO-235, DRO-236]",
-  );
+  it("plan → delete_files removes an in-plan file and silently retries past a missing one", async () => {
+    const kitId = await createKit("Delete Walk Kit");
+
+    // Seed two files directly under the kit root, then author a plan whose
+    // `deletes` authorize both a present and an absent path. delete_files must
+    // remove the present one and report the absent one in notFoundPaths (the
+    // known-good silent-retry case), while leaving out-of-plan files untouched.
+    await writeFile(join(harness.roots.kitsRoot, kitId, "stale.txt"), "stale", "utf8");
+    await writeFile(join(harness.roots.kitsRoot, kitId, "keep.txt"), "keep", "utf8");
+
+    const planResult = await harness.call("mcp__genie__plan", {
+      kitId,
+      writes: ["**/*"],
+      deletes: ["stale.txt", "gone.txt"],
+    });
+    expect(planResult.isError, JSON.stringify(planResult)).toBeFalsy();
+    const { planId } = payload(planResult) as { planId: string };
+
+    const delResult = await harness.call("mcp__genie__delete_files", {
+      planId,
+      paths: ["stale.txt", "gone.txt"],
+    });
+    expect(delResult.isError, JSON.stringify(delResult)).toBeFalsy();
+    expect(payload(delResult)).toEqual({
+      deletedPaths: ["stale.txt"],
+      notFoundPaths: ["gone.txt"],
+    });
+
+    // An out-of-plan path rejects the whole call and touches nothing.
+    const rejected = await harness.call("mcp__genie__delete_files", {
+      planId,
+      paths: ["keep.txt"],
+    });
+    expect(rejected.isError).toBe(true);
+    expect(rejected.content?.[0]?.text ?? "").toContain("PathOutsidePlanError");
+
+    // keep.txt survived; the deleted file is gone from list_files.
+    const listed = await harness.call("mcp__genie__list_files", { kitId });
+    const files = (payload(listed) as { files: { path: string }[] }).files.map((f) => f.path);
+    expect(files).toContain("keep.txt");
+    expect(files).not.toContain("stale.txt");
+  });
+
+  // Write-half of AC3 — needs `write_files` (DRO-236).
+  it.todo("plan → write_files(5) → list_files(5) → read_file round-trip [blocked by DRO-236]");
 });
 
 // ── AC4 — project / blueprint walk ────────────────────────────────────────────

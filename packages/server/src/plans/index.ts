@@ -11,7 +11,13 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import * as micromatch from "micromatch";
+// Default import, NOT `import * as micromatch`. micromatch is CommonJS and
+// assigns `isMatch` dynamically, so cjs-module-lexer can't surface it as a
+// named ESM export. Under native Node ESM a namespace import lands the real
+// module under `.default`, leaving `micromatch.isMatch` undefined at runtime
+// (vitest's lenient interop hides this; the built dist throws). The default
+// import binds the whole module object, so `.isMatch` resolves correctly.
+import micromatch from "micromatch";
 
 /** Max number of write patterns allowed per plan. */
 export const MAX_WRITES = 256;

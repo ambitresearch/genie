@@ -13,6 +13,7 @@ import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
 import { registerListKits } from "./tools/list_kits.js";
 import { registerListComponents } from "./tools/list_components.js";
 import { registerPlan } from "./tools/plan.js";
+import { registerDeleteFilesTool } from "./tools/delete_files.js";
 import { LocalFsKitStore } from "./store/local.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
 
@@ -49,7 +50,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
       "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
       "create/list/get/delete/bind_kit, plan creation (the capability-grant boundary for " +
-      "write_files/delete_files), and conjure_screen.)",
+      "write_files/delete_files), conjure_screen, and delete_files (plan-gated file deletion).)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -126,6 +127,10 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   );
 
   registerPlan(server);
+
+  // Plan-gated destructive verb: deletes are authorized by a plan's `deletes`
+  // globs and hit the SAME kit tree read_file/list_files read (kitsRoot).
+  registerDeleteFilesTool(server, kitsRoot);
 
   return server;
 }
