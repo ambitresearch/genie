@@ -1397,57 +1397,102 @@ The component supports four visual variants and three sizes...
 
 ### 7.5 LLM `COMPONENT_SCHEMA`
 
-The JSON Schema sent to the configured LLM endpoint as `response_format.json_schema` for `conjure`:
+The JSON Schema sent to the configured LLM endpoint as `response_format.json_schema` for
+`conjure`/`refine` (M2-02, tracking issue
+[DRO-249](https://github.com/roshangautam/genie/issues/26)). **Canonical source is code, not
+this doc:** `packages/server/src/llm/schema.ts` exports `COMPONENT_SCHEMA` (as
+`const satisfies JSONSchema7`) plus the `ValidatedComponent` type inferred from it via
+`json-schema-to-ts`; the JSON below is a snapshot for readability; docs drift from the
+shipped shape, code cannot. A standalone JSON file is also emitted to
+`packages/server/dist/schemas/component.schema.json` by `scripts/emit-component-schema.mjs`
+(a `pnpm build` postbuild step) for non-TS/non-Node consumers.
+
+Supersedes this section's earlier `{name, framework, depsUsed}` sketch — the M2-02 issue's
+own ACs (`componentName`/`group`/`files[].mimeType`/`manifestEntry`) are the shipped shape:
 
 ```json
 {
-  "name": "GeneratedComponent",
-  "schema": {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "required": ["name", "group", "framework", "files", "subtitle"],
-    "additionalProperties": false,
-    "properties": {
-      "name": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]{0,63}$" },
-      "group": { "type": "string", "pattern": "^[a-z0-9-]{1,32}$" },
-      "framework": { "enum": ["react", "vue", "html"] },
-      "subtitle": { "type": "string", "maxLength": 256 },
-      "viewport": {
-        "type": "object",
-        "required": ["width", "height"],
-        "properties": {
-          "width": { "type": "integer", "minimum": 200, "maximum": 1600 },
-          "height": { "type": "integer", "minimum": 100, "maximum": 1200 }
-        }
-      },
-      "files": {
-        "type": "array",
-        "minItems": 3,
-        "maxItems": 8,
-        "items": {
-          "type": "object",
-          "required": ["path", "content"],
-          "additionalProperties": false,
-          "properties": {
-            "path": {
-              "type": "string",
-              "pattern": "^[A-Z][A-Za-z0-9]+\\.(tsx|d\\.ts|html|prompt\\.md|jsx)$"
-            },
-            "content": { "type": "string", "minLength": 1, "maxLength": 65536 }
-          }
-        }
-      },
-      "depsUsed": {
-        "type": "array",
-        "items": { "type": "string", "pattern": "^[a-z0-9-]+/[A-Z][A-Za-z0-9]*$" }
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://genie.dev/schema/component.schema.json",
+  "title": "GenieComponent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["componentName", "group", "files", "manifestEntry"],
+  "definitions": {
+    "Viewport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 4096 }
       }
     }
   },
-  "strict": true
+  "properties": {
+    "componentName": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]{0,63}$" },
+    "group": { "type": "string", "pattern": "^[a-z0-9-]{1,32}$" },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "contains": {
+        "$comment": "AC5 — at least one <Name>.html whose directory segment matches its own basename.",
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^components/[a-z0-9-]+/([A-Z][A-Za-z0-9]{0,63})/\\1\\.html$"
+          }
+        }
+      },
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "content", "mimeType"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^components/[a-z0-9-]+/[A-Z][A-Za-z0-9]+/[A-Za-z0-9._-]+$"
+          },
+          "content": { "type": "string", "minLength": 1, "maxLength": 65536 },
+          "mimeType": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$"
+          }
+        }
+      }
+    },
+    "manifestEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["viewport"],
+      "properties": {
+        "viewport": { "$ref": "#/definitions/Viewport" },
+        "subtitle": { "type": "string", "maxLength": 256 },
+        "tags": { "type": "array", "items": { "type": "string" }, "maxItems": 16 }
+      }
+    }
+  }
 }
 ```
 
-The server validates the LLM endpoint response against this schema after parsing; a failure raises `genie.llmUpstream` with the validator error in `data._validatorErrors`.
+Draft 7 only (AC2): the schema's only `$ref` is the single-level
+`manifestEntry.viewport → #/definitions/Viewport` hop shared with the `Viewport` `$def` in
+§9.20 — no `anyOf`/`oneOf` discriminator, no multi-level `$ref` chain. That constraint exists
+because LiteLLM's structured-output passthrough to Anthropic (via tool-use) has been observed
+not to reliably handle deep `$ref` chains.
+
+The `<Name>.html` entry's `content` must additionally begin with the `@genie` marker
+(`/^<!--\s*@genie\s+group="[^"]*"[^>]*-->/`, M3-01) — checked post-hoc by M2-07's
+`validateComponent`, not encoded as a schema `pattern` on `content` itself (Ajv's `pattern`
+keyword cannot cheaply express "first line matches X" against a multi-line string, and the
+regex is shared with M3-01's own file-watch validator so the two must stay in sync at the
+regex-source level, not be re-derived independently here).
+
+The server validates the LLM endpoint response against this schema after parsing (M2-07,
+`validateComponent`, Ajv `{ strict: true, allErrors: true }`); a failure raises
+`genie.llmUpstream` with the validator error in `data._validatorErrors`.
 
 ### 7.6 Plan / planId lifecycle
 
