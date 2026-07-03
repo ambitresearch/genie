@@ -28,7 +28,11 @@
  * — see `.github/workflows/ci.yml`'s `m2-generation` job. Mirrors the
  * `describe.skipIf(!dockerAvailable)` pattern the Gitea conformance suites
  * (`m1-conformance.test.ts` / `gitea-conformance.test.ts`) already use for
- * their own opt-in, environment-gated leg.
+ * their own opt-in, environment-gated leg — including that pattern's
+ * "must run for real, don't pass by skipping" tripwire: once `ci.yml` can see
+ * both secrets are actually configured, it sets `GENIE_REQUIRE_LLM=1` and a
+ * config that regresses mid-flight (a secret rotated to empty/removed) throws
+ * instead of silently going green-but-vacuous (Copilot review on PR #136).
  *
  * ── Why no stub, and why an in-memory RefineKitStore for AC8 ────────────────
  * `conjure` is pure generation (AC9 of M2-03) — it never touches a KitStore,
@@ -90,6 +94,25 @@ if (!hasLlmConfig) {
       "OpenAI-compatible endpoint to run this suite for real; CI's dedicated " +
       "m2-generation job (push-to-main only) runs it when both are provisioned " +
       "as repo secrets.",
+  );
+}
+
+// Guard against the push-to-main canary silently going green-but-vacuous
+// (Copilot review, PR #136) — the same "don't pass by skipping once this is
+// meant to run for real" contract `GENIE_REQUIRE_DOCKER` already enforces for
+// the Gitea conformance suites (m1-conformance.test.ts / gitea-conformance
+// .test.ts). `ci.yml`'s `m2-generation` job sets `GENIE_REQUIRE_LLM=1` ONLY
+// once it can see both `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` are actually
+// non-empty (see that job's own comment) — so this throw only fires if a
+// previously-working config regresses mid-run (a secret rotated to empty,
+// removed, or reduced to whitespace) between the job's own check and this
+// suite's, never on today's not-yet-provisioned state, and never on a local
+// run or the check-matrix CI leg (both always leave the var unset).
+if (!hasLlmConfig && process.env["GENIE_REQUIRE_LLM"] === "1") {
+  throw new Error(
+    "GENIE_REQUIRE_LLM=1 but GENIE_LLM_BASE_URL and/or GENIE_LLM_API_KEY is " +
+      "missing/empty — the m2-generation CI job must run the real LLM " +
+      "endpoint round-trip, not silently skip it.",
   );
 }
 

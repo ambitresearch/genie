@@ -194,11 +194,29 @@ jobs:
         # operator provisions them, `m2-generation.test.ts`'s own AC2 gate
         # skips the whole file and this step exits 0 — a green-but-vacuous run
         # is expected and visible in the job log, not a silent no-op.
+        #
+        # GENIE_REQUIRE_LLM flips this from "may vacuously skip" to "must run
+        # for real" (Copilot review, PR #136 — the same contract
+        # GENIE_REQUIRE_DOCKER already gives the Gitea conformance legs). It is
+        # NOT hardcoded to "1": unlike the Docker leg (pinned to ubuntu-latest,
+        # which guarantees a daemon), there is no guarantee these two repo
+        # secrets are provisioned yet, and the issue's own AC2 requires this
+        # suite to skip cleanly — not fail the push-to-main job — while they
+        # aren't. The `github.secrets` context isn't queryable in an `if:`
+        # expression, so this step-local shell check (both values already
+        # resolved into env below) sets GENIE_REQUIRE_LLM=1 only once BOTH are
+        # actually non-empty — guarding against exactly the regression Copilot
+        # flagged (a previously-working secret rotated to empty/removed) without
+        # making today's not-yet-provisioned state fail loudly.
         env:
           VITEST_JUNIT: "1"
           GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
           GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
-        run: pnpm test m2-generation
+        run: |
+          if [ -n "$GENIE_LLM_BASE_URL" ] && [ -n "$GENIE_LLM_API_KEY" ]; then
+            export GENIE_REQUIRE_LLM=1
+          fi
+          pnpm test m2-generation
 
       # AC7 — the per-component `.html` samples + summary.json this suite
       # writes to reports/m2-generation/ (empty/absent when AC2 skipped the
