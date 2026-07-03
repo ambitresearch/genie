@@ -260,6 +260,39 @@ function kitStoreContract(
       const kit = await store.createKit("rich-del-absent-kit");
       expect(await store.deleteFile(kit.id, "never-here.txt")).toEqual({ existed: false });
     });
+
+    it("deleteFile on a directory target rejects (parity), leaving its contents intact (DRO-568)", async () => {
+      // The parity fix: a directory target is NOT a deletable file, and BOTH
+      // adapters must REJECT rather than silently no-op. GitHost previously
+      // returned `{ existed: false }` for a directory (contents-API array
+      // response) — which the `delete_files` tool routes to `notFoundPaths` (a
+      // silent success) — while LocalFs's `unlink` throws → the tool maps it to
+      // `DeleteFailed`. That divergence broke the byte-identical cross-adapter
+      // parity DRO-540 claimed (RFC G-5). We assert the shared, platform-robust
+      // invariant here; the exact errno (EISDIR) is pinned per-adapter below,
+      // since the real filesystem yields EISDIR on Linux/CI but EPERM on
+      // macOS/BSD, whereas GitHost synthesizes EISDIR deterministically.
+      const kit = await store.createKit("dir-target-kit");
+      // A nested file makes `adir` a real directory on both surfaces (LocalFs
+      // mkdir; GitHost contents-API GET on `adir` returns an array of children).
+      await seedFile(kit.id, "adir/inner.txt", "inner");
+
+      let caught: NodeJS.ErrnoException | undefined;
+      try {
+        await store.deleteFile(kit.id, "adir");
+      } catch (e) {
+        caught = e as NodeJS.ErrnoException;
+      }
+      // Must have REJECTED — not resolved to `{ existed: false }`. A resolve
+      // would leave `caught` undefined and route the path to `notFoundPaths`.
+      expect(caught).toBeDefined();
+      // A native-shaped fs error carrying a `code` the tool reads to compose its
+      // `DeleteFailed` message — never the silent-retry `{ existed: false }` case.
+      expect(caught?.code).toBeTruthy();
+
+      // The failed delete must not have removed the directory's contents.
+      expect((await store.listFiles(kit.id)).map((f) => f.path)).toContain("adir/inner.txt");
+    });
   });
 }
 
@@ -702,6 +735,43 @@ describe("GitHostKitStore — adapter-specific", () => {
     const listed = await store.listKits();
     expect(listed.map((k) => k.id)).toContain("corrupt-kit-abc123");
     expect(listed.map((k) => k.id)).not.toContain("some-other-id-999999");
+  });
+
+  it("deleteFile on a directory target throws EISDIR, not a silent no-op (DRO-568)", async () => {
+    // The exact-errno pin the shared conformance contract deliberately leaves
+    // platform-robust: GitHost synthesizes an EISDIR-shaped error for a
+    // directory / non-file target REGARDLESS of host OS, so the `delete_files`
+    // tool's `DeleteFailed` message ("Failed to delete \"adir\": EISDIR.") is
+    // byte-identical to LocalFs on the Linux/CI path. Regression guard against
+    // the old `return { existed: false }` silent no-op that violated the
+    // `interface.ts` deleteFile contract (RFC G-5).
+    const mockFetch = createMockGitHostFactory();
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
+
+    const store = new GitHostKitStore({
+      baseUrl: "https://mock-git-host.test/api/v1",
+      owner: "test-org",
+      token: "mock-token",
+    });
+
+    const kit = await store.createKit("git-dir-del-kit");
+    // Seed a nested file so a GET on `adir` returns a contents-API array (dir).
+    await mockFetch(
+      `https://mock-git-host.test/api/v1/repos/test-org/${kit.id}/contents/adir/inner.txt`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          content: Buffer.from("inner", "utf-8").toString("base64"),
+        }),
+      },
+    );
+
+    await expect(store.deleteFile(kit.id, "adir")).rejects.toMatchObject({
+      code: "EISDIR",
+    });
+    // The directory's contents survive the rejected delete.
+    expect((await store.listFiles(kit.id)).map((f) => f.path)).toContain("adir/inner.txt");
   });
 });
 

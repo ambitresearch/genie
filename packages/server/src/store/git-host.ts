@@ -79,6 +79,22 @@ class GitHostApiError extends Error {
   }
 }
 
+/**
+ * Build an EISDIR-shaped error for `deleteFile` on a directory / non-file
+ * target. LocalFs's `unlink` throws a native `NodeJS.ErrnoException` with
+ * `code: "EISDIR"` for the same case; the `delete_files` tool reads `error.code`
+ * to compose its `DeleteFailed` message. Emitting an identically-`code`d error
+ * keeps that failure byte-identical across adapters (RFC G-5 / DRO-568) instead
+ * of GitHost silently no-op'ing where LocalFs hard-fails.
+ */
+function eisdirError(target: string): NodeJS.ErrnoException {
+  const err = new Error(
+    `EISDIR: illegal operation on a directory, unlink '${target}'`,
+  ) as NodeJS.ErrnoException;
+  err.code = "EISDIR";
+  return err;
+}
+
 async function apiRequest<T>(opts: RequestOptions): Promise<T> {
   const url = `${opts.baseUrl}${opts.path}`;
   const res = await fetch(url, {
@@ -454,10 +470,18 @@ export class GitHostKitStore implements KitStore {
         "GET",
         `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}`,
       );
-      // A directory (array response) or a non-file entry is not a deletable
-      // file — treat as absent rather than erroring.
+      // A directory (contents-API array response) or any non-`file` entry
+      // (submodule, symlink) is NOT a deletable file. LocalFs's `unlink` on a
+      // directory throws a native EISDIR, which the `delete_files` tool maps to
+      // `DeleteFailed`. GitHost must raise the SAME native-shaped error rather
+      // than silently no-op'ing to `{ existed: false }` — otherwise an
+      // authorized `deletes: ["adir"]` plan yields `DeleteFailed` on LocalFs but
+      // a silent success on GitHost, breaking byte-identical cross-adapter
+      // parity (RFC G-5). The `interface.ts` deleteFile contract already mandates
+      // this ("a hard removal failure that is NOT 'already absent' … propagates
+      // as the adapter's native error"). See DRO-568.
       if (Array.isArray(existing) || existing.type !== "file") {
-        return { existed: false };
+        throw eisdirError(`${kitId}/${path}`);
       }
       sha = existing.sha ?? "";
     } catch (e) {
