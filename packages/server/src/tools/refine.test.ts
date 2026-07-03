@@ -421,6 +421,46 @@ describe("AC5 — returns { diff, files }", () => {
     // And it is NOT misreported as deleted (or anything) in the diff.
     expect(res.diff).not.toContain("icon.png");
   });
+
+  it("does not carry a binary forward (or duplicate it) when the model returns that path (PR #128 review)", async () => {
+    // The original component has a binary icon.png. This time the model's reply
+    // DOES include an icon.png entry (e.g. it was instructed to swap the icon).
+    // The `returnedPaths` guard must let the model's entry win — exactly one
+    // icon.png in the result, and it's the model's content, not the original's.
+    const originalPng =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+    const files: LoadedFile[] = [
+      ...currentFiles(),
+      {
+        path: "components/actions/Button/icon.png",
+        content: originalPng,
+        encoding: "base64",
+        mimeType: "image/png",
+      },
+    ];
+    const kitStore = stubKitStore(files);
+    // The model returns the standard component PLUS a new icon.png (its own bytes).
+    const modelPng = "REPLACED_ICON_BYTES_BASE64==";
+    const withIcon = refinedComponent({
+      files: [
+        ...refinedComponent().files,
+        {
+          path: "components/actions/Button/icon.png",
+          content: modelPng,
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const chat = stubChat([completionOf(JSON.stringify(withIcon))]);
+    const res = await refine(deps({ chat, kitStore }), args());
+
+    // Exactly one icon.png — no duplicate from the carry-forward step.
+    const icons = res.files.filter((f) => f.path.endsWith("icon.png"));
+    expect(icons).toHaveLength(1);
+    // The model's entry wins; the original was NOT re-added over it.
+    expect(icons[0]!.content).toBe(modelPng);
+    expect(icons[0]!.content).not.toBe(originalPng);
+  });
 });
 
 // ── AC6 — schema validation + retry once (same as M2-03) ──────────────────────

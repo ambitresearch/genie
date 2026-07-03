@@ -627,6 +627,22 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
   // byte-identical on both sides, `buildUnifiedDiff`'s `before === after` check
   // omits it from the diff automatically — it is preserved, not spuriously shown
   // as changed.
+  //
+  // Deliberate consequence (Copilot review, PR #128): because omission of a
+  // binary can't be distinguished from "the model never saw it", this carry-
+  // forward means `refine` cannot DELETE a binary asset — omission always
+  // resurrects it. That is intentional for v1: `refine` is an *edit* verb whose
+  // prompt explicitly says "don't drop files", and the kit's own system prompt
+  // steers components toward inline SVG / `data:` URIs rather than binary assets
+  // in the first place. Removing a binary from a component is the job of the
+  // dedicated, plan-gated `delete_files` / `write_files` verbs, not a side effect
+  // of a natural-language refine instruction. If a future version needs
+  // refine-driven binary deletion, it would take an explicit keep/delete marker
+  // protocol (the model returns the path with a sentinel the tool resolves to the
+  // original bytes, and true omission then means delete) — out of scope here.
+  // The guard below (`!returnedPaths.has`) means a model that DOES return a
+  // binary path wins: its entry is kept as-is and the original is not re-added,
+  // so no path is ever duplicated.
   const returnedPaths = new Set(component.files.map((f) => f.path));
   const carriedBinaries: ValidatedComponent["files"] = originalFiles
     .filter((f) => !isTextFile(f) && !returnedPaths.has(f.path))
