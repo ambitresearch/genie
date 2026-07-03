@@ -406,14 +406,27 @@ export interface WriteFilesResult extends Record<string, unknown> {
 /**
  * Validate + execute a `write_files` call against a resolved plan.
  *
- * Order of validation (fails fast, before any filesystem write):
- *   1. AC5  — planId exists + not expired (`getPlan`, from the M1-07 plan
- *      registry — throws `PlanNotFoundError` for either failure mode).
- *   2. AC3  — `files.length <= 256`.
- *   3. AC4  — every `path` matches a plan `writes` glob.
- *   4. AC7  — every file sets exactly one of `localPath` / `data`.
- *   5. AC6  — every `localPath` resolves inside the plan's `localDir`.
- *   6. AC9  — total decoded payload size <= the configured byte cap.
+ * Order of validation (fails fast, before any filesystem write) — keep this
+ * list in lockstep with the code below; downstream steps assume every prior
+ * step has passed (e.g. the `resolvedLocalPaths` map keyed by `file.path`
+ * assumes step 3 rejected duplicates):
+ *   1. AC5           — planId exists + not expired (`getPlan`, from the M1-07
+ *                      plan registry — throws `PlanNotFoundError` for either
+ *                      failure mode).
+ *   2. AC3           — `files.length <= 256`.
+ *   3. Structural    — no two `files[]` entries share the same destination
+ *                      `path` (`DuplicatePathError`; Copilot review finding
+ *                      on PR #106).
+ *   4. AC4           — every `path` matches a plan `writes` glob.
+ *   5. Security      — every destination `path` resolves inside
+ *                      `plan.localDir` (`PathOutsidePlanError` with
+ *                      `reason: "escapesLocalDir"`; RFC §10 T-13 — a glob
+ *                      match alone doesn't imply containment when the glob
+ *                      is permissive and the path is absolute).
+ *   6. AC7           — every file sets exactly one of `localPath` / `data`.
+ *   7. AC6           — every `localPath` resolves inside the plan's
+ *                      `localDir`.
+ *   8. AC9           — total decoded payload size <= the configured byte cap.
  * Only once every file in the batch passes does staging begin (AC10).
  */
 export async function writeFiles(
