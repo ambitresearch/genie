@@ -7,6 +7,11 @@ dist/
 *.tsbuildinfo
 coverage/
 
+# ── genie runtime state (GENIE_HOME default; plan grants, etc.) ──
+# Generated at runtime by the MCP server (e.g. `plan`'s persisted
+# planId JSON snapshots). Never source, never shipped.
+/.genie/
+
 # ── Private session memory (not part of the project) ──────
 .remember/
 

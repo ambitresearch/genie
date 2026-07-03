@@ -11,6 +11,7 @@ import { registerValidate } from "./tools/validate.js";
 import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
 import { registerListKits } from "./tools/list_kits.js";
 import { registerListComponents } from "./tools/list_components.js";
+import { registerPlan } from "./tools/plan.js";
 import { LocalFsKitStore } from "./store/local.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
 
@@ -45,8 +46,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
-      "listing, kit creation, kit lookup, file listing, file reading, validation, and project " +
-      "create/list/get/delete/bind_kit.)",
+      "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
+      "create/list/get/delete/bind_kit, and plan creation (the capability-grant boundary for " +
+      "write_files/delete_files).)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -111,6 +113,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       process.env.GENIE_REPORTS_DIR ??
       join(process.cwd(), ".genie", "reports"),
   );
+
+  registerPlan(server);
 
   return server;
 }
