@@ -59,6 +59,17 @@ interface RequestOptions {
   token: string;
 }
 
+class GitHostApiError extends Error {
+  constructor(
+    public readonly status: number,
+    statusText: string,
+    body: string,
+  ) {
+    super(`Git host API error: ${status} ${statusText} — ${body}`);
+    this.name = "GitHostApiError";
+  }
+}
+
 async function apiRequest<T>(opts: RequestOptions): Promise<T> {
   const url = `${opts.baseUrl}${opts.path}`;
   const res = await fetch(url, {
@@ -75,9 +86,7 @@ async function apiRequest<T>(opts: RequestOptions): Promise<T> {
   }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(
-      `Git host API error: ${res.status} ${res.statusText} — ${text}`,
-    );
+    throw new GitHostApiError(res.status, res.statusText, text);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -112,6 +121,13 @@ interface FileResponse {
   };
 }
 
+interface KitMetaFile {
+  id: string;
+  name: string;
+  type: string;
+  createdAt: string;
+}
+
 // ─── GitHostKitStore ─────────────────────────────────────────────────────────
 
 /**
@@ -122,6 +138,7 @@ export class GitHostKitStore implements KitStore {
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly owner: string;
+  private readonly kitMetaPath = ".kit.json";
 
   constructor(config: GitHostConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, "");
@@ -139,6 +156,53 @@ export class GitHostKitStore implements KitStore {
     });
   }
 
+  private repoPath(kitId: KitId): string {
+    return `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}`;
+  }
+
+  private async readKitMeta(kitId: KitId): Promise<KitMeta | undefined> {
+    try {
+      const entry = await this.api<ContentEntry>(
+        "GET",
+        `${this.repoPath(kitId)}/contents/${this.kitMetaPath}`,
+      );
+      if (!entry.content || entry.encoding !== "base64") {
+        throw new Error(`Kit metadata for "${kitId}" returned no base64 content.`);
+      }
+      const meta = JSON.parse(
+        Buffer.from(entry.content, "base64").toString("utf-8"),
+      ) as KitMetaFile;
+      // The repository name (kitId) is authoritative for the kit's identity —
+      // it is the path every subsequent API call routes through. A manually
+      // edited or corrupted .kit.json could embed a divergent `id`; trusting it
+      // would make listKits/getKit return an ID that resolves to no repo. So we
+      // take only the human-readable fields (name, createdAt) from the file.
+      return {
+        id: kitId,
+        name: meta.name,
+        type: KIT_TYPE,
+        createdAt: meta.createdAt,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundError) return undefined;
+      throw error;
+    }
+  }
+
+  private async writeKitMeta(meta: KitMeta): Promise<void> {
+    const content = Buffer.from(JSON.stringify(meta, null, 2)).toString(
+      "base64",
+    );
+    await this.api<FileResponse>(
+      "POST",
+      `${this.repoPath(meta.id)}/contents/${this.kitMetaPath}`,
+      {
+        content,
+        message: `kit: create ${meta.name}`,
+      },
+    );
+  }
+
   async listKits(): Promise<KitMeta[]> {
     const repos = await this.api<RepoResponse[]>(
       "GET",
@@ -148,20 +212,32 @@ export class GitHostKitStore implements KitStore {
     const list = Array.isArray(repos)
       ? repos
       : ((repos as unknown as { data: RepoResponse[] }).data ?? []);
-    return list.map((r) => ({
-      id: r.name,
-      name: r.name,
-      type: KIT_TYPE,
-      createdAt: r.created_at,
-    }));
+    // Each repo needs its own .kit.json read. Fetch them concurrently so the
+    // total time is bounded by the slowest request rather than the sum of all
+    // N — the previous serial loop was an N+1 latency trap at limit=50.
+    return Promise.all(
+      list.map(async (repo) => {
+        const meta = await this.readKitMeta(repo.name);
+        return (
+          meta ?? {
+            id: repo.name,
+            name: repo.name,
+            type: KIT_TYPE,
+            createdAt: repo.created_at,
+          }
+        );
+      }),
+    );
   }
 
   async getKit(kitId: KitId): Promise<KitMeta> {
     try {
       const repo = await this.api<RepoResponse>(
         "GET",
-        `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}`,
+        this.repoPath(kitId),
       );
+      const meta = await this.readKitMeta(kitId);
+      if (meta) return meta;
       return {
         id: repo.name,
         name: repo.name,
@@ -177,7 +253,7 @@ export class GitHostKitStore implements KitStore {
   async listFiles(kitId: KitId): Promise<string[]> {
     // Get the full tree recursively
     const entries = await this.listTree(kitId, "");
-    return entries.sort();
+    return entries.filter((path) => path !== this.kitMetaPath).sort();
   }
 
   async listComponents(params: {
@@ -280,20 +356,17 @@ export class GitHostKitStore implements KitStore {
           private: true,
         },
       );
-      return {
+      const meta: KitMeta = {
         id: repo.name,
-        name: repo.name,
+        name,
         type: KIT_TYPE,
         createdAt: repo.created_at,
       };
+      await this.writeKitMeta(meta);
+      return meta;
     } catch (err: unknown) {
       // Check if it's a 409 Conflict indicating repo already exists
-      if (
-        err &&
-        typeof err === "object" &&
-        "status" in err &&
-        err.status === 409
-      ) {
+      if (err instanceof GitHostApiError && err.status === 409) {
         throw new KitAlreadyExistsError(repoName);
       }
       throw err;
