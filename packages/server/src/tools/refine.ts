@@ -617,9 +617,27 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
 
   const component = outcome.component;
 
-  // AC5 — unified diff (informational) from originals → updated, by path.
+  // Binary (base64) originals are never sent to the model (they can't be inlined
+  // as prompt text — see buildUserText), so the model cannot echo them back. If
+  // we returned `component.files` as-is, any binary asset in the component
+  // directory would be silently DROPPED from the returned set and the diff would
+  // misreport it as deleted (diffed against /dev/null) — a refine round-trip
+  // would lose it (Copilot review, PR #127). So carry every original binary file
+  // the model did not return forward into the result. Because such a file is then
+  // byte-identical on both sides, `buildUnifiedDiff`'s `before === after` check
+  // omits it from the diff automatically — it is preserved, not spuriously shown
+  // as changed.
+  const returnedPaths = new Set(component.files.map((f) => f.path));
+  const carriedBinaries: ValidatedComponent["files"] = originalFiles
+    .filter((f) => !isTextFile(f) && !returnedPaths.has(f.path))
+    .map((f) => ({ path: f.path, content: f.content, mimeType: f.mimeType }));
+  const files: ValidatedComponent["files"] = [...component.files, ...carriedBinaries];
+
+  // AC5 — unified diff (informational) from originals → updated, by path. Built
+  // from the merged `files` so carried-forward binaries (identical on both sides)
+  // are excluded, while genuine text edits still surface.
   const originalsByPath = new Map(originalFiles.map((f) => [f.path, f.content]));
-  const updatedByPath = new Map(component.files.map((f) => [f.path, f.content]));
+  const updatedByPath = new Map(files.map((f) => [f.path, f.content]));
   const diff = buildUnifiedDiff(originalsByPath, updatedByPath);
 
   // AC8 — per-call structured log.
@@ -640,7 +658,7 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
     componentName: component.componentName,
     group: component.group,
     diff,
-    files: component.files,
+    files,
     manifestEntry: component.manifestEntry,
     usage,
   };
