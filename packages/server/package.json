@@ -36,10 +36,14 @@
   "license": "MIT",
   "author": "Roshan Gautam",
   "devDependencies": {
+    "@types/jsdom": "^21.1.7",
     "@types/json-schema": "^7.0.15",
     "@types/micromatch": "^4.0.10",
     "@types/mime-types": "^3.0.1",
+    "jsdom": "^25.0.1",
     "json-schema-to-ts": "^3.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "yaml": "^2.9.0"
   }
 }
