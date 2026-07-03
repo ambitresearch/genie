@@ -1,0 +1,86 @@
+name: DIAG network check (temporary — DRO-637)
+
+# TEMPORARY diagnostic workflow. Not part of genie's real CI surface — created
+# to isolate why the m2-generation canary job (ci.yml) times out on every
+# attempt from a GitHub-hosted runner while identical requests succeed from
+# the sandbox this was authored in. Deleted once the cause is confirmed.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: DNS + TCP + TLS reachability
+        run: |
+          echo "--- getent hosts ---"
+          getent hosts litellm.roshangautam.com || echo "DNS FAILED"
+          echo "--- curl -v models (10s connect timeout, 20s max) ---"
+          curl -v --connect-timeout 10 --max-time 20 -o /dev/null \
+            "https://litellm.roshangautam.com/v1/models" \
+            -H "Authorization: Bearer ${{ secrets.GENIE_LLM_API_KEY }}" 2>&1 | tail -60
+
+      - name: Timed chat completion (plain, no schema)
+        run: |
+          time curl -sS --max-time 30 -o /tmp/plain.json -w "HTTP_STATUS:%{http_code} TIME:%{time_total}s\n" \
+            "${{ secrets.GENIE_LLM_BASE_URL }}/chat/completions" \
+            -H "Authorization: Bearer ${{ secrets.GENIE_LLM_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"design-default","messages":[{"role":"user","content":"Reply with exactly one word: hi"}],"max_tokens":5}' || echo "CURL EXIT: $?"
+          echo "--- body ---"
+          cat /tmp/plain.json || true
+
+      - name: Timed chat completion (with json_schema response_format, generous timeout)
+        run: |
+          cat > /tmp/schema_body.json << 'EOF'
+          {
+            "model": "design-default",
+            "messages": [{"role":"user","content":"Generate a simple primary button as JSON with keys componentName, group, files (array of {path, content})."}],
+            "response_format": {
+              "type": "json_schema",
+              "json_schema": {
+                "name": "Probe",
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "componentName": {"type": "string"},
+                    "group": {"type": "string"},
+                    "files": {"type": "array", "items": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path","content"]}}
+                  },
+                  "required": ["componentName", "group", "files"]
+                }
+              }
+            }
+          }
+          EOF
+          time curl -sS --max-time 100 -o /tmp/schema.json -w "HTTP_STATUS:%{http_code} TIME:%{time_total}s\n" \
+            "${{ secrets.GENIE_LLM_BASE_URL }}/chat/completions" \
+            -H "Authorization: Bearer ${{ secrets.GENIE_LLM_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/schema_body.json || echo "CURL EXIT: $?"
+          echo "--- body (first 1000 chars) ---"
+          head -c 1000 /tmp/schema.json || true
+
+      - name: Node/undici-level check (mirrors how the openai SDK actually connects)
+        run: |
+          node -e '
+            const start = Date.now();
+            fetch(process.env.GENIE_LLM_BASE_URL + "/chat/completions", {
+              method: "POST",
+              headers: { "Authorization": "Bearer " + process.env.GENIE_LLM_API_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({ model: "design-default", messages: [{ role: "user", content: "Reply with exactly one word: hi" }], max_tokens: 5 }),
+            }).then(async (r) => {
+              console.log("status", r.status, "elapsed_ms", Date.now() - start);
+              console.log(await r.text());
+            }).catch((e) => {
+              console.log("FETCH ERROR after", Date.now() - start, "ms:", e);
+            });
+          '
+        env:
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
