@@ -51,7 +51,11 @@ import {
   type RefineKitStore,
   type RefineResult,
 } from "../../server/src/tools/refine.js";
-import { MARKER_REGEX_M2_07, validateComponent } from "../../server/src/llm/validate.js";
+import {
+  MARKER_REGEX_M2_07,
+  NAMED_HTML_PATH,
+  validateComponent,
+} from "../../server/src/llm/validate.js";
 import type { ValidatedComponent } from "../../server/src/llm/schema.js";
 
 import { estimateCostUsd } from "../src/pricing.js";
@@ -166,11 +170,27 @@ function toSchemaShape(result: {
   };
 }
 
-/** Every `<Name>.html` preview file among a component's file set. There is
- * always exactly one (COMPONENT_SCHEMA's `contains` guarantee), but this
- * returns the full match set rather than assuming that shape holds. */
+/**
+ * Every `<Name>/<Name>.html` NAMED preview file among a component's file set
+ * — the same `NAMED_HTML_PATH` selector `validateComponent`'s own marker
+ * cross-check (M2-07) uses, imported directly rather than re-derived, so
+ * this test can never disagree with the validator about which files are
+ * "preview files" (Copilot review, PR #136).
+ *
+ * Deliberately NOT a loose `f.path.endsWith(".html")` filter: `schema.ts`'s
+ * `PATH_PATTERN` legally permits additional `.html` basenames that aren't
+ * the named preview (e.g. a hypothetical `dark-mode.html`), and those are
+ * exempt from the `@genie` marker rule (`validateComponent` skips anything
+ * that doesn't match `NAMED_HTML_PATH`). A loose filter would wrongly subject
+ * such a file to the AC5 marker assertions below and fail a schema-valid,
+ * spec-compliant live response — a false failure of the push-to-main canary.
+ *
+ * `COMPONENT_SCHEMA`'s `contains` guarantees *at least* one match, not
+ * exactly one — this returns the full match set rather than assuming
+ * cardinality.
+ */
 function htmlFiles(files: ValidatedComponent["files"]): ValidatedComponent["files"][number][] {
-  return files.filter((f) => f.path.endsWith(".html"));
+  return files.filter((f) => NAMED_HTML_PATH.test(f.path));
 }
 
 /**

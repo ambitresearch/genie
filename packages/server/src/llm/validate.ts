@@ -65,8 +65,17 @@ export const MARKER_REGEX_M2_07 = /^<!--\s*@genie\s+group="[^"]*"[^>]*-->/;
  * exact shape here so the schema's `contains` guarantee (at least one file
  * matches) and this cross-check (every matching file also has the `@genie`
  * marker) can never disagree about which files are "preview files".
+ *
+ * Exported (Copilot review, PR #136) so consumers outside this module that
+ * need to identify "which files are actually preview files" — e.g.
+ * `m2-generation.test.ts`'s AC5 assertions — share this exact definition
+ * instead of re-deriving a looser one (`files[].path` also legally permits
+ * non-preview `.html` basenames like `dark-mode.html` per `schema.ts`'s
+ * `PATH_PATTERN`, which a naive `.endsWith(".html")` filter would wrongly
+ * subject to the marker rule).
  */
-const NAMED_HTML_PATH = /^components\/[a-z0-9-]+\/([A-Z][A-Za-z0-9]{1,63})\/\1\.html$/;
+export const NAMED_HTML_PATH =
+  /^components\/[a-z0-9-]+\/([A-Z][A-Za-z0-9]{1,63})\/\1\.html$/;
 
 /**
  * `Error` subclass thrown by {@link validateComponent} on structural or

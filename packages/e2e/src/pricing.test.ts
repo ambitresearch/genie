@@ -19,7 +19,7 @@ import {
 } from "./pricing.js";
 
 describe("PRICING_TABLE", () => {
-  it("DEFAULT_MODEL_ALIAS matches conjure.ts/refine.ts DEFAULT_MODEL (Copilot #136)", () => {
+  it("DEFAULT_MODEL_ALIAS matches conjure.ts/refine.ts DEFAULT_MODEL", () => {
     // pricing.ts's DEFAULT_MODEL_ALIAS is a re-declared literal, not an import
     // from @genie/server (pricing.ts stays runtime-dependency-free — see its
     // module doc). That means nothing enforces the two stay in sync EXCEPT
