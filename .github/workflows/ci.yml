@@ -148,3 +148,72 @@ jobs:
           path: reports/junit.xml
           if-no-files-found: warn
           retention-days: 7
+
+  # ── M2 real-LLM-endpoint canary (M2-09 / DRO-256) ────────────────────────────
+  # `packages/e2e/test/m2-generation.test.ts` — the ONE test in the whole suite
+  # that spends real dollars against a real model. Kept as its own job, gated
+  # to `push` on `main` only (never `pull_request`), for exactly the reason the
+  # issue names: keep every PR run free and fast, and only canary the full
+  # generation pipeline against a live endpoint once code has already landed.
+  #
+  # `if: github.event_name == 'push'` is a belt-and-suspenders gate ON TOP OF
+  # the test's own AC2 skip (`GENIE_LLM_API_KEY` unset ⇒ every test in the file
+  # skips, exit 0) — even if this workflow were ever triggered a different way,
+  # the job still only runs the spend-real-money suite on a push to main, and
+  # even then only if the repo secrets below are actually configured.
+  m2-generation:
+    name: m2 generation canary (real LLM endpoint)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        # Same ERR_PNPM_EAGAIN hardlink-fallback retry as the other jobs.
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Run M2 generation e2e (AC2 — skips if secrets are unset)
+        # GENIE_LLM_BASE_URL / GENIE_LLM_API_KEY come from repo secrets (never
+        # hardcoded — CLAUDE.md hard rule 5 / AGENTS.md hard rule 4). Until an
+        # operator provisions them, `m2-generation.test.ts`'s own AC2 gate
+        # skips the whole file and this step exits 0 — a green-but-vacuous run
+        # is expected and visible in the job log, not a silent no-op.
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
+        run: pnpm test m2-generation
+
+      # AC7 — the per-component `.html` samples + summary.json this suite
+      # writes to reports/m2-generation/ (empty/absent when AC2 skipped the
+      # run — `if-no-files-found: warn`, not `error`, so that's not a failure).
+      - name: Upload M2 generation samples
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: m2-generation-samples
+          path: reports/m2-generation
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload M2 generation test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-m2-generation
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
