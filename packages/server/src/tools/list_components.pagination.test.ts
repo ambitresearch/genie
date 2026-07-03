@@ -146,6 +146,23 @@ describe("cursor encode/decode", () => {
       /wrong shape/,
     );
   });
+
+  it("does not echo the full untrusted cursor into the error message", () => {
+    // Regression (PR #110 review): a maliciously large / opaque cursor must not
+    // be reflected verbatim into error text (log bloat + token leak-back). The
+    // message stays diagnostic but bounded — the raw token never appears whole.
+    const huge = "A".repeat(5000);
+    let message = "";
+    try {
+      decodeCursor(huge);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toMatch(/Invalid cursor/);
+    expect(message).not.toContain(huge);
+    expect(message.length).toBeLessThan(120);
+  });
+
 });
 
 describe("paginateComponents (AC7)", () => {

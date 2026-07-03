@@ -54,13 +54,28 @@ export function encodeCursor(entry: ComponentEntry): string {
   return Buffer.from(JSON.stringify(key), "utf-8").toString("base64url");
 }
 
+/**
+ * Truncated, safe preview of an untrusted cursor for error messages. Echoing
+ * the full caller-supplied string would let an oversized/opaque token bloat
+ * logs and responses (and reflect tokens back to callers); we cap it hard and
+ * mark elision with an ellipsis so the message stays diagnostic but bounded.
+ */
+const CURSOR_PREVIEW_MAX = 16;
+function cursorPreview(cursor: string): string {
+  return cursor.length <= CURSOR_PREVIEW_MAX
+    ? cursor
+    : `${cursor.slice(0, CURSOR_PREVIEW_MAX)}…`;
+}
+
 /** Decode + validate a keyset cursor. Throws on tampered / malformed input. */
 export function decodeCursor(cursor: string): CursorKey {
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf-8"));
   } catch {
-    throw new Error(`Invalid cursor: "${cursor}" is not a decodable list_components cursor.`);
+    throw new Error(
+      `Invalid cursor: "${cursorPreview(cursor)}" is not a decodable list_components cursor.`,
+    );
   }
   if (
     typeof parsed !== "object" ||
@@ -69,7 +84,7 @@ export function decodeCursor(cursor: string): CursorKey {
     typeof (parsed as CursorKey).n !== "string" ||
     typeof (parsed as CursorKey).p !== "string"
   ) {
-    throw new Error(`Invalid cursor: "${cursor}" has the wrong shape.`);
+    throw new Error(`Invalid cursor: "${cursorPreview(cursor)}" has the wrong shape.`);
   }
   const { g, n, p } = parsed as CursorKey;
   return { g, n, p };

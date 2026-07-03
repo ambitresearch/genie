@@ -563,10 +563,13 @@ const ListComponentsOutput = z.object({
       lastModified: z.string().datetime(),
     }),
   ),
-  // Page is capped at 256 entries (the shared list_files/list_kits cap);
-  // nextCursor is an opaque keyset cursor, surfaced in `_meta` on the wire.
-  nextCursor: z.string().optional(),
 });
+// Pagination cap (the shared list_files/list_kits 256-entry ceiling): when a
+// page is truncated the continuation token is surfaced OUT-OF-BAND in the MCP
+// response `_meta.nextCursor`, NOT inside `ListComponentsOutput`. This keeps
+// `components` a clean, schema-validated array on the wire; callers read the
+// opaque keyset cursor from `_meta.nextCursor` and pass it back as `cursor`.
+// (See §6.2.1 tool impl and packages/server/src/tools/list_components.ts.)
 ```
 
 #### 6.2.2 Generation surface

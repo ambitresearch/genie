@@ -88,6 +88,18 @@ describe("LocalFsKitStore.listComponents", () => {
     expect(components).toEqual([]);
   });
 
+  it("propagates non-ENOENT manifest read errors instead of masking them as []", async () => {
+    // Regression (PR #110 review): only a genuinely-absent manifest (ENOENT)
+    // may map to []. If `.genie/manifest.json` is unreadable for another reason
+    // — here it is a DIRECTORY, yielding EISDIR — the error must surface so a
+    // real operability problem is not hidden behind an empty listing.
+    const kit = await store.createKit("Broken Manifest Kit");
+    const manifestAsDir = join(tempDir, "kits", kit.id, ".genie", "manifest.json");
+    await mkdir(manifestAsDir, { recursive: true });
+
+    await expect(store.listComponents({ kitId: kit.id })).rejects.toThrow();
+  });
+
   it("returns [] when group filter matches nothing", async () => {
     const kit = await store.createKit("Empty Kit");
     const components = await store.listComponents({

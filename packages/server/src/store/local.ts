@@ -190,8 +190,17 @@ export class LocalFsKitStore implements KitStore {
     let raw: string | undefined;
     try {
       raw = await readFile(manifestFile, "utf-8");
-    } catch {
-      raw = undefined;
+    } catch (err) {
+      // Only a genuinely-absent manifest (ENOENT) means "no components yet" →
+      // undefined, which selectComponents maps to [] (AC8). Any other IO error
+      // (EACCES, EISDIR, transient failures) is a real operability problem and
+      // must propagate rather than be masked as a silently-empty listing. This
+      // mirrors GitHostStore, which only maps NotFoundError (404) to undefined.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        raw = undefined;
+      } else {
+        throw err;
+      }
     }
 
     return selectComponents(kitId, raw, group);
