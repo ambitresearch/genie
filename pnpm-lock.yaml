@@ -54,6 +54,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
       micromatch:
         specifier: ^4.0.8
         version: 4.0.8
@@ -79,9 +82,6 @@ importers:
       '@types/mime-types':
         specifier: ^3.0.1
         version: 3.0.1
-      ajv:
-        specifier: ^8.20.0
-        version: 8.20.0
       json-schema-to-ts:
         specifier: ^3.1.1
         version: 3.1.1
