@@ -14,26 +14,24 @@
  * rest of M1 — nothing is silently skipped.
  *
  *   Merged & driven live here:
- *   Merged & driven live here:
  *     create_kit, list_files, list_components, read_file, validate, plan,
  *     write_files, delete_files, create_project, list_projects, get_project,
- *     delete_project, (get_kit, list_kits), bind_kit, conjure_screen
+ *     delete_project, get_kit, list_kits, bind_kit, conjure_screen
  *
- *   In_review / not yet registered — stubbed as it.todo, wired to their issue:
- *     bind_kit        DRO-246 (M1-11) — dedicated tool; AC4 exercises the same
- *                     end-state today via create_project's kitBindings input
- *     GitHostStore/Gitea parity (AC5) — testcontainers infra, M1-01 git-host path
+ *   Still `it.todo` — blocked on infra/upstream work, wired to its blocker:
+ *     GitHostStore/Gitea parity (AC5) — needs a createServer store-injection
+ *     seam + a Docker/testcontainers Gitea instance in CI (see the AC5 block).
  *
  * ── Acceptance criteria map ─────────────────────────────────────────────────
  *   AC1  file path (this file)                              ✓ satisfied
  *   AC2  in-process SDK test transport                      ✓ live
  *   AC3  kit protocol walk                                  ✓ read+plan+write_files+delete_files live
- *   AC4  project/blueprint walk                             ◑ CRUD+blueprint+conjure_screen live; dedicated bind_kit tool todo (DRO-246)
- *   AC5  GitHostStore/Gitea parity                          ○ todo (infra)
+ *   AC4  project/blueprint walk                             ✓ CRUD+blueprint+bind_kit tool+conjure_screen all live
+ *   AC5  GitHostStore/Gitea parity                          ○ todo — blocked (store-injection seam + Docker CI infra)
  *   AC6  negative: write without/outside planId → -32602    ✓ live (DRO-236)
  *   AC7  negative: conjure_screen no kit → ERR_PROJECT_KIT_REQUIRED  ✓ live (M1-21)
- *   AC8  test report uploaded as CI artefact                — CI wiring (see .github/workflows)
- *   AC9  suite < 60 s wall-clock                            ✓ live walk is ~ms; guarded below
+ *   AC8  test report uploaded as CI artefact                ✓ junit reporter (vitest.config) + upload step (ci.yml)
+ *   AC9  suite < 60 s wall-clock                            ✓ live walk is ~ms; explicit budget guard below
  */
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -371,8 +369,48 @@ describe("AC4 — project / blueprint workflow", () => {
     expect(gone.content?.[0]?.text ?? "").toContain("ERR_PROJECT_NOT_FOUND");
   });
 
-  // Dedicated bind_kit tool round-trip — needs DRO-246 (M1-11).
-  it.todo("bind_kit(project, kit) then get_project reflects the binding [blocked by DRO-246]");
+  // Dedicated bind_kit tool round-trip. The `mcp__genie__bind_kit` verb is now
+  // merged and registered (M1-20 / PR #100), so the literal AC4 `bind_kit` step
+  // runs live here — no longer the create_project.kitBindings stand-in used by
+  // the "end-state" test above. This drives the tool the AC actually names:
+  // create the kit, create a *kitless* workspace, then bind through the tool and
+  // confirm both the tool's own response and a subsequent get_project reflect it.
+  it("bind_kit(project, kit) attaches the kit and get_project reflects the binding", async () => {
+    const kitResult = await harness.call("mcp__genie__create_kit", { name: "Bindable Kit" });
+    expect(kitResult.isError, JSON.stringify(kitResult)).toBeFalsy();
+    const { kitId } = payload(kitResult) as { kitId: string };
+
+    // A workspace with NO bindings at creation — the binding must come entirely
+    // from the bind_kit call, so this can't accidentally pass on create-time state.
+    const projectId = await createProject({ name: "Bindable Workspace", kind: "workspace" });
+
+    const preBind = await harness.call("mcp__genie__get_project", { projectId });
+    expect(preBind.isError, JSON.stringify(preBind)).toBeFalsy();
+    expect((payload(preBind) as { kitBindings: unknown[] }).kitBindings).toEqual([]);
+
+    // bind_kit returns the updated ProjectSummary directly (its own contract).
+    const bound = await harness.call("mcp__genie__bind_kit", {
+      projectId,
+      kitId,
+      default: true,
+    });
+    expect(bound.isError, JSON.stringify(bound)).toBeFalsy();
+    expect(payload(bound)).toMatchObject({
+      id: projectId,
+      kitBindings: [{ kitId, default: true }],
+      defaultKitId: kitId,
+    });
+
+    // ...and the binding is durable: a fresh get_project sees the same state.
+    const detail = await harness.call("mcp__genie__get_project", { projectId });
+    expect(detail.isError).toBeFalsy();
+    const body = payload(detail) as {
+      kitBindings: { kitId: string; default?: boolean }[];
+      defaultKitId?: string;
+    };
+    expect(body.kitBindings).toContainEqual({ kitId, default: true });
+    expect(body.defaultKitId).toBe(kitId);
+  });
 
   // conjure_screen with the offline scaffold generator (M1-21): binding a kit,
   // conjuring a screen against it, and confirming the screen is appended to the
@@ -494,6 +532,7 @@ describe("AC7 — conjure_screen requires a bound kit", () => {
       name: "Kitless Structure Workspace",
       kind: "workspace",
     });
+    expect(create.isError, JSON.stringify(create)).toBeFalsy();
     const { projectId } = payload(create) as { projectId: string };
 
     const result = await harness.call("mcp__genie__conjure_screen", {
@@ -507,9 +546,127 @@ describe("AC7 — conjure_screen requires a bound kit", () => {
   });
 });
 
+// ── AC9 — wall-clock budget guard ─────────────────────────────────────────────
+//
+// The AC bounds the *whole* suite at < 60 s. Vitest's own run summary is the
+// primary evidence for that (and the CI report artefact, AC8, captures it), but
+// a silent 60 s ceiling is a tripwire nobody trips until CI is already slow. So
+// we also assert an in-band budget on the single heaviest end-to-end walk: the
+// full kit protocol (create → plan → write 5 → list → read → delete → validate)
+// immediately followed by the full project protocol (create → bind → conjure →
+// get → delete). Today that walk is single-digit milliseconds; we bound it at a
+// deliberately generous 20 s so the guard fires only on a genuine order-of-
+// magnitude regression (a real network call sneaking in, an O(n²) blow-up),
+// never on ordinary CI jitter — while still leaving 40 s of headroom under the
+// hard 60 s ceiling for the rest of the suite.
+describe("AC9 — the end-to-end walk stays well within the 60 s suite budget", () => {
+  const WALK_BUDGET_MS = 20_000;
+
+  it(`a full kit + project walk completes in well under ${WALK_BUDGET_MS} ms`, async () => {
+    const started = performance.now();
+
+    // ── Kit protocol ──
+    const kitResult = await harness.call("mcp__genie__create_kit", { name: "Budget Kit" });
+    expect(kitResult.isError, JSON.stringify(kitResult)).toBeFalsy();
+    const { kitId } = payload(kitResult) as { kitId: string };
+    const kitDir = join(harness.roots.kitsRoot, kitId);
+
+    const planResult = await harness.call("mcp__genie__plan", {
+      kitId,
+      writes: ["components/**/*.html"],
+      localDir: kitDir,
+    });
+    expect(planResult.isError, JSON.stringify(planResult)).toBeFalsy();
+    const { planId } = payload(planResult) as { planId: string };
+
+    const files = Array.from({ length: 5 }, (_, i) => ({
+      path: `components/Budget${i}.html`,
+      data: `<div>Budget ${i}</div>`,
+    }));
+    const writeResult = await harness.call("mcp__genie__write_files", { planId, files });
+    expect(writeResult.isError, JSON.stringify(writeResult)).toBeFalsy();
+
+    const listed = await harness.call("mcp__genie__list_files", { kitId });
+    expect(listed.isError).toBeFalsy();
+    const read = await harness.call("mcp__genie__read_file", {
+      kitId,
+      path: "components/Budget0.html",
+    });
+    expect(read.isError).toBeFalsy();
+
+    const delPlan = await harness.call("mcp__genie__plan", {
+      kitId,
+      writes: ["**/*"],
+      deletes: ["components/Budget0.html"],
+    });
+    expect(delPlan.isError, JSON.stringify(delPlan)).toBeFalsy();
+    const { planId: delPlanId } = payload(delPlan) as { planId: string };
+    const del = await harness.call("mcp__genie__delete_files", {
+      planId: delPlanId,
+      paths: ["components/Budget0.html"],
+    });
+    expect(del.isError).toBeFalsy();
+
+    const validated = await harness.call("mcp__genie__validate", {
+      kitId,
+      counts: { total: 5, bad: 0, thin: 0, variantsIdentical: 0, iterations: 1 },
+    });
+    expect(validated.isError).toBeFalsy();
+
+    // ── Project protocol ──
+    const projResult = await harness.call("mcp__genie__create_project", {
+      name: "Budget Workspace",
+      kind: "workspace",
+    });
+    expect(projResult.isError, JSON.stringify(projResult)).toBeFalsy();
+    const { projectId } = payload(projResult) as { projectId: string };
+
+    const bound = await harness.call("mcp__genie__bind_kit", { projectId, kitId, default: true });
+    expect(bound.isError, JSON.stringify(bound)).toBeFalsy();
+
+    const conjured = await harness.call("mcp__genie__conjure_screen", {
+      projectId,
+      prompt: "A dashboard overview page with cards",
+    });
+    expect(conjured.isError, JSON.stringify(conjured)).toBeFalsy();
+
+    const detail = await harness.call("mcp__genie__get_project", { projectId });
+    expect(detail.isError).toBeFalsy();
+
+    const deleted = await harness.call("mcp__genie__delete_project", { projectId });
+    expect(deleted.isError).toBeFalsy();
+
+    const elapsedMs = performance.now() - started;
+    expect(
+      elapsedMs,
+      `end-to-end walk took ${elapsedMs.toFixed(0)} ms, over the ${WALK_BUDGET_MS} ms budget`,
+    ).toBeLessThan(WALK_BUDGET_MS);
+  });
+});
+
 // ── AC5 — GitHostStore / Gitea parity ─────────────────────────────────────────
+//
+// AC5 repeats the *MCP-tool* walks above against a `GitHostStore` backend, with
+// a Docker-Compose `gitea/gitea` instance as the reference git host (testcontainers).
+// It stays `it.todo` because it is blocked on two concrete, tracked prerequisites
+// — not on anything in this suite:
+//
+//   1. Store-injection seam. `createServer()` hard-wires `LocalFsKitStore`, and
+//      the file verbs (`read_file`, `delete_files`) + the whole project family
+//      take a filesystem *path*, not an injected `KitStore`/`ProjectStore`. Until
+//      `createServer` accepts a store backend, the in-process MCP walk cannot be
+//      pointed at `GitHostStore`. (The store *contract* itself already has parity
+//      coverage — `packages/server/test/store-conformance.test.ts` runs the shared
+//      KitStore/ProjectStore contract against both `LocalFs*` and `GitHost*` via a
+//      mocked fetch. AC5 is the missing end-to-end *tool-surface* half.)
+//   2. CI infra. A `gitea/gitea:latest` testcontainer needs a Docker daemon on the
+//      runner; the sandbox this suite is authored in has neither Docker nor an
+//      installable `testcontainers` under the frozen lockfile.
+//
+// Tracked as its own child issue (#111) so it lands with the seam it depends on,
+// rather than smuggling a server refactor into this test-only PR.
 describe("AC5 — the suite repeats against GitHostStore (Gitea reference host)", () => {
   it.todo(
-    "run the kit + project walks against GitHostStore via a testcontainers gitea/gitea instance [blocked by git-host adapter + CI infra]",
+    "run the kit + project MCP walks against GitHostStore via a testcontainers gitea/gitea instance [blocked by #111: createServer store-injection seam + Docker/testcontainers CI infra]",
   );
 });

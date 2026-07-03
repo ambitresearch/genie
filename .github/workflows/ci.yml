@@ -42,6 +42,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run ${{ matrix.task }}
+        # VITEST_JUNIT makes vitest.config.ts add the `junit` reporter and write
+        # reports/junit.xml (M1-14 AC8). Harmless for the non-test matrix legs.
+        env:
+          VITEST_JUNIT: "1"
         run: pnpm ${{ matrix.task }}
 
       - name: Upload build artifact
@@ -51,4 +55,18 @@ jobs:
           name: server-dist-${{ matrix.node }}
           path: packages/server/dist
           if-no-files-found: error
+          retention-days: 7
+
+      # AC8 — archive the M1 conformance (and full suite) JUnit report as a CI
+      # artefact. Runs even when the suite fails so a red run still ships its
+      # report for triage. `warn` (not `error`) on a missing report so a crash
+      # before the reporter flushes surfaces the real test failure rather than a
+      # secondary upload error that masks it.
+      - name: Upload test report
+        if: matrix.task == 'test' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-node-${{ matrix.node }}
+          path: reports/junit.xml
+          if-no-files-found: warn
           retention-days: 7

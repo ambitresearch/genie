@@ -7,6 +7,11 @@ dist/
 *.tsbuildinfo
 coverage/
 
+# ── Test reports (JUnit XML; CI artefact, M1-14 AC8) ──────
+# Written by vitest's junit reporter only when VITEST_JUNIT=1 / CI=true.
+# Uploaded by ci.yml, never committed.
+reports/
+
 # ── genie runtime state (GENIE_HOME default; plan grants, etc.) ──
 # Generated at runtime by the MCP server (e.g. `plan`'s persisted
 # planId JSON snapshots). Never source, never shipped.

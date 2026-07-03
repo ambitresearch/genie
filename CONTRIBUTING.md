@@ -60,16 +60,24 @@ talking to a real `createServer()`, no network. It is the milestone-level
 pnpm test                                        # runs unit + e2e together (root vitest)
 pnpm --filter @genie/e2e typecheck               # type-check the suite in isolation
 npx vitest run packages/e2e/test                 # just the e2e conformance walk
+VITEST_JUNIT=1 npx vitest run packages/e2e/test  # + write reports/junit.xml (CI artefact)
 ```
 
 - The suite must stay **green and fast** (< 60 s wall-clock; the current M1 walk
-  is milliseconds). Each spawns an isolated temp `projectsRoot`/`kitsRoot`, so
-  runs never touch a real `.genie/` and are safe to run in parallel.
+  is milliseconds). A dedicated `AC9` test asserts a generous in-band budget on
+  the heaviest end-to-end walk so a real regression trips before the 60 s ceiling
+  does. Each test spawns an isolated temp `projectsRoot`/`kitsRoot`, so runs never
+  touch a real `.genie/` and are safe to run in parallel.
+- **Test report:** set `VITEST_JUNIT=1` (CI sets it automatically) to emit a
+  JUnit XML report at `reports/junit.xml`. CI archives it as the
+  `test-report-node-<v>` build artefact. A plain local `pnpm test` writes no
+  report and keeps vitest's readable console output.
 - Coverage grows tool-by-tool. Walks that depend on an **unmerged** upstream tool
-  are `it.todo(...)` naming the blocking issue (e.g. `plan` / `write_files`),
-  never silently skipped — the file doubles as the live M1 checklist. When you
-  land a tool that unblocks a `todo`, convert it to a real assertion in the same
-  PR.
+  — or on infra not yet available, like the `GitHostStore`/Gitea parity leg
+  (tracked in its own follow-up issue) — are `it.todo(...)` naming the blocking
+  issue, never silently skipped. The file doubles as the live M1 checklist: when
+  you land a tool (or the infra) that unblocks a `todo`, convert it to a real
+  assertion in the same PR.
 
 ## Commit convention
 
