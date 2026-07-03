@@ -20,7 +20,7 @@
  * an ambiguous/unknown keyword throws at `ajv.compile()` time under
  * `strict: true`, before any data is even validated).
  */
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -319,7 +319,7 @@ describe("COMPONENT_SCHEMA", () => {
 
   // ─── componentName / group field patterns ─────────────────────────────────
 
-  it.each(["Button", "B", "IconButton2"])(
+  it.each(["Button", "IconButton2", "Aa"])(
     "accepts a valid PascalCase componentName %s",
     (componentName) => {
       const fixture = { ...goodFixture(), componentName };
@@ -327,7 +327,7 @@ describe("COMPONENT_SCHEMA", () => {
     },
   );
 
-  it.each(["button", "2Button", "", "Button Name", "a".repeat(65)])(
+  it.each(["button", "2Button", "", "B", "Button Name", "a".repeat(65)])(
     "rejects an invalid componentName %s",
     (componentName) => {
       const fixture = { ...goodFixture(), componentName };
@@ -390,10 +390,10 @@ describe("COMPONENT_SCHEMA", () => {
 describe("component.schema.json (AC7 JSON export)", () => {
   const tmpDirs: string[] = [];
 
-  afterEach(() => {
-    for (const dir of tmpDirs.splice(0)) {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  afterEach(async () => {
+    await Promise.all(
+      tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+    );
   });
 
   it("emitComponentSchemaJson writes a JSON file byte-equivalent to COMPONENT_SCHEMA", async () => {
@@ -406,34 +406,34 @@ describe("component.schema.json (AC7 JSON export)", () => {
     // zero real coverage in the `test` leg (no `dist/` exists there) and
     // would have needed a skip-if-missing escape hatch, silently passing
     // without ever having exercised AC7's JSON-export requirement. Importing
-    // `schema.ts` directly (vitest transorms TS on the fly, same as every
+    // `schema.ts` directly (vitest transforms TS on the fly, same as every
     // other import in this file) keeps the assertion real under both
     // execution orders while still exercising the actual shared function the
     // production postbuild step calls — not a re-implementation of it.
     const schemaModulePath = fileURLToPath(new URL("./schema.ts", import.meta.url));
-    const outDir = mkdtempSync(join(tmpdir(), "emit-component-schema-test-"));
+    const outDir = await mkdtemp(join(tmpdir(), "emit-component-schema-test-"));
     tmpDirs.push(outDir);
     const outFile = join(outDir, "component.schema.json");
 
     const returned = await emitComponentSchemaJson(schemaModulePath, outFile);
     expect(returned).toBe(outFile);
 
-    const written = JSON.parse(readFileSync(outFile, "utf-8"));
+    const written = JSON.parse(await readFile(outFile, "utf-8"));
     expect(written).toEqual(JSON.parse(JSON.stringify(COMPONENT_SCHEMA)));
   });
 
   it("emitComponentSchemaJson creates missing parent directories", async () => {
     const schemaModulePath = fileURLToPath(new URL("./schema.ts", import.meta.url));
-    const outDir = mkdtempSync(join(tmpdir(), "emit-component-schema-test-"));
+    const outDir = await mkdtemp(join(tmpdir(), "emit-component-schema-test-"));
     tmpDirs.push(outDir);
     const outFile = join(outDir, "nested", "deeper", "component.schema.json");
 
     await emitComponentSchemaJson(schemaModulePath, outFile);
-    expect(JSON.parse(readFileSync(outFile, "utf-8")).title).toBe("GenieComponent");
+    expect(JSON.parse(await readFile(outFile, "utf-8")).title).toBe("GenieComponent");
   });
 
   it("emitComponentSchemaJson throws a clear error when the module has no COMPONENT_SCHEMA export", async () => {
-    const outDir = mkdtempSync(join(tmpdir(), "emit-component-schema-test-"));
+    const outDir = await mkdtemp(join(tmpdir(), "emit-component-schema-test-"));
     tmpDirs.push(outDir);
     // schema.test.ts itself has no COMPONENT_SCHEMA export — a convenient
     // real module to import that exercises the "missing export" branch
@@ -472,7 +472,7 @@ describe("component.schema.json (AC7 JSON export)", () => {
       "component-schema",
       "fake-compiled-schema.mjs",
     );
-    const outDir = mkdtempSync(join(tmpdir(), "emit-component-schema-test-"));
+    const outDir = await mkdtemp(join(tmpdir(), "emit-component-schema-test-"));
     tmpDirs.push(outDir);
     const outFile = join(outDir, "component.schema.json");
 
@@ -485,7 +485,7 @@ describe("component.schema.json (AC7 JSON export)", () => {
     ]);
 
     expect(stdout).toContain("wrote");
-    const written = JSON.parse(readFileSync(outFile, "utf-8"));
+    const written = JSON.parse(await readFile(outFile, "utf-8"));
     expect(written).toEqual({
       $schema: "http://json-schema.org/draft-07/schema#",
       title: "GenieComponentFixture",

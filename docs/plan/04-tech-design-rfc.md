@@ -1442,7 +1442,7 @@ own ACs (`componentName`/`group`/`files[].mimeType`/`manifestEntry`) are the shi
         "properties": {
           "path": {
             "type": "string",
-            "pattern": "^components/[a-z0-9-]+/([A-Z][A-Za-z0-9]{0,63})/\\1\\.html$"
+            "pattern": "^components/[a-z0-9-]+/([A-Z][A-Za-z0-9]{1,63})/\\1\\.html$"
           }
         }
       },

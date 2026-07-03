@@ -55,7 +55,7 @@ const HTML_FILE_CONTAINS = {
   properties: {
     path: {
       type: "string",
-      pattern: "^components/[a-z0-9-]+/([A-Z][A-Za-z0-9]{0,63})/\\1\\.html$",
+      pattern: "^components/[a-z0-9-]+/([A-Z][A-Za-z0-9]{1,63})/\\1\\.html$",
     },
   },
 } as const;
@@ -90,8 +90,12 @@ export const COMPONENT_SCHEMA = {
       description: 'PascalCase component name, e.g. "Button".',
       // Same shape as the equivalent `name` field in RFC §7.1/§7.5
       // (manifest.json cards / the RFC's own COMPONENT_SCHEMA draft) — a
-      // 1-64 char PascalCase identifier.
-      pattern: "^[A-Z][A-Za-z0-9]{0,63}$",
+      // 2-64 char PascalCase identifier. Minimum length is 2 (not 1) so a
+      // single-letter name like "B" cannot slip past `componentName` only to
+      // be trapped later by the `files[].path` pattern's `[A-Z][A-Za-z0-9]+`
+      // `<Name>` segment (which itself requires min length 2) — the two
+      // constraints move together.
+      pattern: "^[A-Z][A-Za-z0-9]{1,63}$",
     },
     group: {
       type: "string",
