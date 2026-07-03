@@ -12,6 +12,7 @@ import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
 import { registerListKits } from "./tools/list_kits.js";
 import { registerListComponents } from "./tools/list_components.js";
 import { registerPlan } from "./tools/plan.js";
+import { registerWriteFilesTool } from "./tools/write_files.js";
 import { LocalFsKitStore } from "./store/local.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
 
@@ -47,8 +48,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
       "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
-      "create/list/get/delete/bind_kit, and plan creation (the capability-grant boundary for " +
-      "write_files/delete_files).)",
+      "create/list/get/delete/bind_kit, plan creation, and write_files (the capability-grant " +
+      "boundary and its file-mutation verb — delete_files lands in a later issue).)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -105,6 +106,17 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   registerReadFile(server, kitsRoot);
   registerListFilesTool(server, new KitFileStore(kitsRoot));
 
+  // Plan capability-grant boundary (M1-07). Locks writes/deletes/localDir and
+  // issues a planId; write_files (below) validates every call against it.
+  // `plans/index.ts` owns its own persistence root (`${GENIE_HOME}/plans`) and
+  // TTL (`GENIE_PLAN_TTL`) internally, so there's no store instance to thread
+  // through here — both tools import the same module singleton.
+  registerPlan(server);
+
+  // write_files (M1-08): validates planId + writes-glob membership via
+  // `plans/index.ts`, then commits atomically. Blocked-by M1-07, now shipped.
+  registerWriteFilesTool(server);
+
   // Advisory telemetry facet (M1-12): persists validation counts + emits
   // Prometheus metrics. No planId required (read-side telemetry).
   registerValidate(
@@ -113,8 +125,6 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       process.env.GENIE_REPORTS_DIR ??
       join(process.cwd(), ".genie", "reports"),
   );
-
-  registerPlan(server);
 
   return server;
 }

@@ -11,7 +11,16 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import * as micromatch from "micromatch";
+// micromatch is CJS-only and assigns its named helpers (isMatch, braces, …)
+// as properties on the exported function itself, rather than as separate
+// `module.exports.foo = ...` assignments. Node's cjs-module-lexer can't
+// statically see those, so both a namespace import (`import * as
+// micromatch`) and a named import (`import { isMatch }`) fail at runtime
+// under real Node ESM (`import * as` silently yields `{default, "module.exports"}`
+// with no `isMatch`; a named import throws SyntaxError at load time) even
+// though Vitest's esbuild-based transform papers over it in tests. A default
+// import is the one shape that works both under esbuild and real Node ESM.
+import micromatch from "micromatch";
 
 /** Max number of write patterns allowed per plan. */
 export const MAX_WRITES = 256;
