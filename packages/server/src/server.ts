@@ -13,6 +13,7 @@ import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
 import { registerListKits } from "./tools/list_kits.js";
 import { registerListComponents } from "./tools/list_components.js";
 import { registerPlan } from "./tools/plan.js";
+import { registerDeleteFilesTool } from "./tools/delete_files.js";
 import { registerWriteFilesTool } from "./tools/write_files.js";
 import { LocalFsKitStore } from "./store/local.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
@@ -49,9 +50,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
       "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
-      "create/list/get/delete/bind_kit, plan creation, write_files (the capability-grant " +
-      "boundary and its file-mutation verb — delete_files lands in a later issue), and " +
-      "conjure_screen.)",
+      "create/list/get/delete/bind_kit, conjure_screen, plan creation (the capability-grant " +
+      "boundary for write/delete verbs), write_files, and delete_files.)",
   });
 
   // A single built-in tool. Registering it makes the SDK wire up the
@@ -137,6 +137,11 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     server,
     options.reportsDir ?? process.env.GENIE_REPORTS_DIR ?? join(process.cwd(), ".genie", "reports"),
   );
+
+  // Plan-gated destructive verb (M1-09): deletes are authorized by a plan's
+  // `deletes` globs and hit the SAME kit tree read_file/list_files read
+  // (kitsRoot). Shares the M1-07 plan boundary already registered above.
+  registerDeleteFilesTool(server, kitsRoot);
 
   return server;
 }

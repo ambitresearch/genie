@@ -1921,11 +1921,35 @@ a stray stdout log line would corrupt every client's message framing.
     "additionalProperties": false,
     "required": ["deletedPaths"],
     "properties": {
-      "deletedPaths": { "type": "array", "items": { "type": "string" } }
+      "deletedPaths": { "type": "array", "items": { "type": "string" } },
+      "notFoundPaths": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Authorized paths that did not exist on disk — a non-error (the known-good silent-retry case, e.g. a floor-card component with no _preview/*.html). Always present; empty when every path existed."
+      }
     }
   }
 }
 ```
+
+Each requested `path` must match a glob in the plan's `deletes` (locked at
+`plan` time); an out-of-plan path — a traversal path included — rejects the
+**whole** call with `PathOutsidePlanError` after an atomic pre-flight, so an
+in-plan sibling is never taken down with it. Authorized paths are deleted
+longest-first (a file before any shorter path naming its containing directory,
+avoiding `ENOTEMPTY`). A path that no longer exists (`ENOENT`/`ENOTDIR`) is a
+non-error recorded in `notFoundPaths`; any other failure (permission denied, a
+directory target — recursive directory delete is out of scope) fails the call
+with `DeleteFailed`.
+
+Error responses (`isError: true`, `content[0].text` is JSON):
+
+| `error` | Cause |
+| --- | --- |
+| `InvalidArguments` | `planId` empty, `paths` empty, an empty path string, or an unknown key. |
+| `PlanNotFoundError` | `planId` is unknown, expired, or not a UUID. |
+| `PathOutsidePlanError` | A `path` matches no `deletes` glob, or resolves outside the kit root. Payload includes the offending `path`. |
+| `DeleteFailed` | A non-`ENOENT`/`ENOTDIR` filesystem error (e.g. `EISDIR`, `EACCES`). Payload includes the offending `path`. |
 
 ### 9.9 `mcp__genie__validate`
 
