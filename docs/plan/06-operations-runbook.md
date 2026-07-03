@@ -5,19 +5,20 @@
 | Field                 | Value                                                                                                          |
 | --------------------- | -------------------------------------------------------------------------------------------------------------- |
 | Document              | `06-operations-runbook.md`                                                                                     |
-| Version               | **v0.1.1 DRAFT**                                                                                               |
+| Version               | **v0.1.3 DRAFT**                                                                                               |
 | Status                | DRAFT — awaiting first on-call shadow shift                                                                    |
 | Owner                 | Project maintainer                                                                                                  |
 | Reviewers             | TBD (Primary on-call TBD, Backup on-call TBD, SRE reviewer TBD)                                                |
 | Audience              | The maintainer (and any future self-hosting operator running their own genie instance)                         |
 | Source-of-truth files | `INDEX.md`, `docs/plan/04-tech-design-rfc.md`, `docs/research/`                                               |
-| Last updated          | 2026-06-27                                                                                                                                                      |
+| Last updated          | 2026-07-03                                                                                                                                                      |
 | Cadence               | Re-read on every on-call shift handover; full review quarterly; emergency patch when an incident exposes a gap |
 
 ### Changelog
 
 | Date       | Version | Author        | Notes                                                                                                    |
 | ---------- | ------- | ------------- | -------------------------------------------------------------------------------------------------------- |
+| 2026-07-03 | v0.1.3  | Project maintainer | §7.1 added: model alias config reference (`deploy/litellm/config.yaml`), per-key budget/rate-limit doc (M2-05). |
 | 2026-06-27 | v0.1.2  | Project maintainer | BRD-feedback sweep: UI-kit terminology, native conventions (blueprints not templates), M1 19-tool surface with projects-as-peer tooling.          |
 | 2026-06-24 | v0.1.1  | Project maintainer | Raised minimum Node.js from 18 to 22 (Node 18 & 20 reached EOL; Node 22 is the current Active LTS).      |
 | 2026-06-21 | v0.1    | Project maintainer | Initial draft of ops + runbook + on-call guide; placeholders for dashboard URLs and TBD personnel slots. |
@@ -492,6 +493,48 @@ docker compose up -d --no-deps genie
 - Never bake secrets into the image. CI fails the build if `git grep -E 'sk-(litellm|ant|proj)|gta_'` returns anything in `docker/` or `apps/`.
 - Never expose `:8780` to the public internet without OAuth or static bearer enabled.
 - Never set `GENIE_AUTH_MODE=none` on the storage host deployment. The startup script panics if `GENIE_AUTH_MODE=none && GENIE_MCP_HTTP_PORT=*` are both set.
+
+### 7.1 Model alias config (LiteLLM reference)
+
+genie's generation verbs (`conjure` / `refine`) call `GENIE_MODEL_DEFAULT` /
+`GENIE_MODEL_FALLBACK` as opaque model-routing aliases — never a hardcoded
+provider model ID (D-H). `deploy/litellm/config.yaml` ships as the **reference**
+mapping for those aliases against LiteLLM; operators on a different
+OpenAI-compatible endpoint reproduce the same three aliases however their
+endpoint expresses model routing.
+
+| Alias            | Reference backend (`deploy/litellm/config.yaml`) | Used for                                                    |
+| ---------------- | -------------------------------------------------- | ------------------------------------------------------------ |
+| `design-default` | `anthropic/claude-sonnet-4-6`                       | The default for every `conjure`/`refine` call.               |
+| `design-best`    | `anthropic/claude-opus-4-8`                         | Opt-in for harder generations — never the silent default.    |
+| `design-local`   | `ollama_chat/qwen3-coder:30b`                       | No-token-cost fallback; also the §12.1/§12.2 failover target when the Anthropic backend is down or rate-limited. |
+
+**Before reusing this file**, confirm the operator's actual model catalog —
+`curl -H "Authorization: Bearer $GENIE_LLM_API_KEY" "$GENIE_LLM_BASE_URL/v1/models" | jq '.data[].id'`
+(same command as §12.15) — model catalogs move fast and the placeholder IDs
+above will go stale. Secrets are never hardcoded in the file: `api_key` /
+`api_base` are `os.environ/ANTHROPIC_API_KEY` and `os.environ/OLLAMA_API_BASE`
+passthrough refs, resolved by the LiteLLM process's own environment.
+
+**Per-key budget + rate limit**: every MCP-server caller should authenticate
+with its own virtual key (`/key/generate`), not the shared master key, so each
+gets its own bucket. `deploy/litellm/config.yaml`'s `litellm_settings` sets a
+50 USD/month default **and** ceiling (`default_key_generate_params` +
+`upperbound_key_generate_params` — so a key-creation call can't exceed the cap
+even if it forgets to ask for a tighter one) and a 20 RPM / 200 KTPM limit
+(matches `claude-sonnet-4-6` tier defaults). This requires the proxy's own
+Postgres store (`general_settings.database_url`, not shipped here —
+provisioning that database is out of scope for this reference file, same as
+provisioning the gateway itself).
+
+**Reload after editing** `deploy/litellm/config.yaml`:
+
+```bash
+litellm --config deploy/litellm/config.yaml
+```
+
+(There is no separate `litellm proxy` subcommand or live-reload flag — this
+restarts the proxy process against the edited config.)
 
 [END CHUNK 1]
 

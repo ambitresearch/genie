@@ -76,6 +76,13 @@ Missing `GENIE_LLM_BASE_URL` or `GENIE_LLM_API_KEY` fails fast with
 `MissingLLMConfigError` naming both variables — there is no default endpoint
 to fall back to.
 
+Generation verbs address models by operator-mapped **alias**, never a
+provider-native model ID: `design-default` (Sonnet-class), `design-best`
+(Opus-class), `design-local` (a local model, e.g. Ollama). `deploy/litellm/config.yaml`
+is the reference alias mapping for those three names against LiteLLM — see
+`docs/plan/06-operations-runbook.md` §7.1 for the per-key budget/rate-limit
+config and reload command.
+
 ### Transports
 
 | Flag                           | Use                                                                  |
@@ -93,6 +100,8 @@ packages/
   server/     @genie/server — the MCP server (this is the product)
   viewer/     @genie/viewer — Vite preview viewer (M4, placeholder)
   e2e/        @genie/e2e — harness smoke tests (M5, placeholder)
+deploy/
+  litellm/    reference LiteLLM model_list config (operators adapt to their endpoint)
 docs/
   plan/       vision, BRD, PRD, tech-design RFC, launch plan, ops runbook
   designs/    locked design system + SVG surface mockups

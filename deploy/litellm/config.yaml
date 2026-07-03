@@ -1,0 +1,92 @@
+# deploy/litellm/config.yaml — reference LiteLLM proxy config for genie (M2-05)
+#
+# genie calls a *configurable* OpenAI-compatible chat-completions endpoint (D-H,
+# docs/plan/00-decisions.md). LiteLLM is the reference gateway — this file is an
+# example, not a requirement. Operators on a different OpenAI-compatible endpoint
+# (vLLM, a direct provider, etc.) reproduce the same three aliases however their
+# endpoint expresses model routing; nothing in genie's server hardcodes LiteLLM.
+#
+# The three aliases below are the ones genie's generation verbs (`conjure` /
+# `refine`, M2) send as `model` — see `GENIE_MODEL_DEFAULT` / `GENIE_MODEL_FALLBACK`
+# in docs/plan/06-operations-runbook.md §7 and `packages/server/src/tools/conjure_screen.ts`.
+# genie itself only ever sees the alias; the litellm_params below are where an
+# operator maps that alias onto a real backend model.
+#
+# AC0 (confirm-before-configuring): the two Anthropic model IDs below were
+# verified against a live endpoint's `/v1/models` on 2026-07-03 and matched
+# verbatim. `qwen3-coder:32b` from the issue's placeholder YAML is **not** a real
+# Ollama tag — Ollama's public library (ollama.com/library/qwen3-coder) ships
+# `:latest` / `:30b` / `:480b` / `:480b-cloud`; `:30b` is used below. Re-check your
+# own endpoint's `/v1/models` (or `ollama list`) before reusing this file — model
+# catalogs move fast and these placeholders will go stale.
+#
+# Reload after editing: `litellm --config deploy/litellm/config.yaml`
+# (the LiteLLM CLI has no separate `proxy` subcommand and no live-reload flag —
+# re-running this command against a running deployment restarts the proxy process
+# with the new config; see docs/plan/06-operations-runbook.md §7).
+
+model_list:
+  # design-default — the everyday generation model. Sonnet-class: fast enough
+  # for interactive conjure/refine, cheap enough to be the default.
+  - model_name: design-default
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # design-best — opt-in for harder generations. Opus-class: slower, pricier,
+  # used when the caller explicitly asks for it (never the silent default).
+  - model_name: design-best
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # design-local — a self-hosted fallback with no per-token API cost. Wired to
+  # an Ollama server; also the documented failover target in
+  # docs/plan/06-operations-runbook.md §12.1/§12.2 when the Anthropic backend is
+  # down or rate-limited. `ollama_chat/` (not `ollama/`) is required here:
+  # genie's `conjure`/`refine` send `response_format: json_schema` (D-I), which
+  # LiteLLM only documents against Ollama's /api/chat path.
+  - model_name: design-local
+    litellm_params:
+      model: ollama_chat/qwen3-coder:30b
+      api_base: os.environ/OLLAMA_API_BASE
+
+# ─── Per-key budget + rate limit (AC3 / AC4) ────────────────────────────────
+#
+# LiteLLM enforces per-key budgets/rate-limits on *virtual keys* minted via
+# `/key/generate` (or the `lite keys generate` CLI), backed by the proxy's
+# Postgres store (`general_settings.database_url` — not shown here; provisioning
+# that database is out of scope for this issue, same as provisioning the gateway
+# itself). Every MCP-server caller should authenticate with its own virtual key
+# rather than the master key, so each gets its own budget/rate-limit bucket
+# instead of sharing one.
+#
+# The two blocks below don't themselves create keys — they shape whatever
+# `/key/generate` call an operator (or their provisioning script) makes:
+# `default_key_generate_params` fills in values a call omits, and
+# `upperbound_key_generate_params` caps whatever a call requests. Together they
+# guarantee that *no* key minted against this config can exceed the 50 USD/month
+# / 20 RPM / 200 KTPM caps below, even if whatever creates the key forgets to
+# ask for a tighter one.
+litellm_settings:
+  default_key_generate_params:
+    max_budget: 50 # USD
+    budget_duration: 30d
+    rpm_limit: 20
+    tpm_limit: 200000 # 200 KTPM — matches claude-sonnet-4-6 tier defaults (AC4)
+
+  upperbound_key_generate_params:
+    max_budget: 50 # USD/month hard cap (AC3) — configurable per-deployment; raise
+    # here (and only here) if a deployment needs a higher ceiling.
+    budget_duration: 30d
+    rpm_limit: 20
+    tpm_limit: 200000
+
+# Mint a virtual key against this config, e.g.:
+#   curl -X POST http://localhost:4000/key/generate \
+#     -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+#     -H "Content-Type: application/json" \
+#     -d '{"key_alias": "genie-mcp-server"}'
+# Omitting max_budget/rpm_limit/tpm_limit above lets default_key_generate_params
+# fill them in; the response's "key" is the value that becomes GENIE_LLM_API_KEY
+# for genie's own env (docs/plan/06-operations-runbook.md §7).
