@@ -1,9 +1,6 @@
-import { existsSync } from "node:fs";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { PROJECT_ID_PATTERN } from "./create_project.js";
+import { PROJECT_ID_PATTERN, ProjectStore, ProjectStoreError } from "./create_project.js";
 
 export const DELETE_PROJECT_TOOL_NAME = "mcp__genie__delete_project";
 
@@ -42,8 +39,27 @@ export class DeleteProjectError extends Error {
   }
 }
 
+/**
+ * Delete a project through the injected `ProjectStore` (M1-14a-1 / DRO-531 —
+ * the `delete_project` store-injection re-plumb).
+ *
+ * Previously this reached into the filesystem directly via a raw `projectsRoot`
+ * path + `node:fs`; it now routes through the same `ProjectStore` instance the
+ * rest of the project family (`create_project`/`get_project`/`bind_kit`/
+ * `conjure_screen`) already uses, so a non-LocalFs backend injected into
+ * `createServer` reaches this verb too. Persistence + read-only policy live in
+ * `ProjectStore.deleteProject`; this function owns only the tool's arg-shape
+ * validation and result/error shaping.
+ *
+ * Contract (unchanged from the pre-seam tool):
+ *   - Malformed / traversal `projectId` → `ERR_INVALID_PROJECT_ID`, nothing
+ *     touched (the Zod schema rejects it before the store is reached).
+ *   - Missing project → success with an idempotent "already deleted" warning.
+ *   - Read-only project → `ERR_PROJECT_READONLY`, nothing removed.
+ *   - Otherwise the project tree is removed and `deletedProjectId` returned.
+ */
 export async function deleteProject(
-  root: string,
+  store: ProjectStore,
   args: DeleteProjectArgs,
 ): Promise<DeleteProjectResult> {
   let parsed: DeleteProjectArgs;
@@ -60,36 +76,29 @@ export async function deleteProject(
     }
     throw error;
   }
-  const projectRoot = join(root, parsed.projectId);
 
-  // Check if project exists
-  if (!existsSync(projectRoot)) {
-    return {
-      deletedProjectId: parsed.projectId,
-      _meta: {
-        warnings: [`Project "${parsed.projectId}" does not exist or was already deleted.`],
-      },
-    };
+  try {
+    const { existed } = await store.deleteProject(parsed.projectId);
+    if (!existed) {
+      return {
+        deletedProjectId: parsed.projectId,
+        _meta: {
+          warnings: [`Project "${parsed.projectId}" does not exist or was already deleted.`],
+        },
+      };
+    }
+    return { deletedProjectId: parsed.projectId };
+  } catch (error) {
+    // Translate the store's error taxonomy onto the tool's own so both direct
+    // callers and the MCP wrapper below keep branching on `DeleteProjectError`.
+    if (error instanceof ProjectStoreError && error.code === ERR_PROJECT_READONLY) {
+      throw new DeleteProjectError(ERR_PROJECT_READONLY, error.message);
+    }
+    throw error;
   }
-
-  // Check if project is read-only
-  const readonlyMarker = join(projectRoot, ".genie", ".readonly");
-  if (existsSync(readonlyMarker)) {
-    throw new DeleteProjectError(
-      ERR_PROJECT_READONLY,
-      `Project "${parsed.projectId}" is read-only and cannot be deleted.`,
-    );
-  }
-
-  // Delete the project directory recursively
-  await rm(projectRoot, { recursive: true, force: true });
-
-  return {
-    deletedProjectId: parsed.projectId,
-  };
 }
 
-export function registerDeleteProjectTool(server: McpServer, projectsRoot: string): void {
+export function registerDeleteProjectTool(server: McpServer, store: ProjectStore): void {
   server.registerTool(
     DELETE_PROJECT_TOOL_NAME,
     {
@@ -110,7 +119,7 @@ export function registerDeleteProjectTool(server: McpServer, projectsRoot: strin
     },
     async (args) => {
       try {
-        const result = await deleteProject(projectsRoot, args);
+        const result = await deleteProject(store, args);
         return {
           content: [{ type: "text", text: JSON.stringify(result) }],
           structuredContent: result,

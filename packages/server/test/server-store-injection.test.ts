@@ -198,4 +198,44 @@ describe("createServer store-injection seam — projectStore routes to the injec
     expect(detail.isError, JSON.stringify(detail)).toBeFalsy();
     expect(payload(detail)).toMatchObject({ id: projectId, kind: "workspace" });
   });
+
+  it("delete_project routes through the injected projectStore and removes the project", async () => {
+    projectsRoot = await mkdtemp(join(tmpdir(), "genie-seam-proj-del-"));
+
+    // Same spy strategy as create_project above, on the delete path this time:
+    // the tool must call through the INJECTED instance's deleteProject (M1-14a-1
+    // / DRO-531 re-plumb), not a default store createServer builds internally.
+    let deleteProjectCalls = 0;
+    class SpyProjectStore extends ProjectStore {
+      override async deleteProject(id: string) {
+        deleteProjectCalls += 1;
+        return super.deleteProject(id);
+      }
+    }
+    const injected = new SpyProjectStore(projectsRoot);
+
+    const server = createServer({ projectStore: injected });
+    client = new Client({ name: "seam-project-del", version: "0" });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+
+    const created = await call("mcp__genie__create_project", {
+      name: "Deletable Store Project",
+      kind: "workspace",
+    });
+    expect(created.isError, JSON.stringify(created)).toBeFalsy();
+    const projectId = (payload(created) as { projectId: string }).projectId;
+
+    const deleted = await call("mcp__genie__delete_project", { projectId });
+    expect(deleted.isError, JSON.stringify(deleted)).toBeFalsy();
+    expect(payload(deleted)).toMatchObject({ deletedProjectId: projectId });
+    // Proof the seam routed the tool to the injected instance.
+    expect(deleteProjectCalls).toBe(1);
+
+    // ...and the deletion is durable through the same injected store: a
+    // subsequent get_project no longer finds it.
+    const gone = await call("mcp__genie__get_project", { projectId });
+    expect(gone.isError).toBe(true);
+    expect(gone.content?.[0]?.text ?? "").toContain("ERR_PROJECT_NOT_FOUND");
+  });
 });

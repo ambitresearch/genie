@@ -81,8 +81,10 @@ export interface CreateServerOptions {
    * `GitHostProjectStore` in the store layer does NOT yet implement. So a
    * git-host project backend that satisfies the full tool-surface contract is
    * still to-build (tracked follow-up); this seam is what lets it be dropped in
-   * once it exists, and lets tests substitute a fake. `delete_project` still
-   * takes `projectsRoot` directly (its own tracked holdout).
+   * once it exists, and lets tests substitute a fake. `delete_project` now
+   * routes through this store too (M1-14a-1 / DRO-531); the remaining holdouts
+   * are the fs-native kit-file verbs (`read_file`/`list_files`/`delete_files`),
+   * which still bind to `kitsRoot` (see `kitStore` above).
    */
   projectStore?: ProjectStore;
 }
@@ -148,7 +150,11 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   registerCreateProjectTool(server, projectStore);
   registerListProjectsTool(server, projectStore);
   registerGetProjectTool(server, projectStore);
-  registerDeleteProjectTool(server, projectsRoot);
+  // delete_project (M1-14a-1 / DRO-531): routes through the injected
+  // `projectStore` — the same instance the rest of the project family uses —
+  // instead of a raw `projectsRoot` path, so a non-LocalFs backend reaches this
+  // verb too. Persistence + read-only policy live in `ProjectStore.deleteProject`.
+  registerDeleteProjectTool(server, projectStore);
   registerBindKitTool(server, projectStore);
 
   // conjure_screen (M1-21): project-aware screen generation. The M1 generator is
