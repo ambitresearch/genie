@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { KitStore } from "../store/interface.js";
 import { NotFoundError } from "../store/interface.js";
+import { isSafeKitId } from "../store/kit-files.js";
 
 export const LIST_FILES_TOOL_NAME = "mcp__genie__list_files";
 
@@ -35,18 +36,14 @@ export class ListFilesError extends Error {
 
 /**
  * Reject path-shaped kit ids up front (the store also guards, but this keeps the
- * tool's `ERR_INVALID_KIT_ID` contract — the same shape check the pre-store
- * `KitFileStore` applied). `.`/`..` and any separator escape the single-kit
- * namespace.
+ * tool's `ERR_INVALID_KIT_ID` contract). Delegates to the shared `isSafeKitId`
+ * rule (`store/kit-files.ts`) — the SAME predicate `read_file` and both stores
+ * use — so the two tools' kitId defenses cannot silently drift (AC1). The rule
+ * rejects the empty string, `.`/`..`, and any `/`/`\\` separator; ids that
+ * merely embed dots (`my..kit`) stay a valid single-segment child.
  */
 function assertValidKitId(kitId: string): void {
-  if (
-    kitId === "." ||
-    kitId === ".." ||
-    kitId.includes("/") ||
-    kitId.includes("\\") ||
-    kitId.includes("..")
-  ) {
+  if (!isSafeKitId(kitId)) {
     throw new ListFilesError("ERR_INVALID_KIT_ID", `Invalid kitId "${kitId}".`);
   }
 }

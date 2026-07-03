@@ -106,6 +106,45 @@ export function sriSha256(bytes: Buffer | string): string {
   return `sha256-${createHash("sha256").update(bytes).digest("base64")}`;
 }
 
+// ─── kitId traversal safety ──────────────────────────────────────────────────
+
+/**
+ * The ONE kitId-safety rule shared by the `list_files` and `read_file` tools
+ * AND both `KitStore` adapters, so their traversal defenses cannot silently
+ * drift apart (DRO-509 / DRO-581 unification). Lives here — not in a tool
+ * module — because the store layer (post-#114) also needs it, and `store/*`
+ * must not import from `tools/*`.
+ *
+ * A `kitId` names a single directory (LocalFs) or repo (git host) directly
+ * under the store's kits root. `isSafeKitId` returns false for exactly the ids
+ * that would let a caller escape that single-kit namespace:
+ *
+ *   - the empty string — `join(kitsRoot, "")` is the kits ROOT itself, so an
+ *     empty kitId plus a crafted `path` (e.g. `other-kit/secret.txt`) would
+ *     read across sibling kits; it names no kit and is rejected;
+ *   - `.` or `..` exactly — the traversal aliases for "this dir" / "the parent",
+ *     which also resolve to the root or above it;
+ *   - any id containing a path separator (`/` or `\`), which could introduce a
+ *     nested or absolute path.
+ *
+ * Ids that merely EMBED dots (`my..kit`, `..kit`, `kit..`) stay a literal child
+ * of the root and are allowed — they simply resolve to a not-found kit if
+ * absent. This is deliberately looser than the pre-unification `read_file`
+ * guard (`kitId.includes("..")`), which over-rejected `my..kit` yet — crucially
+ * — MISSED both `""` and `.` (neither contains `..`), the exact holes that
+ * enabled the cross-kit read this rule closes.
+ *
+ * A predicate (not a throwing helper) on purpose: each caller raises its own
+ * error type/code (`ListFilesError` / `McpError` / `NotFoundError`) — only the
+ * RULE is centralised here, not the error shape.
+ */
+export function isSafeKitId(kitId: string): boolean {
+  if (kitId.length === 0) return false;
+  if (kitId === "." || kitId === "..") return false;
+  if (kitId.includes("/") || kitId.includes("\\")) return false;
+  return true;
+}
+
 // ─── Default + .genieignore exclusion ────────────────────────────────────────
 
 /** A predicate over a kit-root-relative, forward-slash path. */

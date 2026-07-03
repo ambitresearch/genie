@@ -113,6 +113,46 @@ describe("listFiles", () => {
     });
   });
 
+  it("streams hashes that are byte-identical to the full-buffer SHA-256 SRI", async () => {
+    // AC3 (DRO-581): the LocalFs walk now STREAMS the SRI hash
+    // (createReadStream → createHash) instead of buffering each file. This pins
+    // the streamed digest to the prior full-buffer `sriSha256(bytes)` across the
+    // edge cases a chunk-boundary bug would break: a >64 KiB multi-chunk file,
+    // an empty file (zero chunks), and a small binary file. RFC G-5's
+    // byte-identical-across-adapters contract depends on this equality holding.
+    const root = await tempKitsRoot();
+    const kitId = "hash-kit";
+    await writeKitFile(root, kitId, ".kit.json", "{}");
+
+    // Larger than the 64 KiB default highWaterMark so the incremental
+    // `hash.update()` path runs across MULTIPLE chunks, not a single buffer.
+    // Deterministic but non-repeating, so a dropped/mis-ordered chunk changes
+    // the digest.
+    const multiChunk = Buffer.alloc(200 * 1024);
+    for (let i = 0; i < multiChunk.length; i++) multiChunk[i] = (i * 131 + 7) & 0xff;
+
+    const empty = Buffer.alloc(0);
+    const tinyBinary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x10]);
+
+    await writeKitFile(root, kitId, "assets/large.bin", multiChunk);
+    await writeKitFile(root, kitId, "assets/empty.txt", empty);
+    await writeKitFile(root, kitId, "assets/tiny.png", tinyBinary);
+
+    const files = await listFiles(new LocalFsKitStore(root), { kitId });
+    const byPath = new Map(files.map((file) => [file.path, file]));
+
+    // `sriSha256` here is the full-buffer reference
+    // (`createHash().update(entireBuffer).digest("base64")`); the streamed hash
+    // the store returns must equal it exactly.
+    expect(byPath.get("assets/large.bin")?.hash).toBe(sriSha256(multiChunk));
+    expect(byPath.get("assets/empty.txt")?.hash).toBe(sriSha256(empty));
+    expect(byPath.get("assets/tiny.png")?.hash).toBe(sriSha256(tinyBinary));
+
+    // Size still comes from stat and must be unaffected by how we hash.
+    expect(byPath.get("assets/large.bin")?.size).toBe(multiChunk.length);
+    expect(byPath.get("assets/empty.txt")?.size).toBe(0);
+  });
+
   it("converts invalid arguments into a ListFilesError (ERR_INVALID_ARGS)", async () => {
     const root = await tempKitsRoot();
     const store = new LocalFsKitStore(root);

@@ -4,6 +4,7 @@ import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { KitStore } from "../store/interface.js";
 import { FileTooLargeError, NotFoundError } from "../store/interface.js";
+import { isSafeKitId } from "../store/kit-files.js";
 
 /** 256 KiB in bytes — hard cap per DesignSync contract. Re-exported for tests. */
 export const MAX_FILE_BYTES = 256 * 1024;
@@ -63,17 +64,21 @@ export function registerReadFile(server: McpServer, kitStore: KitStore): void {
         "Read the contents of a single file from a UI kit. Returns text (utf-8) " +
         "or binary (base64) content. Files larger than 256 KiB are rejected.",
       inputSchema: {
-        kitId: z.string().describe("The UI kit identifier."),
+        kitId: z.string().min(1).describe("The UI kit identifier."),
         path: z.string().describe("Relative path within the kit directory."),
       },
     },
     async ({ kitId, path: relPath }) => {
-      // Validate kitId does not contain path separators or traversal
-      if (kitId.includes("/") || kitId.includes("\\") || kitId.includes("..")) {
-        throw new McpError(
-          ErrorCode.InvalidParams,
-          `InvalidPathError: invalid kit identifier`,
-        );
+      // Reject an unsafe kitId through the SAME shared rule `list_files` and the
+      // stores use (`isSafeKitId`), so the tools' traversal defenses cannot
+      // silently drift (AC1). This rejects the empty string — whose kit-dir
+      // resolves to the kits ROOT, letting a crafted `path` such as
+      // `other-kit/secret.txt` read a SIBLING kit's bytes (AC-SEC) — as well as
+      // `.`/`..` and any separator. The `.min(1)` above already blocks an empty
+      // kitId at the MCP schema layer; this is the defense-in-depth guard for
+      // programmatic callers that bypass schema validation.
+      if (!isSafeKitId(kitId)) {
+        throw new McpError(ErrorCode.InvalidParams, `InvalidPathError: invalid kit identifier`);
       }
 
       // AC6 — path traversal check (surfaces InvalidPathError to the client).
