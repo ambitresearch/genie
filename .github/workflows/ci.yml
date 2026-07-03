@@ -167,7 +167,17 @@ jobs:
   m2-generation:
     name: m2 generation canary (real LLM endpoint)
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    # Pin to the operator's self-hosted `genie` runner (currently the truenas
+    # 7950X) because the GENIE_LLM_BASE_URL LiteLLM gateway lives on the
+    # operator's private LAN and is not reachable from GitHub-hosted runner IP
+    # ranges — the ubuntu-latest attempts (CI runs 28685084411, 28686644130)
+    # each timed out at ~11-13 s / connect, uniformly across 4 retries. The
+    # operator confirmed on DRO-655 (2026-07-03 23:36 Z): "we need to use our
+    # own self hosted runner for e2e or any other workflows that depend on our
+    # internal resources which are not accessible over internet". The `genie`
+    # label narrows to that specific TrueNAS runner rather than the shared
+    # Azure `azure-docker` one, which sits outside the same private network.
+    runs-on: [self-hosted, Linux, X64, genie]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
