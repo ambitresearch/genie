@@ -16,21 +16,21 @@
  *   Merged & driven live here:
  *     create_kit, list_files, list_components, read_file, validate,
  *     create_project, list_projects, get_project, delete_project, (get_kit, list_kits),
- *     bind_kit, conjure_screen
+ *     plan (M1-07 / DRO-235), write_files (M1-08 / DRO-236), conjure_screen (M1-21)
  *
  *   In_review / not yet registered — stubbed as it.todo, wired to their issue:
- *     plan            DRO-235 (M1-07)
- *     write_files     DRO-236 (M1-08)
- *     delete_files    DRO-236 (M1-08) / M1-09
+ *     delete_files    M1-09 (write_files' sibling verb; DRO-236 covers write_files only)
+ *     bind_kit        DRO-246 (M1-11) — dedicated tool; AC4 exercises the same
+ *                     end-state today via create_project's kitBindings input
  *     GitHostStore/Gitea parity (AC5) — testcontainers infra, M1-01 git-host path
  *
  * ── Acceptance criteria map ─────────────────────────────────────────────────
  *   AC1  file path (this file)                              ✓ satisfied
  *   AC2  in-process SDK test transport                      ✓ live
- *   AC3  kit protocol walk                                  ◑ prefix live, write-half todo (DRO-235/236)
- *   AC4  project/blueprint walk                             ✓ CRUD+blueprint+conjure_screen live
+ *   AC3  kit protocol walk                                  ◑ plan/write_files live; delete_files todo (M1-09)
+ *   AC4  project/blueprint walk                             ◑ CRUD+blueprint+conjure_screen live; dedicated bind_kit tool todo (DRO-246)
  *   AC5  GitHostStore/Gitea parity                          ○ todo (infra)
- *   AC6  negative: write without/outside planId → -32602    ○ todo (DRO-236)
+ *   AC6  negative: write without/outside planId → -32602    ✓ live (DRO-236)
  *   AC7  negative: conjure_screen no kit → ERR_PROJECT_KIT_REQUIRED  ✓ live (M1-21)
  *   AC8  test report uploaded as CI artefact                — CI wiring (see .github/workflows)
  *   AC9  suite < 60 s wall-clock                            ✓ live walk is ~ms; guarded below
@@ -182,10 +182,52 @@ describe("AC3 — kit protocol walk (read → plan → write/delete)", () => {
     expect(payload(result)).toEqual({});
   });
 
-  // Write-half of AC3 — needs `plan` (DRO-235) + `write_files` / `delete_files` (DRO-236).
-  it.todo(
-    "plan → write_files(5) → list_files(5) → read_file round-trip → delete_files [blocked by DRO-235, DRO-236]",
-  );
+  // Write-half of AC3: plan → write_files(5) → list_files(5) → read_file
+  // round-trip. `delete_files` doesn't exist yet (M1-09), so the walk stops
+  // short of the delete step — tracked as its own todo below.
+  it("plan → write_files(5) → list_files(5) → read_file round-trip", async () => {
+    const kitId = await createKit("Write Walk Kit");
+    // Kit content lives at `<kitsRoot>/<kitId>/` (the same root create_kit,
+    // read_file, and list_files all share) — that's write_files' localDir.
+    const kitDir = join(harness.roots.kitsRoot, kitId);
+
+    const planResult = await harness.call("mcp__genie__plan", {
+      kitId,
+      writes: ["components/**/*.html"],
+      localDir: kitDir,
+    });
+    expect(planResult.isError, JSON.stringify(planResult)).toBeFalsy();
+    const { planId } = payload(planResult) as { planId: string };
+
+    const files = Array.from({ length: 5 }, (_, i) => ({
+      path: `components/Widget${i}.html`,
+      data: `<div>Widget ${i}</div>`,
+    }));
+    const writeResult = await harness.call("mcp__genie__write_files", { planId, files });
+    expect(writeResult.isError, JSON.stringify(writeResult)).toBeFalsy();
+    expect(payload(writeResult)).toMatchObject({
+      writtenPaths: files.map((f) => f.path),
+    });
+
+    const listed = await harness.call("mcp__genie__list_files", { kitId });
+    expect(listed.isError).toBeFalsy();
+    const listedPaths = (payload(listed) as { files: { path: string }[] }).files.map(
+      (f) => f.path,
+    );
+    for (const f of files) {
+      expect(listedPaths).toContain(f.path);
+    }
+
+    const read = await harness.call("mcp__genie__read_file", {
+      kitId,
+      path: "components/Widget2.html",
+    });
+    expect(read.isError).toBeFalsy();
+    expect(payload(read)).toMatchObject({ content: "<div>Widget 2</div>" });
+  });
+
+  // delete_files doesn't exist yet — M1-09.
+  it.todo("delete_files removes a written file and list_files no longer reports it [blocked by M1-09]");
 });
 
 // ── AC4 — project / blueprint walk ────────────────────────────────────────────
@@ -325,8 +367,55 @@ describe("AC4 — project / blueprint workflow", () => {
 
 // ── AC6 — negative: planId enforcement ────────────────────────────────────────
 describe("AC6 — write path enforces a valid planId", () => {
-  it.todo("write_files without a planId returns -32602 [blocked by DRO-236]");
-  it.todo("write_files with paths outside the plan returns -32602 [blocked by DRO-236]");
+  it("write_files without a planId is rejected at the protocol layer (-32602)", async () => {
+    // `planId` is a required, non-empty field in write_files' Zod input schema,
+    // so an omitted planId never reaches the handler — the MCP SDK itself
+    // rejects it at the protocol layer (InvalidParams, -32602) before
+    // write_files' own handler runs. Unlike a thrown JS-level McpError, the
+    // SDK server surfaces a *schema* validation failure as an isError:true
+    // CallToolResult with the -32602 code embedded in the text, not a
+    // rejected callTool() promise — the harness.call() helper models exactly
+    // that (ToolResult, not a throw).
+    const result = await harness.call("mcp__genie__write_files", {
+      files: [{ path: "a.html", data: "x" }],
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text ?? "").toContain("-32602");
+  });
+
+  it("write_files with a path outside the plan's writes returns a structured PathOutsidePlanError", async () => {
+    // Distinct from the previous case: here planId IS present and valid, so
+    // the call reaches the handler, which rejects the specific offending
+    // path with its own structured (isError: true) payload — not a thrown
+    // protocol error. (The issue's own AC4 - see DRO-236 - specs this exact
+    // shape; the pre-existing scaffold's "-32602" placeholder predates the
+    // tool's actual implementation.)
+    // Local helper — `createKit` from the AC3 describe block above is scoped
+    // to that block, not visible here.
+    const kitResult = await harness.call("mcp__genie__create_kit", {
+      name: "AC6 Outside-Plan Kit",
+    });
+    expect(kitResult.isError, JSON.stringify(kitResult)).toBeFalsy();
+    const { kitId } = payload(kitResult) as { kitId: string };
+
+    const planResult = await harness.call("mcp__genie__plan", {
+      kitId,
+      writes: ["components/**"],
+      localDir: join(harness.roots.kitsRoot, kitId),
+    });
+    expect(planResult.isError, JSON.stringify(planResult)).toBeFalsy();
+    const { planId } = payload(planResult) as { planId: string };
+
+    const result = await harness.call("mcp__genie__write_files", {
+      planId,
+      files: [{ path: "outside/evil.html", data: "x" }],
+    });
+    expect(result.isError).toBe(true);
+    expect(payload(result)).toMatchObject({
+      code: "PathOutsidePlanError",
+      path: "outside/evil.html",
+    });
+  });
 });
 
 // ── AC7 — negative: conjure requires a bound kit ──────────────────────────────
