@@ -14,6 +14,18 @@
  * kit is a separate, plan-gated step the caller owns. That keeps generation
  * free of side effects and testable without a store.
  *
+ * Two DISTINCT retry mechanisms are in play here, at different layers — don't
+ * conflate them when reading this file:
+ *   1. The "retries once on validation failure" above is the shared
+ *      `component-response.ts` harness's schema-repair loop (AC8): a
+ *      structurally-valid-but-wrong-shape reply gets one more attempt with the
+ *      Ajv error fed back into the prompt.
+ *   2. Each of those (up to 2) calls individually goes through M2-06's
+ *      `withRetry(createChatCompletion)` (DRO-253, see `defaultChatCompletion`
+ *      below) for transient network/429/5xx failures — invisible to this
+ *      file's own logic and to the shared harness, handled entirely inside the
+ *      `chat` seam.
+ *
  * ── Import-time safety ────────────────────────────────────────────────────────
  * `../llm/client.js` constructs its `llmClient` singleton eagerly at module load
  * and throws `MissingLLMConfigError` when `GENIE_LLM_*` env vars are unset (M2-01
@@ -23,6 +35,9 @@
  * `verbatimModuleSyntax`), and the default runtime path reaches it via a lazy
  * `await import(...)` inside `defaultChatCompletion`, touched only when an actual
  * `conjure` call runs. Tests inject their own `chat` and never load the client.
+ * (`../llm/retry.js`'s `withRetry`, by contrast, has no such eager side effect —
+ * it's a plain higher-order function — so it's imported statically below and
+ * applied inside that same lazy seam.)
  *
  * §6 honest uncertainty (from the issue): the exact prompt shape / generation
  * loop is unspecified R&D. The system prompt (`prompts/generate-component.system.md`,
@@ -54,6 +69,15 @@ import {
   logStderr,
   runComponentGeneration,
 } from "../llm/component-response.js";
+// Value import (not type-only): `retry.ts` has no import-time side effects —
+// unlike `client.ts`, it never touches `GENIE_LLM_*` env or constructs
+// anything eagerly at module load — so wrapping `defaultChatCompletion`
+// below in `withRetry` is safe to do statically (Copilot review on PR #126 /
+// DRO-253: this file's docstring claimed conjure "calls the endpoint through
+// the M2-01 client" via `withRetry(createChatCompletion)`, but no production
+// call site actually applied the wrapper — every future generation verb
+// would have silently needed to remember to wrap it manually).
+import { withRetry } from "../llm/retry.js";
 // Framework adapter seam (M2-08 · DRO-255). `conjure` picks the adapter from its
 // `framework` input (AC4) and reads the adapter's `promptDirective` — the one
 // framework-specific bit generation carries. `interface.js` has no heavy imports
@@ -357,11 +381,20 @@ function buildMessages(
  * Default `chat` seam: dynamically imports the M2-01 client on first call, so
  * building the server never eagerly triggers `MissingLLMConfigError` (see module
  * header). A real `conjure` call in a properly-configured deployment resolves
- * this to `createChatCompletion`.
+ * this to `withRetry(createChatCompletion)` (M2-06, DRO-253) — every
+ * production LLM call this tool makes is retry/backoff-wrapped by default;
+ * callers (and tests, via `deps.chat`) never need to remember to apply the
+ * wrapper themselves.
+ *
+ * `withRetry` is called fresh on every invocation rather than wrapped once at
+ * module scope: the module-scope `createChatCompletion` binding doesn't exist
+ * until the dynamic import resolves, and re-wrapping a plain async function
+ * is cheap (no state beyond reading `GENIE_LLM_RETRY_MAX` from `process.env`
+ * per call, matching every other env read in this codebase's request path).
  */
 const defaultChatCompletion: ChatCompletionFn = async (input) => {
   const { createChatCompletion } = await import("../llm/client.js");
-  return createChatCompletion(input);
+  return withRetry(createChatCompletion)(input);
 };
 
 const defaultFetch: FetchFn = (url) => fetch(url);
