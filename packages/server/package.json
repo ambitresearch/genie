@@ -16,6 +16,7 @@
     "dev": "tsx watch src/cli.ts",
     "start": "node dist/cli.js",
     "build": "tsc -p tsconfig.json",
+    "postbuild": "node scripts/emit-component-schema.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -32,8 +33,11 @@
   "license": "MIT",
   "author": "Roshan Gautam",
   "devDependencies": {
+    "@types/json-schema": "^7.0.15",
     "@types/micromatch": "^4.0.10",
     "@types/mime-types": "^3.0.1",
+    "ajv": "^8.20.0",
+    "json-schema-to-ts": "^3.1.1",
     "yaml": "^2.9.0"
   }
 }

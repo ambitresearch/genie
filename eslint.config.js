@@ -15,6 +15,10 @@ export default tseslint.config(
       ".paperclip-runtime/**",
       "**/*.config.js",
       "**/*.config.ts",
+      // Build-time tooling that runs against `dist/` under plain Node —
+      // needs Node globals (process, etc.) but isn't part of the shipped
+      // source we lint. Matches the intent behind the config-file ignore.
+      "packages/*/scripts/**",
       "eslint.config.js",
     ],
   },

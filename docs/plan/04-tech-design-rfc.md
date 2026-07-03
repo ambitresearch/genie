@@ -1397,57 +1397,32 @@ The component supports four visual variants and three sizes...
 
 ### 7.5 LLM `COMPONENT_SCHEMA`
 
-The JSON Schema sent to the configured LLM endpoint as `response_format.json_schema` for `conjure`:
+**Authoritative source: `packages/server/src/llm/schema.ts` (M2-02, DRO-249).** The runtime schema lives in that module as `COMPONENT_SCHEMA: JSONSchema7`; a `postbuild` step emits it verbatim to `packages/server/dist/schemas/component.schema.json` for downstream consumers (viewer, external tooling). The TypeScript payload type `GeneratedComponent` is derived from the same literal via `json-schema-to-ts`, so the wire schema and the compile-time type cannot drift.
 
-```json
+Top-level shape (M2-02 AC3):
+
+```
 {
-  "name": "GeneratedComponent",
-  "schema": {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "required": ["name", "group", "framework", "files", "subtitle"],
-    "additionalProperties": false,
-    "properties": {
-      "name": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]{0,63}$" },
-      "group": { "type": "string", "pattern": "^[a-z0-9-]{1,32}$" },
-      "framework": { "enum": ["react", "vue", "html"] },
-      "subtitle": { "type": "string", "maxLength": 256 },
-      "viewport": {
-        "type": "object",
-        "required": ["width", "height"],
-        "properties": {
-          "width": { "type": "integer", "minimum": 200, "maximum": 1600 },
-          "height": { "type": "integer", "minimum": 100, "maximum": 1200 }
-        }
-      },
-      "files": {
-        "type": "array",
-        "minItems": 3,
-        "maxItems": 8,
-        "items": {
-          "type": "object",
-          "required": ["path", "content"],
-          "additionalProperties": false,
-          "properties": {
-            "path": {
-              "type": "string",
-              "pattern": "^[A-Z][A-Za-z0-9]+\\.(tsx|d\\.ts|html|prompt\\.md|jsx)$"
-            },
-            "content": { "type": "string", "minLength": 1, "maxLength": 65536 }
-          }
-        }
-      },
-      "depsUsed": {
-        "type": "array",
-        "items": { "type": "string", "pattern": "^[a-z0-9-]+/[A-Z][A-Za-z0-9]*$" }
-      }
-    }
-  },
-  "strict": true
+  componentName: string,            // PascalCase, ^[A-Z][A-Za-z0-9]{0,63}$
+  group: string,                    // kebab-case,  ^[a-z0-9-]{1,32}$
+  files: Array<{
+    path: string,                   // ^components/[a-z0-9-]+/[A-Z][A-Za-z0-9]+/[A-Za-z0-9._-]+$
+    content: string,                // 1..65536 bytes
+    mimeType: string,               // IANA media type
+  }>,
+  manifestEntry: {
+    viewport: { width: 200..1600, height: 100..1200 },
+    subtitle?: string,              // ≤ 256 chars
+    tags?: string[],                // ≤ 16 entries
+  }
 }
 ```
 
-The server validates the LLM endpoint response against this schema after parsing; a failure raises `genie.llmUpstream` with the validator error in `data._validatorErrors`.
+At least one `files[]` entry must be a `<Pascal>.html` (M2-02 AC5). The stricter "content begins with the `@genie` marker" check is validated post-hoc by M3-01, not by this schema — keeping marker semantics with their owning module. `additionalProperties: false` throughout so the LLM cannot invent fields the manifest compiler wouldn't know how to consume.
+
+Draft 7 only (M2-02 AC2): no `anyOf` discriminators, no multi-hop `$ref` chains, no Draft-2019+ keywords — LiteLLM's structured-output passthrough to Anthropic is fragile on those. Prior drafts of this section captured a different shape (top-level `name`/`framework`, hoisted `viewport`); the codified schema is authoritative and this section now defers to it.
+
+The server validates the LLM endpoint response against this schema after parsing; a failure raises `genie.llmUpstream` with the validator error in `data._validatorErrors` (M2-07, DRO-254).
 
 ### 7.6 Plan / planId lifecycle
 
