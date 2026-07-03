@@ -5,19 +5,20 @@
 | Field                 | Value                                                                                                          |
 | --------------------- | -------------------------------------------------------------------------------------------------------------- |
 | Document              | `06-operations-runbook.md`                                                                                     |
-| Version               | **v0.1.1 DRAFT**                                                                                               |
+| Version               | **v0.1.3 DRAFT**                                                                                               |
 | Status                | DRAFT — awaiting first on-call shadow shift                                                                    |
 | Owner                 | Project maintainer                                                                                                  |
 | Reviewers             | TBD (Primary on-call TBD, Backup on-call TBD, SRE reviewer TBD)                                                |
 | Audience              | The maintainer (and any future self-hosting operator running their own genie instance)                         |
 | Source-of-truth files | `INDEX.md`, `docs/plan/04-tech-design-rfc.md`, `docs/research/`                                               |
-| Last updated          | 2026-06-27                                                                                                                                                      |
+| Last updated          | 2026-07-03                                                                                                                                                      |
 | Cadence               | Re-read on every on-call shift handover; full review quarterly; emergency patch when an incident exposes a gap |
 
 ### Changelog
 
 | Date       | Version | Author        | Notes                                                                                                    |
 | ---------- | ------- | ------------- | -------------------------------------------------------------------------------------------------------- |
+| 2026-07-03 | v0.1.3  | Project maintainer | M2-05 (DRO-252): §7.1 model alias config — reference `deploy/litellm/config.yaml`, AC0 catalog-check command, per-key budget/rate-limit, reload + verify commands.  |
 | 2026-06-27 | v0.1.2  | Project maintainer | BRD-feedback sweep: UI-kit terminology, native conventions (blueprints not templates), M1 19-tool surface with projects-as-peer tooling.          |
 | 2026-06-24 | v0.1.1  | Project maintainer | Raised minimum Node.js from 18 to 22 (Node 18 & 20 reached EOL; Node 22 is the current Active LTS).      |
 | 2026-06-21 | v0.1    | Project maintainer | Initial draft of ops + runbook + on-call guide; placeholders for dashboard URLs and TBD personnel slots. |
@@ -492,6 +493,67 @@ docker compose up -d --no-deps genie
 - Never bake secrets into the image. CI fails the build if `git grep -E 'sk-(litellm|ant|proj)|gta_'` returns anything in `docker/` or `apps/`.
 - Never expose `:8780` to the public internet without OAuth or static bearer enabled.
 - Never set `GENIE_AUTH_MODE=none` on the storage host deployment. The startup script panics if `GENIE_AUTH_MODE=none && GENIE_MCP_HTTP_PORT=*` are both set.
+
+### 7.1 Model alias config (LiteLLM reference gateway) — M2-05 / DRO-252
+
+genie itself never hardcodes a provider model id — `GENIE_LLM_BASE_URL` points
+at *some* OpenAI-compatible endpoint, and the three generation aliases
+(`design-default` / `design-best` / `design-local`) are resolved on the far
+side of that endpoint (D-H, `00-decisions.md`). `deploy/litellm/config.yaml`
+is a **reference example** of that resolution using LiteLLM as the gateway —
+not a requirement. Operators on a different gateway (a raw provider endpoint,
+a different proxy) reproduce the same three-alias contract however their
+gateway expresses it.
+
+**Before adopting or editing this file**: reconfirm the operator's real model
+catalog — placeholder or stale model ids drift out from under a reference
+file fast. Never assume the ids below are still current:
+
+```bash
+curl -fsS "$GENIE_LLM_BASE_URL/v1/models" \
+  -H "Authorization: Bearer $GENIE_LLM_API_KEY" | jq -r '.data[].id'
+```
+
+**Aliases** (`deploy/litellm/config.yaml`):
+
+| Alias             | Reference target             | Notes                                          |
+| ----------------- | ----------------------------- | ----------------------------------------------- |
+| `design-default`  | `anthropic/claude-sonnet-4-6` | Default for `conjure`                           |
+| `design-best`     | `anthropic/claude-opus-4-8`   | Slower/pricier, picks better names               |
+| `design-local`    | `ollama_chat/qwen3-coder:30b` | Offline-capable, lower quality; no per-token cost |
+
+Every credential (`ANTHROPIC_API_KEY`, `OLLAMA_API_BASE`, `LITELLM_MASTER_KEY`)
+is a LiteLLM `os.environ/<VAR>` passthrough resolved from the **proxy host's**
+environment at LiteLLM startup — never a literal in the file. These are
+separate from, and not to be confused with, the `GENIE_LLM_*` vars genie
+itself reads (genie only talks to whatever `GENIE_LLM_BASE_URL` fronts —
+this proxy, in the reference topology).
+
+**Per-key budget + rate limit** (every MCP-server caller's LiteLLM virtual
+key): $50 USD / 30 days, 20 RPM / 200 KTPM (matches `claude-sonnet-4-6` tier
+defaults). LiteLLM's config format has no single "applies to every future
+key" switch for this (`upperbound_key_generate_params` is a ceiling on
+`/key/generate` requests, not a default), so `deploy/litellm/config.yaml`
+pins that ceiling and this is the exact body to pass when provisioning a key:
+
+```bash
+curl -fsS 'http://localhost:4000/key/generate' \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"max_budget": 50, "budget_duration": "30d", "rpm_limit": 20, "tpm_limit": 200000}'
+```
+
+**Reload after editing** `deploy/litellm/config.yaml`:
+
+```bash
+litellm --config deploy/litellm/config.yaml
+# or, if already running under docker compose:
+docker compose restart litellm
+```
+
+**Verify**: `curl -fsS -H "Authorization: Bearer $GENIE_LLM_API_KEY" "$GENIE_LLM_BASE_URL/v1/models" | jq -r '.data[].id'` —
+expect the three alias names among the results (§12.15 walks the failure
+mode where they go missing).
 
 [END CHUNK 1]
 
