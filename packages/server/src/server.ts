@@ -6,6 +6,7 @@ import { registerGetProjectTool } from "./tools/get_project.js";
 import { registerDeleteProjectTool } from "./tools/delete_project.js";
 import { registerBindKitTool } from "./tools/bind_kit.js";
 import { LocalScaffoldScreenGenerator, registerConjureScreenTool } from "./tools/conjure_screen.js";
+import { registerConjureTool } from "./tools/conjure.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
 import { registerValidate } from "./tools/validate.js";
@@ -93,7 +94,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
       "listing, kit creation, kit lookup, file listing, file reading, validation, project " +
-      "create/list/get/delete/bind_kit, conjure_screen, plan creation (the capability-grant " +
+      "create/list/get/delete/bind_kit, conjure_screen, conjure (LLM component generation), " +
+      "plan creation (the capability-grant " +
       "boundary for write/delete verbs), write_files, and delete_files. write_files and " +
       "delete_files share one plan-boundary validation middleware — every call is checked " +
       "for planId presence/existence/expiry and per-path glob membership before the tool " +
@@ -169,6 +171,15 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     kitStore,
     generator: new LocalScaffoldScreenGenerator(),
   });
+
+  // conjure (M2-03): genie's headline verb — real LLM component generation
+  // against the caller's UI kit. Calls the configured OpenAI-compatible endpoint
+  // (M2-01 client) with a COMPONENT_SCHEMA json_schema response_format (M2-02),
+  // validates the reply with Ajv, and retries once on a validation failure. Pure
+  // generation: it does NOT write files (AC9) and takes no store — the default
+  // `chat` seam lazily imports the LLM client only on first call, so registering
+  // it here never requires GENIE_LLM_* to be set just to build the server.
+  registerConjureTool(server);
 
   registerListKits(server, kitStore);
   registerListComponents(server, kitStore);

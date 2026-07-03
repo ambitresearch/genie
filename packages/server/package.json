@@ -15,11 +15,12 @@
   "scripts": {
     "dev": "tsx watch src/cli.ts",
     "start": "node dist/cli.js",
-    "build": "tsc -p tsconfig.json && node scripts/emit-component-schema.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/emit-component-schema.mjs && node scripts/copy-prompts.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "ajv": "^8.20.0",
     "micromatch": "^4.0.8",
     "mime-types": "^3.0.2",
     "openai": "^6.45.0",
@@ -32,7 +33,6 @@
   "license": "MIT",
   "author": "Roshan Gautam",
   "devDependencies": {
-    "ajv": "^8.20.0",
     "@types/json-schema": "^7.0.15",
     "@types/micromatch": "^4.0.10",
     "@types/mime-types": "^3.0.1",
