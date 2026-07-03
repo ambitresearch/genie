@@ -133,10 +133,11 @@ describe("AC2 — ReactAdapter", () => {
     expect(file.content).toContain("button");
   });
 
-  it("renderPreview does not inline React (host provides it as an external)", async () => {
+  it("renderPreview does not inline React (host provides it as a global)", async () => {
     const file = await react.renderPreview(input());
-    // React is external → its source is not bundled in. A crude but effective
-    // check: the whole of react-dom's internals never appear.
+    // React is resolved from the host's `window.React` global (the preview host
+    // contract — see react.ts), not bundled in. A crude but effective check:
+    // the whole of react-dom's internals never appear.
     expect(file.content).not.toContain("react-dom.production");
   });
 

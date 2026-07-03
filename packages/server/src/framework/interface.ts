@@ -8,9 +8,10 @@
  * validated `COMPONENT_SCHEMA` file set (source + `<Name>.html` preview + manifest
  * metadata), and `conjure` never post-processes it. The *only* framework-specific
  * bit `conjure` carries today is the "Target framework: …" prompt directive. This
- * adapter owns that directive (via {@link FrameworkAdapter.framework}) plus the
- * three codegen operations a *future* pipeline (M4 preview compile, refine
- * post-processing) will need per framework:
+ * adapter owns that directive (via {@link FrameworkAdapter.promptDirective}) plus
+ * the three codegen operations — and the default-viewport metadata — a *future*
+ * pipeline (M4 preview compile, refine post-processing) will need per framework
+ * (the first three are codegen; `defaultViewport` is metadata, not codegen):
  *
  *   - {@link FrameworkAdapter.renderSource}  — the canonical source file
  *   - {@link FrameworkAdapter.renderPreview} — a browser-ready preview bundle (IIFE)
