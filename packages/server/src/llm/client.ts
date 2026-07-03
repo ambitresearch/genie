@@ -45,9 +45,9 @@ export class MissingLLMConfigError extends Error {
   constructor(public readonly missing: readonly string[]) {
     super(
       `Missing required LLM configuration: ${missing.join(", ")}. ` +
-        `genie has no default LLM endpoint — set both ${GENIE_LLM_BASE_URL_ENV} ` +
-        `and ${GENIE_LLM_API_KEY_ENV} to an operator-configured OpenAI-compatible ` +
-        `endpoint before starting genie.`,
+        `genie has no default LLM endpoint — set ${GENIE_LLM_BASE_URL_ENV} to an ` +
+        `operator-configured OpenAI-compatible endpoint and ${GENIE_LLM_API_KEY_ENV} ` +
+        `to its API key before starting genie.`,
     );
     this.name = "MissingLLMConfigError";
   }

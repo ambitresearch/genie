@@ -125,26 +125,42 @@ async function startStubServer(
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
       void (async () => {
-        const rawBody = Buffer.concat(chunks).toString("utf-8");
-        let parsedBody: unknown = undefined;
-        if (rawBody) {
-          try {
-            parsedBody = JSON.parse(rawBody);
-          } catch {
-            parsedBody = rawBody;
+        // Wrap the whole handler path in try/catch: if the scripted handler
+        // throws/rejects (or JSON.stringify fails on a circular body), an
+        // unhandled rejection here would leave the HTTP response un-ended and
+        // hang the test on the SDK's fetch — a 500 instead makes the failure
+        // deterministic and surfaces the real error rather than a timeout.
+        try {
+          const rawBody = Buffer.concat(chunks).toString("utf-8");
+          let parsedBody: unknown = undefined;
+          if (rawBody) {
+            try {
+              parsedBody = JSON.parse(rawBody);
+            } catch {
+              parsedBody = rawBody;
+            }
           }
-        }
-        const captured: CapturedRequest = {
-          method: req.method,
-          path: req.url,
-          headers: req.headers,
-          body: parsedBody,
-        };
-        requests.push(captured);
+          const captured: CapturedRequest = {
+            method: req.method,
+            path: req.url,
+            headers: req.headers,
+            body: parsedBody,
+          };
+          requests.push(captured);
 
-        const { status, body } = await handler(captured);
-        res.writeHead(status, { "content-type": "application/json" });
-        res.end(JSON.stringify(body));
+          const { status, body } = await handler(captured);
+          res.writeHead(status, { "content-type": "application/json" });
+          res.end(JSON.stringify(body));
+        } catch (err) {
+          if (!res.headersSent) {
+            res.writeHead(500, { "content-type": "application/json" });
+          }
+          res.end(
+            JSON.stringify({
+              error: { message: `stub server handler failed: ${String(err)}` },
+            }),
+          );
+        }
       })();
     });
   });
