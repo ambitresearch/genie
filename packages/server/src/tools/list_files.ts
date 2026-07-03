@@ -1,8 +1,7 @@
-import { createHash } from "node:crypto";
-import { lstat, readFile, readdir } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import type { KitStore } from "../store/interface.js";
+import { NotFoundError } from "../store/interface.js";
 
 export const LIST_FILES_TOOL_NAME = "mcp__genie__list_files";
 
@@ -24,8 +23,6 @@ const fileEntrySchema = z
 export type ListFilesArgs = z.infer<typeof listFilesArgsSchema>;
 export type ListedFile = z.infer<typeof fileEntrySchema>;
 
-type IgnoreMatcher = (path: string) => boolean;
-
 export class ListFilesError extends Error {
   constructor(
     readonly code: "ERR_KIT_NOT_FOUND" | "ERR_INVALID_KIT_ID" | "ERR_INVALID_ARGS",
@@ -36,62 +33,34 @@ export class ListFilesError extends Error {
   }
 }
 
-export class KitFileStore {
-  constructor(readonly root: string) {}
-
-  async listFiles(kitId: string): Promise<ListedFile[]> {
-    const kitRoot = this.kitRoot(kitId);
-    await this.assertKitExists(kitId, kitRoot);
-
-    const ignore = buildIgnoreMatcher(await this.readIgnorePatterns(kitRoot));
-    const files = await walkFiles(kitRoot, kitRoot, ignore);
-    return files.sort((a, b) => a.path.localeCompare(b.path));
-  }
-
-  private kitRoot(kitId: string): string {
-    if (kitId === "." || kitId === ".." || kitId.includes("/") || kitId.includes("\\")) {
-      throw new ListFilesError("ERR_INVALID_KIT_ID", `Invalid kitId "${kitId}".`);
-    }
-    const resolvedRoot = resolve(this.root);
-    const resolvedKitRoot = resolve(resolvedRoot, kitId);
-    const rel = relative(resolvedRoot, resolvedKitRoot);
-    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      throw new ListFilesError("ERR_INVALID_KIT_ID", `Invalid kitId "${kitId}".`);
-    }
-    return resolvedKitRoot;
-  }
-
-  private async assertKitExists(kitId: string, kitRoot: string): Promise<void> {
-    try {
-      const [rootStats, markerStats] = await Promise.all([
-        lstat(kitRoot),
-        lstat(join(kitRoot, ".kit.json")),
-      ]);
-      if (!rootStats.isDirectory() || !markerStats.isFile()) {
-        throw new ListFilesError("ERR_KIT_NOT_FOUND", `Kit "${kitId}" not found.`);
-      }
-    } catch (error) {
-      if (error instanceof ListFilesError) throw error;
-      if (!isMissingPathError(error)) throw error;
-      throw new ListFilesError("ERR_KIT_NOT_FOUND", `Kit "${kitId}" not found.`);
-    }
-  }
-
-  private async readIgnorePatterns(kitRoot: string): Promise<string[]> {
-    try {
-      const raw = await readFile(join(kitRoot, ".genieignore"), "utf8");
-      return raw
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0 && !line.startsWith("#"));
-    } catch (error) {
-      if (isMissingPathError(error)) return [];
-      throw error;
-    }
+/**
+ * Reject path-shaped kit ids up front (the store also guards, but this keeps the
+ * tool's `ERR_INVALID_KIT_ID` contract — the same shape check the pre-store
+ * `KitFileStore` applied). `.`/`..` and any separator escape the single-kit
+ * namespace.
+ */
+function assertValidKitId(kitId: string): void {
+  if (
+    kitId === "." ||
+    kitId === ".." ||
+    kitId.includes("/") ||
+    kitId.includes("\\") ||
+    kitId.includes("..")
+  ) {
+    throw new ListFilesError("ERR_INVALID_KIT_ID", `Invalid kitId "${kitId}".`);
   }
 }
 
-export async function listFiles(store: KitFileStore, args: ListFilesArgs): Promise<ListedFile[]> {
+/**
+ * List a kit's files as rich entries (path + size + SRI hash + lastModified),
+ * through the injected `KitStore` (M1-14a-1a / DRO-540). The store owns the
+ * walk, SHA-256 SRI hashing, size/mtime, and the `.genieignore` + default-dir
+ * exclusion — so the SAME verb runs against `LocalFsKitStore` (disk) or
+ * `GitHostKitStore` (git host). This function owns only arg-shape validation,
+ * the kitId guard, and mapping the store's `NotFoundError` onto the tool's
+ * `ERR_KIT_NOT_FOUND`.
+ */
+export async function listFiles(store: KitStore, args: ListFilesArgs): Promise<ListedFile[]> {
   let parsed: ListFilesArgs;
   try {
     parsed = listFilesArgsSchema.parse(args);
@@ -105,10 +74,22 @@ export async function listFiles(store: KitFileStore, args: ListFilesArgs): Promi
     }
     throw error;
   }
-  return z.array(fileEntrySchema).parse(await store.listFiles(parsed.kitId));
+
+  assertValidKitId(parsed.kitId);
+
+  let entries;
+  try {
+    entries = await store.listFiles(parsed.kitId);
+  } catch (error) {
+    if (error instanceof NotFoundError) {
+      throw new ListFilesError("ERR_KIT_NOT_FOUND", `Kit "${parsed.kitId}" not found.`);
+    }
+    throw error;
+  }
+  return z.array(fileEntrySchema).parse(entries);
 }
 
-export function registerListFilesTool(server: McpServer, store: KitFileStore): void {
+export function registerListFilesTool(server: McpServer, store: KitStore): void {
   server.registerTool(
     LIST_FILES_TOOL_NAME,
     {
@@ -144,89 +125,5 @@ export function registerListFilesTool(server: McpServer, store: KitFileStore): v
         throw error;
       }
     },
-  );
-}
-
-async function walkFiles(dir: string, root: string, ignore: IgnoreMatcher): Promise<ListedFile[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files: ListedFile[] = [];
-  for (const entry of entries) {
-    const absolutePath = join(dir, entry.name);
-    const relativePath = toRelativePath(root, absolutePath);
-    if (relativePath === ".kit.json" || ignore(relativePath)) continue;
-    if (entry.isDirectory()) {
-      files.push(...(await walkFiles(absolutePath, root, ignore)));
-      continue;
-    }
-    if (!entry.isFile()) continue;
-
-    const [stats, bytes] = await Promise.all([lstat(absolutePath), readFile(absolutePath)]);
-    files.push({
-      path: relativePath,
-      size: stats.size,
-      hash: `sha256-${createHash("sha256").update(bytes).digest("base64")}`,
-      lastModified: stats.mtime.toISOString(),
-    });
-  }
-  return files;
-}
-
-function toRelativePath(root: string, absolutePath: string): string {
-  return relative(root, absolutePath).replaceAll("\\", "/");
-}
-
-function buildIgnoreMatcher(patterns: string[]): IgnoreMatcher {
-  const matchers = [
-    segmentMatcher("node_modules"),
-    segmentMatcher(".git"),
-    segmentMatcher("dist"),
-    // write_files (M1-08) stages its per-call atomic-rename scratch space at
-    // `<localDir>/.genie-tmp/<random>/` (moved inside localDir, rather than
-    // os.tmpdir(), specifically so the commit-phase rename() stays on one
-    // filesystem — see write_files.ts's stageAndCommit doc comment). It is
-    // always removed once the call finishes, but hiding it here means a kit
-    // listing taken during a large concurrent write (or after a hard crash
-    // mid-call, which would leave an orphaned subdir behind) never surfaces
-    // genie's own bookkeeping as if it were kit content.
-    segmentMatcher(".genie-tmp"),
-    ...patterns.map(patternMatcher),
-  ];
-  return (path) => matchers.some((matcher) => matcher(path));
-}
-
-function segmentMatcher(segment: string): IgnoreMatcher {
-  return (path) => path.split("/").includes(segment);
-}
-
-function patternMatcher(rawPattern: string): IgnoreMatcher {
-  const pattern = rawPattern.replace(/^\/+/, "");
-  if (pattern.endsWith("/")) {
-    const dir = pattern.replace(/\/+$/, "");
-    return (path) => path === dir || path.startsWith(`${dir}/`);
-  }
-  if (!pattern.includes("*")) {
-    return (path) => path === pattern || path.startsWith(`${pattern}/`);
-  }
-
-  const regex = globPatternToRegex(pattern);
-  return (path) => regex.test(path);
-}
-
-function globPatternToRegex(pattern: string): RegExp {
-  const escaped = pattern
-    .split("")
-    .map((char) => {
-      if (char === "*") return "[^/]*";
-      return /[\\^$+?.()|[\]{}]/.test(char) ? `\\${char}` : char;
-    })
-    .join("");
-  return new RegExp(`^${escaped}$`);
-}
-
-function isMissingPathError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error.code === "ENOENT" || error.code === "ENOTDIR")
   );
 }

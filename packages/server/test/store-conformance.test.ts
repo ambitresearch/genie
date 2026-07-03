@@ -24,18 +24,33 @@ import { LocalFsKitStore, LocalFsProjectStore } from "../src/store/local.js";
 
 // ─── Shared contract tests ───────────────────────────────────────────────────
 
+/**
+ * Seed a file onto a kit's READABLE surface (LocalFs kit dir / git-host default
+ * branch) — distinct from `openPlan`, which stages onto an isolated plan
+ * branch/dir. Lets the shared contract exercise readFile/listFiles/deleteFile
+ * identically on both adapters (DRO-540: the new {content,encoding,mimeType} /
+ * {path,size,hash,lastModified} shapes are proven on LocalFs AND GitHost).
+ */
+type SeedFile = (kitId: string, path: string, content: Buffer | string) => Promise<void>;
+
 function kitStoreContract(
   name: string,
-  factory: () => Promise<{ store: KitStore; cleanup: () => Promise<void> }>,
+  factory: () => Promise<{
+    store: KitStore;
+    cleanup: () => Promise<void>;
+    seedFile: SeedFile;
+  }>,
 ) {
   describe(`KitStore contract — ${name}`, () => {
     let store: KitStore;
     let cleanup: () => Promise<void>;
+    let seedFile: SeedFile;
 
     beforeEach(async () => {
       const ctx = await factory();
       store = ctx.store;
       cleanup = ctx.cleanup;
+      seedFile = ctx.seedFile;
     });
 
     afterEach(async () => {
@@ -125,16 +140,12 @@ function kitStoreContract(
       expect(Array.isArray(files)).toBe(true);
 
       // readFile must reject for content that was only ever in the plan.
-      await expect(store.readFile(kit.id, "test.txt")).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.readFile(kit.id, "test.txt")).rejects.toThrow(NotFoundError);
     });
 
     it("readFile throws NotFoundError for missing file", async () => {
       const kit = await store.createKit("read-miss-kit");
-      await expect(store.readFile(kit.id, "nope.txt")).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.readFile(kit.id, "nope.txt")).rejects.toThrow(NotFoundError);
     });
 
     // AC9 — both LocalFsStore and GitHostStore implement listComponents with
@@ -167,9 +178,7 @@ function kitStoreContract(
       expect(planId).toBeTruthy();
 
       // commitPlan adds more ops
-      await store.commitPlan(kit.id, planId, [
-        { kind: "write", path: "b.txt", content: "second" },
-      ]);
+      await store.commitPlan(kit.id, planId, [{ kind: "write", path: "b.txt", content: "second" }]);
 
       // closePlan cleans up
       await store.closePlan(kit.id, planId);
@@ -179,16 +188,77 @@ function kitStoreContract(
     });
 
     it("openPlan throws NotFoundError for non-existent kit", async () => {
-      await expect(
-        store.openPlan("ghost-kit", []),
-      ).rejects.toThrow(NotFoundError);
+      await expect(store.openPlan("ghost-kit", [])).rejects.toThrow(NotFoundError);
     });
 
     it("commitPlan throws NotFoundError for non-existent plan", async () => {
       const kit = await store.createKit("commit-miss-kit");
-      await expect(
-        store.commitPlan(kit.id, "no-such-plan", []),
-      ).rejects.toThrow(NotFoundError);
+      await expect(store.commitPlan(kit.id, "no-such-plan", [])).rejects.toThrow(NotFoundError);
+    });
+
+    // ── File-content contract (DRO-540) ──────────────────────────────────────
+    // readFile → { content, encoding, mimeType }; listFiles → rich entries;
+    // deleteFile → { existed }. Run against BOTH adapters so the shapes are
+    // byte-identical across LocalFs and GitHost.
+
+    it("readFile returns { content, encoding: 'utf-8', mimeType } for a text file", async () => {
+      const kit = await store.createKit("rich-read-kit");
+      await seedFile(kit.id, "hello.txt", "hello world");
+
+      const file = await store.readFile(kit.id, "hello.txt");
+      expect(file).toEqual({
+        content: "hello world",
+        encoding: "utf-8",
+        mimeType: "text/plain",
+      });
+    });
+
+    it("readFile returns base64 for a binary file (PNG header)", async () => {
+      const kit = await store.createKit("rich-read-bin-kit");
+      // PNG magic bytes — a binary MIME (image/png), so the store must base64 it.
+      const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      await seedFile(kit.id, "icon.png", png);
+
+      const file = await store.readFile(kit.id, "icon.png");
+      expect(file.encoding).toBe("base64");
+      expect(file.mimeType).toBe("image/png");
+      expect(Buffer.from(file.content, "base64").equals(png)).toBe(true);
+    });
+
+    it("readFile throws FileTooLargeError above the 256 KiB cap", async () => {
+      const kit = await store.createKit("rich-read-big-kit");
+      await seedFile(kit.id, "big.bin", "x".repeat(MAX_FILE_BYTES + 1));
+      await expect(store.readFile(kit.id, "big.bin")).rejects.toThrow(FileTooLargeError);
+    });
+
+    it("listFiles returns rich entries (path + size + sha256 SRI + lastModified)", async () => {
+      const kit = await store.createKit("rich-list-kit");
+      await seedFile(kit.id, "components/Button.tsx", "export const Button = 1;\n");
+
+      const files = await store.listFiles(kit.id);
+      const entry = files.find((f) => f.path === "components/Button.tsx");
+      expect(entry).toBeDefined();
+      expect(entry!.size).toBe(Buffer.byteLength("export const Button = 1;\n"));
+      expect(entry!.hash).toMatch(/^sha256-[A-Za-z0-9+/]+=*$/);
+      // ISO-8601 round-trips.
+      expect(new Date(entry!.lastModified).toISOString()).toBe(entry!.lastModified);
+      // The .kit.json marker is never surfaced as kit content.
+      expect(files.map((f) => f.path)).not.toContain(".kit.json");
+    });
+
+    it("deleteFile removes a file (existed: true) then is an idempotent no-op (existed: false)", async () => {
+      const kit = await store.createKit("rich-del-kit");
+      await seedFile(kit.id, "stale.txt", "stale");
+
+      expect(await store.deleteFile(kit.id, "stale.txt")).toEqual({ existed: true });
+      expect((await store.listFiles(kit.id)).map((f) => f.path)).not.toContain("stale.txt");
+      // Second delete: already gone → not an error, just existed: false.
+      expect(await store.deleteFile(kit.id, "stale.txt")).toEqual({ existed: false });
+    });
+
+    it("deleteFile on a file that never existed is existed: false", async () => {
+      const kit = await store.createKit("rich-del-absent-kit");
+      expect(await store.deleteFile(kit.id, "never-here.txt")).toEqual({ existed: false });
     });
   });
 }
@@ -240,23 +310,17 @@ function projectStoreContract(
     });
 
     it("getProject throws NotFoundError for non-existent project", async () => {
-      await expect(store.getProject("no-such-project")).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.getProject("no-such-project")).rejects.toThrow(NotFoundError);
     });
 
     it("deleteProject removes the project", async () => {
       const project = await store.createProject("del-me");
       await store.deleteProject(project.id);
-      await expect(store.getProject(project.id)).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.getProject(project.id)).rejects.toThrow(NotFoundError);
     });
 
     it("deleteProject throws NotFoundError for non-existent project", async () => {
-      await expect(store.deleteProject("nope")).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.deleteProject("nope")).rejects.toThrow(NotFoundError);
     });
 
     it("bindKit sets kitId on the project", async () => {
@@ -268,9 +332,7 @@ function projectStoreContract(
     });
 
     it("bindKit throws NotFoundError for non-existent project", async () => {
-      await expect(store.bindKit("ghost", "kit")).rejects.toThrow(
-        NotFoundError,
-      );
+      await expect(store.bindKit("ghost", "kit")).rejects.toThrow(NotFoundError);
     });
 
     it("recordScreen appends screen ref", async () => {
@@ -281,9 +343,7 @@ function projectStoreContract(
     });
 
     it("recordScreen throws NotFoundError for non-existent project", async () => {
-      await expect(
-        store.recordScreen("ghost", "img.png"),
-      ).rejects.toThrow(NotFoundError);
+      await expect(store.recordScreen("ghost", "img.png")).rejects.toThrow(NotFoundError);
     });
   });
 }
@@ -301,6 +361,13 @@ async function createLocalFsKitFactory() {
   const store = new LocalFsKitStore(tmpDir);
   return {
     store,
+    // Seed writes straight into the kit dir — the readable surface listFiles/
+    // readFile/deleteFile operate on (vs openPlan, which stages elsewhere).
+    seedFile: async (kitId: string, path: string, content: Buffer | string) => {
+      const full = join(tmpDir, kitId, ...path.split("/"));
+      await mkdir(join(full, ".."), { recursive: true });
+      await writeFile(full, content);
+    },
     cleanup: async () => {
       // Restore env var carefully: assigning `undefined` to process.env coerces
       // to the literal string "undefined" and would leak into other tests.
@@ -334,204 +401,16 @@ projectStoreContract("LocalFsProjectStore", createLocalFsProjectFactory);
 // ─── GitHostStore mock factory ───────────────────────────────────────────────
 
 import { GitHostKitStore, GitHostProjectStore } from "../src/store/git-host.js";
+import { createMockGitHostFetch } from "./helpers/mock-git-host.js";
 
 /**
- * Mock fetch for GitHostStore conformance tests.
- * Simulates a git host API in-memory.
+ * Mock fetch for GitHostStore conformance tests — the shared in-memory
+ * Gitea-shaped REST mock (`test/helpers/mock-git-host.ts`), reused by the
+ * createServer store-injection seam test (DRO-523 AC1) so both suites drive one
+ * reference host rather than two drifting copies.
  */
 function createMockGitHostFactory() {
-  // In-memory storage for repos, files, branches.
-  // Files are keyed by `${owner}/${repo}` AND branch, so plan-branch writes
-  // don't leak into reads against the default branch.
-  const repos = new Map<string, { name: string; created_at: string; default_branch: string }>();
-  const files = new Map<string, Map<string, Map<string, { content: string; sha: string }>>>();
-  const branches = new Map<string, Set<string>>();
-
-  const filesFor = (repoKey: string, branch: string) => {
-    let perBranch = files.get(repoKey);
-    if (!perBranch) {
-      perBranch = new Map();
-      files.set(repoKey, perBranch);
-    }
-    let perFile = perBranch.get(branch);
-    if (!perFile) {
-      perFile = new Map();
-      perBranch.set(branch, perFile);
-    }
-    return perFile;
-  };
-
-  const mockFetch = async (url: string, init?: RequestInit) => {
-    const method = init?.method ?? "GET";
-    const body = init?.body ? JSON.parse(init.body as string) : undefined;
-
-    // Parse URL - strip /api/v1 prefix since the baseUrl includes it
-    const urlObj = new URL(url);
-    const pathname = urlObj.pathname.replace(/^\/api\/v1/, "");
-    const pathParts = pathname.split("/").filter(Boolean);
-    const refParam = urlObj.searchParams.get("ref");
-
-    // Helper to generate SHA
-    const genSha = () => Math.random().toString(36).substring(2);
-
-    // Route: GET /repos/search
-    if (method === "GET" && pathParts[0] === "repos" && pathParts[1] === "search") {
-      const data = Array.from(repos.values());
-      return new Response(JSON.stringify({ data }), { status: 200 });
-    }
-
-    // Route: GET/POST /repos/:owner/:repo
-    if (pathParts[0] === "repos" && pathParts.length === 3) {
-      const [, owner, repo] = pathParts;
-      const key = `${owner}/${repo}`;
-      if (method === "GET") {
-        if (!repos.has(key)) {
-          return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
-        }
-        return new Response(JSON.stringify(repos.get(key)), { status: 200 });
-      }
-    }
-
-    // Route: POST /orgs/:owner/repos
-    if (method === "POST" && pathParts[0] === "orgs" && pathParts.length === 3 && pathParts[2] === "repos") {
-      const [, owner] = pathParts;
-      const { name } = body;
-      const key = `${owner}/${name}`;
-      if (repos.has(key)) {
-        return new Response(JSON.stringify({ message: "Repository already exists" }), {
-          status: 409,
-        });
-      }
-      const repo = { name, created_at: new Date().toISOString(), default_branch: "main" };
-      repos.set(key, repo);
-      // Seed the default branch with an empty file map.
-      filesFor(key, "main");
-      branches.set(key, new Set(["main"]));
-      return new Response(JSON.stringify(repo), { status: 201 });
-    }
-
-    // Route: POST /repos/:owner/:repo/branches  (4 path segments)
-    if (method === "POST" && pathParts.length === 4 && pathParts[0] === "repos" && pathParts[3] === "branches") {
-      const [, owner, repo] = pathParts;
-      const key = `${owner}/${repo}`;
-      if (!repos.has(key)) {
-        return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
-      }
-      const { new_branch_name, old_branch_name } = body;
-      branches.get(key)?.add(new_branch_name);
-      // Copy files from the source branch so the new branch starts as a fork.
-      const source = filesFor(key, old_branch_name ?? "main");
-      const target = filesFor(key, new_branch_name);
-      for (const [path, entry] of source) target.set(path, { ...entry });
-      return new Response(JSON.stringify({ name: new_branch_name }), { status: 201 });
-    }
-
-    // Route: GET /repos/:owner/:repo/branches/:branch  (5 path segments)
-    if (method === "GET" && pathParts.length === 5 && pathParts[0] === "repos" && pathParts[3] === "branches") {
-      const [, owner, repo, , branch] = pathParts;
-      const key = `${owner}/${repo}`;
-      if (!branches.get(key)?.has(decodeURIComponent(branch))) {
-        return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
-      }
-      return new Response(JSON.stringify({ name: branch }), { status: 200 });
-    }
-
-    // Route: DELETE /repos/:owner/:repo/branches/:branch  (5 path segments)
-    if (method === "DELETE" && pathParts.length === 5 && pathParts[0] === "repos" && pathParts[3] === "branches") {
-      const [, owner, repo, , branch] = pathParts;
-      const key = `${owner}/${repo}`;
-      const decoded = decodeURIComponent(branch);
-      branches.get(key)?.delete(decoded);
-      files.get(key)?.delete(decoded);
-      return new Response(null, { status: 204 });
-    }
-
-    // Route: GET/POST/PUT/DELETE /repos/:owner/:repo/contents/:path
-    if (pathParts[3] === "contents") {
-      const [, owner, repo, , ...pathSegments] = pathParts;
-      const key = `${owner}/${repo}`;
-      const filePath = decodeURIComponent(pathSegments.join("/"));
-
-      if (!repos.has(key)) {
-        return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
-      }
-      // ref query param wins; for writes, fall back to body.branch; else default.
-      const branch =
-        refParam ??
-        (body && typeof body === "object" && "branch" in body
-          ? (body as { branch: string }).branch
-          : repos.get(key)!.default_branch);
-      if (!branches.get(key)?.has(branch)) {
-        return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
-      }
-      const repoFiles = filesFor(key, branch);
-
-      if (method === "GET") {
-        // Build a name field from the last path segment for directory entries.
-        const entryFor = (path: string) => ({
-          type: "file" as const,
-          name: path.split("/").pop()!,
-          path,
-          sha: repoFiles.get(path)!.sha,
-          size: Buffer.from(repoFiles.get(path)!.content, "base64").length,
-        });
-
-        // If filePath is empty, return all files at root level
-        if (!filePath || filePath === "") {
-          const entries = Array.from(repoFiles.keys())
-            .filter((path) => !path.includes("/"))
-            .map(entryFor);
-          return new Response(JSON.stringify(entries), { status: 200 });
-        }
-        // Check if this is a directory path (has children)
-        const children = Array.from(repoFiles.keys()).filter((path) => path.startsWith(filePath + "/"));
-        if (children.length > 0) {
-          // Return directory listing
-          const entries = children
-            .filter((path) => {
-              const relativePath = path.substring(filePath.length + 1);
-              return !relativePath.includes("/");
-            })
-            .map(entryFor);
-          return new Response(JSON.stringify(entries), { status: 200 });
-        }
-        // It's a file
-        if (!repoFiles.has(filePath)) {
-          return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
-        }
-        const file = repoFiles.get(filePath)!;
-        return new Response(
-          JSON.stringify({
-            type: "file",
-            name: filePath.split("/").pop(),
-            path: filePath,
-            content: file.content,
-            encoding: "base64",
-            sha: file.sha,
-            size: Buffer.from(file.content, "base64").length,
-          }),
-          { status: 200 },
-        );
-      }
-
-      if (method === "POST" || method === "PUT") {
-        const { content } = body;
-        const sha = genSha();
-        repoFiles.set(filePath, { content, sha });
-        return new Response(JSON.stringify({ content: { sha } }), { status: method === "POST" ? 201 : 200 });
-      }
-
-      if (method === "DELETE") {
-        repoFiles.delete(filePath);
-        return new Response(null, { status: 204 });
-      }
-    }
-
-    // Default 404
-    return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
-  };
-
-  return mockFetch;
+  return createMockGitHostFetch();
 }
 
 async function createGitHostKitFactory() {
@@ -548,6 +427,19 @@ async function createGitHostKitFactory() {
 
   return {
     store,
+    // Seed onto the DEFAULT branch (no `branch` in the body → the mock writes to
+    // the repo's default branch), which is the readable surface readFile/
+    // listFiles/deleteFile see — NOT a plan branch. Content is base64, exactly
+    // as the real Gitea contents API expects.
+    seedFile: async (kitId: string, path: string, content: Buffer | string) => {
+      const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+      const base64 = Buffer.from(content).toString("base64");
+      const res = await mockFetch(
+        `https://mock-git-host.test/api/v1/repos/test-org/${kitId}/contents/${encodedPath}`,
+        { method: "POST", body: JSON.stringify({ content: base64 }) },
+      );
+      if (!res.ok) throw new Error(`seedFile failed: ${res.status}`);
+    },
     cleanup: async () => {
       globalThis.fetch = originalFetch;
     },
@@ -664,9 +556,7 @@ describe("LocalFsKitStore — adapter-specific", () => {
     const bigContent = "x".repeat(MAX_FILE_BYTES + 1);
     await writeFile(join(kitDir, "big.bin"), bigContent);
 
-    await expect(store.readFile(kit.id, "big.bin")).rejects.toThrow(
-      FileTooLargeError,
-    );
+    await expect(store.readFile(kit.id, "big.bin")).rejects.toThrow(FileTooLargeError);
 
     try {
       await store.readFile(kit.id, "big.bin");
@@ -684,11 +574,15 @@ describe("LocalFsKitStore — adapter-specific", () => {
     const kitDir = join(tmpDir, kit.id);
     await writeFile(join(kitDir, "hello.txt"), "hello world");
 
-    const content = await store.readFile(kit.id, "hello.txt");
-    expect(content).toBe("hello world");
+    const file = await store.readFile(kit.id, "hello.txt");
+    expect(file).toEqual({
+      content: "hello world",
+      encoding: "utf-8",
+      mimeType: "text/plain",
+    });
   });
 
-  it("listFiles returns all files (excluding .kit.json)", async () => {
+  it("listFiles returns rich entries (path + size + SRI hash + lastModified), excluding .kit.json", async () => {
     const kit = await store.createKit("multi-file-kit");
     const kitDir = join(tmpDir, kit.id);
     await mkdir(join(kitDir, "sub"), { recursive: true });
@@ -696,9 +590,30 @@ describe("LocalFsKitStore — adapter-specific", () => {
     await writeFile(join(kitDir, "sub", "b.txt"), "b");
 
     const files = await store.listFiles(kit.id);
-    expect(files).toContain("a.txt");
-    expect(files).toContain(join("sub", "b.txt"));
-    expect(files).not.toContain(".kit.json");
+    const paths = files.map((f) => f.path);
+    // Paths are kit-root-relative, forward-slash, and .kit.json is hidden.
+    expect(paths).toContain("a.txt");
+    expect(paths).toContain("sub/b.txt");
+    expect(paths).not.toContain(".kit.json");
+
+    const a = files.find((f) => f.path === "a.txt")!;
+    expect(a.size).toBe(1);
+    expect(a.hash).toMatch(/^sha256-[A-Za-z0-9+/]+=*$/);
+    // ISO-8601 round-trips.
+    expect(new Date(a.lastModified).toISOString()).toBe(a.lastModified);
+  });
+
+  it("deleteFile removes a file and is idempotent past an absent one", async () => {
+    const kit = await store.createKit("del-file-kit");
+    const kitDir = join(tmpDir, kit.id);
+    await writeFile(join(kitDir, "gone.txt"), "bye");
+
+    // Present → existed: true, and it disappears from the listing.
+    expect(await store.deleteFile(kit.id, "gone.txt")).toEqual({ existed: true });
+    expect((await store.listFiles(kit.id)).map((f) => f.path)).not.toContain("gone.txt");
+
+    // Absent (already deleted) → existed: false, a non-error idempotent no-op.
+    expect(await store.deleteFile(kit.id, "gone.txt")).toEqual({ existed: false });
   });
 
   it("listFiles throws NotFoundError for non-existent kit", async () => {
@@ -723,17 +638,15 @@ describe("LocalFsKitStore — adapter-specific", () => {
 
   it("readFile denies path traversal attacks", async () => {
     const kit = await store.createKit("traversal-kit");
-    await expect(
-      store.readFile(kit.id, "../../etc/passwd"),
-    ).rejects.toThrow("Path traversal denied");
+    await expect(store.readFile(kit.id, "../../etc/passwd")).rejects.toThrow(
+      "Path traversal denied",
+    );
   });
 
   it("openPlan denies path traversal in file ops", async () => {
     const kit = await store.createKit("traversal-plan-kit");
     await expect(
-      store.openPlan(kit.id, [
-        { kind: "write", path: "../../../tmp/evil.txt", content: "pwned" },
-      ]),
+      store.openPlan(kit.id, [{ kind: "write", path: "../../../tmp/evil.txt", content: "pwned" }]),
     ).rejects.toThrow("Path traversal denied");
   });
 });
@@ -812,9 +725,7 @@ describe("GitHostStore — credential check (AC6)", () => {
     const origToken = process.env["GENIE_GIT_TOKEN"];
     delete process.env["GENIE_GIT_TOKEN"];
     try {
-      const { MissingCredentialError } = await import(
-        "../src/store/interface.js"
-      );
+      const { MissingCredentialError } = await import("../src/store/interface.js");
       const { GitHostKitStore } = await import("../src/store/git-host.js");
 
       expect(

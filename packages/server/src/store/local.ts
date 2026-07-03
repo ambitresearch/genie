@@ -7,13 +7,15 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type {
   ComponentEntry,
   FileOp,
+  KitFileContent,
+  KitFileEntry,
   KitId,
   KitMeta,
   KitStore,
@@ -29,6 +31,13 @@ import {
   MAX_FILE_BYTES,
   NotFoundError,
 } from "./interface.js";
+import {
+  buildIgnoreMatcher,
+  classifyFileContent,
+  parseGenieignore,
+  sriSha256,
+  type IgnoreMatcher,
+} from "./kit-files.js";
 import { MANIFEST_PATH, selectComponents } from "./manifest.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -61,21 +70,48 @@ function safePath(baseDir: string, userPath: string): string {
   return resolved;
 }
 
-/** Recursively list files relative to `baseRoot`. */
-async function walkDir(dir: string, baseRoot?: string): Promise<string[]> {
-  const root = baseRoot ?? dir;
-  const results: string[] = [];
+/**
+ * Recursively walk a kit directory into rich `KitFileEntry` records
+ * (kit-root-relative forward-slash `path`, byte `size`, `sha256-…` SRI `hash`,
+ * ISO-8601 `lastModified`). The `.kit.json` marker and any path the `ignore`
+ * matcher rejects (default dirs + `.genieignore`) are skipped. Symlinks and
+ * other non-regular entries are ignored. Unsorted — the caller sorts by path.
+ */
+async function walkKitFiles(
+  dir: string,
+  root: string,
+  ignore: IgnoreMatcher,
+): Promise<KitFileEntry[]> {
   const entries = await readdir(dir, { withFileTypes: true });
+  const files: KitFileEntry[] = [];
   for (const entry of entries) {
-    const full = join(dir, entry.name);
+    const absolutePath = join(dir, entry.name);
+    const relativePath = relative(root, absolutePath).replaceAll("\\", "/");
+    if (relativePath === ".kit.json" || ignore(relativePath)) continue;
     if (entry.isDirectory()) {
-      const children = await walkDir(full, root);
-      results.push(...children);
-    } else {
-      results.push(relative(root, full));
+      files.push(...(await walkKitFiles(absolutePath, root, ignore)));
+      continue;
     }
+    if (!entry.isFile()) continue;
+    const [stats, bytes] = await Promise.all([stat(absolutePath), readFile(absolutePath)]);
+    files.push({
+      path: relativePath,
+      size: stats.size,
+      hash: sriSha256(bytes),
+      lastModified: stats.mtime.toISOString(),
+    });
   }
-  return results.sort();
+  return files;
+}
+
+/** ENOENT (missing file) and ENOTDIR (a parent component is a file) both mean
+ * "the path is not there". */
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
 }
 
 /** Read and parse a JSON metadata file, or return undefined. */
@@ -160,16 +196,30 @@ export class LocalFsKitStore implements KitStore {
     };
   }
 
-  async listFiles(kitId: KitId): Promise<string[]> {
+  async listFiles(kitId: KitId): Promise<KitFileEntry[]> {
     const dir = this.kitDir(kitId);
     try {
       await stat(dir);
     } catch {
       throw new NotFoundError("Kit", kitId);
     }
-    const files = await walkDir(dir);
-    // Exclude the metadata file from the listing
-    return files.filter((f) => f !== ".kit.json");
+    const ignore = buildIgnoreMatcher(await this.readIgnorePatterns(dir));
+    const files = await walkKitFiles(dir, dir, ignore);
+    return files.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  /**
+   * Read the kit's `.genieignore` (if any) into active pattern lines. Absent
+   * file → no extra patterns (the default-dir exclusion still applies).
+   */
+  private async readIgnorePatterns(kitDir: string): Promise<string[]> {
+    try {
+      const raw = await readFile(join(kitDir, ".genieignore"), "utf8");
+      return parseGenieignore(raw);
+    } catch (error) {
+      if (isMissingPathError(error)) return [];
+      throw error;
+    }
   }
 
   async listComponents(params: {
@@ -206,7 +256,7 @@ export class LocalFsKitStore implements KitStore {
     return selectComponents(kitId, raw, group);
   }
 
-  async readFile(kitId: KitId, path: string): Promise<string> {
+  async readFile(kitId: KitId, path: string): Promise<KitFileContent> {
     // First check if kit exists
     const kitDir = this.kitDir(kitId);
     try {
@@ -223,10 +273,33 @@ export class LocalFsKitStore implements KitStore {
     } catch {
       throw new NotFoundError("File", `${kitId}/${path}`);
     }
+    // A directory target is not a readable file.
+    if (!fileStats.isFile()) {
+      throw new NotFoundError("File", `${kitId}/${path}`);
+    }
     if (fileStats.size > MAX_FILE_BYTES) {
       throw new FileTooLargeError(path, fileStats.size);
     }
-    return readFile(filePath, "utf-8");
+    // Read raw bytes and let the shared classifier decide utf-8 vs base64 and
+    // the MIME type — the exact logic the pre-store `read_file` tool ran, now
+    // shared with GitHostKitStore so a read is byte-identical across adapters.
+    const bytes = await readFile(filePath);
+    return classifyFileContent(path, bytes);
+  }
+
+  async deleteFile(kitId: KitId, path: string): Promise<{ existed: boolean }> {
+    // A missing kit is the same idempotent no-op as a missing file: the tool's
+    // plan-gating has already authorized the path, and "not there" is the
+    // silent-retry case, never a hard error. So we do NOT pre-stat the kit dir.
+    const kitDir = this.kitDir(kitId);
+    const filePath = safePath(kitDir, path);
+    try {
+      await unlink(filePath);
+      return { existed: true };
+    } catch (error) {
+      if (isMissingPathError(error)) return { existed: false };
+      throw error; // EISDIR / EPERM / … → tool maps to DeleteFailed.
+    }
   }
 
   async createKit(name: string, kitId?: string): Promise<KitMeta> {

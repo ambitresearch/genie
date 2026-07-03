@@ -15,6 +15,8 @@ import { randomUUID } from "node:crypto";
 
 import type {
   FileOp,
+  KitFileContent,
+  KitFileEntry,
   KitId,
   KitMeta,
   KitStore,
@@ -31,6 +33,12 @@ import {
   MissingCredentialError,
   NotFoundError,
 } from "./interface.js";
+import {
+  buildIgnoreMatcher,
+  classifyFileContent,
+  parseGenieignore,
+  sriSha256,
+} from "./kit-files.js";
 import { MANIFEST_PATH, selectComponents } from "./manifest.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -99,6 +107,9 @@ interface RepoResponse {
   name: string;
   full_name: string;
   created_at: string;
+  /** Last push/update time — the git-host `lastModified` parity source (see
+   * `KitFileEntry`'s doc comment); may be absent on older Gitea versions. */
+  updated_at?: string;
   description?: string;
   default_branch?: string;
 }
@@ -110,6 +121,7 @@ interface ContentEntry {
   size?: number;
   content?: string;
   encoding?: string;
+  sha?: string;
 }
 
 interface BranchResponse {
@@ -251,10 +263,35 @@ export class GitHostKitStore implements KitStore {
     }
   }
 
-  async listFiles(kitId: KitId): Promise<string[]> {
-    // Get the full tree recursively
-    const entries = await this.listTree(kitId, "");
-    return entries.filter((path) => path !== this.kitMetaPath).sort();
+  async listFiles(kitId: KitId): Promise<KitFileEntry[]> {
+    // Repo metadata doubles as the kit-existence check AND the `lastModified`
+    // parity source (updated_at → created_at). See KitFileEntry's doc comment
+    // for why git-host entries carry a per-repo, not per-file, timestamp.
+    const repo = await this.getRepo(kitId);
+    const lastModified = repo.updated_at ?? repo.created_at;
+
+    // Enumerate every tracked file path (recursive contents walk).
+    const paths = await this.listTree(kitId, "");
+
+    // Apply the SAME exclusion LocalFs uses — default dirs (node_modules/.git/
+    // dist/.genie-tmp) + a committed `.genieignore` + the `.kit.json` marker —
+    // so a listing is filtered identically whichever adapter backs it.
+    const ignore = buildIgnoreMatcher(await this.readIgnorePatterns(kitId));
+    const visible = paths.filter((path) => path !== this.kitMetaPath && !ignore(path));
+
+    // A git host exposes no dependable per-file sha256 (its `sha` is a git blob
+    // SHA-1, wrong algorithm AND wrong shape for the `sha256-…` SRI contract),
+    // so we fetch each surviving file's bytes to compute a real SRI hash + true
+    // byte size. This is an intentional N-read fan-out — the honest cost of
+    // producing byte-identical `list_files` output across adapters. Ignored
+    // files were filtered out ABOVE, so their bytes are never fetched.
+    const entries = await Promise.all(
+      visible.map(async (path): Promise<KitFileEntry> => {
+        const bytes = await this.fetchFileBytes(kitId, path);
+        return { path, size: bytes.length, hash: sriSha256(bytes), lastModified };
+      }),
+    );
+    return entries.sort((a, b) => a.path.localeCompare(b.path));
   }
 
   async listComponents(params: {
@@ -269,9 +306,18 @@ export class GitHostKitStore implements KitStore {
     // absent until the M3-03 compiler writes it → a 404 (surfaced by readFile as
     // NotFoundError) maps to `undefined`, which selectComponents turns into []
     // (AC8). Other errors (auth, 5xx, oversize) propagate.
+    //
+    // `readFile` returns the rich `KitFileContent` shape (M1-14a-1a / DRO-540),
+    // not a bare string. `.genie/manifest.json` is JSON (a textual MIME), so the
+    // shared classifier decodes it to a utf-8 `content` string; a base64 result
+    // is decoded defensively so `selectComponents` always parses real JSON text.
     let raw: string | undefined;
     try {
-      raw = await this.readFile(params.kitId, MANIFEST_PATH);
+      const file = await this.readFile(params.kitId, MANIFEST_PATH);
+      raw =
+        file.encoding === "base64"
+          ? Buffer.from(file.content, "base64").toString("utf-8")
+          : file.content;
     } catch (e) {
       if (e instanceof NotFoundError) {
         raw = undefined;
@@ -281,6 +327,36 @@ export class GitHostKitStore implements KitStore {
     }
 
     return selectComponents(params.kitId, raw, params.group);
+  }
+
+  /** Fetch repo metadata, mapping a 404 to NotFoundError("Kit"). */
+  private async getRepo(kitId: KitId): Promise<RepoResponse> {
+    try {
+      return await this.api<RepoResponse>("GET", this.repoPath(kitId));
+    } catch (e) {
+      if (e instanceof NotFoundError) throw new NotFoundError("Kit", kitId);
+      throw e;
+    }
+  }
+
+  /**
+   * Read the kit's committed `.genieignore` (default branch) into active
+   * pattern lines. Absent file → no extra patterns (default-dir exclusion still
+   * applies via buildIgnoreMatcher).
+   */
+  private async readIgnorePatterns(kitId: KitId): Promise<string[]> {
+    try {
+      const entry = await this.fetchContentEntry(kitId, ".genieignore");
+      if (entry.type !== "file" || !entry.content) return [];
+      const raw =
+        entry.encoding === "base64"
+          ? Buffer.from(entry.content, "base64").toString("utf-8")
+          : entry.content;
+      return parseGenieignore(raw);
+    } catch (e) {
+      if (e instanceof NotFoundError) return [];
+      throw e;
+    }
   }
 
   private async listTree(kitId: KitId, dirPath: string): Promise<string[]> {
@@ -306,20 +382,34 @@ export class GitHostKitStore implements KitStore {
     return files;
   }
 
-  async readFile(kitId: KitId, path: string): Promise<string> {
-    // Encode each path segment to handle spaces, #, ?, etc.
+  /**
+   * GET a single contents entry, mapping a 404 to NotFoundError("File").
+   * Encodes each path segment to handle spaces, #, ?, etc.
+   */
+  private async fetchContentEntry(kitId: KitId, path: string): Promise<ContentEntry> {
     const encodedPath = path.split("/").map(encodeURIComponent).join("/");
-    let entry: ContentEntry;
     try {
-      entry = await this.api<ContentEntry>(
+      return await this.api<ContentEntry>(
         "GET",
         `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}`,
       );
     } catch (e) {
-      if (e instanceof NotFoundError)
-        throw new NotFoundError("File", `${kitId}/${path}`);
+      if (e instanceof NotFoundError) throw new NotFoundError("File", `${kitId}/${path}`);
       throw e;
     }
+  }
+
+  /** Fetch a file's raw bytes off the default branch (base64 or utf-8 payload). */
+  private async fetchFileBytes(kitId: KitId, path: string): Promise<Buffer> {
+    const entry = await this.fetchContentEntry(kitId, path);
+    if (entry.type !== "file" || !entry.content) return Buffer.alloc(0);
+    return entry.encoding === "base64"
+      ? Buffer.from(entry.content, "base64")
+      : Buffer.from(entry.content, "utf-8");
+  }
+
+  async readFile(kitId: KitId, path: string): Promise<KitFileContent> {
+    const entry = await this.fetchContentEntry(kitId, path);
 
     // Validate that this is a file, not a directory
     if (entry.type !== "file") {
@@ -337,18 +427,49 @@ export class GitHostKitStore implements KitStore {
       );
     }
 
-    if (entry.encoding === "base64") {
-      const decoded = Buffer.from(entry.content, "base64").toString("utf-8");
-      // Fallback size check when entry.size was not provided by the API
-      const byteLength = Buffer.byteLength(decoded, "utf-8");
-      if (byteLength > MAX_FILE_BYTES) {
-        throw new FileTooLargeError(path, byteLength);
-      }
-      return decoded;
+    const bytes =
+      entry.encoding === "base64"
+        ? Buffer.from(entry.content, "base64")
+        : Buffer.from(entry.content, "utf-8");
+    // Fallback size check when entry.size was not provided by the API.
+    if (bytes.length > MAX_FILE_BYTES) {
+      throw new FileTooLargeError(path, bytes.length);
     }
+    // Shared classifier decides utf-8 vs base64 + the MIME type — identical to
+    // LocalFsKitStore, so a `read_file` result is byte-identical across adapters
+    // (a binary blob on the git host comes back base64, text comes back utf-8).
+    return classifyFileContent(path, bytes);
+  }
 
-    // If encoding is not base64, treat content as plain text
-    return entry.content;
+  async deleteFile(kitId: KitId, path: string): Promise<{ existed: boolean }> {
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+    // The contents-API DELETE needs the file's current blob SHA. A missing file
+    // OR a missing kit (repo) both 404 → the idempotent "already absent" no-op,
+    // matching LocalFs (which never pre-stats the kit). Deletes hit the DEFAULT
+    // branch — the readable surface `readFile`/`listFiles` see — NOT a plan
+    // branch (plan-branch edits are the openPlan/commitPlan path).
+    let sha: string;
+    try {
+      const existing = await this.api<ContentEntry>(
+        "GET",
+        `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}`,
+      );
+      // A directory (array response) or a non-file entry is not a deletable
+      // file — treat as absent rather than erroring.
+      if (Array.isArray(existing) || existing.type !== "file") {
+        return { existed: false };
+      }
+      sha = existing.sha ?? "";
+    } catch (e) {
+      if (e instanceof NotFoundError) return { existed: false };
+      throw e;
+    }
+    await this.api<void>(
+      "DELETE",
+      `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}`,
+      { message: `kit: delete ${path}`, sha },
+    );
+    return { existed: true };
   }
 
   async createKit(name: string, kitId?: string): Promise<KitMeta> {

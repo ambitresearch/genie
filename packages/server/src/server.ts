@@ -9,13 +9,14 @@ import { LocalScaffoldScreenGenerator, registerConjureScreenTool } from "./tools
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
 import { registerValidate } from "./tools/validate.js";
-import { KitFileStore, registerListFilesTool } from "./tools/list_files.js";
+import { registerListFilesTool } from "./tools/list_files.js";
 import { registerListKits } from "./tools/list_kits.js";
 import { registerListComponents } from "./tools/list_components.js";
 import { registerPlan } from "./tools/plan.js";
 import { registerDeleteFilesTool } from "./tools/delete_files.js";
 import { registerWriteFilesTool } from "./tools/write_files.js";
 import { LocalFsKitStore } from "./store/local.js";
+import type { KitStore } from "./store/interface.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
 
 /** Server identity. Bumped independently of the workspace version. */
@@ -42,6 +43,48 @@ export interface CreateServerOptions {
   projectsRoot?: string;
   kitsRoot?: string;
   reportsDir?: string;
+  /**
+   * Injectable kit backend (AC1 / DRO-523; kit-file verbs added in
+   * M1-14a-1a / DRO-540). When supplied, the kit verbs route through this store
+   * instead of the default `LocalFsKitStore(kitsRoot)`:
+   *   - metadata: `create_kit`, `get_kit`, `list_kits`, `list_components`,
+   *     plus `conjure_screen`'s explicit-kitId validation and `bind_kit`'s
+   *     kit-existence check (via `KitStore.getKit`/`listKits`/`createKit`/…);
+   *   - files: `read_file`, `list_files`, `delete_files` (via
+   *     `KitStore.readFile`/`listFiles`/`deleteFile`).
+   * Defaulting to LocalFs keeps every existing caller (`createServer()`,
+   * `createServer({ kitsRoot })`) byte-for-byte unchanged, so injecting a
+   * `GitHostKitStore` points the whole kit surface at the git host.
+   *
+   * Remaining holdout (tracked, deliberately out of scope here): `write_files`
+   * still binds to `kitsRoot` + the on-disk plan registry — its atomic
+   * rename-to-temp / streaming / rollback transaction doesn't map onto the
+   * git-host REST model without its own design, so it is a sibling follow-up.
+   * The rich project family (`create_project`/`get_project`/`bind_kit` write
+   * side/`recordScreen`) also still uses the concrete fs-backed `ProjectStore`
+   * (see `projectStore` below); `delete_project` already routes through it
+   * (M1-14a-1 / DRO-531).
+   */
+  kitStore?: KitStore;
+  /**
+   * Injectable project backend (AC1 / DRO-523). When supplied, the project
+   * family (`create_project`, `list_projects`, `get_project`, `bind_kit`, and
+   * `conjure_screen`'s project read/record) route through this store instead of
+   * the default `new ProjectStore(projectsRoot, kitStore)`. Defaulting to the
+   * LocalFs-backed `ProjectStore` keeps every existing caller unchanged.
+   *
+   * Same partial-seam caveat as `kitStore`: this is the concrete
+   * fs-backed `ProjectStore` class (create_project.ts), which owns blueprints,
+   * kitBindings, screens, and `canEdit` — capabilities the thin
+   * `GitHostProjectStore` in the store layer does NOT yet implement. So a
+   * git-host project backend that satisfies the full tool-surface contract is
+   * still to-build (tracked follow-up); this seam is what lets it be dropped in
+   * once it exists, and lets tests substitute a fake. `delete_project` now
+   * routes through this store too (M1-14a-1 / DRO-531); the kit-file verbs
+   * (`read_file`/`list_files`/`delete_files`) route through `kitStore` as of
+   * M1-14a-1a / DRO-540, leaving `write_files` (kitsRoot) as the last holdout.
+   */
+  projectStore?: ProjectStore;
 }
 
 export function createServer(options: CreateServerOptions = {}): McpServer {
@@ -86,20 +129,33 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     join(process.cwd(), ".genie", "projects");
   // Resolve the kits root ONCE so every kit verb agrees on where kits live.
   // `create_kit` (via LocalFsKitStore) writes here, `read_file` reads here, and
-  // `list_files` (via KitFileStore) walks here — threading the same value into
-  // all of them is what keeps them consistent.
+  // `list_files` walks here — threading the same value into all of them (via the
+  // shared kitStore below) is what keeps them consistent.
   const kitsRoot =
     options.kitsRoot ?? process.env.GENIE_KITS_ROOT ?? join(process.cwd(), ".genie", "kits");
   // Shared instance: `bind_kit` (via ProjectStore) validates kitId through the
   // same store `create_kit`/`get_kit` already write through, so a kit created
   // in this process is immediately bindable without a second construction.
-  const kitStore = new LocalFsKitStore(kitsRoot);
+  //
+  // AC1 (DRO-523): an injected `options.kitStore` overrides the default so an
+  // in-process MCP walk can be pointed at `GitHostKitStore` (or any KitStore).
+  // Absent injection, this is exactly the pre-seam `new LocalFsKitStore(kitsRoot)`.
+  const kitStore = options.kitStore ?? new LocalFsKitStore(kitsRoot);
 
-  const projectStore = new ProjectStore(projectsRoot, kitStore);
+  // AC1 (DRO-523): an injected `options.projectStore` overrides the default so
+  // the project family can be pointed at an alternate backend. Absent injection
+  // this is exactly the pre-seam `new ProjectStore(projectsRoot, kitStore)` —
+  // sharing the same `kitStore` above so `bind_kit`/`conjure_screen` validate
+  // kitIds through the store `create_kit` writes to.
+  const projectStore = options.projectStore ?? new ProjectStore(projectsRoot, kitStore);
   registerCreateProjectTool(server, projectStore);
   registerListProjectsTool(server, projectStore);
   registerGetProjectTool(server, projectStore);
-  registerDeleteProjectTool(server, projectsRoot);
+  // delete_project (M1-14a-1 / DRO-531): routes through the injected
+  // `projectStore` — the same instance the rest of the project family uses —
+  // instead of a raw `projectsRoot` path, so a non-LocalFs backend reaches this
+  // verb too. Persistence + read-only policy live in `ProjectStore.deleteProject`.
+  registerDeleteProjectTool(server, projectStore);
   registerBindKitTool(server, projectStore);
 
   // conjure_screen (M1-21): project-aware screen generation. The M1 generator is
@@ -119,9 +175,15 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   registerCreateKit(server, kitStore);
   registerGetKitTool(server, kitStore);
 
-  // M1 tools
-  registerReadFile(server, kitsRoot);
-  registerListFilesTool(server, new KitFileStore(kitsRoot));
+  // M1 kit-file verbs. Re-plumbed onto the injected `kitStore` (M1-14a-1a /
+  // DRO-540): `read_file`, `list_files`, and `delete_files` now route through
+  // `KitStore.readFile`/`listFiles`/`deleteFile` instead of a raw `kitsRoot`
+  // path, so injecting a `GitHostKitStore` carries these verbs onto the git
+  // host too (not just the metadata verbs). The store owns MIME/encoding, the
+  // 256 KiB cap, SRI hashing, and `.genieignore`/default-dir exclusion; the
+  // tools keep plan-gating (delete_files) and request-shape guards.
+  registerReadFile(server, kitStore);
+  registerListFilesTool(server, kitStore);
 
   // Plan capability-grant boundary (M1-07). Locks writes/deletes/localDir and
   // issues a planId; write_files (below) validates every call against it via
@@ -145,11 +207,12 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   );
 
   // Plan-gated destructive verb (M1-09): deletes are authorized by a plan's
-  // `deletes` globs and hit the SAME kit tree read_file/list_files read
-  // (kitsRoot). Shares the M1-07 plan boundary and the M1-13 plan-guard
-  // middleware (`middleware/plan-guard.ts`) with write_files so the two
-  // verbs enforce plan authorization through one identical validation seam.
-  registerDeleteFilesTool(server, kitsRoot);
+  // Plan-gated destructive verb (M1-09): deletes are authorized by a plan's
+  // `deletes` globs and hit the SAME kit tree read_file/list_files read (via
+  // the shared `kitStore`, M1-14a-1a). Shares the M1-07 plan boundary and the
+  // M1-13 plan-guard middleware (`middleware/plan-guard.ts`) with write_files
+  // so the two verbs enforce plan authorization through one identical seam.
+  registerDeleteFilesTool(server, kitStore);
 
   return server;
 }

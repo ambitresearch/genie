@@ -6,7 +6,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { createServer } from "../server.js";
-import { KitFileStore, listFiles } from "./list_files.js";
+import { listFiles } from "./list_files.js";
+import { LocalFsKitStore } from "../store/local.js";
 
 async function tempKitsRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), "genie-kits-"));
@@ -33,7 +34,7 @@ describe("listFiles", () => {
     await mkdir(join(root, "empty-kit"), { recursive: true });
     await writeFile(join(root, "empty-kit", ".kit.json"), "{}");
 
-    await expect(listFiles(new KitFileStore(root), { kitId: "empty-kit" })).resolves.toEqual([]);
+    await expect(listFiles(new LocalFsKitStore(root), { kitId: "empty-kit" })).resolves.toEqual([]);
   });
 
   it("returns relative file metadata with SHA-256 SRI hashes and hidden files included", async () => {
@@ -44,7 +45,7 @@ describe("listFiles", () => {
     await writeKitFile(root, kitId, ".genie/recompile", "yes\n");
     await writeKitFile(root, kitId, ".genie/sync.json", '{"version":1}\n');
 
-    const files = await listFiles(new KitFileStore(root), { kitId });
+    const files = await listFiles(new LocalFsKitStore(root), { kitId });
 
     expect(files.map((file) => file.path)).toEqual([
       ".genie/recompile",
@@ -92,7 +93,7 @@ describe("listFiles", () => {
     await writeKitFile(root, kitId, "debug.log", "log\n");
     await writeKitFile(root, kitId, "components/Button.tmp", "tmp\n");
 
-    const files = await listFiles(new KitFileStore(root), { kitId });
+    const files = await listFiles(new LocalFsKitStore(root), { kitId });
 
     expect(files.map((file) => file.path)).toEqual([".genieignore", "src/App.tsx"]);
   });
@@ -102,11 +103,11 @@ describe("listFiles", () => {
     await writeKitFile(root, "safe-kit", ".kit.json", "{}");
     await writeKitFile(root, "safe-kit", "src/App.tsx", "app\n");
 
-    await expect(listFiles(new KitFileStore(root), { kitId: "." })).rejects.toMatchObject({
+    await expect(listFiles(new LocalFsKitStore(root), { kitId: "." })).rejects.toMatchObject({
       code: "ERR_INVALID_KIT_ID",
     });
     await expect(
-      listFiles(new KitFileStore(root), { kitId: "safe-kit/src" }),
+      listFiles(new LocalFsKitStore(root), { kitId: "safe-kit/src" }),
     ).rejects.toMatchObject({
       code: "ERR_INVALID_KIT_ID",
     });
@@ -114,7 +115,7 @@ describe("listFiles", () => {
 
   it("converts invalid arguments into a ListFilesError (ERR_INVALID_ARGS)", async () => {
     const root = await tempKitsRoot();
-    const store = new KitFileStore(root);
+    const store = new LocalFsKitStore(root);
 
     // Missing kitId
     await expect(
