@@ -123,6 +123,13 @@ describe("read_file tool", () => {
     ]);
     await writeFile(join(kitRoot, "icon.png"), pngHeader);
 
+    // A SIBLING kit under the same kits root — used to prove that an empty (or
+    // otherwise unsafe) kitId cannot resolve to the kits root and read across
+    // kit boundaries via the `path` argument.
+    const otherKitRoot = join(kitsRoot, "other-kit");
+    await mkdir(otherKitRoot, { recursive: true });
+    await writeFile(join(otherKitRoot, "secret.txt"), "cross-kit-secret");
+
     // Connect server + client over in-memory transport. The server is
     // configured with the same kitsRoot the fixtures were written under, so
     // read_file resolves to the directory create_kit would have written to.
@@ -245,5 +252,32 @@ describe("read_file tool", () => {
     const result = await callRaw(client, "../../../etc", "passwd");
     expect(result.isError).toBe(true);
     expect(errorText(result)).toContain("InvalidPathError");
+  });
+
+  // ── kitId cross-kit isolation (Copilot review, PR #116) ──
+  it("rejects an empty kitId instead of reading across sibling kits", async () => {
+    // With an empty kitId, kitRoot would resolve to the kits root itself, so a
+    // relative `path` of `other-kit/secret.txt` would escape `test-kit` and
+    // read a sibling kit's file. The shared guarded resolver must reject it.
+    const result = await callRaw(client, "", "other-kit/secret.txt");
+    expect(result.isError).toBe(true);
+    const text = errorText(result);
+    expect(text).not.toContain("cross-kit-secret");
+    // Rejected either at the MCP schema layer (min-length) or by the handler's
+    // InvalidPathError guard — both are acceptable, neither leaks the file.
+    expect(
+      text.includes("InvalidPathError") ||
+        text.toLowerCase().includes("invalid") ||
+        text.toLowerCase().includes("too small") ||
+        text.toLowerCase().includes("at least"),
+    ).toBe(true);
+  });
+
+  it("cannot read a sibling kit's file even with a valid kitId", async () => {
+    // Sanity: the `path` traversal guard still blocks `../other-kit/...` from a
+    // legitimate kit, independent of the kitId fix.
+    const result = await callRaw(client, kitId, "../other-kit/secret.txt");
+    expect(result.isError).toBe(true);
+    expect(errorText(result)).not.toContain("cross-kit-secret");
   });
 });

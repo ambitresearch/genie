@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readFile, readdir } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, relative } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { isSafeKitId } from "./kit-id.js";
+import { resolveSafeKitRoot } from "./kit-id.js";
 
 export const LIST_FILES_TOOL_NAME = "mcp__genie__list_files";
 
@@ -52,18 +52,15 @@ export class KitFileStore {
   }
 
   private kitRoot(kitId: string): string {
-    // Shared rule with `read_file` (see `./kit-id.ts`) so the two tools cannot
-    // silently drift: reject a separator or an exact `.`/`..` dot-name.
-    if (!isSafeKitId(kitId)) {
+    // Shared root resolution with `read_file` (see `resolveSafeKitRoot` in
+    // `./kit-id.ts`) so the two tools' traversal defenses cannot silently drift:
+    // it rejects empty / separator / exact-dot-name kitIds and confirms the
+    // resolved path stays inside the kits root.
+    const kitRoot = resolveSafeKitRoot(this.root, kitId);
+    if (kitRoot === null) {
       throw new ListFilesError("ERR_INVALID_KIT_ID", `Invalid kitId "${kitId}".`);
     }
-    const resolvedRoot = resolve(this.root);
-    const resolvedKitRoot = resolve(resolvedRoot, kitId);
-    const rel = relative(resolvedRoot, resolvedKitRoot);
-    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      throw new ListFilesError("ERR_INVALID_KIT_ID", `Invalid kitId "${kitId}".`);
-    }
-    return resolvedKitRoot;
+    return kitRoot;
   }
 
   private async assertKitExists(kitId: string, kitRoot: string): Promise<void> {

@@ -4,7 +4,7 @@ import { lookup } from "mime-types";
 import { z } from "zod";
 import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { isSafeKitId } from "./kit-id.js";
+import { resolveSafeKitRoot } from "./kit-id.js";
 
 /** 256 KiB in bytes — hard cap per DesignSync contract. */
 export const MAX_FILE_BYTES = 256 * 1024;
@@ -69,18 +69,6 @@ function isTextMime(mime: string): boolean {
 }
 
 /**
- * Resolve the on-disk directory for a single kit, given the server's configured
- * kits root. This is the SAME root the rest of the server's kit tools use
- * (`create_kit` via `LocalFsKitStore`), so `read_file` reads from exactly the
- * directory those verbs write to. The root is threaded in from `createServer`
- * (`options.kitsRoot ?? GENIE_KITS_ROOT ?? <cwd>/.genie/kits`) rather than
- * re-derived here, to avoid the two paths drifting apart.
- */
-export function resolveKitRoot(kitsRoot: string, kitId: string): string {
-  return resolve(kitsRoot, kitId);
-}
-
-/**
  * Validate that a resolved path stays within the kit root (prevents traversal).
  * Returns the fully-resolved target path or throws.
  *
@@ -134,22 +122,26 @@ export function registerReadFile(server: McpServer, kitsRoot: string): void {
         "Read the contents of a single file from a UI kit. Returns text (utf-8) " +
         "or binary (base64) content. Files larger than 256 KiB are rejected.",
       inputSchema: {
-        kitId: z.string().describe("The UI kit identifier."),
+        kitId: z.string().min(1).describe("The UI kit identifier."),
         path: z.string().describe("Relative path within the kit directory."),
       },
     },
     async ({ kitId, path: relPath }) => {
-      // Validate kitId does not contain path separators or traversal. Shared
-      // rule with `list_files` (see `./kit-id.ts`) so the two tools cannot
-      // silently drift: reject a separator or an exact `.`/`..` dot-name.
-      if (!isSafeKitId(kitId)) {
+      // Resolve the kit root through the SAME guarded resolver `list_files`
+      // uses (`resolveSafeKitRoot` in `./kit-id.ts`), so the two tools' kitId
+      // traversal defenses cannot silently drift. It rejects an empty kitId
+      // (which would otherwise resolve to the kits root itself and let `path`
+      // read across sibling kits), a separator, or an exact `.`/`..`, and it
+      // confirms the resolved path stays inside the kits root. The `.min(1)`
+      // above already blocks empty kitId at the MCP schema layer; this is the
+      // defense-in-depth guard for programmatic callers that bypass it.
+      const kitRoot = resolveSafeKitRoot(kitsRoot, kitId);
+      if (kitRoot === null) {
         throw new McpError(
           ErrorCode.InvalidParams,
           `InvalidPathError: invalid kit identifier`,
         );
       }
-
-      const kitRoot = resolveKitRoot(kitsRoot, kitId);
 
       // AC6 — path traversal check
       const target = safePath(kitRoot, relPath);
