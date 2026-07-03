@@ -66,15 +66,25 @@ OpenAI-compatible chat-completions endpoint through `packages/server/src/llm/cli
 LiteLLM is the reference gateway, but Ollama / OpenAI / vLLM / any compatible
 endpoint work the same way — genie hardcodes no provider URL or key.
 
-| Env var                        | Required | Default  | Purpose                                                                           |
-| ------------------------------ | -------- | -------- | --------------------------------------------------------------------------------- |
-| `GENIE_LLM_BASE_URL`           | yes      | none     | Base URL of the OpenAI-compatible endpoint, e.g. `https://litellm.example.com/v1` |
-| `GENIE_LLM_API_KEY`            | yes      | none     | API key/token for that endpoint                                                   |
-| `GENIE_LLM_REQUEST_TIMEOUT_MS` | no       | `120000` | Per-request timeout, in milliseconds                                              |
+| Env var                        | Required | Default  | Purpose                                                                                          |
+| ------------------------------ | -------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `GENIE_LLM_BASE_URL`           | yes      | none     | Base URL of the OpenAI-compatible endpoint, e.g. `https://litellm.example.com/v1`                |
+| `GENIE_LLM_API_KEY`            | yes      | none     | API key/token for that endpoint                                                                  |
+| `GENIE_LLM_REQUEST_TIMEOUT_MS` | no       | `120000` | Per-request timeout, in milliseconds                                                             |
+| `GENIE_LLM_RETRY_MAX`          | no       | `3`      | Max retries on transient LLM failures (429 / 5xx / ECONNRESET / ETIMEDOUT); `0` disables retries |
 
 Missing `GENIE_LLM_BASE_URL` or `GENIE_LLM_API_KEY` fails fast with
 `MissingLLMConfigError` naming both variables — there is no default endpoint
 to fall back to.
+
+Transient LLM failures — HTTP 429, 5xx, and network errors — are retried with
+exponential backoff (base 1 s, cap 30 s, ±20 % jitter) by the `withRetry`
+middleware in `packages/server/src/llm/retry.ts`, honouring `Retry-After` when
+the upstream sends it. After the budget is exhausted, callers see a typed
+`RateLimitedError` (429 tail) or `TransientError` (5xx / network tail) whose
+`.cause` preserves the original SDK error. Each retry is logged as
+`{ event: "llm.retry", attempt, status, retryAfter }` on stderr (never
+stdout — the stdio transport IS the protocol stream).
 
 ### Transports
 
