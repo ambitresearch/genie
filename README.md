@@ -59,6 +59,23 @@ printf '%s\n' \
 SHA-256 SRI hashes, includes dot-prefixed files, and excludes `node_modules`,
 `.git`, `dist`, plus patterns in `.genieignore`.
 
+### LLM endpoint
+
+Generation verbs (`conjure` / `refine`, M2) call a configurable
+OpenAI-compatible chat-completions endpoint through `packages/server/src/llm/client.ts`.
+LiteLLM is the reference gateway, but Ollama / OpenAI / vLLM / any compatible
+endpoint work the same way — genie hardcodes no provider URL or key.
+
+| Env var                        | Required | Default  | Purpose                                                                           |
+| ------------------------------ | -------- | -------- | --------------------------------------------------------------------------------- |
+| `GENIE_LLM_BASE_URL`           | yes      | none     | Base URL of the OpenAI-compatible endpoint, e.g. `https://litellm.example.com/v1` |
+| `GENIE_LLM_API_KEY`            | yes      | none     | API key/token for that endpoint                                                   |
+| `GENIE_LLM_REQUEST_TIMEOUT_MS` | no       | `120000` | Per-request timeout, in milliseconds                                              |
+
+Missing `GENIE_LLM_BASE_URL` or `GENIE_LLM_API_KEY` fails fast with
+`MissingLLMConfigError` naming both variables — there is no default endpoint
+to fall back to.
+
 ### Transports
 
 | Flag                           | Use                                                                  |
