@@ -157,10 +157,13 @@ jobs:
   # generation pipeline against a live endpoint once code has already landed.
   #
   # `if: github.event_name == 'push'` is a belt-and-suspenders gate ON TOP OF
-  # the test's own AC2 skip (`GENIE_LLM_API_KEY` unset ⇒ every test in the file
-  # skips, exit 0) — even if this workflow were ever triggered a different way,
-  # the job still only runs the spend-real-money suite on a push to main, and
-  # even then only if the repo secrets below are actually configured.
+  # the test's own AC2 skip (`GENIE_LLM_BASE_URL` or `GENIE_LLM_API_KEY` unset
+  # ⇒ every test in the file skips, exit 0 — both are required, not just the
+  # API key: a partial configuration must still skip cleanly rather than throw
+  # MissingLLMConfigError uncaught, Copilot review on PR #136) — even if this
+  # workflow were ever triggered a different way, the job still only runs the
+  # spend-real-money suite on a push to main, and even then only if the repo
+  # secrets below are actually configured.
   m2-generation:
     name: m2 generation canary (real LLM endpoint)
     if: github.event_name == 'push'

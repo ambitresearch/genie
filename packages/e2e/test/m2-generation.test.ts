@@ -18,12 +18,14 @@
  * and the `@genie` marker convention accept.
  *
  * ── Gate (AC2) ────────────────────────────────────────────────────────────
- * Skipped whenever `GENIE_LLM_API_KEY` is unset — the common case for a local
- * `pnpm test` and for every PR-triggered CI run (`ci.yml`'s `check` matrix
- * never sets it). Only a dedicated CI job gated to `push` on `main` (and an
- * operator who has deliberately provisioned `GENIE_LLM_BASE_URL` /
- * `GENIE_LLM_API_KEY` as repo secrets) actually executes this suite — see
- * `.github/workflows/ci.yml`'s `m2-generation` job. Mirrors the
+ * Skipped whenever `GENIE_LLM_BASE_URL` or `GENIE_LLM_API_KEY` is unset (the
+ * underlying M2-01 client requires both — gating on the API key alone would
+ * let a partial configuration slip past the skip and throw uncaught instead,
+ * Copilot review on PR #136) — the common case for a local `pnpm test` and
+ * for every PR-triggered CI run (`ci.yml`'s `check` matrix never sets either).
+ * Only a dedicated CI job gated to `push` on `main` (and an operator who has
+ * deliberately provisioned both as repo secrets) actually executes this suite
+ * — see `.github/workflows/ci.yml`'s `m2-generation` job. Mirrors the
  * `describe.skipIf(!dockerAvailable)` pattern the Gitea conformance suites
  * (`m1-conformance.test.ts` / `gitea-conformance.test.ts`) already use for
  * their own opt-in, environment-gated leg.
@@ -61,16 +63,32 @@ import type { ValidatedComponent } from "../../server/src/llm/schema.js";
 import { estimateCostUsd } from "../src/pricing.js";
 
 // ── AC2 — gate ────────────────────────────────────────────────────────────────
-
-const hasLlmApiKey = Boolean(process.env["GENIE_LLM_API_KEY"]);
-if (!hasLlmApiKey) {
+//
+// `createLLMClient` (M2-01, packages/server/src/llm/client.ts) throws
+// `MissingLLMConfigError` unless BOTH `GENIE_LLM_BASE_URL` and
+// `GENIE_LLM_API_KEY` are set. Gating on the API key alone (Copilot review,
+// PR #136) means a partial configuration — API key provisioned, base URL
+// not (or vice versa) — would NOT skip: `hasLlmConfig` would be true, the
+// suite would run, and the first `conjure` call in `beforeAll` would throw
+// that error uncaught, turning the push-to-main job red instead of the
+// documented "exits 0 via the AC2 gate" outcome. Requiring both env vars
+// here (not imported from `client.ts` — that module constructs its `llmClient`
+// singleton eagerly at load time and would throw on import in exactly this
+// unset-config case, same import-time-safety hazard `conjure.ts`/`refine.ts`
+// document; the two env var NAMES are re-declared as literals instead, zero
+// runtime dependency on the server package) makes this gate agree with what
+// the client actually requires.
+const hasLlmConfig = Boolean(
+  process.env["GENIE_LLM_BASE_URL"]?.trim() && process.env["GENIE_LLM_API_KEY"]?.trim(),
+);
+if (!hasLlmConfig) {
   // Visible breadcrumb, same convention as the Gitea conformance suites: a
   // green "skipped" run must never read like a green "ran and passed" one.
   console.info(
-    "[m2-generation] GENIE_LLM_API_KEY is not set — skipping the real LLM endpoint " +
-      "round-trip (AC2). Set GENIE_LLM_BASE_URL + GENIE_LLM_API_KEY to a real " +
+    "[m2-generation] GENIE_LLM_BASE_URL and/or GENIE_LLM_API_KEY is not set — " +
+      "skipping the real LLM endpoint round-trip (AC2). Set BOTH to a real " +
       "OpenAI-compatible endpoint to run this suite for real; CI's dedicated " +
-      "m2-generation job (push-to-main only) runs it when those are provisioned " +
+      "m2-generation job (push-to-main only) runs it when both are provisioned " +
       "as repo secrets.",
   );
 }
@@ -336,7 +354,7 @@ async function runFullGeneration(): Promise<GenerationRun> {
 
 // ── Suite ──────────────────────────────────────────────────────────────────────
 
-describe.skipIf(!hasLlmApiKey)("M2-09 — real LLM endpoint round-trip (DRO-256)", () => {
+describe.skipIf(!hasLlmConfig)("M2-09 — real LLM endpoint round-trip (DRO-256)", () => {
   let run: GenerationRun;
   let reportSummaryPath: string;
 
