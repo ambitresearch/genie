@@ -6,10 +6,12 @@
  * Each plan is a temp staging directory.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import type {
   ComponentEntry,
@@ -35,9 +37,9 @@ import {
   buildIgnoreMatcher,
   classifyFileContent,
   parseGenieignore,
-  sriSha256,
   type IgnoreMatcher,
 } from "./kit-files.js";
+import { isSafeKitId } from "./kit-id.js";
 import { MANIFEST_PATH, selectComponents } from "./manifest.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -93,15 +95,34 @@ async function walkKitFiles(
       continue;
     }
     if (!entry.isFile()) continue;
-    const [stats, bytes] = await Promise.all([stat(absolutePath), readFile(absolutePath)]);
+    const [stats, hash] = await Promise.all([stat(absolutePath), hashFileStream(absolutePath)]);
     files.push({
       path: relativePath,
       size: stats.size,
-      hash: sriSha256(bytes),
+      hash,
       lastModified: stats.mtime.toISOString(),
     });
   }
   return files;
+}
+
+/**
+ * Compute a file's SHA-256 SRI hash (`sha256-<base64>`) by streaming it through
+ * the hash in chunks, so peak hashing memory is bounded by the read-stream
+ * buffer (default highWaterMark, 64 KiB) rather than the largest single file's
+ * size. The digest is byte-identical to hashing the full buffer with
+ * `sriSha256` (`createHash("sha256").update(entireBuffer)`) — piping the stream
+ * feeds the same bytes to the same hash in the same order — which the
+ * "streams hashes that are byte-identical" regression test in `list_files.test.ts`
+ * pins down against `sriSha256` for a multi-chunk file plus empty/binary edges.
+ * `pipeline` propagates a mid-read stream error as a rejection instead of
+ * leaving a dangling stream (RFC G-5: the hash is part of byte-identical
+ * `list_files` output, so it must not silently differ from the buffered path).
+ */
+async function hashFileStream(absolutePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  await pipeline(createReadStream(absolutePath), hash);
+  return `sha256-${hash.digest("base64")}`;
 }
 
 /** ENOENT (missing file) and ENOTDIR (a parent component is a file) both mean
@@ -197,6 +218,16 @@ export class LocalFsKitStore implements KitStore {
   }
 
   async listFiles(kitId: KitId): Promise<KitFileEntry[]> {
+    // Defense in depth: an unsafe kitId (empty, `.`/`..`, or a separator) must
+    // never resolve to a directory. An empty kitId in particular would make
+    // `kitDir("")` === `baseDir` (the shared kits root), so `walkKitFiles` would
+    // enumerate EVERY kit's files, not one kit's. The `list_files` tool already
+    // rejects these (schema `.min(1)` + `isSafeKitId`); this guards programmatic
+    // callers that reach the store directly. Shared rule with `read_file` via
+    // `isSafeKitId` so the two verbs cannot drift.
+    if (!isSafeKitId(kitId)) {
+      throw new NotFoundError("Kit", kitId);
+    }
     const dir = this.kitDir(kitId);
     try {
       await stat(dir);
@@ -257,6 +288,15 @@ export class LocalFsKitStore implements KitStore {
   }
 
   async readFile(kitId: KitId, path: string): Promise<KitFileContent> {
+    // Defense in depth against a cross-kit read: an empty kitId makes
+    // `kitDir("")` === `baseDir` (the shared kits root), so a `path` of
+    // `other-kit/secret.txt` stays INSIDE that root and `safePath` would permit
+    // it — leaking a sibling kit's bytes. Rejecting the unsafe kitId up front
+    // (shared `isSafeKitId` rule with `list_files`) closes that hole for any
+    // programmatic caller that bypasses the tool's schema guard.
+    if (!isSafeKitId(kitId)) {
+      throw new NotFoundError("Kit", kitId);
+    }
     // First check if kit exists
     const kitDir = this.kitDir(kitId);
     try {

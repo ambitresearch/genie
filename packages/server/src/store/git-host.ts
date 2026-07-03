@@ -39,6 +39,7 @@ import {
   parseGenieignore,
   sriSha256,
 } from "./kit-files.js";
+import { isSafeKitId } from "./kit-id.js";
 import { MANIFEST_PATH, selectComponents } from "./manifest.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -280,6 +281,12 @@ export class GitHostKitStore implements KitStore {
   }
 
   async listFiles(kitId: KitId): Promise<KitFileEntry[]> {
+    // Shared `isSafeKitId` guard (parity with LocalFsKitStore + the tools) so an
+    // unsafe kitId can never reach the git-host API as a repo name. Rejected as
+    // NotFound — the same vocabulary an unknown kit uses.
+    if (!isSafeKitId(kitId)) {
+      throw new NotFoundError("Kit", kitId);
+    }
     // Repo metadata doubles as the kit-existence check AND the `lastModified`
     // parity source (updated_at → created_at). See KitFileEntry's doc comment
     // for why git-host entries carry a per-repo, not per-file, timestamp.
@@ -425,6 +432,12 @@ export class GitHostKitStore implements KitStore {
   }
 
   async readFile(kitId: KitId, path: string): Promise<KitFileContent> {
+    // Shared `isSafeKitId` guard (parity with LocalFsKitStore + the tools): an
+    // unsafe kitId (empty / `.`/`..` / separator) never reaches the git-host
+    // content API. NotFound matches the "kit missing" vocabulary.
+    if (!isSafeKitId(kitId)) {
+      throw new NotFoundError("File", `${kitId}/${path}`);
+    }
     const entry = await this.fetchContentEntry(kitId, path);
 
     // Validate that this is a file, not a directory

@@ -4,6 +4,7 @@ import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { KitStore } from "../store/interface.js";
 import { FileTooLargeError, NotFoundError } from "../store/interface.js";
+import { isSafeKitId } from "../store/kit-id.js";
 
 /** 256 KiB in bytes — hard cap per DesignSync contract. Re-exported for tests. */
 export const MAX_FILE_BYTES = 256 * 1024;
@@ -63,13 +64,20 @@ export function registerReadFile(server: McpServer, kitStore: KitStore): void {
         "Read the contents of a single file from a UI kit. Returns text (utf-8) " +
         "or binary (base64) content. Files larger than 256 KiB are rejected.",
       inputSchema: {
-        kitId: z.string().describe("The UI kit identifier."),
+        kitId: z.string().min(1).describe("The UI kit identifier."),
         path: z.string().describe("Relative path within the kit directory."),
       },
     },
     async ({ kitId, path: relPath }) => {
-      // Validate kitId does not contain path separators or traversal
-      if (kitId.includes("/") || kitId.includes("\\") || kitId.includes("..")) {
+      // Validate kitId through the SAME shared rule `list_files` uses
+      // (`isSafeKitId`), so the two verbs' kitId traversal defenses cannot
+      // silently drift. It rejects an empty kitId — which would otherwise make
+      // the store resolve `kitDir("")` to the kits root and let `path` read
+      // across sibling kits (`{ kitId: "", path: "other-kit/secret.txt" }`) — as
+      // well as a separator or an exact `.`/`..`. The `.min(1)` above already
+      // blocks empty kitId at the MCP schema layer; this is the defense-in-depth
+      // guard for programmatic callers that bypass schema validation.
+      if (!isSafeKitId(kitId)) {
         throw new McpError(
           ErrorCode.InvalidParams,
           `InvalidPathError: invalid kit identifier`,
