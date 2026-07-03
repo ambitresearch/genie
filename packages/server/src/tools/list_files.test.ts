@@ -81,6 +81,13 @@ describe("listFiles", () => {
     await writeKitFile(root, kitId, "node_modules/pkg/index.js", "pkg\n");
     await writeKitFile(root, kitId, ".git/config", "git\n");
     await writeKitFile(root, kitId, "dist/index.js", "dist\n");
+    // write_files (M1-08) stages its atomic-rename scratch space at
+    // `.genie-tmp/<random>/` under the same root list_files walks — a
+    // Copilot review finding on PR #106 flagged this as leakable into a kit
+    // listing (e.g. a concurrent list_files call during a large write, or an
+    // orphaned subdir left behind by a hard crash mid-write). Default-excluded
+    // like node_modules/.git/dist, below.
+    await writeKitFile(root, kitId, ".genie-tmp/abc123-def/0", "staged\n");
     await writeKitFile(root, kitId, "coverage/report.json", "{}\n");
     await writeKitFile(root, kitId, "debug.log", "log\n");
     await writeKitFile(root, kitId, "components/Button.tmp", "tmp\n");

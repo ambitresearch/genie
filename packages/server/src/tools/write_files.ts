@@ -39,9 +39,8 @@
  * directly instead of the stopgap, which has been deleted.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, type Stats } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -355,6 +354,27 @@ export async function writeFiles(
     }
   }
 
+  // Security (Copilot review finding on PR #106; RFC §10 T-13 — "Path
+  // traversal in write_files overwrites /etc/passwd"): `path` is
+  // matched against the plan's glob patterns above, but a glob match alone
+  // does NOT guarantee the resolved destination stays inside `localDir` — an
+  // absolute path like "/etc/passwd" matches a permissive glob such as `**`
+  // under micromatch (confirmed empirically: `isMatch("/etc/passwd", ["**"])`
+  // is `true`), and `resolve(localDir, "/etc/passwd")` then returns
+  // `/etc/passwd` verbatim, since `path.resolve` treats an absolute second
+  // argument as an override rather than joining it. A `../`-traversal `path`
+  // is already blocked by micromatch's own glob semantics (confirmed: `**`
+  // does not match `../x`), so this second check is specifically the
+  // absolute-path gap, not a redundant traversal re-check. Reuses
+  // `isPathInsideLocalDir` — the same containment helper `localPath` (AC6)
+  // already goes through — so `path` and `localPath` share one containment
+  // guarantee instead of the destination trusting glob-membership alone.
+  for (const file of args.files) {
+    if (!isPathInsideLocalDir(file.path, plan.localDir)) {
+      throw new PathOutsidePlanError(file.path);
+    }
+  }
+
   // AC7 — exactly one of localPath/data per file.
   for (const file of args.files) {
     const hasLocalPath = file.localPath !== undefined;
@@ -451,14 +471,36 @@ interface StagedFile {
  * fully buffered in memory), then commit via rename-to-temp + rename-back
  * (see the module header). Nothing under `localDir` is touched until every
  * file has staged successfully.
+ *
+ * Staging lives at `<localDir>/.genie-tmp/<random>/` — inside `localDir`
+ * itself, per the issue's own Implementation Notes ("Per-call transaction =
+ * write to `<projectRoot>/.genie-tmp/<callId>/` then atomic rename per
+ * file"). This is load-bearing, not cosmetic: `rename()` is only atomic
+ * within a single filesystem/mount. An earlier version of this code staged
+ * under `os.tmpdir()` (`/tmp`), which is commonly a *different* mount than
+ * the project/kit directory (e.g. a container with `/tmp` as tmpfs and the
+ * project on a bind-mounted volume) — a Copilot review finding on PR #106
+ * confirmed the commit-phase `rename()` would then throw `EXDEV` and break
+ * the atomic guarantee AC10 depends on. Staging inside `localDir` guarantees
+ * same-filesystem renames.
+ *
+ * Known limitation (v1, matches the issue's own "conflict detection vs
+ * concurrent writes... out of scope" note): a concurrent `list_files` call
+ * could observe the `.genie-tmp/<random>/` directory mid-write. It is always
+ * removed (success or failure) before this function returns, and
+ * `randomUUID()`-derived names make a collision between concurrent calls
+ * astronomically unlikely, but it is not hidden from a concurrent lister the
+ * way `.git`/`node_modules`/`dist` are (see `list_files.ts`'s ignore list) —
+ * left as-is rather than expanding this PR's scope into that tool.
  */
 async function stageAndCommit(
   files: FileInput[],
   resolvedLocalPaths: Map<string, string>,
   localDir: string,
 ): Promise<WriteFilesResult> {
-  const callId = randomUUID();
-  const stagingRoot = await mkdtemp(join(tmpdir(), `genie-write-${callId}-`));
+  const genieTmpRoot = join(localDir, ".genie-tmp");
+  await mkdir(genieTmpRoot, { recursive: true });
+  const stagingRoot = await mkdtemp(join(genieTmpRoot, `${randomUUID()}-`));
   const backupRoot = join(stagingRoot, "backup");
 
   try {
@@ -558,18 +600,46 @@ async function commitStaged(
 /**
  * Rename `destPath` to `backupPath` if it exists. Returns whether a backup
  * was made (`false` when `destPath` didn't exist — nothing to back up).
+ *
+ * Refuses (via `WriteFailedError`, triggering the normal rollback path) when
+ * `destPath` exists as a DIRECTORY rather than a file. `rename()` itself
+ * doesn't distinguish files from directories — it would happily move an
+ * existing directory into the backup slot, after which a file gets renamed
+ * into its place; if the whole call then succeeds, the caller's `finally`
+ * (`stageAndCommit`) deletes the entire staging root, backups included,
+ * silently destroying whatever tree used to live at `destPath` (a Copilot
+ * review finding on PR #106). `write_files` writes FILES, never replaces a
+ * directory, so this rejects before the rename is even attempted.
  */
 async function tryRenameIfExists(
   destPath: string,
   backupPath: string,
   publicPath: string,
 ): Promise<boolean> {
+  const existing = await statIfExists(destPath);
+  if (existing?.isDirectory()) {
+    throw new WriteFailedError(
+      publicPath,
+      `destination "${destPath}" already exists and is a directory, not a file`,
+    );
+  }
+
   try {
     await rename(destPath, backupPath);
     return true;
   } catch (error) {
     if (isEnoent(error)) return false;
     throw new WriteFailedError(publicPath, describeError(error, "failed to back up existing file"));
+  }
+}
+
+/** `stat`, or `undefined` if the path doesn't exist. Other errors propagate. */
+async function statIfExists(path: string): Promise<Stats | undefined> {
+  try {
+    return await stat(path);
+  } catch (error) {
+    if (isEnoent(error)) return undefined;
+    throw error;
   }
 }
 

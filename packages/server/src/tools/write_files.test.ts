@@ -1,5 +1,5 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { tmpdir, platform } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -173,12 +173,50 @@ describe("writeFiles (core logic)", () => {
     await expect(stat(join(localDir, "components", "Good.html"))).rejects.toThrow();
   });
 
+  it("AC4 — rejects an absolute path that matches a permissive glob but escapes localDir (Copilot review finding)", async () => {
+    // Regression guard: a glob match alone does not guarantee containment.
+    // "**" matches the literal string "/etc/passwd" under micromatch (an
+    // absolute path is still just a string to the glob matcher), and
+    // `resolve(localDir, "/etc/passwd")` returns "/etc/passwd" verbatim since
+    // `path.resolve` treats an absolute second argument as an override rather
+    // than joining it — so without the isPathInsideLocalDir check, this call
+    // would have written outside localDir entirely, ignoring the plan's
+    // containment guarantee.
+    const plan = await createPlan("k", ["**"], [], localDir);
+
+    await expect(
+      writeFiles({
+        planId: plan.planId,
+        files: [{ path: "/etc/passwd-genie-test-should-not-write", data: "pwned" }],
+      }),
+    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+
+    await expect(stat("/etc/passwd-genie-test-should-not-write")).rejects.toThrow();
+  });
+
+  it("AC4 — rejects a path containing a parent-traversal segment even under a permissive glob", async () => {
+    // Belt-and-suspenders: micromatch's own semantics already reject "../x"
+    // against "**", but assert it explicitly so a future glob-library swap
+    // can't silently reopen this.
+    const plan = await createPlan("k", ["**"], [], localDir);
+
+    await expect(
+      writeFiles({
+        planId: plan.planId,
+        files: [{ path: "../escaped.html", data: "x" }],
+      }),
+    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+  });
+
   it("AC6 — rejects a localPath that escapes the plan's localDir (parent traversal)", async () => {
     const plan = await createPlan("k", ["dest/**"], [], localDir);
     // A sibling directory outside localDir with a file we must not be able to read.
     const secretsDir = await tempDir("genie-wf-secret-");
     await writeFile(join(secretsDir, "secret.txt"), "top secret", "utf-8");
-    const escapePath = join("..", ...secretsDir.split("/").slice(-1), "secret.txt");
+    // basename() is separator-agnostic (unlike a raw `.split("/")`, which
+    // would silently misparse a Windows-style path), matching this file's
+    // and the codebase's established containment-helper conventions.
+    const escapePath = join("..", basename(secretsDir), "secret.txt");
 
     await expect(
       writeFiles({
@@ -353,6 +391,33 @@ describe("writeFiles (core logic)", () => {
     await expect(stat(join(localDir, "dest", "fresh.html"))).rejects.toThrow();
   });
 
+  it("AC10 — refuses to overwrite a destination that already exists as a directory (Copilot review finding)", async () => {
+    // Regression guard: `rename()` doesn't distinguish files from
+    // directories — without an explicit guard, this call would have renamed
+    // the pre-existing "dest/existing" directory into the backup slot, then
+    // renamed a FILE into its place. Since the call would otherwise succeed,
+    // the backup (containing the original directory) gets deleted by the
+    // caller's cleanup — silently destroying the directory and its contents.
+    const plan = await createPlan("k", ["dest/**"], [], localDir);
+    const existingDir = join(localDir, "dest", "existing");
+    await mkdir(existingDir, { recursive: true });
+    await writeFile(join(existingDir, "precious.txt"), "do not delete me", "utf-8");
+
+    await expect(
+      writeFiles({
+        planId: plan.planId,
+        files: [{ path: "dest/existing", data: "this should never land" }],
+      }),
+    ).rejects.toMatchObject({ code: "WriteFailedError" });
+
+    // The directory and its contents must be completely untouched.
+    const stats = await stat(existingDir);
+    expect(stats.isDirectory()).toBe(true);
+    await expect(readFile(join(existingDir, "precious.txt"), "utf-8")).resolves.toBe(
+      "do not delete me",
+    );
+  });
+
   it("does not mutate the destination tree at all when plan/schema validation fails before staging", async () => {
     const plan = await createPlan("k", ["components/**"], [], localDir);
 
@@ -363,7 +428,7 @@ describe("writeFiles (core logic)", () => {
       }),
     ).rejects.toThrow();
 
-    const entries = await import("node:fs/promises").then((m) => m.readdir(localDir));
+    const entries = await readdir(localDir);
     expect(entries).toEqual([]);
   });
 });
