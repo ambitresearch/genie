@@ -39,6 +39,7 @@ import {
   parseGenieignore,
   sriSha256,
 } from "./kit-files.js";
+import { MANIFEST_PATH, selectComponents } from "./manifest.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -297,20 +298,35 @@ export class GitHostKitStore implements KitStore {
     kitId: KitId;
     group?: string;
   }): Promise<import("./interface.js").ComponentEntry[]> {
-    // Check kit exists by attempting to fetch .kit.json
-    // getKit throws NotFoundError for invalid kit, which propagates naturally
+    // getKit throws NotFoundError for an unknown kit, which propagates naturally
+    // and keeps "kit missing" distinct from "kit present but no manifest yet".
     await this.getKit(params.kitId);
 
-    // For now, return empty array as M3-03 manifest compiler is not yet implemented
-    // TODO: After M3-03 lands, fetch .genie/manifest.json from the kit repository
-    const components: import("./interface.js").ComponentEntry[] = [];
-
-    // Filter by group if specified (use explicit undefined check to handle empty string correctly)
-    if (params.group !== undefined) {
-      return components.filter((c) => c.group === params.group);
+    // Fetch the compiled card index (D-D) from the kit's default branch. It is
+    // absent until the M3-03 compiler writes it → a 404 (surfaced by readFile as
+    // NotFoundError) maps to `undefined`, which selectComponents turns into []
+    // (AC8). Other errors (auth, 5xx, oversize) propagate.
+    //
+    // `readFile` returns the rich `KitFileContent` shape (M1-14a-1a / DRO-540),
+    // not a bare string. `.genie/manifest.json` is JSON (a textual MIME), so the
+    // shared classifier decodes it to a utf-8 `content` string; a base64 result
+    // is decoded defensively so `selectComponents` always parses real JSON text.
+    let raw: string | undefined;
+    try {
+      const file = await this.readFile(params.kitId, MANIFEST_PATH);
+      raw =
+        file.encoding === "base64"
+          ? Buffer.from(file.content, "base64").toString("utf-8")
+          : file.content;
+    } catch (e) {
+      if (e instanceof NotFoundError) {
+        raw = undefined;
+      } else {
+        throw e;
+      }
     }
 
-    return components;
+    return selectComponents(params.kitId, raw, params.group);
   }
 
   /** Fetch repo metadata, mapping a 404 to NotFoundError("Kit"). */

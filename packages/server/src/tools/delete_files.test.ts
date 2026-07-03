@@ -333,7 +333,14 @@ describe("delete_files tool (via MCP)", () => {
     expect(existsSync(join(kitDir, "old/a.txt"))).toBe(false);
   });
 
-  it("AC3 — an out-of-plan path yields isError with a PathOutsidePlanError payload", async () => {
+  it("AC3 — an out-of-plan path yields isError with a canonical -32602 plan-guard rejection (M1-13)", async () => {
+    // Post-M1-13 the plan-guard middleware (packages/server/src/middleware/
+    // plan-guard.ts) preempts the delete-side PathOutsidePlanError and
+    // returns a JSON-RPC `-32602` envelope: `{ code, message, data: { reason:
+    // "pathOutsidePlan", planId, path } }`. Nothing about the destructive-
+    // side guarantee changes — the file must still remain — only the shape
+    // of the isError payload does, because the guard's whole point is one
+    // shared shape across the four plan-gated verbs.
     await seed(kitDir, "secret.txt");
     const planId = await seedPlan(["old/*.txt"]);
 
@@ -344,8 +351,15 @@ describe("delete_files tool (via MCP)", () => {
 
     expect(result.isError).toBe(true);
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
-    const payload = JSON.parse(text) as { error: string; path?: string };
-    expect(payload.error).toBe("PathOutsidePlanError");
+    const payload = JSON.parse(text) as {
+      code: number;
+      message: string;
+      data: { reason: string; planId?: string; path?: string };
+    };
+    expect(payload.code).toBe(-32602);
+    expect(payload.data.reason).toBe("pathOutsidePlan");
+    expect(payload.data.path).toBe("secret.txt");
+    expect(payload.data.planId).toBe(planId);
     expect(existsSync(join(kitDir, "secret.txt"))).toBe(true);
   });
 });

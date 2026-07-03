@@ -29,6 +29,7 @@ import { isAbsolute } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { KitStore } from "../store/interface.js";
+import { withPlanGuard } from "../middleware/plan-guard.js";
 import { getPlan, pathMatchesGlobs, PlanNotFoundError } from "../plans/index.js";
 
 export const DELETE_FILES_TOOL_NAME = "mcp__genie__delete_files";
@@ -230,6 +231,14 @@ export async function deleteFiles(
  * AC4: Returns `deletedPaths` — what was actually removed.
  * AC5: A missing path is a non-error, recorded in `notFoundPaths`.
  * AC6: Other errors (permission denied, directory target, …) fail the call.
+ *
+ * Plan-boundary validation (planId presence/existence/expiry, path-vs-
+ * `deletes`-glob) runs through the M1-13 plan-guard middleware
+ * (`../middleware/plan-guard.ts`) so the write/delete verbs share one
+ * identical check. Delete-tool-specific validation (InvalidArguments shape,
+ * kitId containment, dot-segment rejection, unlink failure taxonomy) stays
+ * in `deleteFiles` itself — the guard is intentionally tool-agnostic about
+ * those.
  */
 export function registerDeleteFilesTool(server: McpServer, store: KitStore): void {
   server.registerTool(
@@ -258,7 +267,16 @@ export function registerDeleteFilesTool(server: McpServer, store: KitStore): voi
         notFoundPaths: z.array(z.string()).optional(),
       },
     },
-    async (args) => {
+    // M1-13 plan-vs-write guard (DRO-239). The middleware runs BEFORE the
+    // delete handler, catching PlanNotFoundError and out-of-plan paths and
+    // returning the canonical JSON-RPC `-32602` shape `{ code, message,
+    // data: { reason, planId?, path? } }`. The delete-side path-outside-
+    // plan branch below is now only reachable for a direct in-process caller
+    // (see the "deleteFiles — core behaviour" test suite), which bypasses
+    // MCP registration and this middleware with it — kept as defense-in-
+    // depth so removing the check from `deleteFiles` doesn't silently open
+    // that path for those callers.
+    withPlanGuard({ mode: "deletes", pathsKey: "paths" }, async (args) => {
       try {
         const result = await deleteFiles(store, args);
         return {
@@ -282,6 +300,11 @@ export function registerDeleteFilesTool(server: McpServer, store: KitStore): voi
           };
         }
         if (error instanceof PlanNotFoundError) {
+          // Ordinarily unreachable at the wire level — the M1-13 plan-guard
+          // middleware (above) catches PlanNotFoundError first. Kept as
+          // belt-and-suspenders for a future refactor that bypasses the
+          // guard or a race where a plan expires between the guard's
+          // getPlan and the core's getPlan.
           return {
             isError: true,
             content: [
@@ -298,6 +321,6 @@ export function registerDeleteFilesTool(server: McpServer, store: KitStore): voi
         }
         throw error; // unexpected — bubble up as an MCP internal error
       }
-    },
+    }),
   );
 }

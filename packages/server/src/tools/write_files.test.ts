@@ -562,7 +562,15 @@ describe("mcp__genie__write_files tool (MCP wire level)", () => {
     await expect(readFile(join(h.localDir, "b.html"), "utf-8")).resolves.toBe("B");
   });
 
-  it("AC5 — an unknown planId returns a structured PlanNotFoundError, not a thrown protocol error", async () => {
+  it("AC5 — an unknown planId returns a canonical -32602 plan-guard rejection (M1-13)", async () => {
+    // Post-M1-13 the plan-guard middleware (packages/server/src/middleware/
+    // plan-guard.ts) owns the planId-not-found rejection, and normalises the
+    // response to a JSON-RPC-shaped `{ code: -32602, message, data: { reason,
+    // planId } }` payload. This test asserts the middleware envelope rather
+    // than the old code-name-string ("PlanNotFoundError") — that path is
+    // now unreachable at the wire level (see the belt-and-suspenders branch
+    // in write_files.ts) and would only surface for a direct in-process
+    // caller, which the core-logic suite above covers.
     const result = await h.client.callTool({
       name: WRITE_FILES_TOOL_NAME,
       arguments: {
@@ -571,10 +579,16 @@ describe("mcp__genie__write_files tool (MCP wire level)", () => {
       },
     });
     expect(result.isError).toBe(true);
-    expect(firstTextOf(result)).toContain("PlanNotFoundError");
+    const parsed = JSON.parse(firstTextOf(result));
+    expect(parsed.code).toBe(-32602);
+    expect(parsed.data.reason).toBe("planNotFound");
+    expect(parsed.data.planId).toBe("00000000-0000-4000-8000-000000000000");
   });
 
-  it("AC4 — a path outside the plan surfaces PathOutsidePlanError with the offending path", async () => {
+  it("AC4 — a path outside the plan surfaces a -32602 plan-guard rejection with the offending path (M1-13)", async () => {
+    // Same rationale as the AC5 test above: the M1-13 middleware normalises
+    // this response, so the assertion targets the canonical envelope's
+    // `data.reason` + `data.path` rather than the old code-name string.
     const planResult = await h.client.callTool({
       name: PLAN_TOOL_NAME,
       arguments: { kitId: "k", writes: ["components/**"], localDir: h.localDir },
@@ -586,9 +600,10 @@ describe("mcp__genie__write_files tool (MCP wire level)", () => {
       arguments: { planId, files: [{ path: "outside/x.html", data: "x" }] },
     });
     expect(result.isError).toBe(true);
-    const text = firstTextOf(result);
-    expect(text).toContain("PathOutsidePlanError");
-    expect(text).toContain("outside/x.html");
+    const parsed = JSON.parse(firstTextOf(result));
+    expect(parsed.code).toBe(-32602);
+    expect(parsed.data.reason).toBe("pathOutsidePlan");
+    expect(parsed.data.path).toBe("outside/x.html");
   });
 
   it("AC9 — payload-too-large surfaces code -32099 with retryWith.maxFiles in data", async () => {

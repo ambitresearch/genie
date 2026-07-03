@@ -554,13 +554,22 @@ const ListComponentsOutput = z.object({
       name: z.string(),
       group: z.string(),
       path: z.string(),
-      viewport: z.object({ width: z.number().int(), height: z.number().int() }),
+      // Raw viewport token captured by the M3-01 `@genie` regex from the
+      // preview's first-line marker (e.g. "desktop" or "375x812"). Kept as an
+      // opaque string — Draft-7 JSON Schema on the wire forbids the `$ref`
+      // chain a {width,height} object would require (M1-15 AC3/AC5).
+      viewport: z.string(),
       hash: z.string(),
       lastModified: z.string().datetime(),
     }),
   ),
-  nextCursor: z.string().optional(),
 });
+// Pagination cap (the shared list_files/list_kits 256-entry ceiling): when a
+// page is truncated the continuation token is surfaced OUT-OF-BAND in the MCP
+// response `_meta.nextCursor`, NOT inside `ListComponentsOutput`. This keeps
+// `components` a clean, schema-validated array on the wire; callers read the
+// opaque keyset cursor from `_meta.nextCursor` and pass it back as `cursor`.
+// (See §6.2.1 tool impl and packages/server/src/tools/list_components.ts.)
 ```
 
 #### 6.2.2 Generation surface
@@ -2159,7 +2168,7 @@ ran validation locally persist the summary without a re-scan.
     "properties": {
       "components": {
         "type": "array",
-        "maxItems": 500,
+        "maxItems": 256,
         "items": {
           "type": "object",
           "required": ["name", "group", "path", "viewport", "hash", "lastModified"],
@@ -2167,17 +2176,20 @@ ran validation locally persist the summary without a re-scan.
             "name": { "type": "string" },
             "group": { "type": "string" },
             "path": { "type": "string" },
-            "viewport": { "$ref": "#/definitions/Viewport" },
+            "viewport": { "type": "string" },
             "hash": { "type": "string" },
             "lastModified": { "type": "string", "format": "date-time" }
           }
         }
-      },
-      "nextCursor": { "type": "string" }
+      }
     }
   }
 }
 ```
+
+**Ordering (AC6).** Entries are sorted `group` ASC, then `name` ASC, ties broken by `path` ASC, compared by UTF-16 code unit (locale-independent) so the manifest compiler (M3-03) and grid renderer (M4-03) share a stable seed order.
+
+**Pagination (AC7).** A single call returns at most 256 components — the shared `list_files` / `list_kits` cap. When more remain, an opaque keyset cursor is returned out-of-band in `_meta.nextCursor`; pass it back as the `cursor` input to fetch the next page. `viewport` is the raw first-line-marker token (string), not a `{width,height}` object, keeping the schema Draft-7 `$ref`-free (AC3/AC5).
 
 ### 9.13 `mcp__genie__preview`
 
