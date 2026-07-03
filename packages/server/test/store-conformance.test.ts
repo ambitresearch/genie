@@ -180,15 +180,11 @@ function kitStoreContract(
 
     it("listComponents returns [] when the group filter matches nothing (AC8)", async () => {
       const kit = await store.createKit("group-miss-kit");
-      await expect(
-        store.listComponents({ kitId: kit.id, group: "nope" }),
-      ).resolves.toEqual([]);
+      await expect(store.listComponents({ kitId: kit.id, group: "nope" })).resolves.toEqual([]);
     });
 
     it("listComponents throws NotFoundError for a non-existent kit", async () => {
-      await expect(
-        store.listComponents({ kitId: "ghost-kit" }),
-      ).rejects.toThrow(NotFoundError);
+      await expect(store.listComponents({ kitId: "ghost-kit" })).rejects.toThrow(NotFoundError);
     });
 
     it("openPlan + commitPlan + closePlan lifecycle", async () => {
@@ -313,6 +309,60 @@ function kitStoreContract(
 
       // The failed delete must not have removed the directory's contents.
       expect((await store.listFiles(kit.id)).map((f) => f.path)).toContain("adir/inner.txt");
+    });
+
+    // ── Write-primitive contract (DRO-565) ───────────────────────────────────
+    // writeFiles(kitId, ops) → { writtenPaths }, committing atomically into the
+    // kit's readable surface. Run against BOTH adapters so the write path is
+    // byte-identical across LocalFs (rename transaction) and GitHost
+    // (contents-API commit). Content lands where readFile/listFiles see it.
+
+    it("writeFiles commits inline content, readable back via readFile in input order", async () => {
+      const kit = await store.createKit("write-inline-kit");
+      const result = await store.writeFiles(kit.id, [
+        { path: "components/Button.html", content: Buffer.from("<button>Hi</button>") },
+        { path: "tokens.css", content: Buffer.from(":root { --c: red; }") },
+      ]);
+      expect(result.writtenPaths).toEqual(["components/Button.html", "tokens.css"]);
+
+      // The written files are on the SAME surface readFile/listFiles read.
+      expect((await store.readFile(kit.id, "components/Button.html")).content).toBe(
+        "<button>Hi</button>",
+      );
+      expect((await store.readFile(kit.id, "tokens.css")).content).toBe(":root { --c: red; }");
+      const listed = (await store.listFiles(kit.id)).map((f) => f.path);
+      expect(listed).toContain("components/Button.html");
+      expect(listed).toContain("tokens.css");
+    });
+
+    it("writeFiles overwrites an existing file with new content", async () => {
+      const kit = await store.createKit("write-overwrite-kit");
+      await seedFile(kit.id, "a.txt", "original");
+
+      await store.writeFiles(kit.id, [{ path: "a.txt", content: Buffer.from("replaced") }]);
+      expect((await store.readFile(kit.id, "a.txt")).content).toBe("replaced");
+    });
+
+    it("writeFiles is all-or-nothing: a failing-source op rolls back the whole batch", async () => {
+      // A `sourcePath` that can't be read is a failure BOTH adapters share
+      // (unlike a directory-target, which is LocalFs-specific): each resolves/
+      // stages every op before committing anything, so op #1 must not land when
+      // op #2 fails to source (AC10). Seed a pre-existing file to prove it is
+      // left untouched, not just that the new file is absent.
+      const kit = await store.createKit("write-atomic-kit");
+      await seedFile(kit.id, "existing.txt", "unchanged");
+
+      await expect(
+        store.writeFiles(kit.id, [
+          { path: "existing.txt", content: Buffer.from("should not land") },
+          { path: "new.txt", sourcePath: "/genie-nonexistent-source-xyz.tmp" }, // read fails
+        ]),
+      ).rejects.toMatchObject({ code: "WriteFailedError" });
+
+      // Nothing from the failed batch landed: the pre-existing file keeps its
+      // original content, and the new file was never created.
+      expect((await store.readFile(kit.id, "existing.txt")).content).toBe("unchanged");
+      await expect(store.readFile(kit.id, "new.txt")).rejects.toThrow(NotFoundError);
     });
   });
 }
@@ -562,9 +612,30 @@ describe("GitHostKitStore — listComponents parses a seeded manifest", () => {
     const manifest = {
       version: 1,
       components: [
-        { name: "Select", group: "forms", path: "forms/select.html", viewport: "desktop", hash: "sha256-c", lastModified: "2026-07-01T00:00:00.000Z" },
-        { name: "Button", group: "actions", path: "actions/button.html", viewport: "desktop", hash: "sha256-a", lastModified: "2026-07-01T00:00:00.000Z" },
-        { name: "Anchor", group: "actions", path: "actions/anchor.html", viewport: "375x812", hash: "sha256-b", lastModified: "2026-07-01T00:00:00.000Z" },
+        {
+          name: "Select",
+          group: "forms",
+          path: "forms/select.html",
+          viewport: "desktop",
+          hash: "sha256-c",
+          lastModified: "2026-07-01T00:00:00.000Z",
+        },
+        {
+          name: "Button",
+          group: "actions",
+          path: "actions/button.html",
+          viewport: "desktop",
+          hash: "sha256-a",
+          lastModified: "2026-07-01T00:00:00.000Z",
+        },
+        {
+          name: "Anchor",
+          group: "actions",
+          path: "actions/anchor.html",
+          viewport: "375x812",
+          hash: "sha256-b",
+          lastModified: "2026-07-01T00:00:00.000Z",
+        },
       ],
     };
     await seedFile(kit.id, ".genie/manifest.json", JSON.stringify(manifest));
@@ -793,6 +864,59 @@ describe("GitHostKitStore — adapter-specific", () => {
     });
     // The directory's contents survive the rejected delete.
     expect((await store.listFiles(kit.id)).map((f) => f.path)).toContain("adir/inner.txt");
+  });
+
+  it("writeFiles rolls back a mid-batch failure: restores a pre-existing file and deletes a created one", async () => {
+    // Exercises the git-host-specific unwind path (unwriteFiles) that the shared
+    // conformance "failing-source" case does NOT reach (that one fails during
+    // the pre-write resolve, before anything commits). Here op #1 and op #2
+    // commit, then op #3's contents-API write is forced to fail — so rollback
+    // must (a) restore op #1's pre-existing blob to its ORIGINAL content and
+    // (b) DELETE op #2, which this call created.
+    const base = createMockGitHostFactory();
+    // Fail the write to "new.html" (a POST/PUT to its contents path). Every
+    // other request — including the rollback restore/delete — passes through.
+    const failOn = "contents/new.html";
+    const mockFetch = async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if ((method === "POST" || method === "PUT") && url.includes(failOn)) {
+        return new Response(JSON.stringify({ message: "boom" }), { status: 500 });
+      }
+      return base(url, init);
+    };
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
+
+    const store = new GitHostKitStore({
+      baseUrl: "https://mock-git-host.test/api/v1",
+      owner: "test-org",
+      token: "mock-token",
+    });
+    const kit = await store.createKit("Rollback Kit", "rollback-kit-abc123");
+
+    // Seed a pre-existing file op #1 will overwrite (so rollback must RESTORE it).
+    await mockFetch(
+      `https://mock-git-host.test/api/v1/repos/test-org/${kit.id}/contents/existing.html`,
+      {
+        method: "POST",
+        body: JSON.stringify({ content: Buffer.from("original").toString("base64") }),
+      },
+    );
+
+    await expect(
+      store.writeFiles(kit.id, [
+        { path: "existing.html", content: Buffer.from("overwritten") }, // commits, then must restore
+        { path: "created.html", content: Buffer.from("brand new") }, // commits, then must delete
+        { path: "new.html", content: Buffer.from("this write 500s") }, // fails → triggers rollback
+      ]),
+    ).rejects.toMatchObject({ code: "WriteFailedError" });
+
+    // Rollback restored the pre-existing file to its ORIGINAL content…
+    expect((await store.readFile(kit.id, "existing.html")).content).toBe("original");
+    // …and deleted the file this call created.
+    await expect(store.readFile(kit.id, "created.html")).rejects.toThrow(NotFoundError);
+    // …and the failing file never landed.
+    await expect(store.readFile(kit.id, "new.html")).rejects.toThrow(NotFoundError);
   });
 });
 

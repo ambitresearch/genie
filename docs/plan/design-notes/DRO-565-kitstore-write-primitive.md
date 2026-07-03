@@ -19,14 +19,14 @@ Everything DRO-565's description treats as _already shipped_ lives **only on bra
 `DRO-523-m1-14a-ac5-…` (open PR #114 → `main`)**, which is `MERGEABLE`/`CLEAN` with all
 9 CI checks green but **not yet merged**:
 
-| Prerequisite DRO-565 assumes | Introduced by | Present on `main`? |
-| --- | --- | --- |
-| `createServer({ kitStore?, projectStore? })` injection seam | DRO-531 (`bb26474`) | **No** |
-| `KitStore.deleteFile()` write-sibling primitive to mirror | DRO-540 (`5ef203d`) | **No** |
-| Rich `KitFileEntry` / `KitFileContent` return types | DRO-540 | **No** |
-| `read_file`/`list_files`/`delete_files` on injected `kitStore` | DRO-540 | **No** |
-| `packages/server/test/server-store-injection.test.ts` (Scope 3 says "extend") | DRO-531/540 | **No** |
-| The `server.ts` L84–85 caveat the issue quotes verbatim | DRO-540 | **No** |
+| Prerequisite DRO-565 assumes                                                  | Introduced by       | Present on `main`? |
+| ----------------------------------------------------------------------------- | ------------------- | ------------------ |
+| `createServer({ kitStore?, projectStore? })` injection seam                   | DRO-531 (`bb26474`) | **No**             |
+| `KitStore.deleteFile()` write-sibling primitive to mirror                     | DRO-540 (`5ef203d`) | **No**             |
+| Rich `KitFileEntry` / `KitFileContent` return types                           | DRO-540             | **No**             |
+| `read_file`/`list_files`/`delete_files` on injected `kitStore`                | DRO-540             | **No**             |
+| `packages/server/test/server-store-injection.test.ts` (Scope 3 says "extend") | DRO-531/540         | **No**             |
+| The `server.ts` L84–85 caveat the issue quotes verbatim                       | DRO-540             | **No**             |
 
 This worktree is based on `main` @ `d053a4b` with **0 unique commits**. All three Scope items
 touch exactly the files PR #114 rewrites (`store/interface.ts`, `store/local.ts`,

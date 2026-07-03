@@ -12,6 +12,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 
 import type {
   FileOp,
@@ -24,6 +25,7 @@ import type {
   ProjectId,
   ProjectMeta,
   ProjectStore,
+  WriteOp,
 } from "./interface.js";
 import {
   FileTooLargeError,
@@ -32,6 +34,8 @@ import {
   MAX_FILE_BYTES,
   MissingCredentialError,
   NotFoundError,
+  RollbackIncompleteError,
+  WriteFailedError,
 } from "./interface.js";
 import {
   buildIgnoreMatcher,
@@ -57,6 +61,27 @@ function resolveToken(cfg: GitHostConfig): string {
   const token = cfg.token ?? process.env["GENIE_GIT_TOKEN"];
   if (!token) throw new MissingCredentialError("GENIE_GIT_TOKEN");
   return token;
+}
+
+/** Human-readable message for a caught error (for WriteFailedError causes). */
+function describeGitError(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
+
+/**
+ * Read a file fully into a Buffer by streaming (`createReadStream`), so the
+ * `write_files` "never buffer a whole localPath in memory ahead of time"
+ * property is preserved up to the point the contents API forces a single
+ * base64 body. The tool has already containment-checked `sourcePath`.
+ */
+async function readStreamToBuffer(sourcePath: string): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  const stream = createReadStream(sourcePath);
+  for await (const chunk of stream) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
 }
 
 // ─── HTTP helpers ────────────────────────────────────────────────────────────
@@ -220,17 +245,11 @@ export class GitHostKitStore implements KitStore {
   }
 
   private async writeKitMeta(meta: KitMeta): Promise<void> {
-    const content = Buffer.from(JSON.stringify(meta, null, 2)).toString(
-      "base64",
-    );
-    await this.api<FileResponse>(
-      "POST",
-      `${this.repoPath(meta.id)}/contents/${this.kitMetaPath}`,
-      {
-        content,
-        message: `kit: create ${meta.name}`,
-      },
-    );
+    const content = Buffer.from(JSON.stringify(meta, null, 2)).toString("base64");
+    await this.api<FileResponse>("POST", `${this.repoPath(meta.id)}/contents/${this.kitMetaPath}`, {
+      content,
+      message: `kit: create ${meta.name}`,
+    });
   }
 
   async listKits(): Promise<KitMeta[]> {
@@ -262,10 +281,7 @@ export class GitHostKitStore implements KitStore {
 
   async getKit(kitId: KitId): Promise<KitMeta> {
     try {
-      const repo = await this.api<RepoResponse>(
-        "GET",
-        this.repoPath(kitId),
-      );
+      const repo = await this.api<RepoResponse>("GET", this.repoPath(kitId));
       const meta = await this.readKitMeta(kitId);
       if (meta) return meta;
       return {
@@ -449,9 +465,7 @@ export class GitHostKitStore implements KitStore {
 
     // Validate that content is actually present
     if (!entry.content) {
-      throw new Error(
-        `File "${kitId}/${path}" returned no content from the git host API.`,
-      );
+      throw new Error(`File "${kitId}/${path}" returned no content from the git host API.`);
     }
 
     const bytes =
@@ -505,6 +519,162 @@ export class GitHostKitStore implements KitStore {
       { message: `kit: delete ${path}`, sha },
     );
     return { existed: true };
+  }
+
+  async writeFiles(kitId: KitId, ops: WriteOp[]): Promise<{ writtenPaths: string[] }> {
+    // Writes land on the DEFAULT branch — the readable surface readFile/
+    // listFiles/deleteFile see — NOT a plan branch (a git host has no
+    // rename-transaction; the plan is the capability grant, resolved tool-side,
+    // and openPlan/commitPlan are the separate plan-branch path). A git host
+    // can't offer filesystem-atomic multi-file writes, so we honour the
+    // all-or-nothing CONTRACT the way the host allows: capture each
+    // destination's prior blob state, apply every write, and on any failure
+    // unwind by restoring captured blobs / deleting files this call created.
+    // Rollback failures are collected (never short-circuited) and surfaced as
+    // RollbackIncompleteError — the same guarantee shape as LocalFs.
+
+    // Resolve each op's bytes first (streaming a `sourcePath` off disk so a
+    // large localPath upload never fully buffers beyond this base64 encode,
+    // which the contents API requires anyway). A read failure here aborts
+    // before any remote write — nothing has landed yet.
+    const resolved: { path: string; contentB64: string }[] = [];
+    for (const op of ops) {
+      try {
+        const bytes = "sourcePath" in op ? await readStreamToBuffer(op.sourcePath) : op.content;
+        resolved.push({ path: op.path, contentB64: bytes.toString("base64") });
+      } catch (error) {
+        throw new WriteFailedError(op.path, describeGitError(error, "read failed"));
+      }
+    }
+
+    // Snapshot prior state per path so we can restore on rollback:
+    //   { existed: true, sha, contentB64 } — restore via PUT with this content.
+    //   { existed: false }                 — created by us; delete on rollback.
+    const priors: {
+      path: string;
+      encodedPath: string;
+      existed: boolean;
+      sha?: string;
+      contentB64?: string;
+    }[] = [];
+    const committed: { path: string; encodedPath: string; sha: string }[] = [];
+
+    try {
+      for (const { path, contentB64 } of resolved) {
+        const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+        const prior = await this.getContentForWrite(kitId, encodedPath);
+        priors.push({ path, encodedPath, ...prior });
+
+        const body: Record<string, string> = {
+          content: contentB64,
+          message: `kit: write ${path}`,
+        };
+        if (prior.existed && prior.sha) body["sha"] = prior.sha;
+
+        try {
+          const res = await this.api<FileResponse>(
+            prior.existed ? "PUT" : "POST",
+            `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}`,
+            body,
+          );
+          committed.push({ path, encodedPath, sha: res.content.sha });
+        } catch (error) {
+          throw new WriteFailedError(path, describeGitError(error, "contents-API write failed"));
+        }
+      }
+    } catch (error) {
+      const rollbackFailures = await this.unwriteFiles(kitId, committed, priors);
+      if (rollbackFailures.length > 0) {
+        throw new RollbackIncompleteError(
+          describeGitError(error, "commit failed"),
+          rollbackFailures,
+        );
+      }
+      throw error;
+    }
+
+    return { writtenPaths: ops.map((o) => o.path) };
+  }
+
+  /**
+   * Fetch a path's current blob state on the default branch for a write:
+   * `{ existed: true, sha, contentB64 }` if present (needed to update AND to
+   * restore on rollback), `{ existed: false }` if absent (we'd be creating it).
+   * A directory at the path is treated as "not a writable file" and surfaces as
+   * absent — the subsequent write then fails and rolls back, matching LocalFs's
+   * directory-target refusal.
+   */
+  private async getContentForWrite(
+    kitId: KitId,
+    encodedPath: string,
+  ): Promise<{ existed: boolean; sha?: string; contentB64?: string }> {
+    try {
+      const existing = await this.api<ContentEntry>(
+        "GET",
+        `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${encodedPath}`,
+      );
+      if (Array.isArray(existing) || existing.type !== "file") {
+        return { existed: false };
+      }
+      return {
+        existed: true,
+        sha: existing.sha ?? "",
+        contentB64: existing.encoding === "base64" ? existing.content : undefined,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundError) return { existed: false };
+      throw error;
+    }
+  }
+
+  /**
+   * Unwind a partially-applied writeFiles batch. For each committed file: if it
+   * pre-existed, PUT its captured content back; if we created it, DELETE it.
+   * Every step is attempted even if an earlier one fails — failures are
+   * collected and returned so the caller can raise RollbackIncompleteError
+   * rather than mask an incomplete restore.
+   */
+  private async unwriteFiles(
+    kitId: KitId,
+    committed: { path: string; encodedPath: string; sha: string }[],
+    priors: {
+      path: string;
+      encodedPath: string;
+      existed: boolean;
+      sha?: string;
+      contentB64?: string;
+    }[],
+  ): Promise<string[]> {
+    const failures: string[] = [];
+    const priorByPath = new Map(priors.map((p) => [p.path, p]));
+    // Undo in reverse commit order so a path committed twice (impossible today —
+    // the tool rejects duplicates — but cheap insurance) restores oldest-last.
+    for (const c of [...committed].reverse()) {
+      const prior = priorByPath.get(c.path);
+      try {
+        if (prior?.existed && prior.contentB64 !== undefined) {
+          // Restore the captured blob. Needs the CURRENT sha (what we just
+          // wrote) as the update base.
+          await this.api<FileResponse>(
+            "PUT",
+            `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${c.encodedPath}`,
+            { content: prior.contentB64, message: `kit: rollback ${c.path}`, sha: c.sha },
+          );
+        } else {
+          // We created it (or couldn't capture its content) — delete it.
+          await this.api<void>(
+            "DELETE",
+            `/repos/${encodeURIComponent(this.owner)}/${encodeURIComponent(kitId)}/contents/${c.encodedPath}`,
+            { message: `kit: rollback delete ${c.path}`, sha: c.sha },
+          );
+        }
+      } catch (error) {
+        failures.push(
+          `failed to roll back "${c.path}": ${describeGitError(error, "unknown error")}`,
+        );
+      }
+    }
+    return failures;
   }
 
   async createKit(name: string, kitId?: string): Promise<KitMeta> {
@@ -567,11 +737,7 @@ export class GitHostKitStore implements KitStore {
     return planId;
   }
 
-  async commitPlan(
-    kitId: KitId,
-    planId: PlanId,
-    ops: FileOp[],
-  ): Promise<void> {
+  async commitPlan(kitId: KitId, planId: PlanId, ops: FileOp[]): Promise<void> {
     const branchName = `plan/${planId}`;
     // Verify branch exists by trying to get it
     try {
@@ -598,11 +764,7 @@ export class GitHostKitStore implements KitStore {
     }
   }
 
-  private async applyOps(
-    kitId: KitId,
-    branch: string,
-    ops: FileOp[],
-  ): Promise<void> {
+  private async applyOps(kitId: KitId, branch: string, ops: FileOp[]): Promise<void> {
     for (const op of ops) {
       // Validate path for traversal-like segments
       const pathSegments = op.path.split("/");
@@ -715,11 +877,11 @@ export class GitHostProjectStore implements ProjectStore {
     } catch (e) {
       // Only auto-create on NotFoundError; rethrow other failures
       if (e instanceof NotFoundError) {
-        await this.api<RepoResponse>(
-          "POST",
-          `/orgs/${encodeURIComponent(this.owner)}/repos`,
-          { name: this.metaRepo, auto_init: true, private: true },
-        );
+        await this.api<RepoResponse>("POST", `/orgs/${encodeURIComponent(this.owner)}/repos`, {
+          name: this.metaRepo,
+          auto_init: true,
+          private: true,
+        });
       } else {
         throw e;
       }
@@ -766,9 +928,7 @@ export class GitHostProjectStore implements ProjectStore {
         `/repos/${encodeURIComponent(this.owner)}/${this.metaRepo}/contents/${this.projectPath(projectId)}`,
       );
       if (file.content && file.encoding === "base64") {
-        return JSON.parse(
-          Buffer.from(file.content, "base64").toString("utf-8"),
-        ) as ProjectMeta;
+        return JSON.parse(Buffer.from(file.content, "base64").toString("utf-8")) as ProjectMeta;
       }
     } catch {
       // fall through to NotFoundError
@@ -784,9 +944,7 @@ export class GitHostProjectStore implements ProjectStore {
       name,
       createdAt: new Date().toISOString(),
     };
-    const content = Buffer.from(JSON.stringify(meta, null, 2)).toString(
-      "base64",
-    );
+    const content = Buffer.from(JSON.stringify(meta, null, 2)).toString("base64");
     await this.api<FileResponse>(
       "POST",
       `/repos/${encodeURIComponent(this.owner)}/${this.metaRepo}/contents/${this.projectPath(id)}`,
@@ -821,24 +979,19 @@ export class GitHostProjectStore implements ProjectStore {
   }
 
   async recordScreen(projectId: ProjectId, screenRef: string): Promise<void> {
-    const meta = await this.getProject(projectId) as ProjectMeta & { screens?: string[] };
+    const meta = (await this.getProject(projectId)) as ProjectMeta & { screens?: string[] };
     const screens = meta.screens ?? [];
     screens.push(screenRef);
     await this.updateProjectMeta(projectId, { ...meta, screens });
   }
 
-  private async updateProjectMeta(
-    projectId: ProjectId,
-    meta: object,
-  ): Promise<void> {
+  private async updateProjectMeta(projectId: ProjectId, meta: object): Promise<void> {
     const file = await this.api<ContentEntry>(
       "GET",
       `/repos/${encodeURIComponent(this.owner)}/${this.metaRepo}/contents/${this.projectPath(projectId)}`,
     );
     const sha = (file as unknown as { sha: string }).sha;
-    const content = Buffer.from(JSON.stringify(meta, null, 2)).toString(
-      "base64",
-    );
+    const content = Buffer.from(JSON.stringify(meta, null, 2)).toString("base64");
     await this.api<FileResponse>(
       "PUT",
       `/repos/${encodeURIComponent(this.owner)}/${this.metaRepo}/contents/${this.projectPath(projectId)}`,
