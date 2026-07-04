@@ -126,10 +126,31 @@ const MODEL_ALIAS = "design-default";
 /** $5 USD hard cap for one full run of this suite (AC6). */
 const BUDGET_CAP_USD = 5;
 
-/** Generous ceiling for 5 parallel `conjure` calls + 1 sequential `refine`
- * call against a REAL endpoint — real network latency, not the sub-second
- * stubbed-seam budget the rest of the M2 suite uses. */
-const GENERATION_TIMEOUT_MS = 180_000;
+/** Ceiling for the `beforeAll` hook that runs 5 concurrent `conjure` calls
+ * FOLLOWED BY 1 sequential `refine` call against a REAL endpoint — real
+ * network/model latency, not the sub-second stubbed-seam budget the rest of
+ * the M2 suite uses.
+ *
+ * Sized from OBSERVED per-call latency across two live CI runs, not a guess:
+ *   - CI run 28688370472 (PASSED): slowest of the 5 concurrent conjures took
+ *     ~101s; the trailing sequential refine took another ~65s -> ~165s total
+ *     against the previous 180_000 ceiling (only ~15s margin).
+ *   - CI run 28689871455 (FAILED, DRO-616 post-merge canary — see that
+ *     issue's comment thread): slowest conjure took ~114s, leaving only ~66s
+ *     for refine; refine did not finish before the 180s ceiling and vitest
+ *     killed the hook (`Error: Hook timed out in 180000ms`), with the log
+ *     showing every one of the 5 conjure calls had already succeeded — this
+ *     was a test-infra timeout, not a generation failure, and NOT caused by
+ *     the Vue adapter (this suite only ever requests `framework: "react"`).
+ * A single slow conjure call has been observed as high as ~125s on its own
+ * (same run 28689871455, `TopNavBar`). 180s leaves near-zero room for a
+ * merely-average-but-not-fastest run once refine's own tail is added, so this
+ * doubles the ceiling to 360s: comfortably covers a ~125s conjure tail plus a
+ * ~120s refine call (refine's own single-call latencies observed so far:
+ * 65-72s) with real margin, while staying well under the `m2-generation`
+ * CI job's own `timeout-minutes: 15` (900s) wall-clock cap (ci.yml) so a
+ * truly hung call still fails the job rather than hanging indefinitely. */
+const GENERATION_TIMEOUT_MS = 360_000;
 
 const KIT_ID = "m2-generation-e2e-kit";
 const KIT_DESCRIPTION =
