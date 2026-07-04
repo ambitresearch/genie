@@ -388,6 +388,81 @@ describe("AC5 — returns { diff, files }", () => {
     expect(diff).toContain("gone.txt");
     expect(diff).not.toContain("keep.txt"); // unchanged → omitted
   });
+
+  it("carries an original binary asset forward and omits it from the diff (PR #127 review)", async () => {
+    // A binary (base64) file lives in the component dir. It is never sent to the
+    // model (can't be inlined as prompt text), so the model's reply omits it.
+    // The tool must still return it (no data loss) and must NOT show it as a
+    // deleted file in the diff.
+    const files: LoadedFile[] = [
+      ...currentFiles(),
+      {
+        path: "components/actions/Button/icon.png",
+        content:
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+        encoding: "base64",
+        mimeType: "image/png",
+      },
+    ];
+    const kitStore = stubKitStore(files);
+    // The model returns only the text files (as it must — it never saw the png).
+    const chat = stubChat([completionOf(JSON.stringify(refinedComponent()))]);
+    const res = await refine(deps({ chat, kitStore }), args());
+
+    // The prompt never carried the binary content.
+    const userMsg = JSON.stringify(chat.calls[0]!.messages[1]!.content);
+    expect(userMsg).toContain("[binary file, base64 — omitted]");
+    expect(userMsg).not.toContain("iVBORw0KGgo"); // the base64 bytes stayed out
+
+    // The binary file is preserved in the returned set, byte-for-byte.
+    const carried = res.files.find((f) => f.path.endsWith("icon.png"));
+    expect(carried).toBeDefined();
+    expect(carried?.content).toBe(files.find((f) => f.path.endsWith("icon.png"))!.content);
+    expect(carried?.mimeType).toBe("image/png");
+
+    // And it is NOT misreported as deleted (or anything) in the diff.
+    expect(res.diff).not.toContain("icon.png");
+  });
+
+  it("does not carry a binary forward (or duplicate it) when the model returns that path (PR #128 review)", async () => {
+    // The original component has a binary icon.png. This time the model's reply
+    // DOES include an icon.png entry (e.g. it was instructed to swap the icon).
+    // The `returnedPaths` guard must let the model's entry win — exactly one
+    // icon.png in the result, and it's the model's content, not the original's.
+    const originalPng =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+    const files: LoadedFile[] = [
+      ...currentFiles(),
+      {
+        path: "components/actions/Button/icon.png",
+        content: originalPng,
+        encoding: "base64",
+        mimeType: "image/png",
+      },
+    ];
+    const kitStore = stubKitStore(files);
+    // The model returns the standard component PLUS a new icon.png (its own bytes).
+    const modelPng = "REPLACED_ICON_BYTES_BASE64==";
+    const withIcon = refinedComponent({
+      files: [
+        ...refinedComponent().files,
+        {
+          path: "components/actions/Button/icon.png",
+          content: modelPng,
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const chat = stubChat([completionOf(JSON.stringify(withIcon))]);
+    const res = await refine(deps({ chat, kitStore }), args());
+
+    // Exactly one icon.png — no duplicate from the carry-forward step.
+    const icons = res.files.filter((f) => f.path.endsWith("icon.png"));
+    expect(icons).toHaveLength(1);
+    // The model's entry wins; the original was NOT re-added over it.
+    expect(icons[0]!.content).toBe(modelPng);
+    expect(icons[0]!.content).not.toBe(originalPng);
+  });
 });
 
 // ── AC6 — schema validation + retry once (same as M2-03) ──────────────────────
