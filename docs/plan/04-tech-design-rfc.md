@@ -1275,27 +1275,36 @@ The kit manifest is a flat array of cards. It is regenerated atomically on every
 
 ### 7.2 `.genie/sync.json` schema
 
-Reconstructed from `lib/sync-hashes.mjs` + `lib/remote-diff.mjs` in the bundled skill on disk. The exact field set is one of the open questions in §17, but our schema is forward-compatible (additive fields are non-breaking).
+**Shipped in M3-06 (DRO-262).** Earlier drafts of this section reconstructed an
+Anthropic-flavored guess (`lib/sync-hashes.mjs` + `lib/remote-diff.mjs` in the
+bundled skill, titled `DsSyncAnchor` / `ds-sync.json`) while the exact field
+set was still an open question (§17.3). D-C (`00-decisions.md`) settled it:
+genie's own native anchor is the 6-field shape below — NOT a byte-identical
+copy of Anthropic's `_ds_sync.json` (CLAUDE.md hard rule 1). The
+implementation lives in `packages/server/src/sync/anchor.ts`
+(`writeAnchor`/`readAnchor`, exporting the `Anchor` TS type).
 
 ```json
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://genie.dev/schema/ds-sync.json",
-  "title": "DsSyncAnchor",
+  "$id": "https://genie.dev/schema/sync.json",
+  "title": "GenieSyncAnchor",
   "type": "object",
   "required": ["version", "writtenAt", "by", "sourceHashes", "renderHashes", "verified"],
-  "additionalProperties": false,
   "properties": {
-    "version": { "type": "integer", "minimum": 1 },
+    "version": { "type": "integer", "const": 1 },
     "writtenAt": { "type": "string", "format": "date-time" },
-    "by": { "type": "string", "pattern": "^genie(/.+)?$" },
+    "by": {
+      "type": "string",
+      "description": "Always \"genie\"; overridable via the GENIE_BY env var for forks (e.g. \"genie/acme-fork\")."
+    },
     "sourceHashes": {
       "type": "object",
       "additionalProperties": {
         "type": "string",
         "pattern": "^sha256-[A-Za-z0-9+/=]{43,44}$"
       },
-      "description": "Map of repo-relative source path → sha256 of source file content"
+      "description": "Map of repo-relative .tsx/.jsx/.vue source path → sha256-<base64> SRI hash (the same form list_files/manifest.json use), covering every source file the sync touched across every shipped component-source framework (React, Vue; html has no committed source yet — M2-08 stub)."
     },
     "renderHashes": {
       "type": "object",
@@ -1303,18 +1312,30 @@ Reconstructed from `lib/sync-hashes.mjs` + `lib/remote-diff.mjs` in the bundled 
         "type": "string",
         "pattern": "^sha256-[A-Za-z0-9+/=]{43,44}$"
       },
-      "description": "Map of repo-relative preview.html path → sha256"
+      "description": "Map of repo-relative .html preview path → sha256-<base64> SRI hash, covering every render file the sync touched."
     },
     "verified": {
       "type": "array",
       "items": { "type": "string", "pattern": "^[a-z0-9-]+/[A-Z][A-Za-z0-9]*$" },
-      "description": "List of <group>/<Name> tuples whose source + render hash were both seen during this write"
-    },
-    "planId": { "type": "string", "format": "uuid" },
-    "model": { "type": "string" }
+      "description": "List of <group>/<Name> ids for every component that passed the M3-04 @genie validator within this sync."
+    }
   }
 }
 ```
+
+The `version: 1` integer follows the same evolution rule as `manifest.json`
+(§16.1): a future breaking change to this shape bumps it, and a
+version-2-aware reader still parses `version: 1` anchors. The reference
+implementation's `zod` schema does not set `additionalProperties: false` (so
+a future additive field never fails validation) — but unlike
+`store/manifest.ts`'s `.passthrough()`, which explicitly *retains*
+unrecognized keys in the parsed result, `anchorSchema` is a plain
+`z.object({...})`, whose default mode silently *strips* unrecognized keys
+instead. The two schemas diverge on that point rather than mirroring each
+other; either way, a genuinely malformed anchor (bad JSON, wrong `version`,
+or a missing required field) throws `AnchorParseError` from `readAnchor`
+rather than being silently treated as absent — only a missing file resolves
+to `null` (AC8).
 
 ### 7.3 `meta.json` per component
 
@@ -3179,7 +3200,7 @@ Each entry is tagged with one of `spike-needed` / `decision-needed` / `external-
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | 17.1  | **`_ds_manifest.json` exact filename** — bundled `SKILL.md` writes `ds_manifest`, tool-schema description says `_ds_manifest.json`. Unknown which is on-disk truth. | spike-needed        | Inspect a real `claude.ai/design` upload via `list_files`. Owner: M3 milestone.                                                    |
 | 17.2  | **Canvas-side generation loop prompt shape** — undocumented; we invent.                                                                                             | acceptable-as-is    | Treat as the open R&D workstream. Iterate via prompt evals on a fixed test set.                                                    |
-| 17.3  | **`.genie/sync.json` exact schema** — recovered from `lib/sync-hashes.mjs` but not formally specified.                                                              | spike-needed        | Read the bundled skill source on disk; commit our schema to docs/.                                                                 |
+| 17.3  | **`.genie/sync.json` exact schema** — settled by D-C + shipped in M3-06 (DRO-262); see §7.2.                                                                        | ✅ resolved          | `packages/server/src/sync/anchor.ts`; schema committed at §7.2.                                                                    |
 | 17.4  | **Adherence config exact schema** (`_adherence.oxlintrc.json`) — only mentioned, never specified.                                                                   | external-dependency | Inspect after a real upload; otherwise defer to DS-RFC-0002.                                                                       |
 | 17.5  | **`write_files` byte cap** — Anthropic's server caps bytes, not just file count. Our cap (64 MiB) is a guess.                                                       | spike-needed        | Empirical: trip Anthropic's 500, halve, repeat. Or accept our 64 MiB as authoritative since we don't ship to Anthropic's endpoint. |
 | 17.6  | **"Claude Opus 4.7"** — named in the announcement, not in the public catalog.                                                                                       | external-dependency | Wait for Anthropic. Our endpoint alias routing is unaffected.                                                                      |
