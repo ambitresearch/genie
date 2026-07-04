@@ -113,7 +113,11 @@ describe("validateMarker", () => {
   });
 
   it("rejects a marker preceded by a byte-order mark (no longer the true first byte)", () => {
-    const content = '﻿<!-- @genie group="actions" -->';
+    // Copilot review, PR #142: use an explicit \uFEFF escape rather than an
+    // invisible literal BOM character in the source — the escape is visible
+    // in a diff/review and is not at the mercy of editors/formatters that may
+    // silently strip or mangle a literal invisible character.
+    const content = '\uFEFF<!-- @genie group="actions" -->';
     expect(validateMarker("x.html", content)).toEqual({
       ok: false,
       code: "MARKER_MISSING",
