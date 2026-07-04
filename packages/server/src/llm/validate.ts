@@ -32,7 +32,7 @@
 import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 
 import { COMPONENT_SCHEMA, type ValidatedComponent } from "./schema.js";
-import { MARKER_REGEX } from "../validate/marker.js";
+import { MARKER_REGEX } from "../validate/index.js";
 
 export type { ValidatedComponent } from "./schema.js";
 export type { ErrorObject } from "ajv";
@@ -45,12 +45,15 @@ export type { ErrorObject } from "ajv";
  * without re-parsing the component's JSX.
  *
  * M3-01 (DRO-257) landed the single source of truth for this pattern at
- * `packages/server/src/validate/marker.ts`'s `MARKER_REGEX`; this is now a
- * re-export alias, kept under its original M2-07 name for backwards
- * compatibility with existing consumers (this module's own cross-check
- * below, plus `packages/e2e/test/m2-generation.test.ts`) rather than forcing
- * every call site to rename in the same change that removes the duplicate
- * literal.
+ * `packages/server/src/validate/marker.ts`'s `MARKER_REGEX`, imported here
+ * via the `validate/index.ts` public barrel (Copilot review, PR #142) rather
+ * than reaching into `marker.js` directly, so this call site tracks the
+ * barrel's stable surface instead of the module's internal file layout.
+ * This is now a re-export alias, kept under its original M2-07 name for
+ * backwards compatibility with existing consumers (this module's own
+ * cross-check below, plus `packages/e2e/test/m2-generation.test.ts`) rather
+ * than forcing every call site to rename in the same change that removes
+ * the duplicate literal.
  */
 export const MARKER_REGEX_M2_07 = MARKER_REGEX;
 

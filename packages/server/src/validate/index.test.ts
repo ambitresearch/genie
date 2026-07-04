@@ -37,9 +37,17 @@ describe("validate/index.ts re-export barrel", () => {
     });
   });
 
-  it("AC6: re-exports the MarkerValidationResult and MarkerViewport types (compile-time check)", () => {
-    // These assignments only need to type-check under `tsc --noEmit`; the
-    // runtime assertion below just gives the test a body.
+  it("AC6: re-exports the MarkerValidationResult and MarkerViewport types (IDE-only type check)", () => {
+    // Copilot review, PR #142: `packages/server/tsconfig.json` excludes
+    // `src/**/*.test.ts` (the repo-wide convention every package's tsconfig
+    // follows), so `pnpm --filter @genie/server typecheck` never type-checks
+    // this file — these assignments are only checked by an editor's TS
+    // language server, not any CI gate. The runtime assertions are this
+    // test's actual (and only enforced) regression guard: if a future change
+    // dropped these type re-exports from the barrel, the import above would
+    // start failing at the *type* level in an IDE, but this test would still
+    // pass at runtime since the values themselves are untouched — so this is
+    // a best-effort IDE nudge, not a CI-backed check.
     const ok: MarkerValidationResult = { ok: true };
     const viewport: MarkerViewport = { width: 1, height: 1 };
     expect(ok.ok).toBe(true);
