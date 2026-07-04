@@ -203,6 +203,18 @@ describe("compileManifest", () => {
     expect(manifest.components[0]).not.toHaveProperty("tags");
   });
 
+  it("preserves an explicit empty-string subtitle / empty tags array (presence-checked, not truthiness-checked)", async () => {
+    await writeComponent(root, "actions", "Button", {
+      meta: { subtitle: "", tags: [] },
+    });
+    const { manifest } = await compileManifest(root);
+    // An empty string / empty array is a deliberate value the author wrote,
+    // not the same as "no meta.json at all" — both must round-trip verbatim
+    // rather than being coerced away by a falsy-value check.
+    expect(manifest.components[0]).toHaveProperty("subtitle", "");
+    expect(manifest.components[0]).toHaveProperty("tags", []);
+  });
+
   // ─── AC4 — full output shape ────────────────────────────────────────────────
 
   it("AC4: top-level shape is { version: 1, name, generatedAt, groups: [], components: [] }", async () => {
