@@ -6,11 +6,13 @@
  *   - AC1 — every adapter satisfies the `FrameworkAdapter` interface
  *     (`renderSource` / `renderPreview` / `extractDts` / `defaultViewport`), plus
  *     the `promptDirective` metadata `conjure` reads.
- *   - AC2 — the React adapter's real codegen: `.tsx` source, an esbuild IIFE
- *     preview bundle exposing `GenieComponent`, and a `ts-morph`-extracted `.d.ts`.
- *   - AC3 — the Vue + HTML stubs throw a structured `NotYetImplementedError` with
- *     a tracking-issue link from every codegen method, yet still expose identity
- *     + viewport (so `conjure`'s adapter selection never breaks for them).
+ *   - AC2 — the React + Vue adapters' real codegen: their canonical source file,
+ *     an esbuild IIFE preview bundle exposing `GenieComponent`, and a
+ *     `ts-morph`-extracted `.d.ts`.
+ *   - AC3 — the remaining HTML stub throws a structured `NotYetImplementedError`
+ *     with a tracking-issue link from every codegen method, yet still exposes
+ *     identity + viewport (so `conjure`'s adapter selection never breaks for it).
+ *     Vue graduated out of the stub set in v2 (DRO-616).
  *   - AC4 — the registry (`getAdapter`) maps each framework to the right adapter.
  */
 import { describe, it, expect } from "vitest";
@@ -45,11 +47,42 @@ const REACT_SOURCE = [
   "export default Button;",
 ].join("\n");
 
+/**
+ * A representative Vue SFC: an exported props interface passed to `defineProps`
+ * (so `extractDts` can surface it), an event via `defineEmits`, a `<template>`
+ * with a bound class + interpolation, and a `<style scoped>` block (so the
+ * preview must compile + carry scoped CSS).
+ */
+const VUE_SOURCE = [
+  '<script setup lang="ts">',
+  "export interface ButtonProps {",
+  "  label: string;",
+  "  variant?: 'primary' | 'ghost';",
+  "}",
+  "const props = withDefaults(defineProps<ButtonProps>(), { variant: 'primary' });",
+  "const emit = defineEmits<{ (e: 'press'): void }>();",
+  "</script>",
+  "",
+  "<template>",
+  '  <button :class="props.variant" @click="emit(\'press\')">{{ props.label }}</button>',
+  "</template>",
+  "",
+  "<style scoped>",
+  "button { padding: 8px 12px; }",
+  "</style>",
+].join("\n");
+
 function input(overrides: Partial<RenderInput> = {}): RenderInput {
   return { componentName: "Button", group: "actions", source: REACT_SOURCE, ...overrides };
 }
 
-const STUB_FRAMEWORKS: Framework[] = ["vue", "html"];
+/** Fixture for the Vue adapter: same identity, Vue SFC source. */
+function vueInput(overrides: Partial<RenderInput> = {}): RenderInput {
+  return { componentName: "Button", group: "actions", source: VUE_SOURCE, ...overrides };
+}
+
+// Only HTML remains stubbed in v2 — Vue graduated to a real adapter (DRO-616).
+const STUB_FRAMEWORKS: Framework[] = ["html"];
 
 // ── AC1 — interface shape (every adapter) ─────────────────────────────────────
 
@@ -168,25 +201,113 @@ describe("AC2 — ReactAdapter", () => {
   });
 });
 
-// ── AC3 — Vue + HTML stubs throw a structured, linked error ───────────────────
+// ── AC2 — Vue adapter codegen (the DRO-616 v2 implementation) ──────────────────
 
-describe("AC3 — Vue/HTML stubs", () => {
-  it("Vue codegen methods reject with NotYetImplementedError + tracking link", async () => {
-    const vue = new VueAdapter();
-    expect(() => vue.renderSource(input())).toThrow(NotYetImplementedError);
-    await expect(vue.renderPreview(input())).rejects.toBeInstanceOf(NotYetImplementedError);
-    await expect(vue.extractDts(input())).rejects.toBeInstanceOf(NotYetImplementedError);
-    try {
-      vue.renderSource(input());
-    } catch (err) {
-      const e = err as NotYetImplementedError;
-      expect(e.code).toBe("ERR_FRAMEWORK_NOT_IMPLEMENTED");
-      expect(e.framework).toBe("vue");
-      expect(e.trackingIssue).toBe(VUE_TRACKING_ISSUE);
-      expect(e.message).toContain(VUE_TRACKING_ISSUE);
-    }
+describe("AC2 — VueAdapter", () => {
+  const vue = new VueAdapter();
+
+  it("has vue identity + a viewport + a Vue-shaped prompt directive", () => {
+    expect(vue.framework).toBe("vue");
+    expect(vue.defaultViewport.width).toBeGreaterThan(0);
+    expect(vue.defaultViewport.height).toBeGreaterThan(0);
+    expect(vue.promptDirective).toContain("Target framework: vue");
+    // The directive steers the model toward the SFC shape extractDts relies on.
+    expect(vue.promptDirective).toContain("Single File Component");
+    expect(vue.promptDirective).toContain("defineProps");
   });
 
+  it("renderSource emits <Name>.vue carrying the SFC verbatim", () => {
+    const file = vue.renderSource(vueInput());
+    expect(file.path).toBe("components/actions/Button/Button.vue");
+    expect(file.content).toBe(VUE_SOURCE);
+    // Matches the MIME the kit-file classifier maps `.vue` to.
+    expect(file.mimeType).toBe("text/x-vue");
+  });
+
+  it("renderPreview bundles the SFC to an IIFE exposing the component global", async () => {
+    const file = await vue.renderPreview(vueInput());
+    expect(file.path).toBe("components/actions/Button/Button.preview.js");
+    expect(file.mimeType).toBe("text/javascript");
+    // esbuild IIFE assigns the bundle to `var GenieComponent = (() => { … })()`.
+    expect(file.content).toContain(PREVIEW_GLOBAL_NAME);
+    expect(file.content).toContain("(() =>");
+    // The compiled template's element made it into the bundle.
+    expect(file.content).toContain("button");
+    // The scoped <style> was compiled and carried in the preview.
+    expect(file.content).toContain("padding: 8px 12px");
+  });
+
+  it("renderPreview resolves Vue from the host global (no inlined/require'd runtime)", async () => {
+    const file = await vue.renderPreview(vueInput());
+    // Vue is resolved from the host's `window.Vue` global (the preview host
+    // contract — see vue.ts), not bundled in and not left as a throwing
+    // `require("vue")` (the DRO-624 failure mode, guarded here for Vue too).
+    expect(file.content).toContain("window.Vue");
+    expect(file.content).not.toMatch(/[^_.\w]require\("vue/);
+    expect(file.content).not.toContain("Dynamic require of");
+  });
+
+  it("renderPreview compiles a template-only SFC (no <script> block)", async () => {
+    const file = await vue.renderPreview(
+      vueInput({
+        componentName: "Badge",
+        group: "display",
+        source: [
+          '<template><span class="badge">Static</span></template>',
+          "<style scoped>.badge { color: red; }</style>",
+        ].join("\n"),
+      }),
+    );
+    expect(file.path).toBe("components/display/Badge/Badge.preview.js");
+    expect(file.content).toContain(PREVIEW_GLOBAL_NAME);
+    expect(file.content).toContain("badge");
+  });
+
+  it("renderPreview surfaces a Vue parse error rather than emitting a broken bundle", async () => {
+    await expect(
+      // An unterminated <template> is a hard SFC parse error.
+      vue.renderPreview(vueInput({ source: "<template><div></template>" })),
+    ).rejects.toThrow(/Vue (SFC parse|template compile) failed/);
+  });
+
+  it("extractDts emits a <Name>.d.ts with the SFC's exported prop types", async () => {
+    const file = await vue.extractDts(vueInput());
+    expect(file.path).toBe("components/actions/Button/Button.d.ts");
+    expect(file.content).toContain("ButtonProps");
+    expect(file.content).toContain("label: string");
+  });
+
+  it("extractDts falls back to a valid empty module for an SFC with no exports", async () => {
+    const file = await vue.extractDts(
+      vueInput({
+        componentName: "Inline",
+        group: "misc",
+        // Inline (non-exported) prop types → nothing to emit.
+        source: [
+          '<script setup lang="ts">',
+          "defineProps<{ n: number }>();",
+          "</script>",
+          "<template><i>{{ n }}</i></template>",
+        ].join("\n"),
+      }),
+    );
+    expect(file.content.length).toBeGreaterThan(0);
+    expect(file.path).toBe("components/misc/Inline/Inline.d.ts");
+  });
+
+  it("all Vue artefacts live under components/<group>/<Name>/", async () => {
+    const src = vue.renderSource(vueInput());
+    const prev = await vue.renderPreview(vueInput());
+    const dts = await vue.extractDts(vueInput());
+    for (const f of [src, prev, dts]) {
+      expect(f.path.startsWith("components/actions/Button/")).toBe(true);
+    }
+  });
+});
+
+// ── AC3 — the remaining HTML stub throws a structured, linked error ───────────
+
+describe("AC3 — HTML stub", () => {
   it("HTML codegen methods reject with NotYetImplementedError + tracking link", async () => {
     const html = new HtmlAdapter();
     expect(() => html.renderSource(input())).toThrow(NotYetImplementedError);
@@ -204,6 +325,8 @@ describe("AC3 — Vue/HTML stubs", () => {
   });
 
   it("the tracking-issue links point at the genie repo (v2 milestone)", () => {
+    // VUE_TRACKING_ISSUE is retained for provenance even though Vue is now a real
+    // adapter (DRO-616); it and the HTML stub's link must stay genie-repo URLs.
     for (const url of [VUE_TRACKING_ISSUE, HTML_TRACKING_ISSUE]) {
       expect(url).toMatch(/^https:\/\/github\.com\/roshangautam\/genie\/issues\/\d+$/);
     }
@@ -211,7 +334,7 @@ describe("AC3 — Vue/HTML stubs", () => {
 
   it("stubs still expose identity + viewport (selection never breaks for them)", () => {
     for (const fw of STUB_FRAMEWORKS) {
-      const adapter = fw === "vue" ? new VueAdapter() : new HtmlAdapter();
+      const adapter = new HtmlAdapter();
       expect(adapter.framework).toBe(fw);
       expect(adapter.defaultViewport.width).toBeGreaterThan(0);
       expect(adapter.promptDirective).toContain(`Target framework: ${fw}`);
