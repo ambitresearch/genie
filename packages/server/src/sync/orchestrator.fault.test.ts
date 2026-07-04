@@ -18,8 +18,20 @@
  *   - A step-5 failure (anchor rename) leaves NO anchor behind (writeAnchor's
  *     own temp-file + rename atomicity means a failed rename commits nothing),
  *     so the sync correctly reports `ok:false, failedStep:5`.
+ *
+ * Two further regressions (both Copilot review findings on this PR) round out
+ * this file:
+ *   - `detectResumeStep` must PROPAGATE a non-"missing" `stat` failure (e.g.
+ *     `EACCES` on the sentinel) rather than silently treating it as "sentinel
+ *     absent" — a `stat` fault injection on the sentinel path proves this.
+ *   - Step 5's anchor hashing must read a `localPath` write's bytes back from
+ *     the KIT tree it just committed to (`projectRoot`), never re-read the
+ *     plan's `localDir` source a second time — a TOCTOU hazard, since the
+ *     caller may keep mutating `localDir` for the sync's lifetime. A `rename`
+ *     hook mutates the local source immediately after step 2's commit lands,
+ *     proving the anchor still reflects the ORIGINAL committed bytes.
  */
-import { mkdir, mkdtemp, rm as realRm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm as realRm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +42,15 @@ let sentinelWriteCount: number;
 let failSentinelWriteOnCount: number | null;
 /** When true, a rename whose destination is the anchor file throws. */
 let failAnchorRename: boolean;
+/** When set, a `stat` whose path ends in `suffix` throws with `code`. */
+let failStatSuffix: { suffix: string; code: string } | null;
+/**
+ * When set, once a `rename` commits a file whose destination ends in
+ * `destSuffix`, `sourcePath` is immediately overwritten with `newContent` —
+ * simulating a caller mutating the plan's `localDir` while a sync is still
+ * mid-flight (TOCTOU regression, see module header).
+ */
+let mutateSourceAfterCommit: { sourcePath: string; destSuffix: string; newContent: string } | null;
 
 vi.mock("node:fs/promises", async () => {
   const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
@@ -48,15 +69,41 @@ vi.mock("node:fs/promises", async () => {
   };
 
   const rename: typeof actual.rename = async (from, to) => {
-    if (failAnchorRename && to.toString().endsWith(".genie/sync.json")) {
-      throw Object.assign(new Error(`simulated EIO renaming anchor into ${to.toString()}`), {
+    const target = to.toString();
+    if (failAnchorRename && target.endsWith(".genie/sync.json")) {
+      throw Object.assign(new Error(`simulated EIO renaming anchor into ${target}`), {
         code: "EIO",
       });
     }
-    return actual.rename(from, to);
+    const result = await actual.rename(from, to);
+    // Fires AFTER the real commit lands, so the kit tree already holds the
+    // ORIGINAL bytes by the time we mutate the (separate) localDir source.
+    if (mutateSourceAfterCommit && target.endsWith(mutateSourceAfterCommit.destSuffix)) {
+      await actual.writeFile(
+        mutateSourceAfterCommit.sourcePath,
+        mutateSourceAfterCommit.newContent,
+        "utf-8",
+      );
+    }
+    return result;
   };
 
-  return { ...actual, writeFile, rename };
+  const stat: typeof actual.stat = (async (...args: Parameters<typeof actual.stat>) => {
+    const [path] = args;
+    if (failStatSuffix && path.toString().endsWith(failStatSuffix.suffix)) {
+      throw Object.assign(
+        new Error(`simulated ${failStatSuffix.code} statting ${path.toString()}`),
+        {
+          code: failStatSuffix.code,
+        },
+      );
+    }
+    return (
+      actual.stat as (...a: Parameters<typeof actual.stat>) => ReturnType<typeof actual.stat>
+    )(...args);
+  }) as typeof actual.stat;
+
+  return { ...actual, writeFile, rename, stat };
 });
 
 // Import AFTER vi.mock so the orchestrator + store + anchor all bind the mocked
@@ -64,7 +111,9 @@ vi.mock("node:fs/promises", async () => {
 const { createPlan } = await import("../plans/index.js");
 const { LocalFsKitStore } = await import("../store/local.js");
 const { readAnchor } = await import("./anchor.js");
-const { runAtomicSync, RECOMPILE_SENTINEL_PATH } = await import("./orchestrator.js");
+const { sriSha256 } = await import("../store/kit-files.js");
+const { runAtomicSync, detectResumeStep, RECOMPILE_SENTINEL_BODY, RECOMPILE_SENTINEL_PATH } =
+  await import("./orchestrator.js");
 
 const KIT_ID = "kit-orch-fault";
 
@@ -90,6 +139,8 @@ beforeEach(async () => {
   sentinelWriteCount = 0;
   failSentinelWriteOnCount = null;
   failAnchorRename = false;
+  failStatSuffix = null;
+  mutateSourceAfterCommit = null;
   harness = await setup();
 });
 
@@ -154,8 +205,87 @@ describe("runAtomicSync — step 5 fault (anchor rename) [AC7]", () => {
     // The sentinel IS present (steps 1 and 4 both wrote it) — so the next
     // sync's detectResumeStep would see "sentinel present, anchor absent" and
     // correctly resume from step 2. Proven here by direct read.
-    const { readFile } = await import("node:fs/promises");
     const sentinel = await readFile(join(harness.projectRoot, RECOMPILE_SENTINEL_PATH), "utf-8");
-    expect(sentinel).toBe('{"by":"genie"}');
+    expect(sentinel).toBe(RECOMPILE_SENTINEL_BODY);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Copilot review finding #1: detectResumeStep must PROPAGATE a non-"missing"
+// stat failure on the sentinel, not silently read it as "sentinel absent".
+// ────────────────────────────────────────────────────────────
+
+describe("detectResumeStep — non-ENOENT stat failure propagates (Copilot review)", () => {
+  it("rethrows an EACCES statting the sentinel rather than reporting resume-from-1", async () => {
+    // A fresh kit has no anchor and no sentinel yet — absent either fault
+    // injection, detectResumeStep would report `1` (fresh sync). Injecting an
+    // EACCES on the sentinel path must surface as a thrown error instead of
+    // being silently folded into "absent", which would misreport a real
+    // permissions/operability problem as a normal fresh-kit state.
+    failStatSuffix = { suffix: RECOMPILE_SENTINEL_PATH, code: "EACCES" };
+
+    await expect(detectResumeStep(harness.projectRoot)).rejects.toMatchObject({ code: "EACCES" });
+  });
+
+  it("still propagates EACCES even when a completed anchor already exists", async () => {
+    // Belt-and-suspenders: the fault must surface regardless of the anchor's
+    // state, since `pathExists` runs independently of `readAnchor`.
+    const { writeAnchor } = await import("./anchor.js");
+    await writeAnchor(harness.projectRoot, { writes: [], verified: [] });
+    failStatSuffix = { suffix: RECOMPILE_SENTINEL_PATH, code: "EACCES" };
+
+    await expect(detectResumeStep(harness.projectRoot)).rejects.toMatchObject({ code: "EACCES" });
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Copilot review finding #2: step 5 must hash a localPath write's COMMITTED
+// kit-tree bytes, never re-read the plan's (mutable) localDir source.
+// ────────────────────────────────────────────────────────────
+
+describe("runAtomicSync — anchor hashes committed bytes, not a re-read localPath source (Copilot review)", () => {
+  it("anchor's sourceHashes reflect the ORIGINAL bytes even if localDir changes after step 2 commits", async () => {
+    const localDir = await mkdtemp(join(tmpdir(), "genie-orch-fault-local-"));
+    const originalContent = "export const Original = 1;\n";
+    const mutatedContent = "export const Mutated = 999;\n";
+    await writeFile(join(localDir, "Button.tsx"), originalContent, "utf-8");
+
+    // The moment step 2's write_files commit renames the staged file into the
+    // kit tree (destination ends in "c/Button.tsx"), overwrite the SOURCE file
+    // in localDir — simulating a caller that keeps mutating its local upload
+    // dir while the sync is still mid-flight (e.g. a subsequent, unrelated
+    // conjure round touching the same scratch dir).
+    mutateSourceAfterCommit = {
+      sourcePath: join(localDir, "Button.tsx"),
+      destSuffix: "c/Button.tsx",
+      newContent: mutatedContent,
+    };
+
+    const state = await createPlan(KIT_ID, ["c/**"], [], localDir);
+    const result = await runAtomicSync(harness.deps, {
+      planId: state.planId,
+      writes: [{ path: "c/Button.tsx", localPath: "Button.tsx" }],
+      deletes: [],
+      verified: ["c/Button"],
+    });
+
+    expect(result.ok).toBe(true);
+
+    // The kit tree holds the ORIGINAL committed bytes (mutation only touched
+    // the separate localDir source, never the kit destination).
+    const committed = await readFile(join(harness.projectRoot, "c/Button.tsx"), "utf-8");
+    expect(committed).toBe(originalContent);
+
+    // The localDir source WAS mutated (proving the fault actually fired).
+    const sourceNow = await readFile(join(localDir, "Button.tsx"), "utf-8");
+    expect(sourceNow).toBe(mutatedContent);
+
+    // The anchor's hash MUST match the ORIGINAL committed bytes — not the
+    // mutated source, and not a fresh read of the (now-mutated) localDir file.
+    const anchor = await readAnchor(harness.projectRoot);
+    expect(anchor?.sourceHashes["c/Button.tsx"]).toBe(sriSha256(originalContent));
+    expect(anchor?.sourceHashes["c/Button.tsx"]).not.toBe(sriSha256(mutatedContent));
+
+    await realRm(localDir, { recursive: true, force: true });
   });
 });
