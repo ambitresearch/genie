@@ -1237,16 +1237,17 @@ For multi-host shared deployments (Scenario C), the plan lock moves into Redis (
 ### 7.1 `manifest.json` schema (JSON Schema Draft 7)
 
 **Shipped in M3-03 (DRO-259), reconciled against an earlier shipped dependency.**
-This section originally sketched a `cards` root key with an object `viewport:
-{width,height}`. By the time M3-03 was implemented, `packages/server/src/
-store/manifest.ts` had already shipped (backing the M1-15 `list_components`
-tool, read by BOTH `LocalFsKitStore` and `GitHostKitStore`) with a schema that
-requires the root key `components` and a STRING `viewport` (the `@genie`
-marker's raw token, e.g. `"400x200"` or a named token like `"desktop"`) — not
-the shape below. Emitting `cards` would have silently broken that already-live
-P0 tool, so the compiler (`packages/server/src/manifest/compiler.ts`) emits
-the `components`/string-`viewport` shape instead, layering this section's
-other fields (`generatedAt`, `groups`, per-card `subtitle`/`tags`) on top via
+This section originally sketched a `cards` root key with an object
+`viewport: {width,height}`. By the time M3-03 was implemented,
+`packages/server/src/store/manifest.ts` had already shipped (backing the M1-15
+`list_components` tool, read by BOTH `LocalFsKitStore` and `GitHostKitStore`)
+with a schema that requires the root key `components` and a STRING `viewport`
+(the `@genie` marker's raw token, e.g. `"400x200"` or a named token like
+`"desktop"`) — not the shape below. Emitting `cards` would have silently broken
+that already-live P0 tool, so the compiler
+(`packages/server/src/manifest/compiler.ts`) emits the
+`components`/string-`viewport` shape instead, layering this section's other
+fields (`generatedAt`, `groups`, per-card `subtitle`/`tags`) on top via
 `store/manifest.ts`'s `.passthrough()` tolerance — additive per §16.2. The
 JSON Schema below is kept as the **original design intent** for historical
 context; the **as-shipped** shape is:
