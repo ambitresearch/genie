@@ -1304,7 +1304,7 @@ implementation lives in `packages/server/src/sync/anchor.ts`
         "type": "string",
         "pattern": "^sha256-[A-Za-z0-9+/=]{43,44}$"
       },
-      "description": "Map of repo-relative .tsx/.jsx source path → sha256-<base64> SRI hash (the same form list_files/manifest.json use), covering every source file the sync touched."
+      "description": "Map of repo-relative .tsx/.jsx/.vue source path → sha256-<base64> SRI hash (the same form list_files/manifest.json use), covering every source file the sync touched across every shipped component-source framework (React, Vue; html has no committed source yet — M2-08 stub)."
     },
     "renderHashes": {
       "type": "object",

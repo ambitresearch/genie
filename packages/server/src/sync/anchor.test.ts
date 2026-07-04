@@ -116,6 +116,23 @@ describe("sync/anchor", () => {
     expect(anchor?.sourceHashes).toEqual({});
   });
 
+  it("AC3: sourceHashes also covers .vue single-file components (Vue is a first-class shipped framework, M2-08)", async () => {
+    const planResult: PlanResult = {
+      writes: [
+        { path: "components/actions/Button/Button.vue", content: "vue-sfc-content" },
+        { path: "components/actions/Button/Button.html", content: "html-content" },
+      ],
+      verified: [],
+    };
+
+    await writeAnchor(projectRoot, planResult);
+    const anchor = await readAnchor(projectRoot);
+
+    expect(anchor?.sourceHashes).toEqual({
+      "components/actions/Button/Button.vue": sriSha256("vue-sfc-content"),
+    });
+  });
+
   // ─── AC4 — renderHashes covers every .html touched ────────────────────────
 
   it("AC4: renderHashes includes every .html write, keyed by path", async () => {

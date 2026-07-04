@@ -45,6 +45,22 @@ export const GENIE_BY_ENV = "GENIE_BY";
 export const DEFAULT_BY = "genie";
 
 /**
+ * Source-file extensions that count toward {@link Anchor.sourceHashes} (AC3).
+ * The issue's literal AC3 text says ".tsx/.jsx", written when React was the
+ * only shipped framework; Vue landed as a first-class framework in M2-08
+ * (merged to `main` the day before this PR) with `.vue` as its canonical
+ * single-file-component source (`framework/vue.ts`'s `renderSource` →
+ * `<Name>.vue`). Omitting `.vue` here would leave every Vue component's
+ * source invisible to the anchor's drift/tamper detection (RFC §10 T-05) —
+ * the exact failure mode this file exists to prevent — so the extension list
+ * covers both shipped component-source frameworks rather than only the one
+ * named in the issue's illustrative example. `html` has no committed source
+ * file of its own (`HtmlAdapter.renderSource` is still an M2 stub throwing
+ * {@link NotYetImplementedError}); add its extension here if/when that lands.
+ */
+const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".vue"];
+
+/**
  * genie's own `.genie/sync.json` shape (D-C, AC2) — verbatim the schema the
  * issue body specifies:
  *
@@ -58,7 +74,9 @@ export const DEFAULT_BY = "genie";
  * `sourceHashes`/`renderHashes` map a repo-relative path to its
  * `sha256-<base64>` SRI hash (the same form `list_files`/`manifest.json` use,
  * via the shared {@link sriSha256} helper) — one shared hash format across
- * every genie artifact, per RFC §7.2's existing convention.
+ * every genie artifact, per RFC §7.2's existing convention. The `.tsx`
+ * example above is illustrative, not exhaustive — see {@link SOURCE_EXTENSIONS}
+ * for the full, current set of source extensions `sourceHashes` covers.
  */
 export interface Anchor {
   version: 1;
@@ -109,9 +127,10 @@ const anchorSchema = z.object({
 /**
  * Compute and atomically write `${projectRoot}/.genie/sync.json` (AC1).
  *
- * - `sourceHashes` covers every `.tsx`/`.jsx` path in `planResult.writes`
- *   (AC3); `renderHashes` covers every `.html` path (AC4). A path with
- *   neither extension (e.g. `meta.json`) appears in neither map — this
+ * - `sourceHashes` covers every {@link SOURCE_EXTENSIONS} path in
+ *   `planResult.writes` (AC3 — `.tsx`/`.jsx`, plus `.vue` for the shipped Vue
+ *   framework); `renderHashes` covers every `.html` path (AC4). A path with
+ *   none of those extensions (e.g. `meta.json`) appears in neither map — this
  *   anchor is scoped to source + render provenance, not a general write log.
  * - `verified` is `planResult.verified` verbatim (AC5) — the caller (the
  *   M3-05 orchestrator, or a direct test) is the one that ran the M3-04
@@ -138,7 +157,7 @@ export async function writeAnchor(
     version: 1,
     writtenAt: new Date().toISOString(),
     by: env[GENIE_BY_ENV] ?? DEFAULT_BY,
-    sourceHashes: hashByExtension(planResult.writes, [".tsx", ".jsx"]),
+    sourceHashes: hashByExtension(planResult.writes, SOURCE_EXTENSIONS),
     renderHashes: hashByExtension(planResult.writes, [".html"]),
     verified: [...planResult.verified],
   };
