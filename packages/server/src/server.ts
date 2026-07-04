@@ -227,12 +227,23 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // local SOURCE base for `localPath` reads; the kit is the write destination.
   registerWriteFilesTool(server, kitStore);
 
-  // Advisory telemetry facet (M1-12): persists validation counts + emits
-  // Prometheus metrics. No planId required (read-side telemetry).
-  registerValidate(
-    server,
-    options.reportsDir ?? process.env.GENIE_REPORTS_DIR ?? join(process.cwd(), ".genie", "reports"),
-  );
+  // validate (D-A — one verb, two facets):
+  //   • Counter-persistence facet (M1-12): persists caller-supplied validation
+  //     counts + emits Prometheus metrics. No planId required (read-side).
+  //   • Full-scan facet (M3-04 / DRO-260): when called WITHOUT `counts`, walks
+  //     every `.html` in the kit through the injected `kitStore` and runs the
+  //     @genie-marker / thin-render / variants-identical checks, returning
+  //     structured findings and persisting the derived counters via the same
+  //     path. The headless render uses Playwright as an OPTIONAL peer dependency
+  //     (createDefaultRenderer degrades to marker-only when it is absent), so
+  //     registering this here never requires Playwright to build/run the server.
+  registerValidate(server, {
+    reportsDir:
+      options.reportsDir ??
+      process.env.GENIE_REPORTS_DIR ??
+      join(process.cwd(), ".genie", "reports"),
+    kitStore,
+  });
 
   // Plan-gated destructive verb (M1-09): deletes are authorized by a plan's
   // Plan-gated destructive verb (M1-09): deletes are authorized by a plan's
