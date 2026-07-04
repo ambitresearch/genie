@@ -44,10 +44,9 @@
  */
 
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { getPlan } from "../plans/index.js";
 import type { KitStore } from "../store/interface.js";
 import { deleteFiles } from "../tools/delete_files.js";
 import { MAX_FILES_PER_CALL, writeFiles } from "../tools/write_files.js";
@@ -203,7 +202,9 @@ export async function runAtomicSync(deps: SyncDeps, args: SyncArgs): Promise<Syn
  * Never mutates the tree. Propagates {@link readAnchor}'s `AnchorParseError`
  * for a corrupt-but-present anchor — a corrupt anchor is a real operability
  * problem, not a "nothing to resume" signal (same reasoning `readAnchor` itself
- * applies).
+ * applies). Likewise propagates any non-"missing" error from the sentinel
+ * `stat` (e.g. `EACCES` on `.genie/`) rather than treating it as "sentinel
+ * absent" — see {@link pathExists}.
  */
 export async function detectResumeStep(projectRoot: string): Promise<StepNumber | null> {
   const sentinelPresent = await pathExists(join(projectRoot, RECOMPILE_SENTINEL_PATH));
@@ -262,7 +263,7 @@ async function runDeletes(store: KitStore, planId: string, deletes: string[]): P
  */
 async function writeFinalAnchor(projectRoot: string, args: SyncArgs): Promise<void> {
   const planResult: PlanResult = {
-    writes: await resolveAnchorWrites(args.planId, args.writes),
+    writes: await resolveAnchorWrites(projectRoot, args.writes),
     verified: args.verified ?? [],
   };
   await writeAnchor(projectRoot, planResult);
@@ -270,22 +271,41 @@ async function writeFinalAnchor(projectRoot: string, args: SyncArgs): Promise<vo
 
 /**
  * Resolve each {@link WriteInput} to the `{ path, content }` shape
- * `writeAnchor` hashes. Inline `data` resolves for free (utf-8 → the string;
- * base64 → the decoded `Buffer`); a `localPath` is read from disk, resolved
- * against the plan's `localDir` exactly as `write_files` resolves it — so the
- * anchor hashes the same bytes that landed. `getPlan` is consulted only when at
- * least one `localPath` write exists, so the common all-inline sync pays no
- * extra plan read.
+ * `writeAnchor` hashes.
+ *
+ * ── Committed bytes, not the plan's local source (Copilot review) ───────────
+ * Inline `data` resolves for free — utf-8 decodes to the string, base64 to a
+ * `Buffer` — the exact bytes already handed to `writeFiles` in step 2, no disk
+ * read at all.
+ *
+ * A `localPath` write is different: step 2 STREAMS it straight from the
+ * plan's `localDir` into the kit tree (`store/local.ts`'s `streamCopy`, via
+ * `createReadStream` — never buffered here, by design, so a large upload
+ * never fully loads into memory). This function used to re-read that SAME
+ * `localDir` source file a second time, during step 5, to compute its hash —
+ * a TOCTOU hazard, since the plan's `localDir` is a directory the CALLER
+ * controls and may keep writing to for the lifetime of a sync, so the bytes
+ * step 5 would hash could silently diverge from the bytes step 2 actually
+ * streamed into the kit. It also contradicted `sync/anchor.ts`'s own
+ * contract that hashes must come from "the exact bytes that landed, not
+ * re-read from disk after the fact."
+ *
+ * The fix: read the file back from `projectRoot` — the KIT destination step
+ * 2 just committed it to (`join(projectRoot, write.path)`) — never from the
+ * plan's `localDir` source. `projectRoot` is guaranteed (by `SyncDeps`'s own
+ * contract, see above) to be the exact directory `store.writeFiles` resolved
+ * the write to, so this hashes precisely the bytes the kit tree now holds —
+ * the same tree `writeAnchor` is meant to vouch for — rather than a second,
+ * independently-timed read of a directory outside genie's control.
  *
  * A write with neither `data` nor `localPath` is unreachable here (step 2's
  * `write_files` would have rejected it, and step 5 only runs once step 2
  * passed); it is defensively hashed as empty rather than throwing.
  */
 async function resolveAnchorWrites(
-  planId: string,
+  projectRoot: string,
   writes: WriteInput[],
 ): Promise<PlanResult["writes"]> {
-  let localDir: string | null = null;
   const resolved: PlanResult["writes"] = [];
 
   for (const write of writes) {
@@ -293,8 +313,7 @@ async function resolveAnchorWrites(
     if (write.data !== undefined) {
       content = write.encoding === "base64" ? Buffer.from(write.data, "base64") : write.data;
     } else if (write.localPath !== undefined) {
-      localDir ??= (await getPlan(planId)).localDir;
-      content = await readFile(resolve(localDir, write.localPath));
+      content = await readFile(join(projectRoot, write.path));
     } else {
       content = "";
     }
@@ -333,12 +352,38 @@ function chunk<T>(items: T[], size: number): T[][] {
   return batches;
 }
 
-/** True if `path` exists (any node type). Used only for the sentinel probe. */
+/**
+ * True if `path` exists (any node type); false if it (or a parent directory
+ * component) genuinely does not exist. Any OTHER `stat` failure — EACCES,
+ * EPERM, a transient I/O error — propagates rather than being misread as
+ * "absent" (Copilot review on this PR): silently mapping every error to
+ * `false` could make {@link detectResumeStep} report "fresh, start from step
+ * 1" for a sentinel that is actually present-but-unreadable, masking a real
+ * operability problem instead of surfacing it. Mirrors `./anchor.ts`'s
+ * `readAnchor` (and `store/local.ts`'s identical helper), which apply the
+ * same ENOENT/ENOTDIR-only rule for the same reason.
+ */
 async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isMissingPathError(error)) return false;
+    throw error;
   }
+}
+
+/**
+ * ENOENT (missing file) and ENOTDIR (a parent path component is a file, not a
+ * directory) both mean "not there". Duplicated locally rather than imported
+ * from `./anchor.ts` / `store/local.ts` — each of those already carries its
+ * own copy of this exact one-liner, matching this repo's established
+ * per-module-owns-its-guard convention for this helper.
+ */
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR")
+  );
 }
