@@ -21,6 +21,17 @@
  * or a sandboxed CI runner missing the OS-level shared libraries Chromium
  * itself needs — independent of whether the npm package is present).
  *
+ * ── Degradation is logged, not silent (PR #152 review) ────────────────────────
+ * A `null` renderer makes the full-scan facet skip `thin`/`variantsIdentical`
+ * entirely, so its `{ thin: [], variantsIdentical: [] }` would otherwise be
+ * indistinguishable from a genuinely clean kit — neither an operator nor the
+ * model consuming `validate` could tell the checks were skipped for an
+ * environment reason rather than a real "nothing wrong" result. Both
+ * degradation paths below (import-missing, launch-failure) emit a structured
+ * stderr line via the same `logStderr` (`llm/component-response.ts`) `refine.ts`
+ * uses for its own region-cropper degradation — stderr, never stdout, since
+ * stdout is the stdio transport's JSON-RPC framing.
+ *
  * ── Bare-fragment previews render in quirks mode — measure children, not body ──
  * A genie `<Name>.html` preview is a bare fragment: `<!-- @genie … -->`
  * followed directly by markup, with NO `<!DOCTYPE html>`/`<html>`/`<body>`
@@ -35,6 +46,7 @@
  * body stretching, and needs no synthetic doctype/wrapper injection that
  * could itself perturb the very layout AC4 is trying to measure.
  */
+import { logStderr } from "../llm/component-response.js";
 
 /** One render's measurements: content height (AC4) + a decoded screenshot for
  * perceptual hashing (AC5). */
@@ -98,7 +110,16 @@ async function importPlaywright(): Promise<PlaywrightModule | null> {
   const specifier = "playwright";
   try {
     return (await import(specifier)) as PlaywrightModule;
-  } catch {
+  } catch (error) {
+    // Logged (not silent, PR #152 review) — see the module doc's "Degradation
+    // is logged, not silent" section for why an operator/model needs this
+    // signal. Same event-naming convention as `refine.ts`'s own
+    // `refine.region.unavailable` for the identical Playwright-absent case.
+    logStderr({
+      event: "validate.render.unavailable",
+      reason: "playwright-not-installed",
+      error: String(error),
+    });
     return null;
   }
 }
@@ -143,11 +164,18 @@ export async function createDefaultRenderer(): Promise<Renderer | null> {
     // `--no-sandbox` so this runs in restricted CI/container environments —
     // the same flag `refine.ts`'s `defaultRegionCropper` launches with.
     browser = await pw.chromium.launch({ args: ["--no-sandbox"] });
-  } catch {
+  } catch (error) {
     // A Chromium binary that fails to LAUNCH (missing OS-level shared
     // libraries, no downloaded browser, …) is the same "can't render" signal
     // as Playwright not being installed at all — degrade the same way rather
-    // than letting a launch failure crash the whole `validate` call.
+    // than letting a launch failure crash the whole `validate` call. Logged
+    // (not silent, PR #152 review) — same reasoning as `importPlaywright`'s
+    // catch above.
+    logStderr({
+      event: "validate.render.unavailable",
+      reason: "chromium-launch-failed",
+      error: String(error),
+    });
     return null;
   }
 
