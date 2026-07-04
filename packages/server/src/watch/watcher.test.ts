@@ -30,7 +30,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { startWatcher, type WatcherChange } from "./watcher.js";
+import { startWatcher, type WatcherChange, type WatcherChangeType } from "./watcher.js";
 
 // Real debounce window per AC3; give assertions comfortable headroom above it
 // so the suite isn't flaky on a loaded CI box, without waiting so long the
