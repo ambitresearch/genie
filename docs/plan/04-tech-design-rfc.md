@@ -988,6 +988,14 @@ async function writeFilesTool(input: WriteFilesInput) {
 
 If step 5 fails, the manifest-compiler sees `.genie/recompile` still present and refuses to publish a manifest update — the next successful `write_files` will re-anchor.
 
+> **Shipped (M3-05 / DRO-261).** The sequence above is realized as `packages/server/src/sync/orchestrator.ts` — `runAtomicSync({ planId, writes, deletes })`, barrel-exported via `sync/index.ts`. It composes the in-process `writeFiles` / `deleteFiles` core fns directly (not over the MCP transport) and writes `.genie/sync.json` via M3-06's `writeAnchor` as step 5. Refinements over the pseudocode, all covered by `orchestrator.test.ts`:
+>
+> - The native sentinel body is the literal `{"by":"genie"}` at `.genie/recompile` — genie's own surface, never the Anthropic `_ds_*` shape (CLAUDE.md hard rule 1).
+> - Steps 1 and 4 write the sentinel FS-natively to the kit root (it is genie bookkeeping, not plan-gated user content); steps 2–3 stay plan-gated through the tool core fns.
+> - Stop-on-first-failure returns `{ ok:false, failedStep:1..5, error, events }` BEFORE writing the anchor (a mid-plan failure leaves `.genie/sync.json` absent); a not-found delete in step 3 is not a failure (inherited from `delete_files`' AC5). Success returns `{ ok:true, events }`.
+> - Every attempted step emits a `{ step, ok, ms }` observability event.
+> - `detectResumeStep(projectRoot)` implements the idempotent-resume probe: sentinel-present + anchor-absent ⇒ resume from step 2; both absent ⇒ fresh sync from step 1; anchor present ⇒ `null` (last sync was clean).
+
 ### 6.8 Manifest compiler
 
 ```ts

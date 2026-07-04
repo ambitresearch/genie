@@ -1,10 +1,10 @@
 /**
  * Proves `packages/server/src/sync/index.ts` publicly re-exports the sync
- * anchor's full surface (mirrors `validate/index.test.ts`'s barrel-regression
- * pattern). Downstream consumers (the M3-05 atomic sync orchestrator) import
- * from this barrel, not from `./anchor.js` directly; this test is the
- * regression guard that keeps the barrel in sync if `anchor.ts` ever grows a
- * new export.
+ * layer's full surface — both M3-06's anchor and M3-05's orchestrator (mirrors
+ * `validate/index.test.ts`'s barrel-regression pattern). Downstream consumers
+ * (the sync-flow caller) import from this barrel, not from `./anchor.js` /
+ * `./orchestrator.js` directly; this test is the regression guard that keeps the
+ * barrel in sync if either module grows a new export.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,6 +20,10 @@ import {
   writeAnchor,
   type Anchor,
   type PlanResult,
+  RECOMPILE_SENTINEL_BODY,
+  RECOMPILE_SENTINEL_PATH,
+  detectResumeStep,
+  runAtomicSync,
 } from "./index.js";
 
 describe("sync/index.ts re-export barrel", () => {
@@ -47,6 +51,23 @@ describe("sync/index.ts re-export barrel", () => {
 
   it("re-exports AnchorParseError as the class readAnchor throws on corruption", () => {
     expect(AnchorParseError.prototype).toBeInstanceOf(Error);
+  });
+
+  // ─── M3-05 orchestrator surface ────────────────────────────────────────────
+
+  it("re-exports the orchestrator sentinel constants", () => {
+    expect(RECOMPILE_SENTINEL_PATH).toBe(".genie/recompile");
+    expect(RECOMPILE_SENTINEL_BODY).toBe('{"by":"genie"}');
+  });
+
+  it("re-exports runAtomicSync + detectResumeStep as callables", () => {
+    expect(typeof runAtomicSync).toBe("function");
+    expect(typeof detectResumeStep).toBe("function");
+  });
+
+  it("re-exports a working detectResumeStep (fresh kit → resume from step 1)", async () => {
+    // A brand-new temp dir has neither sentinel nor anchor → step 1.
+    expect(await detectResumeStep(projectRoot)).toBe(1);
   });
 
   it("re-exports the Anchor and PlanResult types (IDE-only type check)", () => {
