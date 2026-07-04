@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.0](https://github.com/roshangautam/genie/compare/server-v1.0.0...server-v1.1.0) (2026-07-04)
+
+
+### Features
+
+* **server:** .genie/manifest.json writer — client-side compiler (M3-03) ([#147](https://github.com/roshangautam/genie/issues/147)) ([088f761](https://github.com/roshangautam/genie/commit/088f7617efee82362f18bf03a167280d9a0dc44a))
+* **server:** .genie/sync.json verification anchor (DRO-262) ([#144](https://github.com/roshangautam/genie/issues/144)) ([2163ca2](https://github.com/roshangautam/genie/commit/2163ca2ba9b2f418c070b4d2d6ad92891fc49573))
+* **server:** [@genie](https://github.com/genie) first-line marker validator (DRO-257) ([#142](https://github.com/roshangautam/genie/issues/142)) ([59d88da](https://github.com/roshangautam/genie/commit/59d88da5616d91b5a4ce932b42e5392554f0094d))
+* **server:** 5-step atomic write orchestrator (DRO-261 / M3-05) ([#148](https://github.com/roshangautam/genie/issues/148)) ([609b7d8](https://github.com/roshangautam/genie/commit/609b7d8ff9311b00d92dac3ee8ad62154919a765))
+* **server:** chokidar watcher for component tree (DRO-258) ([#146](https://github.com/roshangautam/genie/issues/146)) ([fda2961](https://github.com/roshangautam/genie/commit/fda296122ee188c9d784060c275562cd8a378d6d))
+* **server:** validate full-scan facet — marker + thin + variants (DRO-260 / M3-04) ([#152](https://github.com/roshangautam/genie/issues/152)) ([a769c1f](https://github.com/roshangautam/genie/commit/a769c1f76d495289994d7cf92003a30892d0164f))
+
+
+### Bug Fixes
+
+* **server:** address Copilot review findings on atomic sync orchestrator ([#150](https://github.com/roshangautam/genie/issues/150)) ([91204ce](https://github.com/roshangautam/genie/commit/91204ceb730a8b3a3c2d71b870104a9ca60cae73))
+
 ## 1.0.0 (2026-07-04)
 
 
