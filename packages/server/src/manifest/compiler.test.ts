@@ -14,7 +14,7 @@
  * `tags`) is asserted as specified.
  *
  * Covers:
- *   - AC1 — `compileManifest(projectRoot): Promise<Manifest>` is exported and callable.
+ *   - AC1 — `compileManifest(projectRoot): Promise<CompileResult>` is exported and callable.
  *   - AC2 — walks `components/**\/*.html`; reads first line; extracts group + viewport.
  *   - AC3 — joins a sibling `meta.json` for `subtitle`/`tags` when present.
  *   - AC4 — output shape (reconciled — see above).
