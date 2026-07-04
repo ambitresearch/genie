@@ -15,3 +15,23 @@ export {
   type MarkerValidationResult,
   type MarkerViewport,
 } from "./marker.js";
+
+// M3-04 (DRO-260) — the full-scan facet's orchestrator + its render/pHash
+// helpers, surfaced here so `tools/validate.ts` (and any future consumer)
+// composes them through the barrel rather than reaching into the files.
+export {
+  fullScan,
+  type FullScanDeps,
+  type FullScanInput,
+  type FullScanResult,
+  type FullScanKitStore,
+} from "./full-scan.js";
+export { createDefaultRenderer, type Renderer, type RenderedCard } from "./render.js";
+export {
+  computePHash,
+  hammingDistance,
+  findDuplicateClusters,
+  DEFAULT_TOLERANCE_BITS,
+  type RGBAImage,
+  type HashedEntry,
+} from "./phash.js";
