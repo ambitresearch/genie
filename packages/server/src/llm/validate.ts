@@ -32,25 +32,27 @@
 import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 
 import { COMPONENT_SCHEMA, type ValidatedComponent } from "./schema.js";
+import { MARKER_REGEX } from "../validate/marker.js";
 
 export type { ValidatedComponent } from "./schema.js";
 export type { ErrorObject } from "ajv";
 
 /**
  * AC4 — the canonical `@genie` first-line marker regex from
- * `docs/plan/00-decisions.md` §D-B (also the AC2 regex on M3-01, spec
- * DRO-267). Every generated `<Name>.html` preview must open with a comment
- * matching this pattern so the manifest compiler (M3-03) and the validate
- * tool (M3-04) can register / verify the card without re-parsing the
- * component's JSX.
+ * `docs/plan/00-decisions.md` §D-B. Every generated `<Name>.html` preview
+ * must open with a comment matching this pattern so the manifest compiler
+ * (M3-03) and the validate tool (M3-04) can register / verify the card
+ * without re-parsing the component's JSX.
  *
- * TODO(M3-01, DRO-267): once M3-01 lands `packages/server/src/validate/
- * marker.ts` this constant should be replaced with a re-export from there
- * (M3-01 will import `MARKER_REGEX` and re-export it here for backwards
- * compatibility with any M2-07 consumers). Duplicated verbatim here so M2-07
- * ships ahead of M3-01 without a forward dependency.
+ * M3-01 (DRO-257) landed the single source of truth for this pattern at
+ * `packages/server/src/validate/marker.ts`'s `MARKER_REGEX`; this is now a
+ * re-export alias, kept under its original M2-07 name for backwards
+ * compatibility with existing consumers (this module's own cross-check
+ * below, plus `packages/e2e/test/m2-generation.test.ts`) rather than forcing
+ * every call site to rename in the same change that removes the duplicate
+ * literal.
  */
-export const MARKER_REGEX_M2_07 = /^<!--\s*@genie\s+group="[^"]*"[^>]*-->/;
+export const MARKER_REGEX_M2_07 = MARKER_REGEX;
 
 /**
  * Same selector as `COMPONENT_SCHEMA.properties.files.items.contains.pattern`
@@ -74,8 +76,7 @@ export const MARKER_REGEX_M2_07 = /^<!--\s*@genie\s+group="[^"]*"[^>]*-->/;
  * `PATH_PATTERN`, which a naive `.endsWith(".html")` filter would wrongly
  * subject to the marker rule).
  */
-export const NAMED_HTML_PATH =
-  /^components\/[a-z0-9-]+\/([A-Z][A-Za-z0-9]{1,63})\/\1\.html$/;
+export const NAMED_HTML_PATH = /^components\/[a-z0-9-]+\/([A-Z][A-Za-z0-9]{1,63})\/\1\.html$/;
 
 /**
  * `Error` subclass thrown by {@link validateComponent} on structural or
