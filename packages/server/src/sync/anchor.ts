@@ -117,12 +117,12 @@ const anchorSchema = z.object({
  *   M3-05 orchestrator, or a direct test) is the one that ran the M3-04
  *   validator and knows which `<group>/<Name>` ids passed.
  * - `by` is {@link DEFAULT_BY} unless overridden by `env.GENIE_BY` (AC6).
- * - The write is atomic (AC7): content lands in a temp file created via
- *   `mkdtemp` alongside the real `.genie/` dir (so the final `rename` is a
- *   same-filesystem, same-directory rename — the one guarantee POSIX
- *   `rename()` actually gives), then renamed over the destination. A crash
- *   between the temp write and the rename leaves the PRIOR anchor (or no
- *   anchor) intact — never a half-written one.
+ * - The write is atomic (AC7): content lands in a temp file staged under
+ *   `<projectRoot>/.genie-tmp/` — a different directory from the `.genie/`
+ *   destination, but the same filesystem/mount, which is the one guarantee
+ *   POSIX `rename()` actually needs — then renamed over the destination. A
+ *   crash between the temp write and the rename leaves the PRIOR anchor (or
+ *   no anchor) intact — never a half-written one.
  *
  * @param env Injectable environment (defaults to `process.env`), so tests can
  *   assert the `GENIE_BY` override without mutating global state — the same
@@ -147,10 +147,11 @@ export async function writeAnchor(
   await mkdir(join(projectRoot, ".genie"), { recursive: true });
 
   // Stage under `<projectRoot>/.genie-tmp/` (NOT os.tmpdir()) so the final
-  // rename is same-filesystem/same-directory — mirrors the load-bearing
-  // reasoning in store/local.ts's stageAndCommit (a kit dir and /tmp are
-  // commonly different mounts, and rename() is only atomic within one
-  // filesystem). Reusing `.genie-tmp` (rather than a new `.genie/`-nested
+  // rename stays on the same filesystem — mirrors the load-bearing reasoning
+  // in store/local.ts's stageAndCommit (a kit dir and /tmp are commonly
+  // different mounts, and rename() is only atomic within one filesystem; it
+  // does NOT require source and destination to share a directory). Reusing
+  // `.genie-tmp` (rather than a new `.genie/`-nested
   // staging dir) matters beyond consistency: `store/kit-files.ts`'s
   // `DEFAULT_IGNORED_SEGMENTS` already excludes `.genie-tmp` from every kit
   // listing, so a `list_files` call landing mid-write never surfaces this

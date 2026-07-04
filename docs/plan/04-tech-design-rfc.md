@@ -1326,12 +1326,16 @@ implementation lives in `packages/server/src/sync/anchor.ts`
 The `version: 1` integer follows the same evolution rule as `manifest.json`
 (§16.1): a future breaking change to this shape bumps it, and a
 version-2-aware reader still parses `version: 1` anchors. The reference
-implementation's `zod` schema does not set `additionalProperties: false` (it
-silently drops unrecognized keys rather than rejecting them, mirroring
-`store/manifest.ts`'s `.passthrough()` precedent) — a genuinely malformed
-anchor (bad JSON, wrong `version`, or a missing required field) throws
-`AnchorParseError` from `readAnchor` rather than being silently treated as
-absent; only a missing file resolves to `null` (AC8).
+implementation's `zod` schema does not set `additionalProperties: false` (so
+a future additive field never fails validation) — but unlike
+`store/manifest.ts`'s `.passthrough()`, which explicitly *retains*
+unrecognized keys in the parsed result, `anchorSchema` is a plain
+`z.object({...})`, whose default mode silently *strips* unrecognized keys
+instead. The two schemas diverge on that point rather than mirroring each
+other; either way, a genuinely malformed anchor (bad JSON, wrong `version`,
+or a missing required field) throws `AnchorParseError` from `readAnchor`
+rather than being silently treated as absent — only a missing file resolves
+to `null` (AC8).
 
 ### 7.3 `meta.json` per component
 
