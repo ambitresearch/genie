@@ -38,7 +38,12 @@
  * structurally impossible to violate from this module.
  */
 import { validateMarker, extractViewport } from "./marker.js";
-import { computePHash, findDuplicateClusters, type HashedEntry } from "./phash.js";
+import {
+  computePHash,
+  computeColorSignature,
+  findDuplicateClusters,
+  type HashedEntry,
+} from "./phash.js";
 import type { Renderer } from "./render.js";
 
 /**
@@ -83,6 +88,11 @@ export interface FullScanDeps {
   /** pHash tolerance override (bits) — defaults to `phash.ts`'s calibrated
    * `DEFAULT_TOLERANCE_BITS`. Exposed for tuning/tests. */
   toleranceBits?: number;
+  /** Hue-veto color tolerance override (L1 over mean ink RGB, DRO-717) —
+   * defaults to `phash.ts`'s calibrated `DEFAULT_COLOR_TOLERANCE_L1`. Exposed
+   * for tuning/tests; the veto only ever REMOVES a blockhash pairing, so raising
+   * this loosens the hue check back toward blockhash-only behavior. */
+  colorToleranceL1?: number;
 }
 
 /** The `validate` verb's input (AC2). `planId` is accepted per the verb's
@@ -367,9 +377,24 @@ export async function fullScan(deps: FullScanDeps, input: FullScanInput): Promis
 
     const hashedEntries: HashedEntry[] = [];
     for (const r of rendered) {
-      if (r) hashedEntries.push({ path: r.path, hash: computePHash(r.card.image) });
+      if (r) {
+        // DRO-717: carry a hue signature alongside the (hue-blind) blockhash so
+        // findDuplicateClusters can veto a same-layout / different-fill pair
+        // (e.g. a primary/danger/success button set) that the blockhash alone
+        // would falsely cluster. computeColorSignature returns undefined for a
+        // blank/near-white render, in which case the veto abstains for that entry.
+        hashedEntries.push({
+          path: r.path,
+          hash: computePHash(r.card.image),
+          color: computeColorSignature(r.card.image),
+        });
+      }
     }
-    variantsIdentical = findDuplicateClusters(hashedEntries, deps.toleranceBits);
+    variantsIdentical = findDuplicateClusters(
+      hashedEntries,
+      deps.toleranceBits,
+      deps.colorToleranceL1,
+    );
   }
 
   const bad = markerMissing.length + thin.length + variantsIdentical.length;
