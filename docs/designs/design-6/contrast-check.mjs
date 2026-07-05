@@ -116,6 +116,7 @@ const light = parseTokens(lightBlock);
 const dark = { ...light, ...parseTokens(darkBlock) };
 
 const AA_BODY = 4.5;
+const AA_UI = 3.0; // large text / UI components (focus ring, etc.) — WCAG 1.4.11 / 1.4.3 large-text floor
 
 function row(label, fgTok, bgTok, tokMap, target) {
   const fg = tokMap[fgTok] ?? fgTok; // allow passing "white" literal
@@ -127,30 +128,32 @@ function row(label, fgTok, bgTok, tokMap, target) {
 
 console.log("=== LIGHT MODE (design.md §14 reproduction) ===");
 const lightRows = [
-  row("ink on paper", "ink", "paper", light, 4.5),
-  row("ink-2 on paper", "ink-2", "paper", light, 4.5),
-  row("ink-3 on paper", "ink-3", "paper", light, 4.5),
+  row("ink on paper", "ink", "paper", light, AA_BODY),
+  row("ink-2 on paper", "ink-2", "paper", light, AA_BODY),
+  row("ink-3 on paper", "ink-3", "paper", light, AA_BODY),
   row("ink-3 on paper-2", "ink-3", "paper-2", light, null),
   row("ink-3 on paper-3", "ink-3", "paper-3", light, null),
-  row("struct on paper", "struct", "paper", light, 4.5),
+  row("struct on paper", "struct", "paper", light, AA_BODY),
+  row("focus on paper", "focus", "paper", light, AA_UI),
   row("accent (clay) on paper", "accent", "paper", light, null),
-  row("accent-2 (deep clay, text-safe) on paper", "accent-2", "paper", light, 4.5),
+  row("accent-2 (deep clay, text-safe) on paper", "accent-2", "paper", light, AA_BODY),
   row("white on accent", "white", "accent", light, null),
-  row("white on accent-2", "white", "accent-2", light, 4.5),
+  row("white on accent-2", "white", "accent-2", light, AA_BODY),
 ];
 for (const r of lightRows)
   console.log(`${r.ratio.toFixed(2)}:1  ${r.verdict.padEnd(1)}  ${r.label}`);
 
 console.log('\n=== DARK MODE (data-scheme="dark") — DRO-743 ===');
 const darkRows = [
-  row("ink(dark) on paper(dark)", "ink", "paper", dark, 4.5),
-  row("ink-2(dark) on paper(dark)", "ink-2", "paper", dark, 4.5),
-  row("ink-3(dark) on paper(dark)", "ink-3", "paper", dark, 4.5),
+  row("ink(dark) on paper(dark)", "ink", "paper", dark, AA_BODY),
+  row("ink-2(dark) on paper(dark)", "ink-2", "paper", dark, AA_BODY),
+  row("ink-3(dark) on paper(dark)", "ink-3", "paper", dark, AA_BODY),
   row("ink-3(dark) on paper-2(dark)", "ink-3", "paper-2", dark, null),
   row("ink-3(dark) on paper-3(dark)", "ink-3", "paper-3", dark, null),
-  row("struct(dark) on paper(dark)", "struct", "paper", dark, 4.5),
+  row("struct(dark) on paper(dark)", "struct", "paper", dark, AA_BODY),
+  row("focus(dark, inherited — no override) on paper(dark)", "focus", "paper", dark, AA_UI),
   row("accent(dark, clay) on paper(dark)", "accent", "paper", dark, null),
-  row("accent-2(dark, text-safe clay) on paper(dark)", "accent-2", "paper", dark, 4.5),
+  row("accent-2(dark, text-safe clay) on paper(dark)", "accent-2", "paper", dark, AA_BODY),
   row("accent-2(dark) on paper-2(dark)", "accent-2", "paper-2", dark, null),
   row("accent-2(dark) on paper-3(dark)", "accent-2", "paper-3", dark, null),
   row("white on accent(dark)", "white", "accent", dark, null),
@@ -163,6 +166,16 @@ const darkRows = [
 ];
 for (const r of darkRows)
   console.log(`${r.ratio.toFixed(2)}:1  ${r.verdict.padEnd(1)}  ${r.label}`);
+
+// ── Print the computed hex for every dark token touched by this fix, so the
+//    hex comments living in tokens.css/design.md have a re-derivable source
+//    right here (previously verified by a separate throwaway script — see
+//    PR description; folding toHex() into the persisted verifier means that
+//    claim is checkable from this file alone, no separate script needed). ──
+console.log("\n=== computed hex (dark-mode fix tokens) ===");
+for (const tok of ["ink-3", "accent-2", "paper"]) {
+  console.log(`--color-${tok} (dark): ${toHex(rgbFromOklchStr(dark[tok]))}`);
+}
 
 // ── Exit non-zero if any AA-targeted pair fails, so this doubles as a guard
 //    against future token edits silently reopening DRO-743. ─────────────────
