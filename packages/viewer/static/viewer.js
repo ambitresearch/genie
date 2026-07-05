@@ -77,6 +77,18 @@
   var MANIFEST_URL = ".genie/manifest.json";
 
   /**
+   * DOM id of the inlined-manifest script the embedded `ui://genie/grid` tier
+   * (M4-06 / DRO-268) injects: `<script type="application/json" id="manifest">
+   * …</script>`. That tier's CSP is `default-src 'none'; … connect-src 'none'`
+   * — `fetch()` is blocked outright — so the manifest MUST travel inside the
+   * document and `boot` reads it from here instead of the network. The `file://`
+   * and localhost tiers carry NO such node, so they transparently keep the
+   * `fetch(MANIFEST_URL)` path — the one `viewer.js` stays byte-identical across
+   * all three vehicles (RFC G-5).
+   */
+  var MANIFEST_ELEMENT_ID = "manifest";
+
+  /**
    * Fallback card height (px) for a named/unparseable viewport (e.g. "desktop").
    * A comfortable 16:10-ish default so a card without an explicit WxH still
    * reserves a sensible preview area instead of collapsing to nothing.
@@ -345,10 +357,69 @@
   }
 
   /**
-   * Boot the viewer: fetch the manifest, render the grid, and wire the `#q`
+   * Read the manifest inlined by the embedded `ui://genie/grid` tier (M4-06):
+   * a `<script type="application/json" id="manifest">…</script>` node whose
+   * text content is the compiled manifest JSON. Returns the parsed object, or
+   * `null` when there is no such node (the `file://` / localhost tiers, which
+   * fetch instead) OR the node is present but not usable — wrong `type`, empty,
+   * or malformed JSON. A `null` return is the caller's signal to fall back to
+   * the network path; a malformed INLINE manifest deliberately degrades to that
+   * same fallback rather than throwing, so a corrupt payload surfaces as the
+   * normal error state, never an uncaught exception on the page.
+   *
+   * Reading `type` guards against picking up an unrelated `#manifest` element
+   * and, more importantly, means only a genuine data block (never an executable
+   * `<script>`) is ever parsed here.
+   *
+   * @param {Document} doc
+   * @returns {object | null}
+   */
+  function readInlineManifest(doc) {
+    var el = doc.getElementById(MANIFEST_ELEMENT_ID);
+    if (!el) return null;
+    // Only a JSON data block counts — never an executable script.
+    var type = (el.getAttribute && el.getAttribute("type")) || "";
+    if (type.toLowerCase() !== "application/json") return null;
+    var raw = el.textContent || "";
+    if (raw.trim() === "") return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Wire the `#q` search box to live-filter the rendered grid (AC5). Shared by
+   * both boot paths (inline + fetch) so the two vehicles behave identically.
+   *
+   * @param {Document} doc
+   * @param {HTMLElement} grid
+   */
+  function wireSearch(doc, grid) {
+    var search = doc.getElementById("q");
+    if (search) {
+      search.addEventListener("input", function () {
+        applyFilter(grid, search.value);
+      });
+    }
+  }
+
+  /**
+   * Boot the viewer: obtain the manifest, render the grid, and wire the `#q`
    * search input to live-filter (AC5). Resolves (never rejects) so a caller
    * / the browser auto-boot can `await` it without an unhandled rejection;
    * on any failure it paints the error state instead.
+   *
+   * ── Manifest source: inline first, then fetch (M4-06 / DRO-268) ────────────
+   * The embedded `ui://genie/grid` tier inlines the manifest into the document
+   * (`<script type="application/json" id="manifest">`) because its CSP
+   * (`connect-src 'none'`) blocks `fetch` entirely. So `boot` reads the inline
+   * node FIRST and, when present, renders straight from it — issuing NO network
+   * request. Only when there is no inline node (the `file://` / localhost tiers)
+   * does it fall back to `fetch(MANIFEST_URL)`. This keeps `viewer.js`
+   * byte-identical across all three vehicles (RFC G-5) while honouring each
+   * tier's transport.
    *
    * @param {Document} doc
    * @param {typeof fetch} fetchImpl
@@ -358,6 +429,20 @@
     var grid = doc.getElementById("grid");
     if (!grid) return Promise.resolve();
 
+    // Embedded tier: manifest is inlined; render it directly, never fetch.
+    var inline = readInlineManifest(doc);
+    if (inline !== null) {
+      try {
+        renderGrid(doc, grid, inline);
+        wireSearch(doc, grid);
+      } catch (err) {
+        var inlineDetail = err && err.message ? err.message : String(err);
+        renderError(doc, grid, inlineDetail);
+      }
+      return Promise.resolve();
+    }
+
+    // file:// / localhost tiers: no inline node — fetch the manifest.
     return fetchImpl(MANIFEST_URL)
       .then(function (response) {
         if (!response.ok) {
@@ -369,13 +454,7 @@
       .then(function (manifest) {
         if (manifest === null) return; // error already rendered above
         renderGrid(doc, grid, manifest);
-
-        var search = doc.getElementById("q");
-        if (search) {
-          search.addEventListener("input", function () {
-            applyFilter(grid, search.value);
-          });
-        }
+        wireSearch(doc, grid);
       })
       .catch(function (err) {
         var detail = err && err.message ? err.message : String(err);
@@ -404,6 +483,9 @@
     window.__genieViewerTestHooks.createCard = createCard;
     window.__genieViewerTestHooks.renderGrid = renderGrid;
     window.__genieViewerTestHooks.applyFilter = applyFilter;
+    window.__genieViewerTestHooks.readInlineManifest = readInlineManifest;
+    window.__genieViewerTestHooks.wireSearch = wireSearch;
+    window.__genieViewerTestHooks.MANIFEST_ELEMENT_ID = MANIFEST_ELEMENT_ID;
     window.__genieViewerTestHooks.boot = boot;
   }
 })();

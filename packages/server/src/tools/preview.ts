@@ -294,10 +294,19 @@ export interface PreviewContext {
   clientName?: string;
 }
 
-/** The tool's return shape (AC3): text URLs + the ui:// resource pointer. */
+/**
+ * The tool's return shape (AC3): text URLs + the ui:// resource pointer.
+ *
+ * `_meta` carries the resource pointer under TWO keys so both app ecosystems
+ * link the result to the same `ui://genie/grid` widget:
+ *   - `ui.resourceUri` — the MCP-Apps convention (Claude, VS Code, Cursor).
+ *   - `openai/outputTemplate` — the ChatGPT Apps SDK convention (M4-06 AC6,
+ *     research report §3.4 cross-vendor note). Same URI value; a host reads
+ *     whichever key it understands and ignores the other.
+ */
 export interface PreviewResult {
   content: { type: "text"; text: string }[];
-  _meta: { ui: { resourceUri: string } };
+  _meta: { ui: { resourceUri: string }; "openai/outputTemplate": string };
 }
 
 /**
@@ -354,7 +363,12 @@ export async function runPreview(
       "(Start the genie viewer manually, or a ui://-capable host can render the inline grid.)";
   }
 
-  return { content: [{ type: "text", text }], _meta: { ui: { resourceUri } } };
+  return {
+    content: [{ type: "text", text }],
+    // Same resourceUri under both the MCP-Apps key (`ui.resourceUri`) and the
+    // ChatGPT Apps SDK key (`openai/outputTemplate`, AC6) — cross-vendor link.
+    _meta: { ui: { resourceUri }, "openai/outputTemplate": resourceUri },
+  };
 }
 
 // ─── MCP registration ────────────────────────────────────────────────────────

@@ -592,6 +592,137 @@ describe("boot", () => {
   });
 });
 
+// ── Inlined manifest (embedded ui://genie/grid tier — M4-06 / DRO-268) ───────
+//
+// The embedded MCP-Apps tier (`ui://genie/grid`) serves a self-contained
+// document whose CSP is `default-src 'none'; …; connect-src 'none'` — so
+// `fetch()` is BLOCKED outright. The server therefore inlines the compiled
+// manifest as `<script type="application/json" id="manifest">…</script>`, and
+// this same `viewer.js` (byte-identical across file:// / localhost / ui://,
+// RFC G-5) must prefer that inline node and NEVER hit the network when it is
+// present. file:// and localhost carry no inline node and keep the fetch path.
+
+describe("inlined manifest (embedded tier — no fetch under connect-src 'none')", () => {
+  /** Build a full HTML document that inlines `manifestObj` the way M4-06's
+   * `grid-resource` handler does: a JSON script with `id="manifest"`. */
+  function htmlWithInlineManifest(manifestJson: string): string {
+    return (
+      "<!doctype html><html><head>" +
+      '<script type="application/json" id="manifest">' +
+      manifestJson +
+      // Split the closing tag so this string is never itself a script
+      // terminator when the file is read as text; irrelevant to jsdom parsing.
+      "</scr" +
+      "ipt>" +
+      '</head><body><input id="q" /><main id="grid"></main></body></html>'
+    );
+  }
+
+  function loadHooksFromHtml(html: string): {
+    hooks: Hooks;
+    window: JSDOM["window"];
+    document: Document;
+  } {
+    const dom = new JSDOM(html, { runScripts: "outside-only" });
+    const { window } = dom;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).__genieViewerTestHooks = {};
+    window.eval(VIEWER_JS);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return { hooks: (window as any).__genieViewerTestHooks, window, document: window.document };
+  }
+
+  /** A fetch impl that fails the test if it is ever called — the embedded
+   * tier's `connect-src 'none'` means calling fetch at all is a bug. */
+  function forbiddenFetch(): typeof fetch {
+    return (async () => {
+      throw new Error("fetch must not be called when a manifest is inlined");
+    }) as unknown as typeof fetch;
+  }
+
+  it("readInlineManifest returns the parsed manifest from #manifest", () => {
+    const { hooks, document } = loadHooksFromHtml(
+      htmlWithInlineManifest(JSON.stringify(twoGroupManifest())),
+    );
+    const parsed = hooks.readInlineManifest(document);
+    expect(parsed).not.toBeNull();
+    expect(parsed.components.length).toBe(2);
+  });
+
+  it("readInlineManifest returns null when there is no inline node (file:// / localhost)", () => {
+    const { hooks, document } = loadHooks();
+    expect(hooks.readInlineManifest(document)).toBeNull();
+  });
+
+  it("readInlineManifest returns null for malformed JSON", () => {
+    const { hooks, document } = loadHooksFromHtml(htmlWithInlineManifest("{ not valid json "));
+    expect(hooks.readInlineManifest(document)).toBeNull();
+  });
+
+  it("readInlineManifest ignores a #manifest node that is not application/json", () => {
+    const html =
+      "<!doctype html><html><head>" +
+      '<script id="manifest">window.__pwned = 1;</scr' +
+      "ipt>" +
+      '</head><body><input id="q" /><main id="grid"></main></body></html>';
+    const { hooks, document } = loadHooksFromHtml(html);
+    expect(hooks.readInlineManifest(document)).toBeNull();
+  });
+
+  it("boot renders from the inline manifest WITHOUT calling fetch", async () => {
+    const { hooks, document } = loadHooksFromHtml(
+      htmlWithInlineManifest(JSON.stringify(twoGroupManifest())),
+    );
+    const grid = document.getElementById("grid") as HTMLElement;
+
+    await hooks.boot(document, forbiddenFetch());
+
+    // Rendered purely from the inline node — two cards, zero network.
+    expect(grid.querySelectorAll("iframe").length).toBe(2);
+    expect(grid.querySelector(".ds-error")).toBeNull();
+  });
+
+  it("boot still wires the #q search input on the inline path (AC5 parity)", async () => {
+    const { hooks, document, window } = loadHooksFromHtml(
+      htmlWithInlineManifest(JSON.stringify(twoGroupManifest())),
+    );
+    const grid = document.getElementById("grid") as HTMLElement;
+    await hooks.boot(document, forbiddenFetch());
+
+    const q = document.getElementById("q") as HTMLInputElement;
+    q.value = "prim";
+    q.dispatchEvent(new window.Event("input", { bubbles: true }));
+
+    const visible = [...grid.querySelectorAll("[data-name]")].filter(
+      (el) => !(el as HTMLElement).hidden,
+    );
+    expect(visible.map((el) => el.getAttribute("data-name"))).toEqual(["primary buttons"]);
+  });
+
+  it("boot renders the empty state from an inline empty manifest (still no fetch)", async () => {
+    const { hooks, document } = loadHooksFromHtml(
+      htmlWithInlineManifest(JSON.stringify(manifest([]))),
+    );
+    const grid = document.getElementById("grid") as HTMLElement;
+    await hooks.boot(document, forbiddenFetch());
+    expect(grid.querySelector(".ds-empty")).not.toBeNull();
+    expect(grid.querySelectorAll("iframe").length).toBe(0);
+  });
+
+  it("falls back to fetch when the inline node is absent (byte-identical file:// path)", async () => {
+    const { hooks, document } = loadHooks();
+    const grid = document.getElementById("grid") as HTMLElement;
+    const seen: string[] = [];
+    const f = async (url: string) => {
+      seen.push(url);
+      return { ok: true, status: 200, json: async () => twoGroupManifest() } as Response;
+    };
+    await hooks.boot(document, f);
+    expect(seen).toEqual([hooks.MANIFEST_URL]);
+    expect(grid.querySelectorAll("iframe").length).toBe(2);
+  });
+});
+
 // ── Security: textContent, never innerHTML, for user-controlled strings ────
 
 describe("XSS safety — card name rendered as inert text", () => {
