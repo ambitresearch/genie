@@ -5,19 +5,19 @@ Vite-backed live preview + UI-kit browser for genie. Watches a kit directory
 MCP tools produce, in a grid, with HMR — see the research report §3.4 and
 §7 step 5 linked from [`docs/github/`](../../docs/github).
 
-## Status: Vite multi-page config (M4-02)
+## Status: booting dev-server CLI (M4-08)
 
-This package ships the `genie-viewer` CLI's argument parser plus the Vite
-**multi-page config** that serves a kit directory with every
-`components/**/preview.html` as its own entry point. The polished dev-server
-_boot_ (`genie-viewer <kit-dir>` actually starting Vite, port-fallback,
-auto-open, Ctrl-C teardown) is still M4-08; today you drive Vite directly via
-the `serve` script (see [Serving a kit](#serving-a-kit)).
+This package ships the `genie-viewer` CLI — it boots the Vite **multi-page dev
+server** against a kit directory (every `components/**/preview.html` is its own
+entry point), prints the preview URL, opens your browser, and stops cleanly on
+Ctrl-C. The grid renderer and HMR card-refresh that fill that page land next
+(M4-03 / M4-04).
 
 | Milestone           | Adds                                                       |
 | ------------------- | ---------------------------------------------------------- |
 | M4-01               | package scaffold, CLI arg-parsing, usage/version           |
-| M4-02 (this change) | Vite multi-page config — one entry per `preview.html`      |
+| M4-02               | Vite multi-page config — one entry per `preview.html`      |
+| M4-08 (this change) | dev-server boot: URL print, port fallback, open, Ctrl-C    |
 | M4-03               | iframe grid renderer                                       |
 | M4-04               | chokidar watch + HMR-driven card refresh via `postMessage` |
 | M4-05…M4-10         | UI-kit file browser, refine pane, polish                   |
@@ -25,18 +25,39 @@ the `serve` script (see [Serving a kit](#serving-a-kit)).
 See the issue backlog in [`docs/github/issues/`](../../docs/github/issues) for
 the full M4 breakdown.
 
+## Quickstart
+
+```bash
+# Boot a live preview of a synced kit (opens your browser at the URL):
+npx genie-viewer ui_kits/acme
+#   Preview: http://127.0.0.1:5173
+
+# Pick a port (falls back to the next free one, with a warning, if it's taken):
+npx genie-viewer ui_kits/acme --port 5180
+
+# Headless / CI — print the URL but don't open a browser:
+npx genie-viewer ui_kits/acme --no-open
+```
+
+Press **Ctrl-C** to stop: the watcher and dev server shut down within a second.
+
+> **The kit must be synced first.** `genie-viewer` refuses a directory without a
+> `.genie/manifest.json` (the client-side compiler's output) and exits non-zero,
+> pointing you at running the genie MCP server against the kit first. That
+> manifest is the signal the kit has cards to render.
+
 ## Usage
 
 ```bash
-npx genie-viewer <kit-dir> [--port N]
+npx genie-viewer <kit-dir> [--port N] [--no-open]
 ```
 
 ```
 Usage: genie-viewer <kit-dir> [--port N]
 
 Vite-backed UI-kit preview grid.
-Scaffold build (M4-01): parses arguments and prints usage only.
-The dev server, grid renderer, and HMR bridge land in M4-02 through M4-08.
+Boots a live preview of <kit-dir> — every components/**/preview.html as a
+card — prints the URL, and opens your browser. Ctrl-C stops it cleanly.
 
 Arguments:
   kit-dir        path to the UI kit directory to preview
@@ -44,19 +65,18 @@ Arguments:
 Options:
   -v, --version  print the version and exit
   --port <n>     dev server port (default: 5173)
+  --open         open the preview in the system browser (default: true)
+  --no-open      do not open a browser
   -h, --help     display help for command
 ```
 
-Until the M4-08 dev-server boot lands, passing a `kit-dir` to `genie-viewer`
-only echoes what was parsed — to actually serve a kit today, use the `serve`
-script below.
-
-## Serving a kit
+## Serving a kit directly (without the CLI)
 
 The Vite config (`vite.config.ts` → [`src/config.ts`](src/config.ts)) serves a
 kit directory as a **multi-page app**: the kit's root `index.html` is the
 always-present entry, and every `components/**/preview.html` becomes its own
-Vite entry point (globbed with `fast-glob`), hot-reloaded independently.
+Vite entry point (globbed with `fast-glob`), hot-reloaded independently. The
+CLI above wraps this; to drive Vite yourself (e.g. debugging the config):
 
 ```bash
 # Point the serve script at a kit (set GENIE_KIT_ROOT — see note below):
@@ -72,8 +92,8 @@ GENIE_KIT_ROOT=/path/to/kit GENIE_VIEWER_PORT=5180 pnpm --filter @genie/viewer s
 > directory you invoked it from — so without `GENIE_KIT_ROOT` it would try to
 > serve the package dir (which has no kit `index.html`). Only a bare `vite`
 > launched from _inside_ a kit picks that kit up via the cwd default. The
-> polished M4-08 CLI will pass the `<kit-dir>` argument through this same env,
-> so you won't set it by hand.
+> `genie-viewer` CLI passes the `<kit-dir>` argument through for you, so you
+> won't set this by hand.
 
 Behaviour (the config's acceptance criteria):
 

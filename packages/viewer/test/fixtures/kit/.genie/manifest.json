@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "kit",
+  "generatedAt": "2026-07-01T00:00:00.000Z",
+  "groups": ["actions", "surfaces"],
+  "components": [
+    {
+      "name": "Primary buttons",
+      "group": "actions",
+      "path": "components/actions/Button/preview.html",
+      "viewport": "480x240",
+      "hash": "sha256-HIu57RKYabGG+6/CvuZ8kojHOKTOBfb3dg/838mrYcQ=",
+      "lastModified": "2026-07-01T00:00:00.000Z"
+    },
+    {
+      "name": "Card",
+      "group": "surfaces",
+      "path": "components/surfaces/Card/preview.html",
+      "viewport": "480x320",
+      "hash": "sha256-D85EQRB1svFvmn9Y6XxiaK03TowFaFAShEq54EfB3C4=",
+      "lastModified": "2026-07-01T00:00:00.000Z"
+    }
+  ]
+}
