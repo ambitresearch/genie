@@ -23,11 +23,13 @@
  * build_target_*`): {@link RenderInput} is the neutral semantic node the three
  * `render*`/`extract*` methods lower into a concrete target artefact.
  *
- * Only {@link ReactAdapter} implements the codegen methods in v1. {@link VueAdapter}
- * and {@link HtmlAdapter} construct fine and expose their identity + viewport
- * (so `conjure`'s adapter selection never breaks for them), but their codegen
- * methods throw a structured {@link NotYetImplementedError} with a link to the
- * tracking issue (AC3).
+ * Only {@link ReactAdapter} implemented the codegen methods in v1; {@link VueAdapter}
+ * (DRO-616) and {@link HtmlAdapter} (DRO-617) graduated from stubs to real adapters
+ * in v2, so every framework now implements the full contract. The
+ * {@link NotYetImplementedError} + tracking-issue convention (AC3) is retained for
+ * the next framework that ships as a stub — a stub constructs fine and exposes its
+ * identity + viewport (so `conjure`'s adapter selection never breaks for it) while
+ * its codegen methods throw the structured, linked error.
  */
 
 /**

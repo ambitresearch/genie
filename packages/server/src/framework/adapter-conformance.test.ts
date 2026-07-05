@@ -9,10 +9,12 @@
  *   - AC2 — the React + Vue adapters' real codegen: their canonical source file,
  *     an esbuild IIFE preview bundle exposing `GenieComponent`, and a
  *     `ts-morph`-extracted `.d.ts`.
- *   - AC3 — the remaining HTML stub throws a structured `NotYetImplementedError`
- *     with a tracking-issue link from every codegen method, yet still exposes
- *     identity + viewport (so `conjure`'s adapter selection never breaks for it).
- *     Vue graduated out of the stub set in v2 (DRO-616).
+ *   - AC2 (cont.) — the HTML adapter's real codegen (DRO-617): its canonical
+ *     `<Name>.html` source, a bundler-free preview IIFE exposing `GenieComponent`
+ *     with a `mount()`, and a valid empty-module `.d.ts`.
+ *   - AC3 — no frameworks remain stubbed in v2 (Vue → DRO-616, HTML → DRO-617);
+ *     the `NotYetImplementedError` contract is retained (exercised directly) for a
+ *     future stubbed framework, and the tracking-issue links stay genie-repo URLs.
  *   - AC4 — the registry (`getAdapter`) maps each framework to the right adapter.
  */
 import { describe, it, expect } from "vitest";
@@ -81,8 +83,31 @@ function vueInput(overrides: Partial<RenderInput> = {}): RenderInput {
   return { componentName: "Button", group: "actions", source: VUE_SOURCE, ...overrides };
 }
 
-// Only HTML remains stubbed in v2 — Vue graduated to a real adapter (DRO-616).
-const STUB_FRAMEWORKS: Framework[] = ["html"];
+/**
+ * A representative vanilla-HTML component: semantic markup, an inline `<style>`,
+ * and an inline `<script>` (so the preview must carry the JS and the source is a
+ * self-contained, browser-ready document fragment).
+ */
+const HTML_SOURCE = [
+  '<!-- @genie group="actions" -->',
+  '<button class="btn" type="button">Click me</button>',
+  "<style>",
+  "  .btn { padding: 8px 12px; color: rgb(10, 20, 30); }",
+  "</style>",
+  "<script>",
+  '  document.currentScript.previousElementSibling?.addEventListener("click", () => {});',
+  "</script>",
+].join("\n");
+
+/** Fixture for the HTML adapter: same identity, vanilla-HTML source. */
+function htmlInput(overrides: Partial<RenderInput> = {}): RenderInput {
+  return { componentName: "Button", group: "actions", source: HTML_SOURCE, ...overrides };
+}
+
+// No frameworks remain stubbed in v2: Vue graduated in DRO-616, HTML in DRO-617.
+// Kept as an (empty) array so the "stubs still expose identity + viewport"
+// invariant re-arms automatically the day a *new* stubbed framework is added.
+const STUB_FRAMEWORKS: Framework[] = [];
 
 // ── AC1 — interface shape (every adapter) ─────────────────────────────────────
 
@@ -305,36 +330,136 @@ describe("AC2 — VueAdapter", () => {
   });
 });
 
-// ── AC3 — the remaining HTML stub throws a structured, linked error ───────────
+// ── AC2 — HTML adapter codegen (the DRO-617 v2 implementation) ─────────────────
 
-describe("AC3 — HTML stub", () => {
-  it("HTML codegen methods reject with NotYetImplementedError + tracking link", async () => {
-    const html = new HtmlAdapter();
-    expect(() => html.renderSource(input())).toThrow(NotYetImplementedError);
-    await expect(html.renderPreview(input())).rejects.toBeInstanceOf(NotYetImplementedError);
-    await expect(html.extractDts(input())).rejects.toBeInstanceOf(NotYetImplementedError);
-    try {
-      html.renderSource(input());
-    } catch (err) {
-      const e = err as NotYetImplementedError;
-      expect(e.code).toBe("ERR_FRAMEWORK_NOT_IMPLEMENTED");
-      expect(e.framework).toBe("html");
-      expect(e.trackingIssue).toBe(HTML_TRACKING_ISSUE);
-      expect(e.message).toContain(HTML_TRACKING_ISSUE);
+describe("AC2 — HtmlAdapter", () => {
+  const html = new HtmlAdapter();
+
+  it("has html identity + a viewport + an HTML-shaped prompt directive", () => {
+    expect(html.framework).toBe("html");
+    expect(html.defaultViewport.width).toBeGreaterThan(0);
+    expect(html.defaultViewport.height).toBeGreaterThan(0);
+    expect(html.promptDirective).toContain("Target framework: html");
+    // The directive steers the model toward the self-contained vanilla-HTML shape.
+    expect(html.promptDirective).toContain("self-contained vanilla HTML");
+  });
+
+  it("renderSource emits <Name>.html carrying the markup verbatim", () => {
+    const file = html.renderSource(htmlInput());
+    expect(file.path).toBe("components/actions/Button/Button.html");
+    expect(file.content).toBe(HTML_SOURCE);
+    // Matches the MIME the whole kit pipeline uses for `.html`.
+    expect(file.mimeType).toBe("text/html");
+  });
+
+  it("renderPreview emits an IIFE exposing the component global with a mount()", async () => {
+    const file = await html.renderPreview(htmlInput());
+    expect(file.path).toBe("components/actions/Button/Button.preview.js");
+    expect(file.mimeType).toBe("text/javascript");
+    // Same `var GenieComponent = (() => { … })()` IIFE shape as React/Vue.
+    expect(file.content).toContain(PREVIEW_GLOBAL_NAME);
+    expect(file.content).toContain("(() =>");
+    // Exposes the cross-framework `{ default, <Name> }` mount handle.
+    expect(file.content).toContain("default: mount");
+    expect(file.content).toContain('"Button": mount');
+    // The component's own markup + inline style made it into the bundle.
+    expect(file.content).toContain("btn");
+    expect(file.content).toContain("color: rgb(10, 20, 30)");
+  });
+
+  it("renderPreview needs no bundler runtime (no esbuild/host-global, no require)", async () => {
+    const file = await html.renderPreview(htmlInput());
+    // Vanilla HTML has no framework runtime to resolve, so — unlike React/Vue —
+    // the preview must not carry a host-global shim nor a throwing `require(...)`.
+    expect(file.content).not.toContain("Dynamic require of");
+    expect(file.content).not.toMatch(/[^_.\w]require\(/);
+    expect(file.content).not.toContain("window.React");
+    expect(file.content).not.toContain("window.Vue");
+  });
+
+  it("renderPreview is deterministic (byte-identical across runs)", async () => {
+    const a = await html.renderPreview(htmlInput());
+    const b = await html.renderPreview(htmlInput());
+    expect(a.content).toBe(b.content);
+  });
+
+  it("renderPreview safely embeds source containing quotes / </script> sequences", async () => {
+    // JSON-encoding the source (not string concatenation) keeps a literal
+    // `</script>` or a quote from breaking the emitted JS.
+    const file = await html.renderPreview(
+      htmlInput({
+        componentName: "Quirky",
+        group: "misc",
+        source: '<p title="a\'b">x</p><script>console.log("</script> not closed");</script>',
+      }),
+    );
+    expect(file.path).toBe("components/misc/Quirky/Quirky.preview.js");
+    // Round-trips: the embedded JSON string parses back to the exact source.
+    const match = file.content.match(/var html = (".*?");\n {2}function mount/s);
+    expect(match).not.toBeNull();
+    expect(JSON.parse(match![1])).toBe(
+      '<p title="a\'b">x</p><script>console.log("</script> not closed");</script>',
+    );
+  });
+
+  it("extractDts emits a valid empty-module <Name>.d.ts (HTML has no type surface)", async () => {
+    const file = await html.extractDts(htmlInput());
+    expect(file.path).toBe("components/actions/Button/Button.d.ts");
+    // Always a valid `.d.ts` artefact, never an empty string.
+    expect(file.content.length).toBeGreaterThan(0);
+    expect(file.content).toContain("export {}");
+    expect(file.mimeType).toBe("text/plain");
+  });
+
+  it("all HTML artefacts live under components/<group>/<Name>/", async () => {
+    const src = html.renderSource(htmlInput());
+    const prev = await html.renderPreview(htmlInput());
+    const dts = await html.extractDts(htmlInput());
+    for (const f of [src, prev, dts]) {
+      expect(f.path.startsWith("components/actions/Button/")).toBe(true);
+    }
+  });
+});
+
+// ── AC3 — no framework remains stubbed; the error contract is retained ─────────
+
+describe("AC3 — stub contract (retained for future frameworks)", () => {
+  it("no shipped adapter is a stub — every framework's codegen is real", async () => {
+    // Regression guard on the v2 graduation: none of the three adapters throws
+    // NotYetImplementedError from a codegen method any more (React v1, Vue DRO-616,
+    // HTML DRO-617). `STUB_FRAMEWORKS` is now empty; this asserts that stays true.
+    expect(STUB_FRAMEWORKS).toHaveLength(0);
+    for (const fw of FRAMEWORKS) {
+      const adapter = await getAdapter(fw);
+      expect(() => adapter.renderSource(input())).not.toThrow(NotYetImplementedError);
     }
   });
 
+  it("NotYetImplementedError stays a well-formed, structured, linked error", () => {
+    // The class is part of the FrameworkAdapter contract — kept for the next
+    // framework that ships as a stub — so its shape is pinned even with no live
+    // stub throwing it today.
+    const err = new NotYetImplementedError("html", HTML_TRACKING_ISSUE);
+    expect(err.code).toBe("ERR_FRAMEWORK_NOT_IMPLEMENTED");
+    expect(err.framework).toBe("html");
+    expect(err.trackingIssue).toBe(HTML_TRACKING_ISSUE);
+    expect(err.message).toContain(HTML_TRACKING_ISSUE);
+  });
+
   it("the tracking-issue links point at the genie repo (v2 milestone)", () => {
-    // VUE_TRACKING_ISSUE is retained for provenance even though Vue is now a real
-    // adapter (DRO-616); it and the HTML stub's link must stay genie-repo URLs.
+    // VUE_TRACKING_ISSUE / HTML_TRACKING_ISSUE are retained for provenance even
+    // though both are now real adapters (DRO-616 / DRO-617); the links must stay
+    // genie-repo URLs.
     for (const url of [VUE_TRACKING_ISSUE, HTML_TRACKING_ISSUE]) {
       expect(url).toMatch(/^https:\/\/github\.com\/roshangautam\/genie\/issues\/\d+$/);
     }
   });
 
-  it("stubs still expose identity + viewport (selection never breaks for them)", () => {
+  it("stubs still expose identity + viewport (selection never breaks for them)", async () => {
+    // Vacuous while STUB_FRAMEWORKS is empty, but re-arms automatically for any
+    // future stubbed framework so a new stub still proves it exposes metadata.
     for (const fw of STUB_FRAMEWORKS) {
-      const adapter = new HtmlAdapter();
+      const adapter = await getAdapter(fw);
       expect(adapter.framework).toBe(fw);
       expect(adapter.defaultViewport.width).toBeGreaterThan(0);
       expect(adapter.promptDirective).toContain(`Target framework: ${fw}`);
