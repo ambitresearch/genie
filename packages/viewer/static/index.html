@@ -15,6 +15,16 @@
   generate/refine moments. This browse surface is structural, so its chrome
   stays ink/neutral; the wordmark's single clay glyph is the one sanctioned
   accent touch.
+
+  `viewer.js` is loaded as a CLASSIC script (no `type="module"`) — DRO-749
+  fix. A module script's relative-path `src` fetch is rejected by the browser
+  under `file://` (each `file://` document gets an opaque, distinct origin,
+  so the ES module loader's same-origin check fails), verified empirically
+  against a real headless-Chromium `file://` navigation before this fix. A
+  classic script has no such restriction and runs identically under
+  `file://`, the Vite dev server, and inside a sandboxed iframe — required by
+  RFC G-5 ("byte-identical across file:// / localhost / ui://",  AGENTS.md
+  hard rule 5). See `viewer.js`'s own header for the full writeup.
 -->
 <html lang="en" class="genie-standalone">
   <head>
@@ -46,6 +56,6 @@
       <!-- viewer.js renders group sections + cards here. -->
     </main>
 
-    <script type="module" src="./viewer.js"></script>
+    <script src="./viewer.js"></script>
   </body>
 </html>

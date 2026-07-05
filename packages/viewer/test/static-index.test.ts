@@ -59,9 +59,20 @@ describe("static/index.html (AC1)", () => {
     expect(scripts).toContain("./viewer.js");
   });
 
-  it("loads viewer.js as an ES module (type=module)", () => {
+  it('loads viewer.js as a CLASSIC script — never type="module" (DRO-749 / file:// CORS)', () => {
+    // A module script's relative-src fetch is rejected by the browser when
+    // the document is opened via file:// (every file:// document gets an
+    // opaque, distinct origin, so the ES module loader's same-origin check
+    // fails against it) — verified empirically against a real headless-
+    // Chromium file:// navigation (console: "has been blocked by CORS
+    // policy"); the module never executes. This was shipped as type="module"
+    // in the original M4-03 merge and silently broke the file:// vehicle
+    // (DS-052 / RFC G-5) with no CI job catching it. A classic script has no
+    // such restriction. This assertion is the regression guard: it fails
+    // loudly if type="module" is ever reintroduced, rather than only being
+    // caught by a manual file:// smoke test.
     const mod = doc.querySelector('script[src="./viewer.js"]');
-    expect(mod?.getAttribute("type")).toBe("module");
+    expect(mod?.getAttribute("type")).not.toBe("module");
   });
 
   it("declares a UTF-8 charset and a viewport meta", () => {
