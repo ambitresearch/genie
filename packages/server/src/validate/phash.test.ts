@@ -257,7 +257,7 @@ describe("computeColorSignature (DRO-717)", () => {
     const img = fillOnBackground(64, 64, [40, 40, 40], [246, 246, 248], 0.6);
     // paint a few white pixels inside the block (simulating label glyphs)
     for (let k = 0; k < 40; k++) {
-      const i = ((20 * 64 + 20 + k) * 4) as number;
+      const i = (20 * 64 + 20 + k) * 4;
       img.data[i] = 255;
       img.data[i + 1] = 255;
       img.data[i + 2] = 255;
