@@ -345,10 +345,18 @@ describe("bootViewer — real Vite integration (AC1/AC2/AC5)", () => {
   });
 
   it("boots real Vite, falls back off a busy port, prints the URL, serves index.html, and closes in <1 s", async () => {
-    // 1. Occupy a port so boot MUST fall back (AC2).
-    const busyPort = 5233;
+    // 1. Occupy a port so boot MUST fall back (AC2). Bind the blocker to an
+    //    OS-assigned free port (port 0) rather than a hardcoded number, then
+    //    read the actual port back: the OS guarantees it exists and is held
+    //    (so it won't be reassigned), which makes the fallback deterministic on
+    //    a shared CI runner where any fixed port could already be in use.
     blocker = net.createServer();
-    await new Promise<void>((r) => blocker!.listen(busyPort, "127.0.0.1", () => r()));
+    await new Promise<void>((r) => blocker!.listen(0, "127.0.0.1", () => r()));
+    const address = blocker.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("expected the blocker to bind a numeric TCP port");
+    }
+    const busyPort = address.port;
 
     // 2. Boot the real dev server against the fixture kit (no browser).
     const io = createRecordingIO();
