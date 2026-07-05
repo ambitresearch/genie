@@ -3,10 +3,11 @@
  *
  * Returns a human-readable summary — the live viewer URL plus a `file://`
  * fallback — as `content`, and points capable hosts at the inline grid via
- * `_meta.ui.resourceUri: "ui://genie/grid?…"`. The four host families that
- * render `ui://` today (Claude, VS Code ≥Jan 2026, ChatGPT, Cursor, plus
- * Goose/Postman/MCPJam) show the inline grid; everyone else falls back to the
- * printed URLs (RFC §8.3, progressive enhancement).
+ * `_meta.ui.resourceUri: "ui://genie/grid?…"`. Hosts that render `ui://`
+ * today (currently Claude, VS Code ≥Jan 2026, ChatGPT, Cursor, and the
+ * Goose/Postman/MCPJam trio — see `UI_HOST_MARKERS`) show the inline grid;
+ * everyone else falls back to the printed URLs (RFC §8.3, progressive
+ * enhancement).
  *
  * ── Contract (RFC §6.2.3 / §8.3; this issue's AC1–AC7) ───────────────────────
  *   input : { kitId, componentName?, group? }                          (AC2)
