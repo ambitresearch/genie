@@ -128,6 +128,26 @@ function stubRenderer(
   };
 }
 
+/**
+ * A renderer that records the `viewport` argument passed to each `render()`
+ * call (DRO-711 regression coverage — the marker-viewport precedence fix).
+ * `stubRenderer` above deliberately drops this argument (no existing test
+ * needed it); this variant exists specifically to assert on it.
+ */
+function viewportCapturingRenderer(
+  script: (html: string) => RenderedCard,
+): Renderer & { viewports: Array<{ width: number; height: number }> } {
+  const viewports: Array<{ width: number; height: number }> = [];
+  return {
+    viewports,
+    async render(html: string, viewport: { width: number; height: number }): Promise<RenderedCard> {
+      viewports.push(viewport);
+      return script(html);
+    },
+    async close(): Promise<void> {},
+  };
+}
+
 /** A renderer that always throws — models a browser that launched but fails
  * mid-render on a specific page. */
 function throwingRenderer(): Renderer {
@@ -233,6 +253,84 @@ describe("fullScan — thin (AC4)", () => {
     const renderer = stubRenderer(() => ({ contentHeight: 90, image: IMAGE_A }));
     const res = await fullScan(deps({ kitStore, renderer }), { kitId: "k" });
     expect(res.thin).toEqual([]);
+  });
+
+  // ── DRO-711 regression coverage ──────────────────────────────────────────
+  // Real-Chromium QA (DRO-711, post-merge hardening of DRO-260/PR #152) found
+  // that `conjure.ts` never synthesizes a `meta.json` — the LLM system prompt
+  // only encourages one and the output schema doesn't require it — so a
+  // meta.json-less kit (the common case) used to render EVERY card at the
+  // generic 400x300 DEFAULT_VIEWPORT regardless of the component's actual
+  // marker-declared size, silently flagging ordinary button-sized cards
+  // `thin` and diluting the AC5 pHash signal (see full-scan.ts's
+  // DEFAULT_VIEWPORT doc for the full real-render evidence). These tests
+  // pin the fix: the marker's own `viewport="WxH"` token is now the
+  // REALISTIC default, with `meta.json` still winning as an explicit
+  // per-component override — the same precedence `manifest/compiler.ts`
+  // already established for the identical marker-vs-meta.json question.
+
+  it("renders at the marker's own viewport when no meta.json is present (DRO-711)", async () => {
+    const kitStore = stubKitStore([
+      {
+        path: "a/Btn/Btn.html",
+        content: '<!-- @genie group="actions" viewport="320x96" -->\n<div>x</div>',
+      },
+    ]);
+    const renderer = viewportCapturingRenderer(() => ({ contentHeight: 300, image: IMAGE_A }));
+    await fullScan(deps({ kitStore, renderer }), { kitId: "k" });
+    expect(renderer.viewports).toEqual([{ width: 320, height: 96 }]);
+  });
+
+  it("prefers an explicit meta.json viewport over the marker's viewport (DRO-711)", async () => {
+    const kitStore = stubKitStore([
+      {
+        path: "a/Btn/Btn.html",
+        content: '<!-- @genie group="actions" viewport="320x96" -->\n<div>x</div>',
+      },
+      {
+        path: "a/Btn/meta.json",
+        content: JSON.stringify({ group: "actions", viewport: { width: 800, height: 600 } }),
+      },
+    ]);
+    const renderer = viewportCapturingRenderer(() => ({ contentHeight: 300, image: IMAGE_A }));
+    await fullScan(deps({ kitStore, renderer }), { kitId: "k" });
+    expect(renderer.viewports).toEqual([{ width: 800, height: 600 }]);
+  });
+
+  it("falls back to DEFAULT_VIEWPORT only when the marker has no viewport attribute at all (DRO-711)", async () => {
+    const kitStore = stubKitStore([
+      { path: "a/Btn/Btn.html", content: '<!-- @genie group="actions" -->\n<div>x</div>' },
+    ]);
+    const renderer = viewportCapturingRenderer(() => ({ contentHeight: 300, image: IMAGE_A }));
+    await fullScan(deps({ kitStore, renderer }), { kitId: "k" });
+    expect(renderer.viewports).toEqual([{ width: 400, height: 300 }]);
+  });
+
+  it("passes the renderer the component's OWN declared viewport, not a generic one (DRO-711)", async () => {
+    // Regression for the real-render finding: the OLD code rendered every
+    // card at the generic 400x300 DEFAULT_VIEWPORT regardless of the
+    // component's actual size, because it only ever consulted `meta.json`
+    // (which `conjure.ts` never produces) and ignored the marker's own
+    // `viewport="WxH"` token. This test pins that a real renderer now
+    // receives the CORRECT per-component viewport — the precondition for it
+    // to report a real, comparable `contentHeight`/pHash for that component.
+    //
+    // NOTE: whether an ordinary single-line button's real height (measured
+    // ~46-48px on real Chromium at this exact 320x96 viewport during DRO-711)
+    // should itself count as "thin" against `DEFAULT_MIN_HEIGHT` (80) is a
+    // SEPARATE, still-open calibration question this fix does not decide —
+    // see the DRO-711 follow-up issue. This test only pins viewport
+    // propagation, using a stubbed height so it stays independent of that
+    // open question.
+    const kitStore = stubKitStore([
+      {
+        path: "a/Btn/Btn.html",
+        content: '<!-- @genie group="actions" viewport="320x96" -->\n<button>Primary</button>',
+      },
+    ]);
+    const renderer = viewportCapturingRenderer(() => ({ contentHeight: 48, image: IMAGE_A }));
+    await fullScan(deps({ kitStore, renderer }), { kitId: "k" });
+    expect(renderer.viewports).toEqual([{ width: 320, height: 96 }]);
   });
 });
 
