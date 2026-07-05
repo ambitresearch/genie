@@ -137,10 +137,24 @@
   --color-paper-3: oklch(27% 0.008 60);
   --color-ink: oklch(94% 0.008 82);
   --color-ink-2: oklch(76% 0.012 78);
-  --color-ink-3: oklch(55% 0.008 65);
+  /* ink-3 dark override (DRO-743): the light-mode value (55% L) unchanged would
+   * read 3.80:1 on dark paper — fails the 4.5:1 AA body-text target (see
+   * design.md §14 dark-mode ledger). 60% L clears it at 4.67:1, mirroring the
+   * light-mode rule that ink-3 is body-text-safe on *base paper only* — use
+   * ink-2 for body text on raised/sunken dark surfaces (paper-2/paper-3), same
+   * restriction as light mode. */
+  --color-ink-3: oklch(60% 0.008 65); /* dark tertiary #847f7b — 4.67:1 on dark paper */
   --color-hairline: oklch(32% 0.012 75);
   --color-hairline-2: oklch(40% 0.014 75);
   --color-accent: oklch(74% 0.1 46);
+  /* accent-2 dark override (DRO-743): with no override this token fell back to
+   * its light-mode value (56% 0.115 38) against dark paper — 3.78:1, failing
+   * the clay-text rule's own 4.5:1 promise (design.md §14) once dark mode is
+   * active. 64% 0.11 42 is --color-accent's own light->dark nudge (+8% L,
+   * -0.005 C, +4 H) applied to accent-2, so the accent/accent-2 relationship
+   * stays consistent across both schemes; it clears 5.27:1 on dark paper (and
+   * 4.82:1 on paper-2 — better than light mode's own accent-2-on-paper-2). */
+  --color-accent-2: oklch(64% 0.11 42); /* dark deeper clay #c47455 — 5.27:1, the dark text-safe clay */
   --color-accent-tint: oklch(30% 0.06 46);
   --color-accent-edge: oklch(48% 0.1 46);
   --color-struct: oklch(68% 0.13 265);
