@@ -18,11 +18,15 @@
  * specificity, so component rules never fight base resets and state (e.g.
  * `[hidden]`) always applies.
  *
- * M4-09 (DRO-271) accessibility additions: the `--color-ink-3` AA override
- * (see the "a11y" test in `static-index.test.ts`), a `:focus-visible` ring,
- * and BOTH an automatic `@media (prefers-color-scheme: dark)` block and the
+ * M4-09 (DRO-271) accessibility additions: the wordmark-spark
+ * `--color-accent-2` contrast fix (AC2/AC6, see the "wordmark__spark"
+ * comment in the components layer below) and its dark-mode override, plus a
+ * new automatic `@media (prefers-color-scheme: dark)` block alongside the
  * pre-existing manual `:root[data-scheme="dark"]` override (AC7) — see the
- * "Dark mode" comment in the tokens layer below for why both exist.
+ * "Dark mode" comment in the tokens layer below for why both exist. The
+ * `--color-ink-3` AA override and the `:focus-visible` ring below predate
+ * this PR (M4-03) and are called out here only because this audit verifies
+ * them, not because either was added or changed by M4-09.
  */
 
 @layer tokens, base, layout, components, state;
