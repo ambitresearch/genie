@@ -169,6 +169,96 @@ describe("create_kit tool (via MCP)", () => {
     expect(kitJson.id).toBe(parsed.kitId);
   });
 
+  it("scaffolds the viewer's static shell (index.html/viewer.js/viewer.css) into the new kit root — zero manual copying (DRO-764 AC1/AC2)", async () => {
+    const result = await client.callTool({
+      name: "mcp__genie__create_kit",
+      arguments: { name: "Viewer Scaffold Kit" },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
+    const { kitId } = JSON.parse(text) as { kitId: string };
+
+    const kitRoot = join(tempDir, "kits", kitId);
+    const viewerStaticDir = join(import.meta.dirname, "../../viewer/static");
+
+    for (const asset of ["index.html", "viewer.js", "viewer.css"]) {
+      const [scaffolded, source] = await Promise.all([
+        readFile(join(kitRoot, asset)),
+        readFile(join(viewerStaticDir, asset)),
+      ]);
+      expect(scaffolded.equals(source), `"${asset}" must be byte-identical to packages/viewer/static`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("a freshly created kit renders the empty-state grid (.ds-empty) with ZERO files touched after creation (DRO-764 AC3)", async () => {
+    // The literal AC3 scenario: create_kit, touch nothing else, open the
+    // scaffolded index.html. We drive the REAL viewer.js (not a stand-in)
+    // through jsdom's `window.eval` — the same harness
+    // `viewer/test/grid-renderer.test.ts` uses to test this classic script
+    // (DRO-749: it has no ES exports to `import`) — with `fetch` wired to
+    // really read the kit's own scaffolded files off disk, so this exercises
+    // the true "does the seeded manifest make boot() resolve to .ds-empty"
+    // question end-to-end, not a stubbed approximation of it. A real `url`
+    // is passed to `JSDOM` (mirroring an actual `file://` navigation)
+    // because without one jsdom treats the document as an opaque origin,
+    // and some of its internals reach for `localStorage` on first access —
+    // which throws for an opaque origin. `file://` is exactly AC3's own
+    // vehicle, so this is also more faithful, not just a workaround.
+    const result = await client.callTool({
+      name: "mcp__genie__create_kit",
+      arguments: { name: "Fresh Empty-State Kit" },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
+    const { kitId } = JSON.parse(text) as { kitId: string };
+    const kitRoot = join(tempDir, "kits", kitId);
+
+    const { JSDOM } = await import("jsdom");
+    const viewerJs = await readFile(join(kitRoot, "viewer.js"), "utf-8");
+    const dom = new JSDOM(await readFile(join(kitRoot, "index.html"), "utf-8"), {
+      runScripts: "outside-only",
+      url: `file://${kitRoot}/index.html`,
+    });
+    const { window } = dom;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).__genieViewerTestHooks = {};
+    window.eval(viewerJs);
+
+    // A `fetch` that reads relative to the kit root, mirroring what a real
+    // `file://` navigation's relative-URL resolution does — NOT a stub that
+    // hands back canned JSON; it reads the exact bytes create_kit wrote.
+    const kitFetch = async (url: string) => {
+      const filePath = join(kitRoot, url.toString());
+      try {
+        const body = await readFile(filePath, "utf-8");
+        return new Response(body, { status: 200 });
+      } catch {
+        return new Response("", { status: 404 });
+      }
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (window as any).__genieViewerTestHooks.boot(window.document, kitFetch);
+
+    // Read plain strings/booleans out of the DOM before asserting — never
+    // hand a live DOM node to `expect()`. On a failing assertion, Vitest's
+    // diff printer would otherwise try to pretty-print the jsdom `Element`,
+    // which can itself throw reaching for jsdom internals; plain values
+    // keep the failure message about the actual grid markup instead.
+    const grid = window.document.getElementById("grid")!;
+    const gridHtml = grid.innerHTML;
+    const hasError = grid.querySelector(".ds-error") !== null;
+    const emptyEl = grid.querySelector(".ds-empty");
+    const hasEmpty = emptyEl !== null;
+    const emptyText = (emptyEl?.textContent ?? "").toLowerCase();
+    const iframeCount = grid.querySelectorAll("iframe").length;
+
+    expect(hasError, `expected no .ds-error; got: ${gridHtml}`).toBe(false);
+    expect(hasEmpty, `expected .ds-empty; got: ${gridHtml}`).toBe(true);
+    expect(emptyText).toContain("no components");
+    expect(iframeCount).toBe(0);
+  });
+
   it("rejects empty name", async () => {
     const result = await client.callTool({
       name: "mcp__genie__create_kit",

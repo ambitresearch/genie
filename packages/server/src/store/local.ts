@@ -53,7 +53,9 @@ import {
   parseGenieignore,
   type IgnoreMatcher,
 } from "./kit-files.js";
+import { serializeEmptyManifest } from "./empty-manifest.js";
 import { MANIFEST_PATH, selectComponents } from "./manifest.js";
+import { loadViewerAssets } from "./viewer-assets.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -630,6 +632,29 @@ export class LocalFsKitStore implements KitStore {
       }
       throw err;
     }
+
+    // DRO-764 AC1 — scaffold the viewer's static shell into the new kit root
+    // so file:// / localhost-Vite / ui://genie/grid all have something to
+    // render immediately, with zero manual copying. `dir` was just created
+    // above and is not yet visible to any other caller (the `.kit.json`
+    // exclusive-write above is the only publication point `getKit`/`listKits`
+    // key off), so plain per-file writes are safe here — no concurrent writer
+    // can be racing this directory. Best-effort: `loadViewerAssets` degrades
+    // to `[]` (never throws) when `@genie/viewer` can't be resolved, so a kit
+    // is still created even if the viewer package happens to be absent from
+    // this install.
+    const viewerAssets = await loadViewerAssets();
+    await Promise.all(viewerAssets.map((asset) => writeFile(join(dir, asset.path), asset.content)));
+
+    // DRO-764 AC3 — seed an empty `.genie/manifest.json` so the file:// /
+    // localhost-Vite vehicles' `fetch(".genie/manifest.json")` resolves
+    // immediately to a valid, empty manifest (→ the `.ds-empty` state)
+    // instead of rejecting (→ the `.ds-error` state) — see
+    // `empty-manifest.ts`'s header for why a missing `file://` resource is a
+    // REJECTED fetch, not a 404 Response. The M3-03 compiler transparently
+    // overwrites this the moment any component is actually added.
+    await mkdir(join(dir, ".genie"), { recursive: true });
+    await writeFile(join(dir, MANIFEST_PATH), serializeEmptyManifest(name), "utf-8");
 
     return {
       id: meta.id,

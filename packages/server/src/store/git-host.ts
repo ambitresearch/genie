@@ -44,7 +44,9 @@ import {
   parseGenieignore,
   sriSha256,
 } from "./kit-files.js";
+import { serializeEmptyManifest } from "./empty-manifest.js";
 import { MANIFEST_PATH, selectComponents } from "./manifest.js";
+import { loadViewerAssets } from "./viewer-assets.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -249,6 +251,23 @@ export class GitHostKitStore implements KitStore {
     await this.api<FileResponse>("POST", `${this.repoPath(meta.id)}/contents/${this.kitMetaPath}`, {
       content,
       message: `kit: create ${meta.name}`,
+    });
+  }
+
+  /**
+   * Create a single file on the repo's default branch via one contents-API
+   * POST. Shares `writeKitMeta`'s "fresh repo, no prior content at this path"
+   * assumption — used by `createKit` for both `.kit.json` and (DRO-764) the
+   * viewer's static scaffold, all written into a repo `auto_init` just
+   * created moments earlier under names (`index.html`/`viewer.js`/
+   * `viewer.css`/`.kit.json`) that don't collide with a host's own auto-init
+   * output (README/LICENSE/.gitignore).
+   */
+  private async writeRepoFile(kitId: KitId, path: string, content: Buffer): Promise<void> {
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+    await this.api<FileResponse>("POST", `${this.repoPath(kitId)}/contents/${encodedPath}`, {
+      content: content.toString("base64"),
+      message: `kit: scaffold ${path}`,
     });
   }
 
@@ -696,6 +715,25 @@ export class GitHostKitStore implements KitStore {
         createdAt: repo.created_at,
       };
       await this.writeKitMeta(meta);
+      // DRO-764 AC1 — scaffold the viewer's static shell into the new repo's
+      // default branch, same as LocalFsKitStore does for its kit dir. Runs
+      // AFTER writeKitMeta so `.kit.json` (the kit-existence marker `getKit`/
+      // `readKitMeta` key off) is already committed by the time any viewer
+      // file lands; a failure scaffolding the viewer assets below still
+      // leaves a valid, gettable kit — matching the local adapter's
+      // best-effort semantics (`loadViewerAssets` degrades to `[]` rather
+      // than throwing when `@genie/viewer` is unresolvable).
+      const viewerAssets = await loadViewerAssets();
+      for (const asset of viewerAssets) {
+        await this.writeRepoFile(meta.id, asset.path, asset.content);
+      }
+      // DRO-764 AC3 — seed an empty `.genie/manifest.json` (see
+      // `empty-manifest.ts`'s header) so the file:// / localhost-Vite
+      // vehicles' manifest fetch resolves to a valid empty manifest instead
+      // of 404ing. Same byte shape `LocalFsKitStore` seeds, same
+      // best-effort posture: this repo already has a valid `.kit.json` by
+      // this point, so a failure here still leaves a gettable kit.
+      await this.writeRepoFile(meta.id, MANIFEST_PATH, Buffer.from(serializeEmptyManifest(name), "utf-8"));
       return meta;
     } catch (err: unknown) {
       // Check if it's a 409 Conflict indicating repo already exists
