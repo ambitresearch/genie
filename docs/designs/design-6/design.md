@@ -49,6 +49,7 @@ This is an identity contract; violating it erases the sibling relationship with 
 --color-accent-2: oklch(56% 0.115 38); /* deeper      #ac5a40 */
 --color-accent-tint: oklch(93% 0.03 46); /* clay wash   #fae2d8 */
 --color-accent-edge: oklch(82% 0.07 44); /* clay border #ecb6a0 */
+--color-on-accent: oklch(20% 0.004 60); /* button-fill text #171614 (DRO-748) */
 
 /* Structural ink-blue (links / focus only — demoted from accent) */
 --color-struct: oklch(45% 0.12 265); /* ink-blue    #345197 */
@@ -95,7 +96,7 @@ enforceable at the component level.
 | **Secondary** | neutral outline | `--color-paper` fill + `--color-hairline-2` border + `--color-ink` text | Secondary structural action |
 | **Ghost** | text only | `--color-struct` (ink-blue) text, no fill | Low-emphasis / inline action |
 | **Delete / danger** | danger | `--color-danger` | Destructive action |
-| **Generate / Conjure / Apply** | clay — the **sole** clay button | `--color-accent` (the generation spark) | Conjure, Refine, Apply only |
+| **Generate / Conjure / Apply** | clay — the **sole** clay button | `--color-accent` fill (the generation spark), `--color-on-accent` text (DRO-748) | Conjure, Refine, Apply only |
 
 Clay is **never** the fill of a generic Primary / Save / Submit / Delete button.
 
@@ -272,8 +273,9 @@ Commitments are testable. Contrast values below are measured against `--color-pa
 | `--color-focus` on paper | 5.3:1 | ✓ focus ring (≥ 3:1) |
 | `--color-accent` (clay) on paper | **3.05:1** | ✗ for normal text — see clay-text rule below |
 | `--color-accent-2` (deep clay) on paper | 4.6:1 | ✓ — the **text-safe clay**; use for clay-coloured labels/`@genie` marker at body size |
-| white on `--color-accent` | 3.2:1 | large/bold UI only (Conjure label ≥ 16 px semibold meets 3:1); for normal-size text on a clay fill, use `--color-accent-2` |
+| white on `--color-accent` | 3.2:1 | large/bold UI only if ever used — **not** the Conjure/Refine/Apply/Approve button token; see `--color-on-accent` below (DRO-748) |
 | white on `--color-accent-2` | 4.9:1 | ✓ button text |
+| `--color-on-accent` on `--color-accent` | **5.6:1** | ✓ — the **Conjure/Refine/Apply/Approve button-fill text token** (DRO-748); a fixed near-black, kept as its own token (not an alias of `--color-ink`) specifically so it does not flip to near-white in dark mode |
 
 **Clay-text rule (a11y refinement of the identity rule):** clay still appears *only* on
 generate/refine moments — but where clay carries **text** at body size (the `@genie`
@@ -299,17 +301,37 @@ source (`tokens.css`); ratios below are measured against dark `--color-paper`
 | `--color-accent` (dark clay) on paper | 7.76:1 | large/UI fill only — same clay-text rule applies in dark mode |
 | `--color-accent-2` (dark deep clay) on paper | **5.27:1** | ✓ — the dark **text-safe clay**; was undefined and fell back to the light-mode value (3.78:1, ✗); fixed by adding a dark override `oklch(64% 0.11 42)` (`#c47455`) — `--color-accent`'s own light→dark nudge (+8% L, −0.005 C, +4 H) applied to `accent-2`, so the two tokens keep the same relationship in both schemes |
 | `--color-accent-2` (dark) on paper-2 / paper-3 | 4.82:1 / 4.30:1 | ✓ / ✗ — paper-2 clears AA (better margin than light mode's own 4.29:1); paper-3 doesn't, so the clay-text rule on dark sunken surfaces still needs `ink-2`-equivalent caution — no current surface puts `@genie`/refine-label text on paper-3 |
-| white on `--color-accent` (dark) | 2.38:1 | ✗ — fails even the 3:1 large-text bar; see caveat below |
+| white on `--color-accent` (dark) | 2.38:1 | ✗ — fails even the 3:1 large-text bar; not used — see `--color-on-accent` below |
 | white on `--color-accent-2` (dark) | 3.51:1 | large/bold UI only in dark mode (clears 3:1, not 4.5:1) |
+| `--color-on-accent` on `--color-accent` (dark) | **7.61:1** | ✓ — the **Conjure/Refine/Apply/Approve button-fill text token** (DRO-748); same fixed value as light mode (`oklch(20% 0.004 60)`, `#171614`) — clears AA body-text (4.5:1) with more headroom than in light mode, since `--color-accent` (dark, 74% L) is lighter than `--color-accent` (light, 66% L) |
 
-**Caveat — dark-mode button-fill text is out of scope for this fix, flagged for follow-up:**
-verifying the ledger above surfaced that the mocks' actual Conjure-button pattern (near-black
-`--color-ink` text on a clay fill, 5.60:1 in **light** mode) does not carry to dark mode —
-`--color-ink` (dark, `#eeebe5`) on `--color-accent` (dark) is only **2.00:1**, worse than
-white-on-accent-dark (2.38:1), and *both* fail even the 3:1 large-text/UI-component bar.
-This is a distinct gap from AC1/AC2 (it's button-fill text, not body/label text) and needs
-its own token decision (e.g. a dedicated dark-mode "on-accent" text token) rather than a
-same-PR fix — tracked as a follow-up issue so it isn't silently assumed solved by this ledger.
+**Fix — dedicated `--color-on-accent` button-fill text token (DRO-748):** verifying the
+ledger above (as part of DRO-743) surfaced a third, distinct dark-mode AA gap — the
+mocks' actual Conjure-button pattern (near-black `--color-ink` text on a clay fill,
+5.60:1 in light mode) did not carry to dark mode. Both `--color-ink`
+(which flips per-scheme, `#171614` → `#eeebe5`) and white lose contrast against
+`--color-accent` (dark) once `--color-accent` itself is lightened for on-paper legibility —
+neither works as dark-mode button-fill text (2.00:1 and 2.38:1 respectively, both failing
+even the 3:1 UI bar). The fix is a **new, scheme-invariant token**, `--color-on-accent`
+(`oklch(20% 0.004 60)`, fixed — not an alias of `--color-ink`, precisely so it does not
+inherit `--color-ink`'s dark-mode flip to near-white): it clears **5.6:1 on `--color-accent`
+(light)** and **7.6:1 on `--color-accent` (dark)** — both comfortably past the 4.5:1
+body-text bar, at any weight/size, in both schemes. **Usage rule:** `--color-on-accent` is
+the text colour for all clay-**fill** buttons (Conjure, Refine, Apply, Approve) in both
+light and dark mode; `--color-accent-2` remains the token for clay **text on paper**
+(the `@genie` marker, refine labels — the clay-text rule above is unchanged).
+
+**Note — hover-state fill is a separate, narrower headroom question, not reopened by
+this fix:** the button's *hover* fill darkens to `--color-accent-2` (§5 button ladder;
+`--clay-dk` in the prototype). `--color-on-accent` on `--color-accent-2` is **3.70:1
+(light-mode hover) / 5.16:1 (dark-mode hover)** — light-mode hover clears the 3:1
+UI-component bar (it's a filled control, not body prose) but not 4.5:1; this is a hard
+ceiling of the hover fill itself, not a token-tuning gap — even pure black on
+`--color-accent-2` (light) only reaches 4.29:1, since the fill is already fairly dark.
+Scoped out of DRO-748 (AC1 targets the resting `--color-accent` fill the Conjure/Refine/
+Apply/Approve buttons render in by default) and flagged here rather than silently
+assumed solved, consistent with how this section documents known headroom limits
+elsewhere (e.g. `accent-2` on paper-3 above).
 
 **Verification:** `docs/designs/design-6/contrast-check.mjs` re-derives every row above
 (and the light-mode table) directly from `tokens.css` — OKLCH → OKLab → linear sRGB →

@@ -71,6 +71,16 @@
   --color-accent-2: oklch(56% 0.115 38); /* deeper clay #ac5a40 */
   --color-accent-tint: oklch(93% 0.03 46); /* clay wash   #fae2d8 */
   --color-accent-edge: oklch(82% 0.07 44); /* clay border #ecb6a0 */
+  /* on-accent (DRO-748): dedicated button-FILL text token for Conjure/Refine/
+   * Apply/Approve — decoupled from --color-ink on purpose. --color-ink is a
+   * body-text-on-paper token that must flip per-scheme (near-black on light
+   * paper, near-white on dark paper); reusing it for button-fill text is what
+   * broke dark mode (ink-dark on accent-dark = 2.00:1, white fares no better
+   * at 2.38:1 — both fail even the 3:1 UI-component bar, see design.md §14).
+   * A fixed near-black clears 5.60:1 on --color-accent (light) and 7.61:1 on
+   * --color-accent (dark) — comfortably past the 4.5:1 body-text bar in BOTH
+   * schemes, with zero change to --color-accent's own on-paper legibility. */
+  --color-on-accent: oklch(20% 0.004 60); /* on-accent text #171614 */
 
   /* ─── Color · structural ink-blue (links / focus only — demoted) ─────────── */
   --color-struct: oklch(45% 0.12 265); /* ink-blue    #345197 */

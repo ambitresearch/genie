@@ -139,6 +139,21 @@ const lightRows = [
   row("accent-2 (deep clay, text-safe) on paper", "accent-2", "paper", light, AA_BODY),
   row("white on accent", "white", "accent", light, null),
   row("white on accent-2", "white", "accent-2", light, AA_BODY),
+  // DRO-748 fix: dedicated button-fill text token for Conjure/Refine/Apply/
+  // Approve — gated, this is the pairing those buttons actually use.
+  row("on-accent on accent [button-fill text]", "on-accent", "accent", light, AA_BODY),
+  // Hover-state fill (button darkens to accent-2 on hover, §5 button ladder).
+  // Not gated at AA_BODY — hard ceiling of the fill itself (even pure black
+  // on accent-2 (light) only reaches 4.29:1), not a token-tuning gap. Clears
+  // AA_UI (filled control, not body prose); flagged in design.md §14 rather
+  // than silently assumed solved.
+  row(
+    "on-accent on accent-2 [button-fill text, HOVER state]",
+    "on-accent",
+    "accent-2",
+    light,
+    AA_UI,
+  ),
 ];
 for (const r of lightRows)
   console.log(`${r.ratio.toFixed(2)}:1  ${r.verdict.padEnd(1)}  ${r.label}`);
@@ -158,11 +173,28 @@ const darkRows = [
   row("accent-2(dark) on paper-3(dark)", "accent-2", "paper-3", dark, null),
   row("white on accent(dark)", "white", "accent", dark, null),
   row("white on accent-2(dark)", "white", "accent-2", dark, null),
-  // Bonus finding while verifying this ledger (not part of DRO-743 AC1/AC2 —
-  // this is button-FILL text, not body/label text — see design.md §14 caveat
-  // + its own follow-up issue). Not gated (target: null) since fixing it is
-  // out of this issue's scope; kept here so it's visible on every re-run.
-  row("ink(dark) on accent(dark) [button-fill text — follow-up]", "ink", "accent", dark, null),
+  // Not used by any button — --color-ink is tuned for body-text-on-paper and
+  // flips per-scheme (near-black light / near-white dark); it was never a
+  // viable button-fill-text token in dark mode (DRO-748 finding). Left
+  // ungated (target: null) since this pairing is never actually rendered —
+  // the button uses --color-on-accent instead (gated row below).
+  row("ink(dark) on accent(dark) [not used — see on-accent below]", "ink", "accent", dark, null),
+  // DRO-748 fix: --color-on-accent is scheme-invariant (no dark override —
+  // same oklch(20% 0.004 60) in both schemes), so it inherits into `dark`
+  // unchanged here. Gated: this is the pairing Conjure/Refine/Apply/Approve
+  // buttons actually use in dark mode.
+  row("on-accent on accent(dark) [button-fill text]", "on-accent", "accent", dark, AA_BODY),
+  // Hover-state fill, dark mode — see the light-mode hover row above for
+  // why this is gated at AA_UI, not AA_BODY (hard ceiling of the fill, not a
+  // token-tuning gap). Dark-mode hover has more headroom than light-mode
+  // hover since accent-2(dark) is lighter than accent-2(light).
+  row(
+    "on-accent on accent-2(dark) [button-fill text, HOVER state]",
+    "on-accent",
+    "accent-2",
+    dark,
+    AA_UI,
+  ),
 ];
 for (const r of darkRows)
   console.log(`${r.ratio.toFixed(2)}:1  ${r.verdict.padEnd(1)}  ${r.label}`);
@@ -176,6 +208,9 @@ console.log("\n=== computed hex (dark-mode fix tokens) ===");
 for (const tok of ["ink-3", "accent-2", "paper"]) {
   console.log(`--color-${tok} (dark): ${toHex(rgbFromOklchStr(dark[tok]))}`);
 }
+// --color-on-accent (DRO-748) has no dark override by design (scheme-invariant
+// fix — see tokens.css comment) so this is its one value in both schemes.
+console.log(`--color-on-accent (both schemes): ${toHex(rgbFromOklchStr(light["on-accent"]))}`);
 
 // ── Exit non-zero if any AA-targeted pair fails, so this doubles as a guard
 //    against future token edits silently reopening DRO-743. ─────────────────

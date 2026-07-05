@@ -29,6 +29,13 @@
         --clay-dk: #ac5a40;
         --clay-t: #fae2d8;
         --clay-e: #ecb6a0;
+        /* on-accent (DRO-748): button-fill text for Conjure/Refine/Apply/
+         * Approve — a fixed near-black, NOT an alias of --ink (--ink flips to
+         * near-white in dark mode, which would repeat the bug this token
+         * fixes — see tokens.css / design.md §14). This prototype has no dark
+         * variant yet, so this is the same as --ink today, but kept distinct
+         * so a future dark-mode pass here can't silently reintroduce the gap. */
+        --on-clay: #171614;
         /* Structural blue (links / focus only) */
         --struct: #345197;
         --struct-t: #dee8fd;
@@ -173,9 +180,10 @@
 
       /* ── Buttons ──────────────────────────────────────────────────────── */
       /* Clay buttons — ONLY on Conjure / Refine / Apply / Approve */
+      /* DRO-748: text is --on-clay, not #fff (was 3.2:1 at best, fails outright in dark mode) */
       .btn-clay {
         background: var(--clay);
-        color: #fff;
+        color: var(--on-clay);
         border: none;
         border-radius: var(--r-sm);
         padding: 8px 18px;

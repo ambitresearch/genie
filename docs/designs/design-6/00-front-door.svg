@@ -60,9 +60,10 @@
   <text x="506" y="351" font-size="12" font-weight="500" fill="#75716d">Model</text>
   <text x="548" y="351" font-size="12" font-weight="500" fill="#423f3d">claude-opus-4</text>
   <text x="630" y="351" font-size="10" fill="#dad7d2">▼</text>
-  <!-- Conjure button — CLAY FILL (generation moment) -->
+  <!-- Conjure button — CLAY FILL (generation moment)
+       text token on-accent (DRO-748): 5.60:1 on accent fill; not white (3.23:1, AA gap in dark mode) -->
   <rect x="1000" y="335" width="80" height="30" rx="5" fill="#c87c5e"/>
-  <text x="1040" y="355" font-size="13" font-weight="600" fill="#ffffff"
+  <text x="1040" y="355" font-size="13" font-weight="600" fill="#171614"
         text-anchor="middle">Conjure</text>
 
   <!-- ── Section: Blueprints ──────────────────────────────────────── -->
