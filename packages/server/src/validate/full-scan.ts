@@ -138,16 +138,23 @@ const DEFAULT_MIN_HEIGHT = 80;
  *   still-open question a DRO-711 follow-up issue tracks — this fix only
  *   corrects which viewport reaches the renderer, not the 80px threshold.)
  *
- * The fix: `extractViewport` (already shipped, already used by `refine.ts`'s
- * `deriveRenderViewport` and `manifest/compiler.ts`) reads the marker line's
- * OWN `viewport="WxH"` token — present on every well-formed `@genie` card,
- * because the system prompt asks the model for one and `manifestEntry`
- * echoes it independently of `meta.json`. That becomes the primary viewport
- * source; a `meta.json` `viewport` (when the model DID emit one) still wins
- * as an explicit override (mirrors `compileManifest`'s own precedent: the
- * marker token is authoritative, `meta.json` only supplements); this
- * `DEFAULT_VIEWPORT` is now the last resort for the rare marker with no
- * viewport attribute at all. */
+ * The fix: `extractViewport` (already shipped by M3-01's `validate/marker.ts`,
+ * but — until this fix — used only by this module's own tests; production
+ * code never called it) reads the marker line's OWN `viewport="WxH"` token —
+ * present on every well-formed `@genie` card, because the system prompt asks
+ * the model for one. That becomes the primary viewport source here; a
+ * `meta.json` `viewport` (when the model DID emit one) still wins as an
+ * explicit override, since `meta.json` is the intentionally-mutable "override
+ * the marker" surface (RFC §7.3) — this is NOT the same precedence
+ * `manifest/compiler.ts`'s `compileManifest` uses for its own `viewport`
+ * field, which reads the marker token exclusively and never lets a sibling
+ * `meta.json` supersede it (`meta.json` there only supplies `subtitle`/`tags`);
+ * two different modules answering two different questions ("what do we
+ * render at" vs. "what do we list the card's declared size as") are free to
+ * resolve viewport precedence differently, and do. `refine.ts`'s
+ * `deriveRenderViewport` is a third, independent precedent: it reads
+ * `meta.json` only and has no marker fallback at all. `DEFAULT_VIEWPORT` here
+ * is the last resort for the rare marker with no viewport attribute at all. */
 const DEFAULT_VIEWPORT = { width: 400, height: 300 };
 
 /** The `renderCheck.minHeight` / `viewport` fields `full-scan.ts` resolves per
