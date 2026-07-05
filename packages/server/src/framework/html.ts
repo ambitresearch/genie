@@ -69,9 +69,18 @@ export const HTML_TRACKING_ISSUE = "https://github.com/roshangautam/genie/issues
  * capturing the custom-element tag (which must contain a hyphen per the HTML
  * spec). Used by {@link HtmlAdapter.extractDts} to surface a typed element map.
  * Tolerant of single/double/back quotes and arbitrary whitespace around `(`.
+ *
+ * **Case-sensitive by design** (only the `g` flag — no `i`): `customElements.define`
+ * is a case-sensitive JS API, so a mixed-case token like `CustomElements.Define` is
+ * not a real registration and must not match. More importantly, a valid custom-element
+ * name is lowercase per the HTML spec — `define("X-Counter", …)` throws `SyntaxError`
+ * at runtime — so an `i` flag would let the tag group accept uppercase names and type
+ * an element in `HTMLElementTagNameMap` that can never actually be registered. The
+ * literal `customElements`/`define` and every valid tag name are already lowercase,
+ * so dropping `i` costs nothing and rejects exactly the tags that can never exist.
  */
 const CUSTOM_ELEMENT_DEFINE =
-  /customElements\s*\.\s*define\s*\(\s*["'`]([a-z][a-z0-9]*-[a-z0-9-]*)["'`]/gi;
+  /customElements\s*\.\s*define\s*\(\s*["'`]([a-z][a-z0-9]*-[a-z0-9-]*)["'`]/g;
 
 /**
  * The property name the preview descriptor carries the component's raw markup

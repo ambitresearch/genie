@@ -384,6 +384,35 @@ describe("AC2 — HtmlAdapter", () => {
     expect(file.content).toContain('"x-counter": HTMLElement');
   });
 
+  it("extractDts ignores spec-invalid uppercase / mis-cased custom-element registrations", async () => {
+    // `customElements.define` is a case-sensitive JS API and a valid custom-element
+    // name is lowercase (`define("X-Counter", …)` throws SyntaxError at runtime), so
+    // the scan must NOT type an element that can never be registered. Guards the
+    // `CUSTOM_ELEMENT_DEFINE` regex against re-acquiring an `i` flag.
+    const file = await html.extractDts(
+      htmlInput({
+        componentName: "Cased",
+        group: "misc",
+        source: [
+          '<x-counter></x-counter>',
+          "<script>",
+          // Valid: lowercase tag, real API — SHOULD surface.
+          '  customElements.define("x-counter", class extends HTMLElement {});',
+          // Invalid tag casing — throws SyntaxError at runtime, MUST be ignored.
+          '  customElements.define("X-Counter", class extends HTMLElement {});',
+          // Mis-cased API call — not a real registration, MUST be ignored.
+          '  CustomElements.Define("y-widget", class extends HTMLElement {});',
+          "</script>",
+        ].join("\n"),
+      }),
+    );
+    expect(file.content).toContain("HTMLElementTagNameMap");
+    expect(file.content).toContain('"x-counter": HTMLElement');
+    // The uppercase and mis-cased-API variants never reach the type map.
+    expect(file.content).not.toContain('"X-Counter"');
+    expect(file.content).not.toContain('"y-widget"');
+  });
+
   it("extractDts falls back to a valid empty module when no custom elements exist", async () => {
     const file = await html.extractDts(
       htmlInput({
