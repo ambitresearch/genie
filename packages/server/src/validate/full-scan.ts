@@ -37,7 +37,7 @@
  * verb, so the G-5 "cards byte-identical across vehicles" guarantee is
  * structurally impossible to violate from this module.
  */
-import { validateMarker } from "./marker.js";
+import { validateMarker, extractViewport } from "./marker.js";
 import { computePHash, findDuplicateClusters, type HashedEntry } from "./phash.js";
 import type { Renderer } from "./render.js";
 
@@ -99,30 +99,100 @@ export interface FullScanInput {
 const DEFAULT_MIN_HEIGHT = 80;
 
 /** Render viewport used for both the thin-height measurement and the
- * perceptual-hash screenshot when a component's `meta.json` names no explicit
- * `viewport` — same default `refine.ts`'s `deriveRenderViewport` falls back
- * to, so a kit that never specifies a viewport still gets a consistent,
- * reasonably-sized render across every tool that renders it. */
+ * perceptual-hash screenshot when a component names NEITHER an `@genie`
+ * marker `viewport="WxH"` token NOR a `meta.json` `viewport` override — the
+ * last-resort fallback, same default `refine.ts`'s `deriveRenderViewport`
+ * falls back to, so a kit that specifies no size anywhere still gets a
+ * consistent, reasonably-sized render across every tool that renders it.
+ *
+ * ── DRO-711 QA finding: this is now the THIRD-choice source, not the second ──
+ * Real-Chromium QA (DRO-711, post-merge hardening of DRO-260/PR #152) found
+ * that `conjure.ts` — genie's only real component-authoring path — never
+ * synthesizes a `meta.json` itself; the LLM system prompt only *encourages*
+ * one ("You may also add … a `meta.json`") and the output JSON Schema does
+ * NOT require it (`files` needs just one `<Name>.html` match). So in
+ * practice, on any kit whose model output omitted `meta.json` — the common
+ * case, not an edge case — the OLD code (which read `meta.json` only, never
+ * the marker) silently rendered every card at this generic 400×300 canvas
+ * regardless of the component's real declared size. Two confirmed effects:
+ *   - **Genuine thin false positives on responsive/percentage-sized content.**
+ *     A card whose body uses `width: 100%` (or similar) wraps its text
+ *     differently — and so measures a genuinely different `contentHeight` —
+ *     depending on which viewport it's rendered at. A 240×120-declared card
+ *     measured 120px tall at its OWN size but only 72px (under the 80px
+ *     `DEFAULT_MIN_HEIGHT`) forced into the old hardcoded 400×300 canvas —
+ *     a real, viewport-CAUSED thin misclassification, confirmed on real
+ *     Chromium renders.
+ *   - **AC5 pHash dilution.** The screenshot fed to `computePHash` is the
+ *     WHOLE canvas, so an oversized, mostly-blank canvas shrinks a small
+ *     component's contribution to the block-grid signal. A legitimately-
+ *     distinct outline-vs-filled button variant hashed only 4 bits apart (AT
+ *     `DEFAULT_TOLERANCE_BITS`, not above it — a false "identical" pairing)
+ *     at 400×300, vs. 12 bits apart when rendered at the marker's own
+ *     declared 320×96.
+ *   (NOT claimed: that this fix changes the thin verdict for every small,
+ *   FIXED-size element, e.g. a single-line button with hardcoded padding —
+ *   that box measures the same height regardless of the surrounding canvas,
+ *   confirmed on real renders. Whether `DEFAULT_MIN_HEIGHT` itself is well
+ *   calibrated for small-but-legitimate fixed-size components is a SEPARATE,
+ *   still-open question a DRO-711 follow-up issue tracks — this fix only
+ *   corrects which viewport reaches the renderer, not the 80px threshold.)
+ *
+ * The fix: `extractViewport` (already shipped by M3-01's `validate/marker.ts`,
+ * but — until this fix — used only by this module's own tests; production
+ * code never called it) reads the marker line's OWN `viewport="WxH"` token —
+ * present on every well-formed `@genie` card, because the system prompt asks
+ * the model for one. That becomes the primary viewport source here; a
+ * `meta.json` `viewport` (when the model DID emit one) still wins as an
+ * explicit override, since `meta.json` is the intentionally-mutable "override
+ * the marker" surface (RFC §7.3) — this is NOT the same precedence
+ * `manifest/compiler.ts`'s `compileManifest` uses for its own `viewport`
+ * field, which reads the marker token exclusively and never lets a sibling
+ * `meta.json` supersede it (`meta.json` there only supplies `subtitle`/`tags`);
+ * two different modules answering two different questions ("what do we
+ * render at" vs. "what do we list the card's declared size as") are free to
+ * resolve viewport precedence differently, and do. `refine.ts`'s
+ * `deriveRenderViewport` is a third, independent precedent: it reads
+ * `meta.json` only and has no marker fallback at all. `DEFAULT_VIEWPORT` here
+ * is the last resort for the rare marker with no viewport attribute at all. */
 const DEFAULT_VIEWPORT = { width: 400, height: 300 };
 
-/** The `renderCheck.minHeight` / `viewport` fields `full-scan.ts` reads out of
- * a component's optional sibling `meta.json` (RFC §7.3 / PRD FR-051). Every
- * field is optional and independently defaulted — a malformed or partial
- * `meta.json` degrades to the defaults rather than failing the scan. */
+/** The `renderCheck.minHeight` / `viewport` fields `full-scan.ts` resolves per
+ * component (RFC §7.3 / PRD FR-051, plus the marker-viewport precedence the
+ * DRO-711 doc comment above explains). Every field is optional and
+ * independently defaulted — a malformed or partial `meta.json`, or a marker
+ * with no `viewport` attribute, degrades to the next fallback rather than
+ * failing the scan. */
 interface ParsedComponentMeta {
   minHeight: number;
   viewport: { width: number; height: number };
 }
 
-/** Best-effort `meta.json` parse: unknown/malformed shape, or no sibling file
- * at all, silently resolves to the defaults — a `meta.json` is optional,
- * non-renderable metadata (RFC §7.3), never load-bearing for the scan itself.
- * Each field defaults INDEPENDENTLY, so a broken `minHeight` doesn't discard a
- * good `viewport` and vice-versa. */
-function parseComponentMeta(raw: string | undefined): ParsedComponentMeta {
+/**
+ * Resolve a component's `{ minHeight, viewport }` for the render pass.
+ *
+ * Precedence (DRO-711 fix — see {@link DEFAULT_VIEWPORT}'s doc for the real-
+ * render QA evidence behind this order):
+ *   1. `meta.json`'s `viewport` / `renderCheck.minHeight`, when present and
+ *      well-formed — an explicit per-component override always wins.
+ *   2. The `@genie` marker's own `viewport="WxH"` token (`markerFirstLine`,
+ *      via `extractViewport`) — present on every well-formed card in
+ *      practice (the system prompt asks the model for one), so this is the
+ *      REALISTIC default, not the generic fallback. Used for viewport only;
+ *      the marker convention has no `minHeight` attribute, so `minHeight`
+ *      still falls through to step 3 unless `meta.json` set it.
+ *   3. `DEFAULT_VIEWPORT` / `DEFAULT_MIN_HEIGHT` — the last-resort constants,
+ *      now reached only when NEITHER a marker viewport NOR a meta.json
+ *      viewport is available (a marker with no `viewport` attribute at all).
+ *
+ * Each field defaults INDEPENDENTLY at every step — a broken `minHeight`
+ * doesn't discard a good `viewport` and vice-versa.
+ */
+function parseComponentMeta(raw: string | undefined, markerFirstLine: string): ParsedComponentMeta {
+  const markerViewport = extractViewport(markerFirstLine);
   const result: ParsedComponentMeta = {
     minHeight: DEFAULT_MIN_HEIGHT,
-    viewport: { ...DEFAULT_VIEWPORT },
+    viewport: markerViewport ? { ...markerViewport } : { ...DEFAULT_VIEWPORT },
   };
   if (raw === undefined) return result;
   try {
@@ -147,7 +217,7 @@ function parseComponentMeta(raw: string | undefined): ParsedComponentMeta {
       result.viewport = { width: w, height: h };
     }
   } catch {
-    // Malformed meta.json — keep the defaults (best-effort, non-fatal).
+    // Malformed meta.json — keep whatever step 1/2 already resolved.
   }
   return result;
 }
@@ -270,7 +340,14 @@ export async function fullScan(deps: FullScanDeps, input: FullScanInput): Promis
       RENDER_CONCURRENCY,
       async ({ path, content }) => {
         const metaRaw = await readOptional(kitStore, kitId, siblingMetaPath(path));
-        const meta = parseComponentMeta(metaRaw);
+        // DRO-711 fix: pass the preview's own first line so parseComponentMeta
+        // can prefer its marker `viewport="WxH"` token over the generic
+        // DEFAULT_VIEWPORT when meta.json is absent/silent on viewport (see
+        // parseComponentMeta's doc for why this is the common case, not an
+        // edge case). `content.split("\n", 1)[0]` mirrors validateMarker's own
+        // first-line extraction above.
+        const firstLine = content.split("\n", 1)[0] ?? "";
+        const meta = parseComponentMeta(metaRaw, firstLine);
         try {
           const card = await renderer.render(content, meta.viewport);
           return { path, minHeight: meta.minHeight, card };
