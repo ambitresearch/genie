@@ -282,6 +282,40 @@ marker, refine labels), it renders in `--color-accent-2` (`#ac5a40`, 4.6:1), not
 This changes no token and no identity — only which existing clay token small clay *text*
 points at.
 
+**Dark-mode contrast ledger (measured, `data-scheme="dark"`):** the light-mode ledger
+above does not automatically hold once dark mode is active — two tokens had no dark
+override and silently inherited their light-mode value against dark paper, which reads
+very differently in OKLCH space. **DRO-743** found and fixed both gaps at the token
+source (`tokens.css`); ratios below are measured against dark `--color-paper`
+(`oklch(19% 0.006 60)`, `#161311`) unless noted.
+
+| Pair | Ratio | Verdict / usage rule |
+| --- | --- | --- |
+| `--color-ink` (dark) on paper | 15.5:1 | ✓ primary text |
+| `--color-ink-2` (dark) on paper | 8.6:1 | ✓ secondary text |
+| `--color-ink-3` (dark) on paper | **4.67:1** | ✓ on **base paper only** — was `oklch(55% 0.008 65)` (unchanged from light, 3.80:1, ✗); fixed to `oklch(60% 0.008 65)` (`#847f7b`) |
+| `--color-ink-3` (dark) on paper-2 / paper-3 | 4.28:1 / 3.82:1 | ✗ as body — same restriction as light mode: use `--color-ink-2` for text on raised/sunken dark surfaces; `ink-3` there is for non-text hairline labels only |
+| `--color-struct` (dark) on paper | 6.3:1 | ✓ links |
+| `--color-accent` (dark clay) on paper | 7.76:1 | large/UI fill only — same clay-text rule applies in dark mode |
+| `--color-accent-2` (dark deep clay) on paper | **5.27:1** | ✓ — the dark **text-safe clay**; was undefined and fell back to the light-mode value (3.78:1, ✗); fixed by adding a dark override `oklch(64% 0.11 42)` (`#c47455`) — `--color-accent`'s own light→dark nudge (+8% L, −0.005 C, +4 H) applied to `accent-2`, so the two tokens keep the same relationship in both schemes |
+| `--color-accent-2` (dark) on paper-2 / paper-3 | 4.82:1 / 4.30:1 | ✓ / ✗ — paper-2 clears AA (better margin than light mode's own 4.29:1); paper-3 doesn't, so the clay-text rule on dark sunken surfaces still needs `ink-2`-equivalent caution — no current surface puts `@genie`/refine-label text on paper-3 |
+| white on `--color-accent` (dark) | 2.38:1 | ✗ — fails even the 3:1 large-text bar; see caveat below |
+| white on `--color-accent-2` (dark) | 3.51:1 | large/bold UI only in dark mode (clears 3:1, not 4.5:1) |
+
+**Caveat — dark-mode button-fill text is out of scope for this fix, flagged for follow-up:**
+verifying the ledger above surfaced that the mocks' actual Conjure-button pattern (near-black
+`--color-ink` text on a clay fill, 5.60:1 in **light** mode) does not carry to dark mode —
+`--color-ink` (dark, `#eeebe5`) on `--color-accent` (dark) is only **2.00:1**, worse than
+white-on-accent-dark (2.38:1), and *both* fail even the 3:1 large-text/UI-component bar.
+This is a distinct gap from AC1/AC2 (it's button-fill text, not body/label text) and needs
+its own token decision (e.g. a dedicated dark-mode "on-accent" text token) rather than a
+same-PR fix — tracked as a follow-up issue so it isn't silently assumed solved by this ledger.
+
+**Verification:** `docs/designs/design-6/contrast-check.mjs` re-derives every row above
+(and the light-mode table) directly from `tokens.css` — OKLCH → OKLab → linear sRGB →
+WCAG contrast, no external deps — and exits non-zero if any AA-targeted pair regresses.
+Run `node docs/designs/design-6/contrast-check.mjs` from the repo root.
+
 **Keyboard & focus:** every interactive element is tabbable in DOM/reading order;
 focus is shown with a 2 px `--color-focus` ring (never removed, never clay). Per-surface
 tab order follows the IA order in §11 (primary region first). The prompt box is the front
