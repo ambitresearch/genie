@@ -1,0 +1,51 @@
+<!doctype html>
+<!--
+  M4-03 (DRO-265) — genie preview viewer shell.
+
+  The static entry the Vite viewer (M4-02) serves as the kit root `index.html`.
+  It is deliberately a thin, declarative shell: the header + search + empty
+  `<main id="grid">`, plus the two static assets. All rendering lives in
+  `viewer.js`, which fetches `.genie/manifest.json` and fills the grid.
+
+  Tier: STANDALONE (Vite viewer / file://) — full brand fonts are allowed here
+  (the EMBEDDED `ui://genie/grid` tier, M4-06, is system-fonts-only). The
+  `genie-standalone` class opts into the brand font stack from tokens.css.
+
+  Identity contract (tokens.css): the clay/gilt accent appears ONLY on
+  generate/refine moments. This browse surface is structural, so its chrome
+  stays ink/neutral; the wordmark's single clay glyph is the one sanctioned
+  accent touch.
+-->
+<html lang="en" class="genie-standalone">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>genie — preview</title>
+    <link rel="stylesheet" href="./viewer.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="app-header__brand">
+        <span class="wordmark">genie<span class="wordmark__spark" aria-hidden="true">✦</span></span>
+        <span class="app-header__subtitle">preview</span>
+      </div>
+      <div class="app-header__search">
+        <label class="visually-hidden" for="q">Filter components by name</label>
+        <input
+          id="q"
+          type="search"
+          class="search-input"
+          placeholder="Filter components…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+    </header>
+
+    <main id="grid" class="app-grid" aria-live="polite">
+      <!-- viewer.js renders group sections + cards here. -->
+    </main>
+
+    <script type="module" src="./viewer.js"></script>
+  </body>
+</html>
