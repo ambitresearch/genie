@@ -154,7 +154,7 @@
    * -0.005 C, +4 H) applied to accent-2, so the accent/accent-2 relationship
    * stays consistent across both schemes; it clears 5.27:1 on dark paper (and
    * 4.82:1 on paper-2 — better than light mode's own accent-2-on-paper-2). */
-  --color-accent-2: oklch(64% 0.11 42); /* dark deeper clay #c47455 — 5.27:1, the dark text-safe clay */
+  --color-accent-2: oklch(64% 0.11 42); /* dark deeper clay #c47455 — 5.27:1 */
   --color-accent-tint: oklch(30% 0.06 46);
   --color-accent-edge: oklch(48% 0.1 46);
   --color-struct: oklch(68% 0.13 265);

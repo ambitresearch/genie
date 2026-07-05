@@ -47,7 +47,11 @@ function toHex(rgbLinear) {
   return (
     "#" +
     rgbLinear
-      .map((c) => Math.min(255, Math.max(0, Math.round(linearToSrgbGamma(c) * 255))).toString(16).padStart(2, "0"))
+      .map((c) =>
+        Math.min(255, Math.max(0, Math.round(linearToSrgbGamma(c) * 255)))
+          .toString(16)
+          .padStart(2, "0"),
+      )
       .join("")
   );
 }
@@ -134,9 +138,10 @@ const lightRows = [
   row("white on accent", "white", "accent", light, null),
   row("white on accent-2", "white", "accent-2", light, 4.5),
 ];
-for (const r of lightRows) console.log(`${r.ratio.toFixed(2)}:1  ${r.verdict.padEnd(1)}  ${r.label}`);
+for (const r of lightRows)
+  console.log(`${r.ratio.toFixed(2)}:1  ${r.verdict.padEnd(1)}  ${r.label}`);
 
-console.log("\n=== DARK MODE (data-scheme=\"dark\") — DRO-743 ===");
+console.log('\n=== DARK MODE (data-scheme="dark") — DRO-743 ===');
 const darkRows = [
   row("ink(dark) on paper(dark)", "ink", "paper", dark, 4.5),
   row("ink-2(dark) on paper(dark)", "ink-2", "paper", dark, 4.5),
@@ -156,7 +161,8 @@ const darkRows = [
   // out of this issue's scope; kept here so it's visible on every re-run.
   row("ink(dark) on accent(dark) [button-fill text — follow-up]", "ink", "accent", dark, null),
 ];
-for (const r of darkRows) console.log(`${r.ratio.toFixed(2)}:1  ${r.verdict.padEnd(1)}  ${r.label}`);
+for (const r of darkRows)
+  console.log(`${r.ratio.toFixed(2)}:1  ${r.verdict.padEnd(1)}  ${r.label}`);
 
 // ── Exit non-zero if any AA-targeted pair fails, so this doubles as a guard
 //    against future token edits silently reopening DRO-743. ─────────────────
