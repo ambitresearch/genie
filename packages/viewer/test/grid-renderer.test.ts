@@ -268,6 +268,40 @@ describe("computeGroupOrder", () => {
     const grouped = hooks.groupByGroup([card({ group: "actions" })]);
     expect(hooks.computeGroupOrder(["actions", "layout"], grouped)).toEqual(["actions", "layout"]);
   });
+
+  it("appends a group present in components but OMITTED from a non-empty groups[] — never silently dropped", () => {
+    // Copilot review finding on this PR: a first cut of computeGroupOrder
+    // only fell back to first-seen order when the declared list produced
+    // ZERO entries — so a valid-but-PARTIAL groups[] (e.g. a hand-edited or
+    // stale manifest that lists only some of the groups components[]
+    // actually uses) silently dropped every component in the undeclared
+    // group. Mirrors the server's own orderGroups "remainder" contract
+    // (compiler.ts): "an incomplete pin list never silently drops a group."
+    const { hooks } = loadHooks();
+    const grouped = hooks.groupByGroup([
+      card({ group: "actions" }),
+      card({ group: "surfaces" }),
+    ]);
+    // groups[] names only "actions" — "surfaces" is a real group with a real
+    // component, but absent from the declared list.
+    expect(hooks.computeGroupOrder(["actions"], grouped)).toEqual(["actions", "surfaces"]);
+  });
+
+  it("declared groups still come first, with the omitted remainder appended after, in first-seen order", () => {
+    const { hooks } = loadHooks();
+    const grouped = hooks.groupByGroup([
+      card({ group: "surfaces" }),
+      card({ group: "layout" }),
+      card({ group: "actions" }),
+    ]);
+    // "actions" is pinned first even though it's last in first-seen order;
+    // the two undeclared groups follow in their original first-seen order.
+    expect(hooks.computeGroupOrder(["actions"], grouped)).toEqual([
+      "actions",
+      "surfaces",
+      "layout",
+    ]);
+  });
 });
 
 // ── createCard (AC2/AC3/AC4 per-card contract) ──────────────────────────────
@@ -365,6 +399,28 @@ describe("renderGrid", () => {
     hooks.renderGrid(document, grid, pinned);
     const sections = [...grid.querySelectorAll("section")];
     expect(sections.map((s) => s.getAttribute("data-group"))).toEqual(["actions", "surfaces"]);
+  });
+
+  it("renders a component whose group is present but OMITTED from a partial groups[] (never silently dropped)", () => {
+    // Integration-level guard for the Copilot-flagged computeGroupOrder gap:
+    // a manifest whose groups[] lists only SOME of the groups components[]
+    // actually uses must still render every component, not just the ones in
+    // named groups. Two real cards, groups[] pins only "actions".
+    const { hooks, document } = loadHooks();
+    const grid = document.getElementById("grid") as HTMLElement;
+    const partial = manifest(
+      [
+        card({ name: "Button", group: "actions" }),
+        card({ name: "Card", group: "surfaces", path: "components/surfaces/Card/preview.html" }),
+      ],
+      ["actions"], // "surfaces" is real but not declared
+    );
+    hooks.renderGrid(document, grid, partial);
+    const sections = [...grid.querySelectorAll("section")];
+    expect(sections.map((s) => s.getAttribute("data-group"))).toEqual(["actions", "surfaces"]);
+    // Both cards actually rendered — the bug this guards against silently
+    // dropped the iframe for the undeclared group entirely.
+    expect(grid.querySelectorAll("iframe")).toHaveLength(2);
   });
 
   it("omits a declared-but-now-empty group from groups[] rather than rendering an empty section", () => {

@@ -538,7 +538,7 @@ Epics map to milestones M0–M5 from the research report §7.
 - **Narrative:** As a Designer-Engineer, I want the viewer to work when I double-click `index.html` from Finder, so a designer can preview a kit without running anything.
 - **Acceptance criteria:**
   - Given `file:///.../ui_kits/acme/index.html`, Then the viewer fetches `.genie/manifest.json` and renders the grid.
-  - Given `file://`, Then the viewer functions even with no relative-fetch hacks (relies on `<script type="module">` and inlined manifest fallback).
+  - Given `file://`, Then the viewer functions even with no relative-fetch hacks (relies on a classic `<script>` — NOT `type="module"`, whose relative-`src` fetch is CORS-blocked under `file://`'s opaque per-document origin, verified empirically in DRO-749 — plus the inlined manifest fallback for the still-open `fetch()`-under-`file://` gap, M4-05/DS-053).
 - **Priority:** P0 · **Estimate:** M · **Milestone:** M4
 
 #### DS-053 — `preview` MCP tool with `ui://` MCP App payload

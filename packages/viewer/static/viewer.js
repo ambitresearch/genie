@@ -42,10 +42,12 @@
  * ── Group order (DRO-749 fix) ────────────────────────────────────────────────
  * `renderGrid` prefers the manifest's own `groups: string[]` for section
  * order — the compiler already resolved `_groups.json` pinning server-side
- * (`orderGroups` in compiler.ts) — falling back to first-seen order among the
- * components themselves only when `groups` is absent, empty, or malformed.
- * Previously this file derived order purely from first-seen-among-components,
- * silently ignoring a pinned `groups[]` order (flagged in PR #164 review).
+ * (`orderGroups` in compiler.ts). Previously this file derived order purely
+ * from first-seen-among-components, silently ignoring a pinned `groups[]`
+ * order (flagged in PR #164 review). `computeGroupOrder` ALWAYS appends any
+ * group actually present in the components that the declared list omitted
+ * (mirroring the server's own `orderGroups` remainder logic), so a partial
+ * or absent `groups[]` never silently drops a group's cards from the grid.
  *
  * ── Design: pure functions + guarded auto-boot ─────────────────────────────
  * Every function takes its `document` (and `fetch`) as an argument and
@@ -128,11 +130,17 @@
    * Section display order (DRO-749 fix): prefer the manifest's own `groups`
    * array — the compiler already resolved alphabetical-vs-`_groups.json`-
    * pinned order server-side, so there is no reason to re-derive a
-   * (possibly different) order client-side. Falls back to first-seen order
-   * among `grouped`'s own keys when `groups` is absent, empty, or
-   * malformed. Any group named in `groups` with zero actual components is
-   * skipped by the caller (a Map lookup miss), never rendered as an empty
-   * section.
+   * (possibly different) order client-side — but ALWAYS append any group
+   * actually present in `grouped` that `declaredGroups` omitted, in
+   * first-seen order. Mirrors the server's own `orderGroups` "remainder"
+   * logic (`packages/server/src/manifest/compiler.ts`): "an incomplete pin
+   * list never silently drops a group." Without this, a valid-but-partial
+   * `groups[]` (e.g. a hand-edited or stale manifest listing only some of
+   * the groups `components[]` actually uses) would cause `renderGrid` to
+   * silently drop every component in an undeclared group — worse than the
+   * plain first-seen order this replaces. When `declaredGroups` is absent,
+   * empty, or entirely malformed, this degrades to pure first-seen order
+   * among `grouped`'s own keys (every group is then "remainder").
    *
    * @param {unknown} declaredGroups — `manifest.groups`, untrusted shape.
    * @param {Map<string, object[]>} grouped
@@ -150,14 +158,13 @@
         }
       }
     }
-    if (order.length === 0) {
-      // No usable declared order: fall back to first-seen among the actual
-      // components (grouped's insertion order already reflects that).
-      for (var key of grouped.keys()) {
-        if (!seen.has(key)) {
-          seen.add(key);
-          order.push(key);
-        }
+    // Remainder: any group actually present in `grouped` that the declared
+    // list didn't name (or the whole list was absent/empty/malformed) —
+    // appended in first-seen order, never dropped.
+    for (var key of grouped.keys()) {
+      if (!seen.has(key)) {
+        seen.add(key);
+        order.push(key);
       }
     }
     return order;
