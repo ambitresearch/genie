@@ -31,6 +31,8 @@
 import { Command, CommanderError, InvalidArgumentError } from "commander";
 import { pathToFileURL } from "node:url";
 
+import { DEFAULT_VIEWER_PORT } from "./config.js";
+
 /** Minimal output seam so tests can capture what the CLI writes. */
 export interface CliIO {
   stdout: (chunk: string) => void;
@@ -49,8 +51,13 @@ const processIO: CliIO = {
 /** Bumped independently of the workspace version, mirrors `SERVER_INFO`. */
 export const VIEWER_VERSION = "0.0.0";
 
-/** The eventual Vite dev-server default (RFC §6.9); reported here, not yet bound. */
-export const DEFAULT_PORT = 5173;
+/**
+ * The Vite dev-server default port, reported by the scaffold CLI's usage.
+ * Re-exported from the single source of truth in `config.ts` (rather than
+ * redeclared) so the CLI's advertised default and the config's actual default
+ * cannot drift apart when M4-08 wires the CLI to boot Vite.
+ */
+export const DEFAULT_PORT = DEFAULT_VIEWER_PORT;
 
 /** AC6's exact required usage string. */
 const USAGE = "<kit-dir> [--port N]";

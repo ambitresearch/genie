@@ -77,6 +77,29 @@ export function collectPreviewEntries(kitRoot: string): string[] {
     .sort();
 }
 
+/**
+ * Parses a `GENIE_VIEWER_PORT`-style env value into a port number, or
+ * `undefined` when it is absent or not a usable port so the caller falls back
+ * to {@link DEFAULT_VIEWER_PORT}.
+ *
+ * Deliberately LENIENT (returns `undefined` on garbage rather than throwing):
+ * an env var is ambient config, so a malformed value degrades to the default
+ * instead of crashing the dev server. This is the opposite of `cli.ts`'s
+ * `parsePort`, which throws — an explicit `--port` flag typo SHOULD be a hard
+ * error, but a stray env value should not. `Number("")`/`Number("  ")` are `0`
+ * (rejected by `> 0`); `Number("3000abc")` is `NaN`; `"3000.5"` is non-integer
+ * — all fall through to `undefined`.
+ *
+ * Extracted here (rather than inlined in `vite.config.ts`) precisely so the
+ * env-parsing branches are unit-testable without importing the config shim.
+ */
+export function parseViewerPortEnv(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) return parsed;
+  return undefined;
+}
+
 /** Inputs to {@link createViewerConfig}. `root` is the kit directory to serve. */
 export interface ViewerConfigOptions {
   /** Absolute or relative path to the `<kit-dir>` to preview. */

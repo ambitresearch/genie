@@ -59,12 +59,21 @@ always-present entry, and every `components/**/preview.html` becomes its own
 Vite entry point (globbed with `fast-glob`), hot-reloaded independently.
 
 ```bash
-# From inside a kit directory (root defaults to CWD):
-pnpm --filter @genie/viewer serve
+# Point the serve script at a kit (set GENIE_KIT_ROOT — see note below):
+GENIE_KIT_ROOT=/path/to/kit pnpm --filter @genie/viewer serve
 
-# Or point at an explicit kit + port:
+# ...with an explicit port too:
 GENIE_KIT_ROOT=/path/to/kit GENIE_VIEWER_PORT=5180 pnpm --filter @genie/viewer serve
 ```
+
+> **Why `GENIE_KIT_ROOT` is required here:** the kit root defaults to
+> `process.cwd()`, but `pnpm --filter @genie/viewer` runs the script with the
+> working directory set to the _viewer package_ (`packages/viewer`), not the
+> directory you invoked it from — so without `GENIE_KIT_ROOT` it would try to
+> serve the package dir (which has no kit `index.html`). Only a bare `vite`
+> launched from _inside_ a kit picks that kit up via the cwd default. The
+> polished M4-08 CLI will pass the `<kit-dir>` argument through this same env,
+> so you won't set it by hand.
 
 Behaviour (the config's acceptance criteria):
 

@@ -2,13 +2,17 @@
  * Tests for M4-02 (DRO-264) — the `@genie/viewer` Vite multi-page config
  * (`packages/viewer/src/config.ts`).
  *
- * The config logic lives in a pure factory (`createViewerConfig`) plus two
- * helpers (`collectPreviewEntries`, `noStoreHtmlPlugin`) rather than inline in
- * `vite.config.ts`, precisely so it is unit-testable WITHOUT booting a real
- * dev server: every AC below is asserted against the returned config object or
- * a fake node req/res, no port binding, no network. The thin root
- * `vite.config.ts` just reads env and calls the factory (covered by the
- * "vite.config.ts integration" block via a direct import).
+ * The config logic lives in a pure factory (`createViewerConfig`) plus helpers
+ * (`collectPreviewEntries`, `previewEntryKey`, `parseViewerPortEnv`,
+ * `noStoreHtmlPlugin`) rather than inline in `vite.config.ts`, precisely so it
+ * is unit-testable WITHOUT booting a real dev server: every AC below is
+ * asserted against the returned config object or a fake node req/res, no port
+ * binding, no network. The thin root `vite.config.ts` reads env
+ * (`GENIE_KIT_ROOT`, `GENIE_VIEWER_PORT`) and calls the factory; its
+ * env-parsing is covered two ways — `parseViewerPortEnv` directly (the
+ * "parseViewerPortEnv" block) and the assembled default export end-to-end (the
+ * "vite.config.ts integration" block, which sets env and dynamically imports
+ * the shim).
  *
  * The fixture kit under `test/fixtures/kit/` mirrors the real on-disk kit
  * layout (RFC §14 / PRD FR kit tree): a root `index.html`, two
@@ -33,7 +37,8 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
+import type { UserConfig } from "vite";
 
 import {
   BUILD_TARGET,
@@ -42,6 +47,7 @@ import {
   DEFAULT_HOST,
   DEFAULT_VIEWER_PORT,
   noStoreHtmlPlugin,
+  parseViewerPortEnv,
   previewEntryKey,
 } from "./config.js";
 
@@ -312,5 +318,98 @@ describe("noStoreHtmlPlugin (AC6)", () => {
     runMiddleware(res);
     res.setHeader("Content-Type", "application/json");
     expect(res.getHeader("Cache-Control")).toBeUndefined();
+  });
+});
+
+describe("parseViewerPortEnv (AC3 — env shim)", () => {
+  it("parses a valid numeric port string", () => {
+    expect(parseViewerPortEnv("4321")).toBe(4321);
+  });
+
+  it("returns undefined when unset (so the factory default applies)", () => {
+    expect(parseViewerPortEnv(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined for a non-numeric value (degrades, does not throw)", () => {
+    expect(parseViewerPortEnv("not-a-port")).toBeUndefined();
+    expect(parseViewerPortEnv("3000abc")).toBeUndefined();
+  });
+
+  it("returns undefined for an empty / whitespace value (Number('') is 0, rejected)", () => {
+    // Guarding the real-world `GENIE_VIEWER_PORT=` (set-but-empty) case, which
+    // must NOT collapse to port 0.
+    expect(parseViewerPortEnv("")).toBeUndefined();
+    expect(parseViewerPortEnv("   ")).toBeUndefined();
+  });
+
+  it("returns undefined for a non-integer value", () => {
+    expect(parseViewerPortEnv("3000.5")).toBeUndefined();
+  });
+
+  it("returns undefined for out-of-range ports (<=0 or >65535)", () => {
+    expect(parseViewerPortEnv("0")).toBeUndefined();
+    expect(parseViewerPortEnv("-1")).toBeUndefined();
+    expect(parseViewerPortEnv("65536")).toBeUndefined();
+  });
+
+  it("accepts the boundary ports 1 and 65535", () => {
+    expect(parseViewerPortEnv("1")).toBe(1);
+    expect(parseViewerPortEnv("65535")).toBe(65535);
+  });
+});
+
+describe("vite.config.ts integration (env shim → factory)", () => {
+  /**
+   * Drives the real root `vite.config.ts` — the file AC1 names — end to end:
+   * sets `GENIE_KIT_ROOT` / `GENIE_VIEWER_PORT`, dynamically imports the shim
+   * (Vite's `defineConfig` returns its argument untouched, so the default
+   * export is the assembled `UserConfig`), and asserts the env actually flows
+   * into the config. `vi.resetModules()` guarantees a fresh evaluation per
+   * case, since the shim reads `process.env` at module-eval time.
+   */
+  const REAL_ENV = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...REAL_ENV };
+    vi.resetModules();
+  });
+
+  async function loadViteConfig(): Promise<UserConfig> {
+    vi.resetModules();
+    const mod = (await import("../vite.config.js")) as { default: UserConfig };
+    return mod.default;
+  }
+
+  it("threads GENIE_KIT_ROOT into config.root and globs that kit's previews", async () => {
+    process.env.GENIE_KIT_ROOT = KIT;
+    delete process.env.GENIE_VIEWER_PORT;
+    const config = await loadViteConfig();
+    expect(config.root).toBe(KIT);
+    const input = config.build?.rollupOptions?.input as Record<string, string>;
+    expect(input.main).toBe(resolve(KIT, "index.html"));
+    expect(input.components_actions_Button_preview_html).toBe(
+      resolve(KIT, "components/actions/Button/preview.html"),
+    );
+  });
+
+  it("threads a valid GENIE_VIEWER_PORT into server.port", async () => {
+    process.env.GENIE_KIT_ROOT = KIT;
+    process.env.GENIE_VIEWER_PORT = "4321";
+    const config = await loadViteConfig();
+    expect(config.server?.port).toBe(4321);
+  });
+
+  it("falls back to the 5173 default when GENIE_VIEWER_PORT is malformed", async () => {
+    process.env.GENIE_KIT_ROOT = KIT;
+    process.env.GENIE_VIEWER_PORT = "not-a-port";
+    const config = await loadViteConfig();
+    expect(config.server?.port).toBe(DEFAULT_VIEWER_PORT);
+  });
+
+  it("defaults kit root to process.cwd() when GENIE_KIT_ROOT is unset", async () => {
+    delete process.env.GENIE_KIT_ROOT;
+    delete process.env.GENIE_VIEWER_PORT;
+    const config = await loadViteConfig();
+    expect(config.root).toBe(resolve(process.cwd()));
   });
 });
