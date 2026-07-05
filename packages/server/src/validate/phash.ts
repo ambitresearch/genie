@@ -274,6 +274,16 @@ export interface HashedEntry {
  * entry lacks a color signature — so a caller that supplies no colors (e.g. an
  * arithmetic-only test) gets the exact pre-DRO-717 blockhash-only behavior.
  *
+ * Why the veto doesn't cause false NEGATIVES (dropping a real duplicate): for a
+ * SAME-fill pair, the ink-color distance co-varies with the button's coverage,
+ * which co-varies with the blockhash. Two same-fill cards only drift apart in
+ * ink color once their rendered widths differ enough — and by then their
+ * blockhash has ALREADY diverged past `toleranceBits`, so the union was never on
+ * the table for the veto to remove (measured on real dark- and light-background
+ * renders: a same-fill pair reaching colorL1 ≈ 39 was already ~35 blockhash bits
+ * apart). The veto therefore only ever bites the case it targets — blockhash
+ * says "close" while hue says "different", i.e. the hue-blind false positive.
+ *
  * O(n²) pairwise comparisons — acceptable for AC7's ~50-component budget (at
  * most ~1225 comparisons, each a cheap XOR+popcount over a 256-bit BigInt plus
  * a three-term color subtraction); would need a smarter index (e.g. an LSH
