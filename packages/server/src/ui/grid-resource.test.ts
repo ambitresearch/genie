@@ -30,6 +30,7 @@ import {
   escapeJsonForScript,
   filterManifest,
   inlineManifest,
+  normalizePreviewsBaseUrl,
   registerGridResource,
   resolveKitDir,
   rewriteCardPaths,
@@ -172,6 +173,47 @@ describe("rewriteCardPaths (AC4)", () => {
     });
     expect(out.components[0]?.path).toBe("components/actions/Button/preview.html");
   });
+
+  it("degrades to the solo-dev data: URL when previewsBaseUrl is malformed (never throws)", async () => {
+    // A bare host (no scheme) is not a valid absolute URL — the old code did
+    // `new URL(cardPath, "previews.example.com")` which THROWS. It must instead
+    // fall through to the data: transport, keeping resources/read answerable.
+    const bytes = Buffer.from("<html>hi</html>", "utf8");
+    const out = await rewriteCardPaths(manifest([card()]), {
+      kitId: "k",
+      kitDir: "/kits/k",
+      previewsBaseUrl: "not a url",
+      readPreviewBytes: bytesPreviewReader(bytes),
+    });
+    expect(out.components[0]?.path).toBe(`data:text/html;base64,${bytes.toString("base64")}`);
+  });
+});
+
+// ─── normalizePreviewsBaseUrl (reviewer robustness fix) ──────────────────────
+
+describe("normalizePreviewsBaseUrl", () => {
+  it("returns a trailing-slash URL for a valid https base", () => {
+    const u = normalizePreviewsBaseUrl("https://previews.example.com");
+    expect(u?.href).toBe("https://previews.example.com/");
+  });
+
+  it("preserves an existing path and forces a trailing slash", () => {
+    const u = normalizePreviewsBaseUrl("https://cdn.example.com/p");
+    expect(u?.href).toBe("https://cdn.example.com/p/");
+  });
+
+  it("accepts http as well as https", () => {
+    expect(normalizePreviewsBaseUrl("http://localhost:8080")?.origin).toBe("http://localhost:8080");
+  });
+
+  it("returns undefined for undefined / empty / malformed / non-http input", () => {
+    expect(normalizePreviewsBaseUrl(undefined)).toBeUndefined();
+    expect(normalizePreviewsBaseUrl("")).toBeUndefined();
+    expect(normalizePreviewsBaseUrl("not a url")).toBeUndefined();
+    expect(normalizePreviewsBaseUrl("previews.example.com")).toBeUndefined(); // no scheme
+    expect(normalizePreviewsBaseUrl("ftp://x/y")).toBeUndefined(); // wrong scheme
+    expect(normalizePreviewsBaseUrl("javascript:alert(1)")).toBeUndefined();
+  });
 });
 
 // ─── escapeJsonForScript + inlineManifest (AC2, XSS-safe) ────────────────────
@@ -242,6 +284,14 @@ describe("buildCspMeta (AC5)", () => {
     expect(csp).toHaveProperty("connectDomains");
     expect(csp).toHaveProperty("resourceDomains");
     expect(csp).toHaveProperty("frameDomains");
+  });
+
+  it("does NOT throw on a malformed previews base URL — degrades to data: (server startup safe)", () => {
+    // A malformed GENIE_PREVIEWS_BASE_URL must not crash registerGridResource
+    // (which calls buildCspMeta eagerly). It degrades to the solo-dev frame src.
+    expect(() => buildCspMeta("not a url")).not.toThrow();
+    expect(buildCspMeta("not a url").frameDomains).toEqual(["data:"]);
+    expect(buildCspMeta("previews.example.com").frameDomains).toEqual(["data:"]); // no scheme
   });
 });
 

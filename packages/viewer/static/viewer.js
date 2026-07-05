@@ -78,13 +78,13 @@
 
   /**
    * DOM id of the inlined-manifest script the embedded `ui://genie/grid` tier
-   * (M4-06 / DRO-268) injects: `<script type="application/json" id="manifest">
-   * …</script>`. That tier's CSP is `default-src 'none'; … connect-src 'none'`
-   * — `fetch()` is blocked outright — so the manifest MUST travel inside the
-   * document and `boot` reads it from here instead of the network. The `file://`
-   * and localhost tiers carry NO such node, so they transparently keep the
-   * `fetch(MANIFEST_URL)` path — the one `viewer.js` stays byte-identical across
-   * all three vehicles (RFC G-5).
+   * (M4-06 / DRO-268) injects: a `<script type="application/json" id="manifest">`
+   * data island holding the compiled manifest. That tier's CSP is
+   * `default-src 'none'; … connect-src 'none'` — `fetch()` is blocked outright —
+   * so the manifest MUST travel inside the document and `boot` reads it from
+   * here instead of the network. The `file://` and localhost tiers carry NO such
+   * node, so they transparently keep the `fetch(MANIFEST_URL)` path — the one
+   * `viewer.js` stays byte-identical across all three vehicles (RFC G-5).
    */
   var MANIFEST_ELEMENT_ID = "manifest";
 
@@ -358,8 +358,8 @@
 
   /**
    * Read the manifest inlined by the embedded `ui://genie/grid` tier (M4-06):
-   * a `<script type="application/json" id="manifest">…</script>` node whose
-   * text content is the compiled manifest JSON. Returns the parsed object, or
+   * a `<script type="application/json" id="manifest">` data island whose text
+   * content is the compiled manifest JSON. Returns the parsed object, or
    * `null` when there is no such node (the `file://` / localhost tiers, which
    * fetch instead) OR the node is present but not usable — wrong `type`, empty,
    * or malformed JSON. A `null` return is the caller's signal to fall back to

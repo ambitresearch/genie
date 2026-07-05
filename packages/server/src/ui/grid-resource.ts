@@ -47,7 +47,7 @@
  */
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
@@ -155,10 +155,35 @@ export function filterManifest(
 // ─── AC4 card `src` rewrite (byte-identical content; transport differs) ───────
 
 /**
+ * Validate + normalise a configured previews base URL. Returns the parsed
+ * `URL` (its `href` forced to end in `/` so a later relative-join appends
+ * rather than replacing the last path segment) when `raw` is a well-formed
+ * ABSOLUTE `http(s)` URL, else `undefined`. A malformed value (a bare host, a
+ * typo, a non-http scheme) degrades to `undefined` — the caller then falls
+ * back to the solo-dev `data:` transport instead of throwing. Centralising the
+ * one `new URL()` parse here is what keeps `rewriteCardPaths` /`buildCspMeta`
+ * from crashing `resources/read` or server startup on bad config (the exact
+ * failure the reviewer flagged): validate once, branch on the result.
+ */
+export function normalizePreviewsBaseUrl(raw: string | undefined): URL | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+  if (!url.pathname.endsWith("/")) url.pathname += "/";
+  return url;
+}
+
+/**
  * Rewrite every card `path` to the URL the EMBEDDED tier's iframe should load
- * (AC4). With a `previewsBaseUrl`, that's an absolute `https://` URL on the
- * separate previews origin (`${base}/${kitId}/${path}`) — the cross-origin
- * isolation the RFC §6/T-09 recommends. Without one (solo dev), the preview's
+ * (AC4). With a valid `previewsBaseUrl`, that's an absolute `https://` URL on
+ * the separate previews origin (`${base}/${kitId}/${path}`) — the cross-origin
+ * isolation the RFC §6/T-09 recommends. Without one — OR when the configured
+ * base URL is malformed (see {@link normalizePreviewsBaseUrl}) — the preview's
  * bytes are read and encoded as a `data:text/html;base64,…` URL so the grid is
  * fully self-contained. A preview whose bytes can't be read keeps its relative
  * `path` (harmless: that card simply won't resolve in the embedded tier — a
@@ -173,13 +198,16 @@ export async function rewriteCardPaths(
 ): Promise<Manifest> {
   const { kitId, kitDir, previewsBaseUrl, readPreviewBytes } = opts;
 
+  // Validate the previews base URL ONCE up front; a malformed value degrades to
+  // the solo-dev `data:` path rather than throwing per-card.
+  const base = normalizePreviewsBaseUrl(previewsBaseUrl);
+
   const components = await Promise.all(
     manifest.components.map(async (card) => {
-      if (previewsBaseUrl !== undefined) {
-        // Absolute https:// on the separate previews origin. `URL` handles the
-        // path-join + percent-encoding; a trailing slash on the base is forced
-        // so the kitId segment is appended, not replacing the last path part.
-        const base = previewsBaseUrl.endsWith("/") ? previewsBaseUrl : previewsBaseUrl + "/";
+      if (base !== undefined) {
+        // Absolute https:// on the separate previews origin. `base` already ends
+        // in `/` (normalizePreviewsBaseUrl) so the kitId segment is appended,
+        // not replacing the last path part; `URL` percent-encodes the join.
         const src = new URL(`${encodeURIComponent(kitId)}/${card.path}`, base).toString();
         return { ...card, path: src };
       }
@@ -255,8 +283,12 @@ export interface GridCspMeta {
  * is absent (see module header).
  */
 export function buildCspMeta(previewsBaseUrl: string | undefined): GridCspMeta {
-  const frameDomains =
-    previewsBaseUrl !== undefined ? [new URL(previewsBaseUrl).origin] : ["data:"];
+  // Validate via the shared normaliser so a malformed GENIE_PREVIEWS_BASE_URL
+  // NEVER throws here — an invalid value degrades to the solo-dev `data:` frame
+  // origin exactly as `rewriteCardPaths` does, keeping the two in lockstep and
+  // never crashing `registerGridResource`/server startup (reviewer flag).
+  const base = normalizePreviewsBaseUrl(previewsBaseUrl);
+  const frameDomains = base !== undefined ? [base.origin] : ["data:"];
   const resourceDomains = [RESOURCE_ORIGIN];
   const frameSrc = frameDomains.join(" ");
   const resourceSrc = resourceDomains.join(" ");
@@ -314,15 +346,32 @@ function makeDefaultAssetReader(): AssetReader {
 const defaultReadPreviewBytes: PreviewReader = async (kitDir, relPath) => {
   try {
     // `relPath` originates from the compiled manifest (already inside the kit);
-    // still resolve + re-check containment defensively before reading.
-    const abs = resolve(kitDir, relPath);
+    // still re-check containment defensively before reading. Uses the SAME
+    // segment-aware guard as `store/local.ts`'s `safePath` (path.relative + sep
+    // + isAbsolute) rather than a `startsWith(root + "/")` prefix test, which
+    // is wrong on Windows (`\` separator) and can false-negative a legitimate
+    // sibling dir sharing a name prefix.
     const root = resolve(kitDir);
-    if (abs !== root && !abs.startsWith(root + "/")) return null;
+    const abs = resolve(root, relPath);
+    if (!isInside(root, abs)) return null;
     return await readFile(abs);
   } catch {
     return null;
   }
 };
+
+/**
+ * True when `child` is `parent` itself or a descendant of it, using the
+ * repo's established segment-aware containment test (mirrors `safePath` in
+ * `store/local.ts`): the relative path escapes only when it IS `..`, starts
+ * with `..` + a path separator, or is absolute. Cross-platform (honours the
+ * OS `sep`), unlike a `startsWith(parent + "/")` prefix check.
+ */
+function isInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  if (rel === "") return true; // child === parent
+  return rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel);
+}
 
 /** A minimal, dependency-free shell used only when the viewer assets can't be
  * read — keeps `resources/read` answering with valid HTML rather than erroring. */
