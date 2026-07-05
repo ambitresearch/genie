@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "genie preview viewer — Vite-backed UI-kit grid (M4). CLI scaffold: arg-parsing + usage banner only; Vite dev-server boot lands in M4-02/M4-08.",
+  "description": "genie preview viewer — Vite-backed UI-kit grid (M4). Multi-page dev config (M4-02): each components/**/preview.html is a Vite entry point.",
   "bin": {
     "genie-viewer": "./dist/cli.js"
   },
@@ -14,11 +14,14 @@
   ],
   "scripts": {
     "dev": "tsx watch src/cli.ts",
+    "serve": "vite",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "commander": "^15.0.0"
+    "commander": "^15.0.0",
+    "fast-glob": "^3.3.3",
+    "vite": "^8.1.3"
   },
   "engines": {
     "node": ">=22"
@@ -27,7 +30,6 @@
   "author": "Roshan Gautam",
   "devDependencies": {
     "@types/node": "^26.0.0",
-    "chokidar": "^3.6.0",
-    "vite": "^8.1.3"
+    "chokidar": "^3.6.0"
   }
 }

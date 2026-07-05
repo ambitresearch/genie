@@ -1,0 +1,5 @@
+/* Fixture kit import-closure root (M4-02 test fixture).
+   Exists so AC5 can assert a kit-root static file serves at `/styles.css`. */
+:root {
+  color-scheme: light;
+}

@@ -1,0 +1,186 @@
+/**
+ * M4-02 (DRO-264) — `@genie/viewer` Vite multi-page dev config.
+ *
+ * Serves a kit directory (`<kit-dir>`) so that every
+ * `components/**\/preview.html` is its own Vite entry point, in addition to
+ * the always-present root `index.html`. Vite supports this natively — "each
+ * `index.html` is treated as source code and part of the module graph"
+ * (vite.dev/guide) — so all we do is enumerate the previews and hand Rollup
+ * the `input` map.
+ *
+ * WHY a factory (`createViewerConfig`) instead of inlining everything in
+ * `vite.config.ts`: the config is pure, deterministic data derived from a kit
+ * root, and the issue's DoD asks for a "config snapshot test". Keeping the
+ * logic here lets `config.test.ts` assert the whole shape — the glob-built
+ * input map, the host/port, the ES2022 target, the no-store plugin — WITHOUT
+ * binding a port or spawning a server. The root `vite.config.ts` is then a
+ * three-line shim that reads env and calls this.
+ *
+ * SCOPE (this issue is config-only): no dev-server *boot*, port-fallback,
+ * auto-open, or Ctrl-C teardown — those are the polished CLI's ACs (M4-08),
+ * exactly as the M4-01 scaffold header reserved them. `strictPort` is left
+ * `false` here precisely so M4-08 owns the EADDRINUSE → 5174… walk (RFC §14
+ * "Port selection") rather than this file failing hard on a busy port.
+ */
+import { resolve } from "node:path";
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+import fg from "fast-glob";
+import type { Plugin, UserConfig } from "vite";
+
+/** RFC §6.9 / §14 default dev-server port. Overridable via `--port` (M4-08). */
+export const DEFAULT_VIEWER_PORT = 5173;
+
+/**
+ * Loopback bind address. AC3 mandates `127.0.0.1` (no LAN exposure) — a kit
+ * preview is a single-developer, local-only surface, so we never bind `0.0.0.0`
+ * by default. (Vite's own default is `localhost`, which can resolve to an
+ * external interface on some setups; pinning the literal IP is deliberate.)
+ */
+export const DEFAULT_HOST = "127.0.0.1";
+
+/** AC4 — the previews are authored against modern browsers; ship ES2022. */
+export const BUILD_TARGET = "es2022";
+
+/** The glob AC1 requires, relative to the kit root. */
+const PREVIEW_GLOB = "components/**/preview.html";
+
+/**
+ * Turns a kit-relative preview path into a Rollup `input` key that is safe as
+ * a chunk name: path separators AND dots collapse to underscores, so
+ * `components/actions/Button/preview.html` →
+ * `components_actions_Button_preview_html`. Dots are folded too (not just
+ * slashes as in the RFC sketch) because a dotted input key leaks into Rollup's
+ * generated file names.
+ */
+export function previewEntryKey(previewPath: string): string {
+  return previewPath.replace(/[/\\.]/g, "_");
+}
+
+/**
+ * Globs every `components/**\/preview.html` under `kitRoot`, returning
+ * kit-relative POSIX paths (forward slashes on every OS — fast-glob
+ * guarantees this) in a stable sorted order so the derived config is
+ * deterministic (and its snapshot test doesn't flake on FS iteration order).
+ * A kit with no component previews yields `[]`; the root `index.html` entry is
+ * added by {@link createViewerConfig}, not here.
+ */
+export function collectPreviewEntries(kitRoot: string): string[] {
+  return fg
+    .sync(PREVIEW_GLOB, {
+      cwd: kitRoot,
+      onlyFiles: true,
+      // Kit dirs like `_vendor/` start with `_`, not `.`; the previews we want
+      // never live under a dotfile dir, so the default (dot:false) is correct
+      // and keeps `.genie/` bookkeeping out of the entry set.
+    })
+    .sort();
+}
+
+/** Inputs to {@link createViewerConfig}. `root` is the kit directory to serve. */
+export interface ViewerConfigOptions {
+  /** Absolute or relative path to the `<kit-dir>` to preview. */
+  root: string;
+  /** Dev-server port (AC3). Defaults to {@link DEFAULT_VIEWER_PORT}. */
+  port?: number;
+  /** Bind address (AC3). Defaults to {@link DEFAULT_HOST}. */
+  host?: string;
+}
+
+/**
+ * AC6 — a dev-only plugin that forces `Cache-Control: no-store` on every HTML
+ * response. Vite's `send()` helper types HTML and then sets
+ * `Cache-Control: no-cache` (browsers may still round-trip a 304 revalidate);
+ * for a live card grid we want the browser to NEVER reuse a cached preview, so
+ * we coerce it to `no-store`.
+ *
+ * We key off the response's `Content-Type` (set by whatever serves the HTML)
+ * rather than the URL, so it catches `/` (→ index.html), each
+ * `.../preview.html`, and any future HTML route uniformly — and never touches
+ * JS/CSS module responses. The `setHeader` wrapper handles both header orders
+ * (Content-Type before or after Cache-Control), since ordering is an
+ * implementation detail of the responder.
+ */
+export function noStoreHtmlPlugin(): Plugin {
+  return {
+    name: "genie-viewer:no-store-html",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use(
+        (_req: IncomingMessage, res: ServerResponse, next: () => void): void => {
+          const setHeader = res.setHeader.bind(res);
+          let isHtml = false;
+          let cacheControlSeen = false;
+
+          res.setHeader = function patchedSetHeader(
+            name: string,
+            value: number | string | ReadonlyArray<string>,
+          ): ServerResponse {
+            const lower = String(name).toLowerCase();
+
+            if (lower === "content-type" && /text\/html/i.test(String(value))) {
+              isHtml = true;
+              // Content-Type arrived after Cache-Control was already set —
+              // retroactively fix the stale no-cache.
+              if (cacheControlSeen) {
+                setHeader("Cache-Control", "no-store");
+              }
+              return setHeader(name, value);
+            }
+
+            if (lower === "cache-control") {
+              cacheControlSeen = true;
+              if (isHtml) {
+                return setHeader("Cache-Control", "no-store");
+              }
+            }
+
+            return setHeader(name, value);
+          } as typeof res.setHeader;
+
+          next();
+        },
+      );
+    },
+  };
+}
+
+/**
+ * Builds the Vite dev config for a kit directory (see the file header for the
+ * why). Pure and deterministic: same `root` in → same config out.
+ */
+export function createViewerConfig(options: ViewerConfigOptions): UserConfig {
+  const root = resolve(options.root);
+
+  // AC1/AC2 — the Rollup input map: the always-present root `index.html`
+  // (`main`) plus one entry per globbed component preview.
+  const input: Record<string, string> = {
+    main: resolve(root, "index.html"),
+  };
+  for (const entry of collectPreviewEntries(root)) {
+    input[previewEntryKey(entry)] = resolve(root, entry);
+  }
+
+  return {
+    // AC5 — root is the kit dir, so its `tokens/`, `styles.css`, and `_vendor/`
+    // are served as ordinary root-relative statics at the same paths a
+    // `file://` open would use (RFC G-5 "one artefact, three vehicles").
+    // publicDir is intentionally left at Vite's default (<root>/public) — NOT
+    // repointed at the kit root, which would double-serve every file.
+    root,
+    // A kit is a genuine multi-page app: no SPA history fallback (a missing
+    // card should 404, not silently return index.html).
+    appType: "mpa",
+    server: {
+      host: options.host ?? DEFAULT_HOST,
+      port: options.port ?? DEFAULT_VIEWER_PORT,
+      // Port-fallback (EADDRINUSE → next port) is M4-08's CLI concern.
+      strictPort: false,
+    },
+    build: {
+      target: BUILD_TARGET,
+      rollupOptions: { input },
+    },
+    plugins: [noStoreHtmlPlugin()],
+  };
+}
