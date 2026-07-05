@@ -1,0 +1,6 @@
+/* Fixture kit token file (M4-02 test fixture).
+   Exists so AC5 can assert `tokens/` serves at `/tokens/colors.css`. */
+:root {
+  --clay: #c87c5e;
+  --ink: #1c1a17;
+}

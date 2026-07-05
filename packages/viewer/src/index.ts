@@ -4,9 +4,9 @@
  * work, tests, or a consumer that wants to drive the CLI programmatically)
  * imports from here rather than reaching into `./cli.js` directly.
  *
- * Only the CLI surface exists at this milestone — the Vite config (M4-02),
- * grid renderer (M4-03), and HMR bridge (M4-04) each add their own exports
- * here as they land.
+ * The CLI surface (M4-01) and the Vite multi-page config (M4-02) exist at this
+ * milestone; the grid renderer (M4-03) and HMR bridge (M4-04) each add their
+ * own exports here as they land.
  */
 export {
   buildProgram,
@@ -16,3 +16,14 @@ export {
   DEFAULT_PORT,
   type CliIO,
 } from "./cli.js";
+
+export {
+  createViewerConfig,
+  collectPreviewEntries,
+  previewEntryKey,
+  noStoreHtmlPlugin,
+  DEFAULT_VIEWER_PORT,
+  DEFAULT_HOST,
+  BUILD_TARGET,
+  type ViewerConfigOptions,
+} from "./config.js";
