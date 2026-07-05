@@ -327,24 +327,35 @@ async function assertNoBlockingViolations(page: Page, extra?: { rules?: string[]
  * catches a future regression here, computed straight from
  * `getComputedStyle` with no axe-core involvement.
  *
- * Parses BOTH `rgb(...)` and `oklch(...)` computed-style serializations —
- * this Chromium build serializes an oklch()-declared custom property back
- * as `oklch(...)` verbatim rather than converting to legacy rgb() syntax
- * (see the AC7 dark-palette-detection test below for the same two-format
- * handling), so a color-managed getComputedStyle read cannot assume rgb().
+ * Parses BOTH `rgb(a)(...)` and `oklch(...)` computed-style serializations
+ * (each with an optional alpha channel) — this Chromium build serializes an
+ * oklch()-declared custom property back as `oklch(...)` verbatim rather than
+ * converting to legacy rgb() syntax (see the AC7 dark-palette-detection test
+ * below for the same two-format handling), so a color-managed
+ * getComputedStyle read cannot assume rgb(). Alpha specifically matters for
+ * the background walk below: `.app-header`'s background is a semi-
+ * transparent `color-mix()`, which serializes with a trailing `/ 0.88` (or
+ * `rgba(..., 0.88)`) alpha component that must be composited, not discarded
+ * (Copilot review, PR #171 — see the walk's own comment for why).
  */
 async function measureSparkContrast(page: Page): Promise<number> {
   return page.evaluate(() => {
-    function parseColor(str: string): [number, number, number] {
-      const rgbMatch = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(str);
-      if (rgbMatch) return [Number(rgbMatch[1]), Number(rgbMatch[2]), Number(rgbMatch[3])];
+    /** [r, g, b] in 0-255 gamma-sRGB, alpha in 0-1 (1 = fully opaque). */
+    function parseColor(str: string): [number, number, number, number] {
+      if (str === "transparent") return [0, 0, 0, 0];
+      const rgbMatch = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/.exec(str);
+      if (rgbMatch) {
+        const [, r, g, b, a] = rgbMatch;
+        return [Number(r), Number(g), Number(b), a === undefined ? 1 : Number(a)];
+      }
       // oklch(L C H [/ A]) -> OKLab -> linear sRGB -> gamma sRGB, per the CSS
       // Color 4 / Bjorn Ottosson reference matrices (same math as
       // docs/designs/design-6/contrast-check.mjs, inlined here since a
       // browser-evaluated function can't import a repo module).
-      const oklchMatch = /oklch\(\s*([\d.]+%?)\s+([\d.]+)\s+([\d.]+)/.exec(str);
+      const oklchMatch =
+        /oklch\(\s*([\d.]+%?)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\s*\)/.exec(str);
       if (!oklchMatch) throw new Error("cannot parse color: " + str);
-      const [, lRaw, cRaw, hRaw] = oklchMatch;
+      const [, lRaw, cRaw, hRaw, aRaw] = oklchMatch;
       const L = lRaw.endsWith("%") ? Number(lRaw.slice(0, -1)) / 100 : Number(lRaw);
       const C = Number(cRaw);
       const hRad = (Number(hRaw) * Math.PI) / 180;
@@ -363,7 +374,9 @@ async function measureSparkContrast(page: Page): Promise<number> {
         const cc = Math.min(1, Math.max(0, c));
         return cc <= 0.0031308 ? 12.92 * cc : 1.055 * Math.pow(cc, 1 / 2.4) - 0.055;
       };
-      return [toSrgb(rl) * 255, toSrgb(gl) * 255, toSrgb(bl) * 255];
+      const alpha =
+        aRaw === undefined ? 1 : aRaw.endsWith("%") ? Number(aRaw.slice(0, -1)) / 100 : Number(aRaw);
+      return [toSrgb(rl) * 255, toSrgb(gl) * 255, toSrgb(bl) * 255, alpha];
     }
     function relLuminance([r, g, b]: [number, number, number]): number {
       const chan = (c: number) => {
@@ -372,25 +385,54 @@ async function measureSparkContrast(page: Page): Promise<number> {
       };
       return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
     }
+    /**
+     * Porter-Duff "over": composites a (possibly translucent) `layer` onto an
+     * already fully-opaque `base`. Used below to flatten a stack of
+     * translucent ancestor backgrounds into the one true painted surface
+     * color, instead of only reading a single element's own backgroundColor.
+     */
+    function over(
+      layer: [number, number, number, number],
+      base: [number, number, number],
+    ): [number, number, number] {
+      const a = layer[3];
+      return [
+        layer[0] * a + base[0] * (1 - a),
+        layer[1] * a + base[1] * (1 - a),
+        layer[2] * a + base[2] * (1 - a),
+      ];
+    }
     const spark = document.querySelector(".wordmark__spark") as HTMLElement;
     const fg = parseColor(getComputedStyle(spark).color);
-    // Walk up for the nearest actually-painted (non-transparent) background —
-    // the header's own background is a semi-transparent color-mix over the
-    // body, so its OWN computed backgroundColor is not the true rendered
-    // surface color.
+    // Walk up collecting every ancestor background that actually paints
+    // something (alpha > 0), stopping once a FULLY opaque one is found (the
+    // true bottom of the visible stack). `.app-header`'s own background is a
+    // semi-transparent color-mix over the body: naively taking the first
+    // non-fully-transparent background (as this test originally did) treats
+    // that 88%-opacity tint as fully opaque and never looks past it to the
+    // real (opaque) body underneath — harmless today only because the tint
+    // happens to be the same paper color mixed with itself, so it composites
+    // back to exactly that color either way. Collecting the whole translucent
+    // stack and alpha-compositing it (below) keeps this correct even if a
+    // future header background is a genuinely different tint (Copilot
+    // review, PR #171).
+    const layers: Array<[number, number, number, number]> = [];
     let bgEl: HTMLElement | null = spark;
-    let bgStr = "";
     while (bgEl) {
-      const c = getComputedStyle(bgEl).backgroundColor;
-      if (c && c !== "rgba(0, 0, 0, 0)" && c !== "transparent") {
-        bgStr = c;
-        break;
-      }
+      const parsed = parseColor(getComputedStyle(bgEl).backgroundColor);
+      if (parsed[3] > 0) layers.push(parsed);
+      if (parsed[3] >= 1) break;
       bgEl = bgEl.parentElement;
     }
-    const bg = parseColor(bgStr);
-    const l1 = relLuminance(fg);
-    const l2 = relLuminance(bg);
+    // Composite back-to-front (`layers` was collected front-to-back, i.e.
+    // element-to-root, so reverse it first). Falls back to opaque white — the
+    // browser's own default canvas — if the walk reached the top of the tree
+    // without ever finding a fully opaque background.
+    let composited: [number, number, number] = [255, 255, 255];
+    for (const layer of layers.reverse()) composited = over(layer, composited);
+
+    const l1 = relLuminance([fg[0], fg[1], fg[2]]);
+    const l2 = relLuminance(composited);
     const lighter = Math.max(l1, l2);
     const darker = Math.min(l1, l2);
     return (lighter + 0.05) / (darker + 0.05);
