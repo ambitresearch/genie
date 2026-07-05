@@ -29,9 +29,13 @@ export {
 export { createDefaultRenderer, type Renderer, type RenderedCard } from "./render.js";
 export {
   computePHash,
+  computeColorSignature,
+  colorDistanceL1,
   hammingDistance,
   findDuplicateClusters,
   DEFAULT_TOLERANCE_BITS,
+  DEFAULT_COLOR_TOLERANCE_L1,
   type RGBAImage,
   type HashedEntry,
+  type ColorSignature,
 } from "./phash.js";

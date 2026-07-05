@@ -78,6 +78,39 @@ function stackImage(
 const IMAGE_A = splitImage([200, 124, 94, 255], [32, 64, 96, 255]);
 const IMAGE_B = splitImage([32, 64, 96, 255], [200, 124, 94, 255]);
 
+/**
+ * A centered saturated block on a light page background (DRO-717) — the shape
+ * `computeColorSignature` reads a hue from. Two of these with the SAME spatial
+ * layout but DIFFERENT fills hash identically under the hue-blind blockhash yet
+ * carry different ink colors, so they exercise the color veto end-to-end.
+ */
+function fillCard(
+  fill: [number, number, number],
+  size = 64,
+): { data: Uint8Array; width: number; height: number } {
+  const data = new Uint8Array(size * size * 4);
+  const bg: [number, number, number] = [246, 246, 248];
+  const lo = Math.floor(size * 0.25);
+  const hi = size - lo;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4;
+      const inBlock = x >= lo && x < hi && y >= lo && y < hi;
+      const c = inBlock ? fill : bg;
+      data[i] = c[0];
+      data[i + 1] = c[1];
+      data[i + 2] = c[2];
+      data[i + 3] = 255;
+    }
+  }
+  return { data, width: size, height: size };
+}
+
+// clay / blue / red — the DRO-717 hue trio; same layout → identical blockhash.
+const CARD_CLAY = fillCard([200, 124, 94]);
+const CARD_BLUE = fillCard([52, 81, 151]);
+const CARD_RED = fillCard([197, 55, 47]);
+
 // ── Stubs ─────────────────────────────────────────────────────────────────────
 
 interface StubFile {
@@ -368,6 +401,69 @@ describe("fullScan — variantsIdentical (AC5)", () => {
     const renderer = stubRenderer(() => ({ contentHeight: 300, image: IMAGE_A }));
     const res = await fullScan(deps({ kitStore, renderer }), { kitId: "k" });
     expect(res.variantsIdentical.slice().sort()).toEqual(["x/X.html", "y/Y.html", "z/Z.html"]);
+  });
+
+  // ── DRO-717: hue-veto integration (same layout, different fill) ───────────────
+
+  it("does NOT cluster same-layout cards of different HUE (DRO-717 finding 1)", async () => {
+    // clay / blue / red buttons — identical layout → identical (hue-blind)
+    // blockhash, distance 0. Before the color veto these all clustered as
+    // variantsIdentical (the reported false positive); the veto must split them.
+    const kitStore = stubKitStore([
+      { path: "a/Primary.html", content: `${MARKER}\n<button>primary</button>` },
+      { path: "a/Danger.html", content: `${MARKER}\n<button>danger</button>` },
+      { path: "a/Warning.html", content: `${MARKER}\n<button>warning</button>` },
+    ]);
+    const renderer = stubRenderer((html) => ({
+      contentHeight: 300,
+      image: html.includes("primary") ? CARD_BLUE : html.includes("danger") ? CARD_RED : CARD_CLAY,
+    }));
+    const res = await fullScan(deps({ kitStore, renderer }), { kitId: "k" });
+    // sanity: these three DO share a blockhash (the veto, not the hash, split them)
+    expect(res.variantsIdentical).toEqual([]);
+  });
+
+  it("still clusters same-layout, same-HUE cards (true duplicates survive the veto)", async () => {
+    // Two genuine duplicates (same fill) must remain clustered — the veto only
+    // removes false positives, it does not break real duplicate detection.
+    const kitStore = stubKitStore([
+      { path: "a/Dup1.html", content: `${MARKER}\n<button>dup one</button>` },
+      { path: "a/Dup2.html", content: `${MARKER}\n<button>dup two</button>` },
+    ]);
+    const renderer = stubRenderer(() => ({ contentHeight: 300, image: CARD_BLUE }));
+    const res = await fullScan(deps({ kitStore, renderer }), { kitId: "k" });
+    expect(res.variantsIdentical).toEqual(["a/Dup1.html", "a/Dup2.html"]);
+  });
+
+  it("splits a mixed set: two same-hue duplicates cluster, a third hue does not", async () => {
+    const kitStore = stubKitStore([
+      { path: "a/BlueOne.html", content: `${MARKER}\n<button>blue one</button>` },
+      { path: "a/BlueTwo.html", content: `${MARKER}\n<button>blue two</button>` },
+      { path: "a/Red.html", content: `${MARKER}\n<button>red</button>` },
+    ]);
+    const renderer = stubRenderer((html) => ({
+      contentHeight: 300,
+      image: html.includes("red") ? CARD_RED : CARD_BLUE,
+    }));
+    const res = await fullScan(deps({ kitStore, renderer }), { kitId: "k" });
+    expect(res.variantsIdentical).toEqual(["a/BlueOne.html", "a/BlueTwo.html"]);
+  });
+
+  it("a large colorToleranceL1 override restores hue-blind clustering", async () => {
+    // Escape hatch / back-compat: with the veto effectively disabled, the hue
+    // trio clusters again exactly as blockhash-only would.
+    const kitStore = stubKitStore([
+      { path: "a/Blue.html", content: `${MARKER}\n<button>blue</button>` },
+      { path: "a/Red.html", content: `${MARKER}\n<button>red</button>` },
+    ]);
+    const renderer = stubRenderer((html) => ({
+      contentHeight: 300,
+      image: html.includes("red") ? CARD_RED : CARD_BLUE,
+    }));
+    const res = await fullScan(deps({ kitStore, renderer, colorToleranceL1: 1000 }), {
+      kitId: "k",
+    });
+    expect(res.variantsIdentical).toEqual(["a/Blue.html", "a/Red.html"]);
   });
 });
 
