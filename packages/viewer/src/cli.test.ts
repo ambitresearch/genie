@@ -233,6 +233,29 @@ describe("runCli", () => {
     expect(io.err()).toContain("unknown option");
   });
 
+  it("maps a CliError (AC7 validation) to a non-zero exit and prints its message", async () => {
+    // A parseable invocation that reaches validateKitDir and fails there —
+    // exercises runCli's `CliError` catch branch (distinct from the
+    // CommanderError parse-error branch the cases above hit). The faked cwd
+    // resolves the relative kit-dir to the manifest-less `empty-kit` fixture.
+    const io = createRecordingIO();
+    const { deps } = fakeCliDeps();
+    const code = await runCli(["test/fixtures/empty-kit"], io, deps);
+    expect(code).not.toBe(0);
+    expect(io.err()).toContain("genie-viewer:");
+    expect(io.err()).toContain(".genie/manifest.json");
+    expect(io.err()).toMatch(/MCP server/i);
+  });
+
+  it("does not boot the server when kit-dir validation fails", async () => {
+    // AC7 guard-before-boot: a failed validation must short-circuit before
+    // createServer is ever called.
+    const io = createRecordingIO();
+    const { deps, bootedPort } = fakeCliDeps();
+    await runCli(["test/fixtures/empty-kit"], io, deps);
+    expect(bootedPort()).toBeUndefined();
+  });
+
   it("never throws, even on malformed input", async () => {
     const io = createRecordingIO();
     await expect(runCli(["--port", "not-a-port"], io)).resolves.not.toThrow();
