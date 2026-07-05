@@ -109,21 +109,31 @@ describe("static/viewer.css (AC7)", () => {
     expect(css.replace(/\s+/g, " ")).toMatch(/display:\s*grid/);
   });
 
-  it("identity rule — the clay accent (--color-accent) is CONSUMED only on the wordmark spark", () => {
+  it("identity rule — the clay accent is CONSUMED only on the wordmark spark", () => {
     // The genie identity contract (tokens.css): the clay/gilt accent marks
     // generate/refine moments ONLY; structural chrome stays ink/neutral. This
     // is a *browse* surface, so its single sanctioned accent touch is the
     // wordmark spark. A regression that paints a border/heading/pill clay would
-    // add another `color: var(--color-accent)` consumer and trip this guard.
+    // add another `color: var(--color-accent…)` consumer and trip this guard.
     //
-    // We count CONSUMERS (`var(--color-accent…)` reads), not the token
-    // DEFINITIONS (`--color-accent: …` in :root / dark mode), so redefining the
-    // token per-scheme never trips it.
+    // We count CONSUMERS (`var(--color-accent…)` reads — this also matches
+    // `--color-accent-2`, the "text-safe clay", since `\b` fires at the
+    // `t`/`-` boundary regardless of what follows), not the token
+    // DEFINITIONS (`--color-accent: …` / `--color-accent-2: …` in :root /
+    // dark mode), so redefining either token per-scheme never trips it.
     const consumers = css.match(/var\(\s*--color-accent\b/g) ?? [];
     expect(consumers.length).toBe(1);
 
-    // And that one consumer is the spark rule.
-    const sparkRule = /\.wordmark__spark\s*\{[^}]*color:\s*var\(--color-accent\)[^}]*\}/;
+    // And that one consumer is the spark rule — using `--color-accent-2`
+    // (M4-09/DRO-271), NOT the bare `--color-accent`. `--color-accent` is
+    // only 3.05:1 on paper (below the 4.5:1 AA body-text bar); design.md's
+    // own **clay-text rule** says clay carried by body-size TEXT (as opposed
+    // to a button/pill FILL) always renders in `--color-accent-2` (4.62:1
+    // light / 5.27:1 dark) instead — exactly what every bare "✦" already
+    // does across the design-6 mocks (ref-primitives.svg, ref-genie-card.svg)
+    // outside a button chip. This changes no identity, only which clay token
+    // small clay text points at.
+    const sparkRule = /\.wordmark__spark\s*\{[^}]*color:\s*var\(--color-accent-2\)[^}]*\}/;
     expect(css).toMatch(sparkRule);
   });
 
@@ -135,5 +145,69 @@ describe("static/viewer.css (AC7)", () => {
     // the light-mode value must be darker than 55%, the dark-mode value lighter.
     expect(css).toMatch(/--color-ink-3:\s*oklch\(\s*4[0-9]%/); // light: ~45% (darker)
     expect(css).toMatch(/--color-ink-3:\s*oklch\(\s*6[0-9]%/); // dark:  ~68% (lighter)
+  });
+
+  it("M4-09 (DRO-271) AC2/AC6 — --color-accent-2 has its own DRO-743-style dark override", () => {
+    // This viewer.css is a SEPARATE inlined copy of docs/designs/design-6/
+    // tokens.css (RFC G-5: "one artefact, three vehicles") — it does not
+    // @import or otherwise share state with that file. DRO-743 added a dark
+    // override for --color-accent-2 to tokens.css (light value 56% falls
+    // back to 3.78:1 on dark paper, failing AA) but nothing ported that fix
+    // here, because nothing in viewer.css consumed --color-accent-2 at the
+    // time. Now the wordmark spark does (the clay-text-rule fix, same test
+    // file, "identity rule" case above) — so without this override, the
+    // spark would silently regress to the exact contrast failure DRO-743
+    // already fixed once, just in dark mode specifically. Both required
+    // triggers (manual `data-scheme="dark"` + automatic `prefers-color-
+    // scheme: dark`, per the AC7 tests below) must carry the override, or
+    // one vehicle would still show the light-mode (failing) value.
+    const lightMatch = /--color-accent-2:\s*oklch\(\s*56%/.exec(css);
+    expect(
+      lightMatch,
+      "expected the light-mode --color-accent-2 (56%) to still be present",
+    ).not.toBeNull();
+
+    const darkOverrides = css.match(/--color-accent-2:\s*oklch\(\s*64%\s+0\.11\s+42\s*\)/g) ?? [];
+    expect(
+      darkOverrides.length,
+      "expected the DRO-743 dark --color-accent-2 override (64% 0.11 42) in BOTH the manual data-scheme block and the prefers-color-scheme media query",
+    ).toBe(2);
+  });
+
+  it("M4-09 AC7 — honors the OS prefers-color-scheme automatically, not only a manual toggle", () => {
+    // Two independent triggers must both exist: `:root[data-scheme="dark"]`
+    // (an explicit override — already present, no in-app toggle UI exists
+    // yet) AND an `@media (prefers-color-scheme: dark)` block (automatic,
+    // needs no app code) applying the SAME dark palette. Without the media
+    // query, a user whose OS is set to dark mode would still see the light
+    // viewer chrome by default.
+    const normalized = css.replace(/\s+/g, " ");
+    expect(normalized).toMatch(/@media\s*\(prefers-color-scheme:\s*dark\)/);
+
+    // The media-query block sets the same paper/ink dark values as the
+    // explicit override (spot-check the two AA-load-bearing tokens rather
+    // than every property, to stay resilient to unrelated token additions).
+    const mediaBlockMatch =
+      /@media\s*\(prefers-color-scheme:\s*dark\)\s*\{([\s\S]*?)\n\s*\}\s*\}/.exec(css);
+    expect(
+      mediaBlockMatch,
+      "expected a parseable @media (prefers-color-scheme: dark) block",
+    ).not.toBeNull();
+    const mediaBlock = mediaBlockMatch?.[1] ?? "";
+    expect(mediaBlock).toMatch(/--color-paper:\s*oklch\(\s*19%/);
+    expect(mediaBlock).toMatch(/--color-ink-3:\s*oklch\(\s*6[0-9]%/);
+
+    // `color-scheme: light dark` on `html` is what makes UA-native chrome
+    // (e.g. the search input's cancel/reveal icons) follow the OS preference
+    // too, not just the app's own custom-property palette.
+    expect(normalized).toMatch(/html\s*\{[^}]*color-scheme:\s*light\s+dark/);
+  });
+
+  it("M4-09 AC7 — a manual data-scheme still wins over the OS preference", () => {
+    // The media-query block scopes to `:root:not([data-scheme="light"])` —
+    // an explicit "force light" override must be able to beat an OS dark
+    // preference (an explicit choice always wins over an ambient one).
+    const normalized = css.replace(/\s+/g, " ");
+    expect(normalized).toMatch(/:root:not\(\[data-scheme=["']light["']\]\)/);
   });
 });

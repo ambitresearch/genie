@@ -65,6 +65,22 @@
  * a compromised preview cannot reach the viewer's origin, cookies, or storage.
  * `card.name` is written via `textContent` (never `innerHTML`), so a hostile
  * component name cannot inject markup into the grid chrome.
+ *
+ * ── Accessibility (M4-09/DRO-271) ───────────────────────────────────────────
+ * Each card is a keyboard-operable `role="link"` (M4-09 AC3): `tabindex="0"`
+ * puts it in Tab order, an explicit `aria-label` gives it a clean accessible
+ * name (without one, a screen reader would concatenate the heading + group
+ * pill + viewport text with no separators — "Primary buttonsactions480x240"),
+ * and a `keydown`/`click` handler activates it (mirrors native `<a>`/`<button>`
+ * behaviour, which `role="link"` does NOT get for free — ARIA supplies
+ * semantics, never key handling). The card's own iframe is pulled OUT of Tab
+ * order (`tabindex="-1"`): a sandboxed iframe with no `allow-same-origin` is
+ * STILL natively focusable, so without this, Tab order would be
+ * search → card → iframe → card → iframe (M4-09 AC3 asks for
+ * search → card → card). Verified empirically against a real Chromium +
+ * axe-core run (`test/a11y.test.ts`) that this combination introduces no new
+ * violations and that `frame-title` (M4-09 AC5) still evaluates the iframe
+ * element correctly.
  */
 (function () {
   "use strict";
@@ -183,6 +199,28 @@
   }
 
   /**
+   * Returns `value` trimmed, or `fallback` when it is missing, empty, or
+   * whitespace-only. Used for the two places M4-09 needs a GUARANTEED
+   * non-empty accessible name: the card's `aria-label` (axe-core's
+   * `link-name` rule flags a `role="link"` with no accessible name as a
+   * CRITICAL violation — and an empty string `aria-label=""` counts as "no
+   * name", it does NOT fall back to the element's text content) and the
+   * iframe's `title` (axe-core's `frame-title` rule, same "empty is not
+   * acceptable" contract). A card whose upstream manifest carries `name: ""`
+   * (schema-legal — `store/manifest.ts` only requires `z.string()`, not a
+   * non-empty one) must still render an accessible, non-violating card
+   * rather than silently produce an unnamed link/frame.
+   *
+   * @param {string=} value
+   * @param {string} fallback
+   * @returns {string}
+   */
+  function accessibleName(value, fallback) {
+    var trimmed = (value || "").trim();
+    return trimmed === "" ? fallback : trimmed;
+  }
+
+  /**
    * Build one card element for a component: a header (name + group pill +
    * viewport meta) and a sandboxed, lazy `<iframe>` preview.
    *
@@ -196,6 +234,39 @@
     // Lowercased once here so the search filter (AC5) is a plain substring
     // test and never re-lowercases per keystroke.
     article.setAttribute("data-name", (card.name || "").toLowerCase());
+
+    // M4-09 AC3 — keyboard-operable card: `tabindex="0"` puts it in Tab
+    // order, `role="link"` + an explicit `aria-label` give it a clean
+    // accessible name (see the module doc's "Accessibility" section —
+    // without the label, a screen reader concatenates the heading + group
+    // pill + viewport text with no separators), and Enter/click activate it
+    // (`role="link"` supplies semantics only, never key handling — unlike a
+    // real `<a>`, so the listener below is required, not decorative). There
+    // is no dedicated card-detail route yet (M4-05 leaves "per-card detail
+    // view" out of scope for v1), so the placeholder destination is the
+    // component's own preview: the one real, already-working URL a card
+    // carries.
+    article.setAttribute("tabindex", "0");
+    article.setAttribute("role", "link");
+    // `accessibleName` guards against axe-core's `link-name` (critical): an
+    // empty-string aria-label is worse than none (it suppresses the normal
+    // fall-back-to-content accessible-name computation), so an unnamed
+    // component still gets a real label rather than an empty one.
+    article.setAttribute("aria-label", accessibleName(card.name, "Untitled component"));
+    var openDetail = function () {
+      var view = doc.defaultView;
+      if (view && card.path) view.location.assign(card.path);
+    };
+    article.addEventListener("click", openDetail);
+    article.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        // Prevent a default action (e.g. a native scroll-on-Enter in some
+        // ATs) before navigating — mirrors how a real `<a>` suppresses it
+        // too.
+        event.preventDefault();
+        openDetail();
+      }
+    });
 
     var header = doc.createElement("header");
     header.className = "ds-card__head";
@@ -236,7 +307,20 @@
     // AC4 — never eagerly load offscreen previews.
     iframe.setAttribute("loading", "lazy");
     iframe.setAttribute("src", card.path || "");
-    iframe.setAttribute("title", card.name || "preview");
+    // M4-09 AC5 — the accessible name axe-core's `frame-title` rule checks
+    // for. `accessibleName` guards the same empty-string trap as the card's
+    // own aria-label above: `title=""` is indistinguishable from a missing
+    // title to `frame-title`, so a nameless component still gets a real
+    // fallback string.
+    iframe.setAttribute("title", accessibleName(card.name, "preview"));
+    // M4-09 AC3 — pull the iframe itself OUT of Tab order. A sandboxed
+    // iframe with no `allow-same-origin` is STILL natively focusable (the
+    // sandbox only restricts what the framed document can DO, not whether
+    // the frame element itself takes focus) — see the module doc's
+    // "Accessibility" section. Without this, Tab order would be
+    // search → card → iframe → card → iframe instead of the required
+    // search → card → card.
+    iframe.setAttribute("tabindex", "-1");
 
     // AC2 — size from the viewport when it is a real WxH; otherwise reserve
     // a sane default height and let CSS own the width (responsive column).
@@ -352,7 +436,9 @@
     var box = doc.createElement("div");
     box.className = "ds-error";
     box.textContent =
-      "Could not load the preview manifest (" + detail + "). Run the genie MCP server against this kit first.";
+      "Could not load the preview manifest (" +
+      detail +
+      "). Run the genie MCP server against this kit first.";
     grid.appendChild(box);
   }
 
@@ -480,6 +566,7 @@
     window.__genieViewerTestHooks.parseViewport = parseViewport;
     window.__genieViewerTestHooks.groupByGroup = groupByGroup;
     window.__genieViewerTestHooks.computeGroupOrder = computeGroupOrder;
+    window.__genieViewerTestHooks.accessibleName = accessibleName;
     window.__genieViewerTestHooks.createCard = createCard;
     window.__genieViewerTestHooks.renderGrid = renderGrid;
     window.__genieViewerTestHooks.applyFilter = applyFilter;

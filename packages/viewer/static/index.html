@@ -40,12 +40,23 @@
         <span class="app-header__subtitle">preview</span>
       </div>
       <div class="app-header__search">
+        <!--
+          M4-09 AC4 — `aria-label` directly on the input (not just the
+          `<label for="q">` below). Both are harmless together: `aria-label`
+          wins the accessible-name computation (WAI-ARIA §5.2.7.5 name-from
+          precedence puts `aria-label` ahead of native `<label>`), so the
+          visible label becomes redundant-but-harmless rather than
+          conflicting — kept because sighted mouse users still get a visible
+          "click the label to focus" affordance the aria-label alone can't
+          give them.
+        -->
         <label class="visually-hidden" for="q">Filter components by name</label>
         <input
           id="q"
           type="search"
           class="search-input"
           placeholder="Filter components…"
+          aria-label="Filter components by name"
           autocomplete="off"
           spellcheck="false"
         />

@@ -3089,6 +3089,77 @@ Coverage gate: 85% branch coverage on `server/src/**`, 95% on `server/src/tools/
 - Keyboard-only navigation: `Tab` cycles through cards in DOM order; `Enter` opens the card detail; `Esc` closes. Tested in CI.
 - Color contrast: design tokens enforce 4.5:1 minimum body, 3:1 minimum large text.
 
+**Implemented (M4-09 / DRO-271):** `packages/viewer/test/a11y.test.ts` runs `@axe-core/playwright`
+against real headless Chromium, serving the actual `packages/viewer/static/*` shell (no jsdom,
+no mocks) — scope is the viewer chrome only (`.exclude(["iframe"])`); a component author's own
+preview accessibility is out of scope by design (the issue's own framing: "the viewer must not
+block it"). `pnpm --filter @genie/viewer test:a11y` runs it; CI's dedicated `viewer-a11y` job
+(`.github/workflows/ci.yml`) installs a real Chromium via `playwright install --with-deps` and
+sets `GENIE_REQUIRE_A11Y_BROWSER=1` so a broken browser install fails the job loudly instead of
+silently skipping — the suite self-skips (never fails) everywhere else that lacks a launchable
+Chromium (e.g. a machine that never ran `playwright install`), consistent with the
+`GENIE_REQUIRE_DOCKER`/`GENIE_REQUIRE_LLM` "vacuous skip must fail somewhere" contract §14.2/14.4
+already use.
+
+AC coverage:
+
+- **AC1** — `pnpm --filter @genie/viewer test:a11y` (above).
+- **AC2** — zero `critical`/`serious` axe-core violations, scanned against the populated grid
+  (light + dark) and the empty-manifest state. The suite also inspects axe-core's third result
+  bucket, `results.incomplete` (checks it cannot auto-resolve, as distinct from checks that ran
+  and failed) — an `APPROVED_INCOMPLETE` allow-list in the test file requires a documented reason
+  per entry (see the justification below); any _new_ incomplete finding fails the suite rather
+  than silently riding through.
+- **AC3** — real `Tab`/`Enter` key events (not simulated DOM events): Tab visits
+  search → card 1 → card 2 (each card's own `<iframe>` is pulled out of tab order via
+  `tabindex="-1"`, since a sandboxed iframe is still natively focusable even with no
+  `allow-same-origin`); Enter on a focused card navigates to its preview path (the placeholder
+  "detail page" — no dedicated per-card route exists yet, out of scope per M4-05).
+- **AC4** — `#q` carries a real `aria-label` (`"Filter components by name"`), asserted via
+  `getAttribute`, not just presence of a `<label for>`.
+- **AC5** — every rendered `<iframe>` has a non-empty `title` (falls back to a fixed string when
+  a manifest entry's `name` is schema-legal but empty, so `frame-title` never sees an empty
+  string, which axe-core treats as equivalent to no title at all).
+- **AC6** — the `color-contrast` rule scanned on its own (in addition to the full tag-based scan)
+  so a future regression fails with an unambiguous rule id, plus explicit computed-style
+  contrast checks (see justification below).
+- **AC7** — the full scan + keyboard walk repeated with `page.emulateMedia({ colorScheme: "dark"
+})`; `static-index.test.ts` separately asserts the CSS ships BOTH an automatic
+  `@media (prefers-color-scheme: dark)` block and the pre-existing manual
+  `:root[data-scheme="dark"]` override (`color-scheme: light dark` on `html` makes even
+  un-themed UA chrome follow the OS preference), with the manual override winning when both are
+  present.
+
+**AC2 justification doc — the one approved `incomplete` finding:** the wordmark's decorative
+spark glyph (`<span class="wordmark__spark" aria-hidden="true">✦</span>`) always lands in
+axe-core's `results.incomplete` for `color-contrast`, in every color scheme, regardless of its
+actual rendered color — axe-core's contrast checker cannot rasterize a non-BMP symbol glyph's
+shape the way it rasterizes a real word to measure anti-aliased edge pixels, and defers to a
+human (`nonBmp` message key) rather than pass or fail it outright. This is not a signal the color
+itself is wrong: `test/a11y.test.ts` independently computes the actual WCAG contrast ratio from
+`getComputedStyle` (OKLCH → OKLab → linear sRGB → relative luminance, no axe-core involved) and
+asserts it is ≥ 4.5:1 in both light (4.62:1) and dark (5.27:1) mode. The underlying audit also
+surfaced a real, pre-existing gap while establishing that ratio: the glyph used
+`--color-accent` (3.05:1 on paper — below the 4.5:1 AA body-text bar), when design.md §14's own
+**clay-text rule** already requires body-size clay _text_ (as opposed to a button/pill _fill_) to
+use `--color-accent-2` (the "text-safe clay") instead — exactly what every bare "✦" already does
+across the design-6 mocks outside a button chip. Fixed by pointing the glyph at
+`--color-accent-2`, and — since `packages/viewer/static/viewer.css` is a separate inlined copy of
+`docs/designs/design-6/tokens.css` (RFC G-5: "one artefact, three vehicles") that had not yet
+received DRO-743's dark-mode `--color-accent-2` override — porting that override into both of
+`viewer.css`'s dark-mode blocks so the same gap DRO-743 fixed at the token source doesn't
+silently reopen for this specific consumer in dark mode. This changes no identity: the wordmark
+spark remains the single sanctioned clay touch on this structural/browse surface
+(`static-index.test.ts`'s "identity rule" test still asserts exactly one `var(--color-accent…)`
+consumer, now `--color-accent-2` rather than the bare `--color-accent`).
+
+Sandbox note: axe-core needs a real browser (contrast/layout/focus-order cannot be computed by
+jsdom). A sandboxed dev workspace without a system Chromium dependency closure (no
+`apt-get`-provisioned libglib/libnss/fontconfig) can still run the suite by pointing
+`LD_LIBRARY_PATH` at a pre-extracted lib root and `FONTCONFIG_FILE` at a private font cache — both
+are no-ops on CI (`ubuntu-latest` + `playwright install --with-deps`) and on a normal desktop; see
+`test/a11y.test.ts`'s own file-header comment for the exact paths.
+
 ---
 
 ## 15. Alternatives considered

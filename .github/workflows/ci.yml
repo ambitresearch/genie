@@ -149,6 +149,64 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # ── Viewer accessibility audit (M4-09 / DRO-271) ─────────────────────────────
+  # `packages/viewer/test/a11y.test.ts` — real headless Chromium + axe-core
+  # against the actual static/{index.html,viewer.js,viewer.css} shell. Kept as
+  # its own job (not folded into the `check` matrix) for the same reason as
+  # `gitea` above: it needs a real browser binary, which the fast matrix legs
+  # deliberately do not install (the suite's own GENIE_SKIP_A11Y_TESTS-free
+  # self-probe — see the test file header — already makes it skip cleanly
+  # there rather than fail). GENIE_REQUIRE_A11Y_BROWSER=1 below makes THIS job
+  # fail loudly instead of silently skipping if its own browser install ever
+  # breaks — the same "vacuous skip must fail somewhere" contract
+  # GENIE_REQUIRE_DOCKER/GENIE_REQUIRE_LLM already give the Gitea/M2 legs.
+  # Runs on every PR (unlike the Docker/LLM legs) — it needs neither a daemon
+  # nor paid API access, so there is no reason to gate it to push-only.
+  viewer-a11y:
+    name: viewer accessibility audit (axe-core)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        # Same ERR_PNPM_EAGAIN hardlink-fallback retry as the other jobs.
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Install Playwright Chromium
+        # --with-deps pulls the OS package closure (libglib/libnss/fontconfig
+        # etc.) ubuntu-latest doesn't ship by default — the exact gap this
+        # suite's own doc comment works around with a private lib root when
+        # run in a sandboxed dev workspace; a real CI runner just apt-gets it.
+        run: pnpm --filter @genie/viewer exec playwright install --with-deps chromium
+
+      - name: Run viewer accessibility audit (AC1-AC7)
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_REQUIRE_A11Y_BROWSER: "1"
+        run: pnpm --filter @genie/viewer test:a11y
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-viewer-a11y
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
   # ── M2 real-LLM-endpoint canary (M2-09 / DRO-256) ────────────────────────────
   # `packages/e2e/test/m2-generation.test.ts` — the ONE test in the whole suite
   # that spends real dollars against a real model. Kept as its own job, gated

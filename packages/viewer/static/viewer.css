@@ -17,6 +17,16 @@
  * components < state. A later layer always wins regardless of selector
  * specificity, so component rules never fight base resets and state (e.g.
  * `[hidden]`) always applies.
+ *
+ * M4-09 (DRO-271) accessibility additions: the wordmark-spark
+ * `--color-accent-2` contrast fix (AC2/AC6, see the "wordmark__spark"
+ * comment in the components layer below) and its dark-mode override, plus a
+ * new automatic `@media (prefers-color-scheme: dark)` block alongside the
+ * pre-existing manual `:root[data-scheme="dark"]` override (AC7) — see the
+ * "Dark mode" comment in the tokens layer below for why both exist. The
+ * `--color-ink-3` AA override and the `:focus-visible` ring below predate
+ * this PR (M4-03) and are called out here only because this audit verifies
+ * them, not because either was added or changed by M4-09.
  */
 
 @layer tokens, base, layout, components, state;
@@ -72,7 +82,35 @@
     --shadow-sm: 0 1px 2px oklch(30% 0.02 70 / 0.06), 0 1px 1px oklch(30% 0.02 70 / 0.04);
   }
 
-  /* Dark mode — warm charcoal (mirrors tokens.css). */
+  /*
+   * Dark mode — warm charcoal (mirrors tokens.css).
+   *
+   * M4-09 AC7 — TWO independent triggers, so an explicit choice always beats
+   * the OS default:
+   *   1. `@media (prefers-color-scheme: dark)` below — automatic, follows the
+   *      OS/browser preference with NO app code required (`color-scheme:
+   *      light dark` on `html`, in the base layer, is what makes even
+   *      un-themed UA chrome — e.g. the search input's native cancel button —
+   *      follow this too).
+   *   2. `:root[data-scheme="dark"]` here — an explicit manual override for a
+   *      future in-app toggle (not built yet; no mock shows one — RFC G-5's
+   *      "one artefact, three vehicles" kit statics already ship this
+   *      attribute hook from tokens.css, so the viewer honors it on arrival
+   *      rather than needing a follow-up CSS change).
+   * The media-query block's `:not([data-scheme="light"])` guard means a
+   * future manual "force light" toggle can still override an OS dark
+   * preference — an explicit choice always wins over the ambient one.
+   *
+   * `--color-accent-2` dark override (DRO-743's fix, ported from
+   * `docs/designs/design-6/tokens.css` — see the wordmark-spark comment in
+   * the components layer below for why this file now has a text consumer of
+   * it): with no override this token would silently fall back to its
+   * light-mode value (`oklch(56% 0.115 38)`) against dark paper — 3.78:1,
+   * failing the 4.5:1 clay-text-rule promise once dark mode is active. This
+   * is `--color-accent`'s own light→dark nudge (+8% L, −0.005 C, +4 H)
+   * applied to `accent-2`, exactly as DRO-743 derived it — 5.27:1 on dark
+   * paper.
+   */
   :root[data-scheme="dark"] {
     --color-paper: oklch(19% 0.006 60);
     --color-paper-2: oklch(23% 0.007 60);
@@ -83,6 +121,26 @@
     --color-hairline: oklch(32% 0.012 75);
     --color-hairline-2: oklch(40% 0.014 75);
     --color-accent: oklch(74% 0.1 46);
+    --color-accent-2: oklch(64% 0.11 42); /* DRO-743: 5.27:1 on dark paper */
+  }
+
+  @media (prefers-color-scheme: dark) {
+    /* Same values as the explicit block above — kept as a literal duplicate
+       rather than a shared selector list so this file has no dependency on
+       CSS nesting syntax (broader baseline support; this ships verbatim to
+       every vehicle per RFC G-5, embedded included). */
+    :root:not([data-scheme="light"]) {
+      --color-paper: oklch(19% 0.006 60);
+      --color-paper-2: oklch(23% 0.007 60);
+      --color-paper-3: oklch(27% 0.008 60);
+      --color-ink: oklch(94% 0.008 82);
+      --color-ink-2: oklch(76% 0.012 78);
+      --color-ink-3: oklch(68% 0.012 70);
+      --color-hairline: oklch(32% 0.012 75);
+      --color-hairline-2: oklch(40% 0.014 75);
+      --color-accent: oklch(74% 0.1 46);
+      --color-accent-2: oklch(64% 0.11 42); /* DRO-743: 5.27:1 on dark paper */
+    }
   }
 }
 
@@ -190,9 +248,28 @@
     color: var(--color-ink);
   }
 
+  /*
+   * M4-09 (DRO-271) AC2/AC6 — `--color-accent-2` ("text-safe clay"), NOT
+   * `--color-accent`. This is the design system's own **clay-text rule**
+   * (design.md §14): `--color-accent` (the fill/large-control hue) is only
+   * 3.05:1 on paper — below the 4.5:1 AA body-text bar — but any bare "✦"
+   * rendered as body-size text directly on paper across every design-6 mock
+   * (ref-primitives.svg, ref-genie-card.svg) already uses `#ac5a40`
+   * (`--color-accent-2`), never `#c87c5e` (`--color-accent`). This span was
+   * the one place that rule hadn't been applied yet — axe-core's
+   * `color-contrast` check flags it as `incomplete` (not a hard violation;
+   * a lone symbol glyph isn't shape-gradable the way a word is — see
+   * `test/a11y.test.ts`'s file-header note) rather than fail outright, but
+   * `aria-hidden="true"` doesn't exempt a *sighted* low-vision user from
+   * needing to actually read it. `--color-accent-2` clears AA (4.62:1 light
+   * / 5.27:1 dark, see the dark-mode override below) while keeping the exact
+   * same hue family — the identity rule (clay only on generate/refine
+   * moments) is unchanged; only which existing clay token this glyph points
+   * at changes.
+   */
   .wordmark__spark {
     margin-left: 2px;
-    color: var(--color-accent);
+    color: var(--color-accent-2);
   }
 
   .app-header__subtitle {
