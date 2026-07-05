@@ -37,4 +37,25 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // The viewer's `static/**` assets are browser-native ES modules (M4-03 /
+    // DRO-265): they ship verbatim to the Vite viewer and the `ui://genie/grid`
+    // resource, so they run in a DOM, not Node. Declare the handful of browser
+    // globals they touch (rather than pulling in the whole `globals` package)
+    // so `no-undef` doesn't flag the auto-boot guard's `document`/`fetch`.
+    files: ["packages/viewer/static/**/*.js"],
+    languageOptions: {
+      globals: {
+        document: "readonly",
+        fetch: "readonly",
+        window: "readonly",
+        console: "readonly",
+        Event: "readonly",
+        Response: "readonly",
+        HTMLElement: "readonly",
+        HTMLInputElement: "readonly",
+        HTMLIFrameElement: "readonly",
+      },
+    },
+  },
 );
