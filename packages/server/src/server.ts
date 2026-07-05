@@ -17,6 +17,7 @@ import { registerListComponents } from "./tools/list_components.js";
 import { registerPlan } from "./tools/plan.js";
 import { registerDeleteFilesTool } from "./tools/delete_files.js";
 import { registerWriteFilesTool } from "./tools/write_files.js";
+import { registerPreviewTool } from "./tools/preview.js";
 import { LocalFsKitStore } from "./store/local.js";
 import type { KitStore } from "./store/interface.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
@@ -99,7 +100,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "create/list/get/delete/bind_kit, conjure_screen, conjure (LLM component generation), " +
       "refine (LLM component iteration — diff + updated files against existing kit source), " +
       "plan creation (the capability-grant " +
-      "boundary for write/delete verbs), write_files, and delete_files. write_files and " +
+      "boundary for write/delete verbs), write_files, delete_files, and preview (returns the " +
+      "viewer URL + a file:// fallback plus a ui://genie/grid resource pointer in " +
+      "_meta.ui.resourceUri). write_files and " +
       "delete_files share one plan-boundary validation middleware — every call is checked " +
       "for planId presence/existence/expiry and per-path glob membership before the tool " +
       "handler runs.)",
@@ -246,12 +249,20 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   });
 
   // Plan-gated destructive verb (M1-09): deletes are authorized by a plan's
-  // Plan-gated destructive verb (M1-09): deletes are authorized by a plan's
   // `deletes` globs and hit the SAME kit tree read_file/list_files read (via
   // the shared `kitStore`, M1-14a-1a). Shares the M1-07 plan boundary and the
   // M1-13 plan-guard middleware (`middleware/plan-guard.ts`) with write_files
   // so the two verbs enforce plan authorization through one identical seam.
   registerDeleteFilesTool(server, kitStore);
+
+  // preview (M4-05 / DRO-267): returns the viewer URL + a file:// fallback as
+  // text, and points ui://-capable hosts at the inline `ui://genie/grid`
+  // resource (registered by M4-06) via `_meta.ui.resourceUri`. Boots the Vite
+  // viewer on demand and reuses it across calls (its own ViewerRegistry),
+  // falling back to `file://<kitDir>/index.html` when the viewer can't boot.
+  // Bound to the same `kitsRoot` the kit verbs resolve against so a `kitId`
+  // maps to the same on-disk kit dir the viewer serves.
+  registerPreviewTool(server, { kitsRoot });
 
   return server;
 }

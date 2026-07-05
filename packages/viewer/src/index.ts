@@ -12,9 +12,13 @@ export {
   buildProgram,
   runCli,
   parsePort,
+  bootViewer,
+  validateKitDir,
   VIEWER_VERSION,
   DEFAULT_PORT,
   type CliIO,
+  type ViewerHandle,
+  type BootViewerOptions,
 } from "./cli.js";
 
 export {
