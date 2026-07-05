@@ -6,13 +6,13 @@
  *   - AC1 — every adapter satisfies the `FrameworkAdapter` interface
  *     (`renderSource` / `renderPreview` / `extractDts` / `defaultViewport`), plus
  *     the `promptDirective` metadata `conjure` reads.
- *   - AC2 — the React + Vue adapters' real codegen: their canonical source file,
- *     an esbuild IIFE preview bundle exposing `GenieComponent`, and a
- *     `ts-morph`-extracted `.d.ts`.
- *   - AC3 — the remaining HTML stub throws a structured `NotYetImplementedError`
- *     with a tracking-issue link from every codegen method, yet still exposes
- *     identity + viewport (so `conjure`'s adapter selection never breaks for it).
- *     Vue graduated out of the stub set in v2 (DRO-616).
+ *   - AC2 — the React + Vue + HTML adapters' real codegen: their canonical source
+ *     file, an IIFE preview bundle exposing `GenieComponent`, and a `.d.ts`
+ *     (React/Vue via `ts-morph`; HTML a custom-element typing surface).
+ *   - AC3 — no framework remains stubbed in v2: React shipped in v1, Vue graduated
+ *     in v2 (DRO-616), and HTML graduated in v2 (DRO-617). The retained
+ *     `NotYetImplementedError` type + the frameworks' tracking-issue links stay
+ *     genie-repo URLs for provenance and for any framework added later.
  *   - AC4 — the registry (`getAdapter`) maps each framework to the right adapter.
  */
 import { describe, it, expect } from "vitest";
@@ -20,10 +20,8 @@ import { describe, it, expect } from "vitest";
 import {
   FRAMEWORKS,
   DEFAULT_FRAMEWORK,
-  NotYetImplementedError,
   componentPath,
   getAdapter,
-  type Framework,
   type FrameworkAdapter,
   type RenderInput,
 } from "./interface.js";
@@ -81,8 +79,25 @@ function vueInput(overrides: Partial<RenderInput> = {}): RenderInput {
   return { componentName: "Button", group: "actions", source: VUE_SOURCE, ...overrides };
 }
 
-// Only HTML remains stubbed in v2 — Vue graduated to a real adapter (DRO-616).
-const STUB_FRAMEWORKS: Framework[] = ["html"];
+/**
+ * A representative vanilla-HTML component: semantic markup with an inline
+ * `<style>` and an inline `<script>` (so the preview must carry both), plus a
+ * `customElements.define(...)` registration so `extractDts` has a typed element to
+ * surface.
+ */
+const HTML_SOURCE = [
+  "<style>.btn { padding: 8px 12px; }</style>",
+  '<button class="btn" id="go">Go</button>',
+  "<script>",
+  '  document.getElementById("go")?.addEventListener("click", () => {});',
+  '  customElements.define("x-counter", class extends HTMLElement {});',
+  "</script>",
+].join("\n");
+
+/** Fixture for the HTML adapter: same identity, vanilla-HTML source. */
+function htmlInput(overrides: Partial<RenderInput> = {}): RenderInput {
+  return { componentName: "Button", group: "actions", source: HTML_SOURCE, ...overrides };
+}
 
 // ── AC1 — interface shape (every adapter) ─────────────────────────────────────
 
@@ -305,39 +320,115 @@ describe("AC2 — VueAdapter", () => {
   });
 });
 
-// ── AC3 — the remaining HTML stub throws a structured, linked error ───────────
+// ── AC2 — HTML adapter codegen (the DRO-617 v2 implementation) ─────────────────
 
-describe("AC3 — HTML stub", () => {
-  it("HTML codegen methods reject with NotYetImplementedError + tracking link", async () => {
-    const html = new HtmlAdapter();
-    expect(() => html.renderSource(input())).toThrow(NotYetImplementedError);
-    await expect(html.renderPreview(input())).rejects.toBeInstanceOf(NotYetImplementedError);
-    await expect(html.extractDts(input())).rejects.toBeInstanceOf(NotYetImplementedError);
-    try {
-      html.renderSource(input());
-    } catch (err) {
-      const e = err as NotYetImplementedError;
-      expect(e.code).toBe("ERR_FRAMEWORK_NOT_IMPLEMENTED");
-      expect(e.framework).toBe("html");
-      expect(e.trackingIssue).toBe(HTML_TRACKING_ISSUE);
-      expect(e.message).toContain(HTML_TRACKING_ISSUE);
+describe("AC2 — HtmlAdapter", () => {
+  const html = new HtmlAdapter();
+
+  it("has html identity + a viewport + an HTML-shaped prompt directive", () => {
+    expect(html.framework).toBe("html");
+    expect(html.defaultViewport.width).toBeGreaterThan(0);
+    expect(html.defaultViewport.height).toBeGreaterThan(0);
+    expect(html.promptDirective).toContain("Target framework: html");
+    // The directive steers the model toward a self-contained vanilla-HTML shape.
+    expect(html.promptDirective).toContain("self-contained vanilla HTML");
+  });
+
+  it("renderSource emits <Name>.html carrying the markup verbatim", () => {
+    const file = html.renderSource(htmlInput());
+    expect(file.path).toBe("components/actions/Button/Button.html");
+    expect(file.content).toBe(HTML_SOURCE);
+    // Matches the MIME the kit-file classifier maps `.html` to.
+    expect(file.mimeType).toBe("text/html");
+  });
+
+  it("renderPreview wraps the markup in an IIFE exposing the component global", async () => {
+    const file = await html.renderPreview(htmlInput());
+    expect(file.path).toBe("components/actions/Button/Button.preview.js");
+    expect(file.mimeType).toBe("text/javascript");
+    // Same preview-global handle React/Vue expose, mounted the same way by M4.
+    expect(file.content).toContain(PREVIEW_GLOBAL_NAME);
+    expect(file.content).toContain("(function ()");
+    // The component's own markup is carried in the preview (JSON-embedded).
+    expect(file.content).toContain("btn");
+    // …and the descriptor carries a mount() the grid can call.
+    expect(file.content).toContain("mount");
+  });
+
+  it("renderPreview is self-contained: no host runtime global, no require", async () => {
+    const file = await html.renderPreview(htmlInput());
+    // Unlike React (window.React) / Vue (window.Vue), a vanilla-HTML preview
+    // resolves no framework runtime — the browser is the runtime.
+    expect(file.content).not.toContain("window.React");
+    expect(file.content).not.toContain("window.Vue");
+    expect(file.content).not.toMatch(/[^_.\w]require\(/);
+    expect(file.content).not.toContain("Dynamic require of");
+  });
+
+  it("renderPreview safely embeds markup containing a nested </script>", async () => {
+    // A raw `</script>` in the markup must not break out of an enclosing HTML
+    // <script> when the preview is inlined: every `<` is escaped to `<`, so
+    // no `<script`/`</script` token survives, yet the markup round-trips at runtime.
+    const file = await html.renderPreview(
+      htmlInput({ source: "<p>before</p><script>alert(1)</script><p>after</p>" }),
+    );
+    expect(file.content).not.toContain("</script>");
+    expect(file.content).not.toContain("<script>");
+    expect(file.content).toContain("\\u003c/script>");
+  });
+
+  it("extractDts surfaces registered custom elements in HTMLElementTagNameMap", async () => {
+    const file = await html.extractDts(htmlInput());
+    expect(file.path).toBe("components/actions/Button/Button.d.ts");
+    expect(file.content).toContain("HTMLElementTagNameMap");
+    expect(file.content).toContain('"x-counter": HTMLElement');
+  });
+
+  it("extractDts falls back to a valid empty module when no custom elements exist", async () => {
+    const file = await html.extractDts(
+      htmlInput({
+        componentName: "Plain",
+        group: "misc",
+        source: "<button class='btn'>No custom elements here</button>",
+      }),
+    );
+    // Always a valid .d.ts artefact, never an empty string.
+    expect(file.content.length).toBeGreaterThan(0);
+    expect(file.content).toContain("export {}");
+    expect(file.content).not.toContain("HTMLElementTagNameMap");
+    expect(file.path).toBe("components/misc/Plain/Plain.d.ts");
+  });
+
+  it("all HTML artefacts live under components/<group>/<Name>/", async () => {
+    const src = html.renderSource(htmlInput());
+    const prev = await html.renderPreview(htmlInput());
+    const dts = await html.extractDts(htmlInput());
+    for (const f of [src, prev, dts]) {
+      expect(f.path.startsWith("components/actions/Button/")).toBe(true);
+    }
+  });
+});
+
+// ── AC3 — no framework remains stubbed; tracking links stay genie-repo URLs ────
+
+describe("AC3 — tracking-issue provenance (no remaining stubs in v2)", () => {
+  it("every framework resolves to a codegen-capable adapter (no NotYetImplemented)", async () => {
+    // React (v1), Vue (DRO-616) and HTML (DRO-617) all implement codegen now, so
+    // no adapter's methods reject with the structured not-implemented error.
+    for (const fw of FRAMEWORKS) {
+      const adapter = await getAdapter(fw);
+      expect(() =>
+        adapter.renderSource(input({ source: "", componentName: "X", group: "g" })),
+      ).not.toThrow();
     }
   });
 
-  it("the tracking-issue links point at the genie repo (v2 milestone)", () => {
-    // VUE_TRACKING_ISSUE is retained for provenance even though Vue is now a real
-    // adapter (DRO-616); it and the HTML stub's link must stay genie-repo URLs.
+  it("the retained tracking-issue links point at the genie repo (v2 milestone)", () => {
+    // VUE_TRACKING_ISSUE / HTML_TRACKING_ISSUE are retained for provenance even
+    // though both are now real adapters (DRO-616 / DRO-617); they must stay
+    // genie-repo URLs for historical links and any framework added later.
     for (const url of [VUE_TRACKING_ISSUE, HTML_TRACKING_ISSUE]) {
       expect(url).toMatch(/^https:\/\/github\.com\/roshangautam\/genie\/issues\/\d+$/);
-    }
-  });
-
-  it("stubs still expose identity + viewport (selection never breaks for them)", () => {
-    for (const fw of STUB_FRAMEWORKS) {
-      const adapter = new HtmlAdapter();
-      expect(adapter.framework).toBe(fw);
-      expect(adapter.defaultViewport.width).toBeGreaterThan(0);
-      expect(adapter.promptDirective).toContain(`Target framework: ${fw}`);
     }
   });
 });
