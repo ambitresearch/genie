@@ -95,6 +95,11 @@ describe("LocalFsKitStore.listComponents", () => {
     // real operability problem is not hidden behind an empty listing.
     const kit = await store.createKit("Broken Manifest Kit");
     const manifestAsDir = join(tempDir, "kits", kit.id, ".genie", "manifest.json");
+    // createKit (DRO-764 AC3) now seeds a real empty manifest FILE at this
+    // exact path — remove it first so the directory can take its place;
+    // otherwise `mkdir` would fail with its own EEXIST before this test ever
+    // reaches the EISDIR case it's actually exercising.
+    await rm(manifestAsDir, { force: true });
     await mkdir(manifestAsDir, { recursive: true });
 
     await expect(store.listComponents({ kitId: kit.id })).rejects.toThrow();

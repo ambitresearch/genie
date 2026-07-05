@@ -21,6 +21,7 @@ import {
   NotFoundError,
 } from "../src/store/interface.js";
 import { LocalFsKitStore, LocalFsProjectStore } from "../src/store/local.js";
+import { loadViewerAssets } from "../src/store/viewer-assets.js";
 
 // ─── Shared contract tests ───────────────────────────────────────────────────
 
@@ -71,6 +72,65 @@ function kitStoreContract(
       const fetched = await store.getKit(kit.id);
       expect(fetched.id).toBe(kit.id);
       expect(fetched.name).toBe("test-kit");
+    });
+
+    it("createKit scaffolds the viewer's 3 static assets, byte-identical to packages/viewer/static (DRO-764 AC1)", async () => {
+      const kit = await store.createKit("viewer-scaffold-kit");
+      const expected = await loadViewerAssets();
+      // Guard against a silently-empty expectation (e.g. @genie/viewer
+      // unresolvable in this test run) — a pass with zero expected assets
+      // would prove nothing.
+      expect(expected.length).toBe(3);
+
+      const files = await store.listFiles(kit.id);
+      const byPath = new Map(files.map((f) => [f.path, f]));
+
+      for (const asset of expected) {
+        const entry = byPath.get(asset.path);
+        expect(entry, `expected "${asset.path}" in a freshly created kit`).toBeDefined();
+      }
+
+      // Byte-identical (AC1) — read each scaffolded file back and diff against
+      // the source `packages/viewer/static/*` bytes `loadViewerAssets` loaded.
+      for (const asset of expected) {
+        const read = await store.readFile(kit.id, asset.path);
+        const actualBytes =
+          read.encoding === "base64" ? Buffer.from(read.content, "base64") : Buffer.from(read.content, "utf-8");
+        expect(actualBytes.equals(asset.content), `"${asset.path}" bytes must match packages/viewer/static exactly`).toBe(
+          true,
+        );
+      }
+    });
+
+    it("createKit seeds an empty .genie/manifest.json so file://'s manifest fetch never 404s (DRO-764 AC3)", async () => {
+      // A fresh kit has zero components — the M3-03 compiler hasn't run yet.
+      // Without a seeded manifest, the file:// / localhost-Vite viewer's
+      // `fetch(".genie/manifest.json")` would reject outright (a browser
+      // does not synthesize a 404 Response for a missing file:// resource),
+      // which `viewer.js`'s `boot()` renders as `.ds-error`, not the
+      // `.ds-empty` state AC3 requires. `listComponents` is the store-level
+      // proxy for "the manifest is present and parses as a valid, empty
+      // manifest" — the same reader `list_components` and the viewer's
+      // conceptual contract both go through (`store/manifest.ts`).
+      const kit = await store.createKit("empty-manifest-kit");
+
+      const files = await store.listFiles(kit.id);
+      expect(files.map((f) => f.path)).toContain(".genie/manifest.json");
+
+      const components = await store.listComponents({ kitId: kit.id });
+      expect(components).toEqual([]);
+
+      // Parse the raw bytes directly too, so this test would fail loudly if
+      // the seeded file were ever malformed JSON rather than merely "empty
+      // per listComponents" (which — per AC8 — is also what a MISSING
+      // manifest maps to; reading raw bytes is what distinguishes "present
+      // and empty" from "absent").
+      const read = await store.readFile(kit.id, ".genie/manifest.json");
+      const raw = read.encoding === "base64" ? Buffer.from(read.content, "base64").toString("utf-8") : read.content;
+      const parsed = JSON.parse(raw);
+      expect(parsed).toMatchObject({ version: 1, groups: [], components: [] });
+      expect(typeof parsed.name).toBe("string");
+      expect(typeof parsed.generatedAt).toBe("string");
     });
 
     it("createKit throws KitAlreadyExistsError for an explicit id collision", async () => {

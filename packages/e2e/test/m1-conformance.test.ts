@@ -157,12 +157,18 @@ describe("AC2 — MCP server boots in-process over the SDK test transport", () =
 // ── AC3 — kit protocol walk ───────────────────────────────────────────────────
 //
 // Full target sequence (AC3):
-//   create_kit → list_files(empty) → plan → write_files(5) →
-//   list_files(5) → read_file round-trip → delete_files → validate
+//   create_kit → list_files(viewer scaffold only) → plan → write_files(5) →
+//   list_files(scaffold+5) → read_file round-trip → delete_files → validate
 //
-// Live prefix below covers create_kit, list_files(empty), read_file(negative),
-// and validate. The plan→write_files→delete_files middle is now fully live —
-// both M1-08 (write_files) and M1-09 (delete_files) are merged.
+// Live prefix below covers create_kit, list_files(viewer scaffold),
+// read_file(negative), and validate. The plan→write_files→delete_files middle
+// is now fully live — both M1-08 (write_files) and M1-09 (delete_files) are
+// merged.
+//
+// DRO-764: create_kit now scaffolds the viewer's static shell (index.html/
+// viewer.js/viewer.css) plus an empty .genie/manifest.json into every new
+// kit's root, so "freshly created" no longer means "empty" — it means
+// "exactly the 4 scaffolded files, nothing author-supplied yet."
 
 describe("AC3 — kit protocol walk (read → plan → write/delete)", () => {
   /** Create a kit through the tool surface and return its kitId. */
@@ -179,11 +185,17 @@ describe("AC3 — kit protocol walk (read → plan → write/delete)", () => {
     expect(kitId).toMatch(/^conformance-kit-[0-9a-f]{6}$/);
   });
 
-  it("list_files on a freshly created kit is empty (the .kit.json marker is hidden)", async () => {
+  it("list_files on a freshly created kit has exactly the viewer scaffold (DRO-764) — the .kit.json marker stays hidden", async () => {
     const kitId = await createKit("Empty Walk Kit");
     const result = await harness.call("mcp__genie__list_files", { kitId });
     expect(result.isError).toBeFalsy();
-    expect((payload(result) as { files: unknown[] }).files).toEqual([]);
+    const paths = (payload(result) as { files: { path: string }[] }).files.map((f) => f.path).sort();
+    // create_kit (DRO-764 AC1/AC3) scaffolds the viewer's static shell plus a
+    // seeded empty manifest into every new kit — no author content yet, but no
+    // longer literally empty either. .kit.json remains the one marker file
+    // list_files never surfaces (it's the store's own existence marker, not
+    // kit content).
+    expect(paths).toEqual([".genie/manifest.json", "index.html", "viewer.css", "viewer.js"]);
   });
 
   it("read_file on a path that does not exist is rejected (-32602)", async () => {
