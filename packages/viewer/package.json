@@ -3,11 +3,31 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "genie preview viewer — Vite-backed UI-kit grid (M4). Placeholder scaffold.",
+  "description": "genie preview viewer — Vite-backed UI-kit grid (M4). CLI scaffold: arg-parsing + usage banner only; Vite dev-server boot lands in M4-02/M4-08.",
+  "bin": {
+    "genie-viewer": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "echo \"@genie/viewer: nothing to build yet (M4)\"",
-    "typecheck": "echo \"@genie/viewer: no sources yet (M4)\""
+    "dev": "tsx watch src/cli.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "commander": "^15.0.0"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "license": "MIT",
-  "author": "Roshan Gautam"
+  "author": "Roshan Gautam",
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "chokidar": "^3.6.0",
+    "vite": "^8.1.3"
+  }
 }

@@ -101,7 +101,7 @@ Auto-detects: a TTY on stdin → HTTP, piped JSON-RPC → stdio. Override with
 ```
 packages/
   server/     @genie/server — the MCP server (this is the product)
-  viewer/     @genie/viewer — Vite preview viewer (M4, placeholder)
+  viewer/     @genie/viewer — Vite preview viewer (M4 in progress; CLI scaffold only so far)
   e2e/        @genie/e2e — harness smoke tests (M5, placeholder)
 docs/
   plan/       vision, BRD, PRD, tech-design RFC, launch plan, ops runbook
