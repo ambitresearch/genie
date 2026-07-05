@@ -32,13 +32,21 @@
  *           substring; `boot` wires it to the `#q` input.
  *   - AC6 — an empty manifest renders a visible empty state and zero iframes.
  *   - AC7 — asserted in `static-index.test.ts` (the CSS `minmax(320px,1fr)`).
+ *
+ * A second "M4-09 AC*" block lives in the `createCard` describe below, for
+ * DRO-271's accessibility contract (Tab order, Enter-to-open, iframe title).
+ * DRO-271's AC numbers are its OWN list, unrelated to (and overlapping in
+ * number with) DRO-265's above — e.g. "M4-09 AC3" (keyboard nav) is not the
+ * same requirement as this file's own "AC3" (iframe sandboxing). The
+ * `end-to-end`, real-browser axe-core scan lives in `test/a11y.test.ts`; the
+ * unit tests here just lock the DOM shape that scan depends on.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { JSDOM } from "jsdom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = resolve(HERE, "../static");
@@ -250,10 +258,7 @@ describe("computeGroupOrder", () => {
 
   it("ignores non-string / duplicate entries within a declared groups[]", () => {
     const { hooks } = loadHooks();
-    const grouped = hooks.groupByGroup([
-      card({ group: "actions" }),
-      card({ group: "surfaces" }),
-    ]);
+    const grouped = hooks.groupByGroup([card({ group: "actions" }), card({ group: "surfaces" })]);
     expect(hooks.computeGroupOrder(["actions", "actions", 42, "surfaces"], grouped)).toEqual([
       "actions",
       "surfaces",
@@ -278,10 +283,7 @@ describe("computeGroupOrder", () => {
     // group. Mirrors the server's own orderGroups "remainder" contract
     // (compiler.ts): "an incomplete pin list never silently drops a group."
     const { hooks } = loadHooks();
-    const grouped = hooks.groupByGroup([
-      card({ group: "actions" }),
-      card({ group: "surfaces" }),
-    ]);
+    const grouped = hooks.groupByGroup([card({ group: "actions" }), card({ group: "surfaces" })]);
     // groups[] names only "actions" — "surfaces" is a real group with a real
     // component, but absent from the declared list.
     expect(hooks.computeGroupOrder(["actions"], grouped)).toEqual(["actions", "surfaces"]);
@@ -361,6 +363,119 @@ describe("createCard", () => {
     const { hooks, document } = loadHooks();
     const el = hooks.createCard(document, card({ name: "Primary buttons", group: "actions" }));
     expect(el.textContent).toContain("Primary buttons");
+  });
+
+  // ── M4-09 (DRO-271) accessibility contract ────────────────────────────────
+
+  it("M4-09 AC3 — the card is in Tab order (tabindex=0) with a link role and an aria-label", () => {
+    const { hooks, document } = loadHooks();
+    const el = hooks.createCard(document, card({ name: "Primary buttons" }));
+    expect(el.getAttribute("tabindex")).toBe("0");
+    expect(el.getAttribute("role")).toBe("link");
+    expect(el.getAttribute("aria-label")).toBe("Primary buttons");
+  });
+
+  it("M4-09 AC3 — falls back to a non-empty aria-label when the card has no name", () => {
+    // axe-core's `link-name` (critical) treats an empty-string aria-label as
+    // NO accessible name at all — it does not fall back to the element's text
+    // content the way an absent aria-label would. A manifest entry with
+    // `name: ""` (schema-legal: `store/manifest.ts` only requires
+    // `z.string()`) must still produce a real, non-empty label.
+    const { hooks, document } = loadHooks();
+    const el = hooks.createCard(document, card({ name: "" }));
+    expect(el.getAttribute("aria-label")).toBe("Untitled component");
+  });
+
+  it("M4-09 AC3 — the card's iframe is pulled OUT of Tab order (tabindex=-1)", () => {
+    // A sandboxed iframe with no allow-same-origin is still natively
+    // focusable — without this, Tab order would visit the iframe between
+    // cards (search → card → iframe → card → iframe) instead of the required
+    // search → card → card.
+    const { hooks, document } = loadHooks();
+    const iframe = hooks.createCard(document, card()).querySelector("iframe") as HTMLIFrameElement;
+    expect(iframe.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("M4-09 AC3 — Enter on the card navigates to its preview path", () => {
+    const { hooks, document, window } = loadHooks();
+    const el = hooks.createCard(document, card({ path: "components/actions/Button/preview.html" }));
+    document.body.appendChild(el);
+    // jsdom's real `window.location` is a special host object whose `assign`
+    // is non-configurable (spying/redefining it throws) — createCard reads
+    // navigation through `doc.defaultView`, and `Document.prototype
+    // .defaultView`'s getter IS configurable, so shadow it with a plain own
+    // property carrying a fake `location.assign` instead.
+    const assign = vi.fn();
+    Object.defineProperty(document, "defaultView", {
+      value: { location: { assign } },
+      configurable: true,
+    });
+
+    el.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+    expect(assign).toHaveBeenCalledWith("components/actions/Button/preview.html");
+  });
+
+  it("M4-09 AC3 — a non-Enter key does not navigate", () => {
+    const { hooks, document, window } = loadHooks();
+    const el = hooks.createCard(document, card({ path: "components/actions/Button/preview.html" }));
+    document.body.appendChild(el);
+    const assign = vi.fn();
+    Object.defineProperty(document, "defaultView", {
+      value: { location: { assign } },
+      configurable: true,
+    });
+
+    el.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("M4-09 AC3 — clicking the card also navigates (mouse users, not just keyboard)", () => {
+    const { hooks, document, window } = loadHooks();
+    const el = hooks.createCard(document, card({ path: "components/surfaces/Card/preview.html" }));
+    document.body.appendChild(el);
+    const assign = vi.fn();
+    Object.defineProperty(document, "defaultView", {
+      value: { location: { assign } },
+      configurable: true,
+    });
+
+    el.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+    expect(assign).toHaveBeenCalledWith("components/surfaces/Card/preview.html");
+  });
+
+  it("M4-09 AC3 — Enter does nothing when the card has no path (no crash)", () => {
+    const { hooks, document, window } = loadHooks();
+    const el = hooks.createCard(document, card({ path: "" }));
+    document.body.appendChild(el);
+    const assign = vi.fn();
+    Object.defineProperty(document, "defaultView", {
+      value: { location: { assign } },
+      configurable: true,
+    });
+
+    expect(() =>
+      el.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    ).not.toThrow();
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("M4-09 AC5 — the iframe title is the component name (axe-core frame-title)", () => {
+    const { hooks, document } = loadHooks();
+    const iframe = hooks
+      .createCard(document, card({ name: "Primary buttons" }))
+      .querySelector("iframe") as HTMLIFrameElement;
+    expect(iframe.getAttribute("title")).toBe("Primary buttons");
+  });
+
+  it("M4-09 AC5 — falls back to a non-empty title when the card has no name", () => {
+    const { hooks, document } = loadHooks();
+    const iframe = hooks
+      .createCard(document, card({ name: "" }))
+      .querySelector("iframe") as HTMLIFrameElement;
+    expect(iframe.getAttribute("title")).toBe("preview");
   });
 });
 
