@@ -54,9 +54,18 @@ export const DEFAULT_BY = "genie";
  * source invisible to the anchor's drift/tamper detection (RFC §10 T-05) —
  * the exact failure mode this file exists to prevent — so the extension list
  * covers both shipped component-source frameworks rather than only the one
- * named in the issue's illustrative example. `html` has no committed source
- * file of its own (`HtmlAdapter.renderSource` is still an M2 stub throwing
- * {@link NotYetImplementedError}); add its extension here if/when that lands.
+ * named in the issue's illustrative example.
+ *
+ * `.html` is deliberately **not** in this list even though vanilla HTML is now a
+ * first-class framework (`HtmlAdapter.renderSource` → `<Name>.html`, DRO-617).
+ * For a vanilla-HTML component the source file *is* the browser-ready
+ * `<Name>.html` preview — so it is already hash-covered by {@link Anchor.renderHashes}
+ * (which hashes every `.html` write, AC4), giving the anchor's drift/tamper
+ * detection full coverage of that source with no gap. Adding `.html` here instead
+ * would double-count it *and* mislabel every React/Vue `<Name>.html` — which is a
+ * *rendered* preview, not source — as `sourceHashes`, so the extension split stays
+ * "compiled-source suffixes → sourceHashes, `.html` → renderHashes" and HTML's
+ * source rides the render side by construction.
  */
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".vue"];
 
