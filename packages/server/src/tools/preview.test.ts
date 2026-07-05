@@ -242,6 +242,9 @@ describe("runPreview (AC3, AC6)", () => {
     const fileUrl = pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href;
     expect(result.content[0]?.text).toContain(fileUrl);
     expect(result._meta.ui.resourceUri).toBe("ui://genie/grid?kitId=acme-abc123");
+    // M4-06 AC6 — the same resourceUri is ALSO exposed under the ChatGPT Apps
+    // SDK key so that ecosystem links the result to the ui://genie/grid widget.
+    expect(result._meta["openai/outputTemplate"]).toBe("ui://genie/grid?kitId=acme-abc123");
   });
 
   it("AC6: falls back to file://<kitDir>/index.html when the viewer cannot boot, still emitting _meta", async () => {

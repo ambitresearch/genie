@@ -18,6 +18,7 @@ import { registerPlan } from "./tools/plan.js";
 import { registerDeleteFilesTool } from "./tools/delete_files.js";
 import { registerWriteFilesTool } from "./tools/write_files.js";
 import { registerPreviewTool } from "./tools/preview.js";
+import { registerGridResource } from "./ui/grid-resource.js";
 import { LocalFsKitStore } from "./store/local.js";
 import type { KitStore } from "./store/interface.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
@@ -263,6 +264,16 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // Bound to the same `kitsRoot` the kit verbs resolve against so a `kitId`
   // maps to the same on-disk kit dir the viewer serves.
   registerPreviewTool(server, { kitsRoot });
+
+  // ui://genie/grid (M4-06 / DRO-268): the embedded MCP-Apps resource the
+  // `preview` tool's `_meta.ui.resourceUri` points at. A ui://-capable host
+  // (Claude, VS Code ≥Jan 2026, ChatGPT, Cursor) reads this resource and renders
+  // the card grid inline in its own sandboxed iframe. The handler compiles the
+  // requested kit's manifest (M3-03) and inlines it as
+  // `<script type="application/json" id="manifest">` so the iframe — whose CSP
+  // is `connect-src 'none'` — needs no fetch. Bound to the same `kitsRoot` as
+  // the kit verbs + `preview`, so a `kitId` resolves to the same on-disk kit.
+  registerGridResource(server, { kitsRoot });
 
   return server;
 }
