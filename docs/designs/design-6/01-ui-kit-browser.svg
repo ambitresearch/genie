@@ -161,9 +161,9 @@
         font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
         font-size="12" fill="#171614">&lt;Button variant="primary"&gt;Label&lt;/Button&gt;</text>
 
-  <!-- Refine button — CLAY (generation moment) -->
+  <!-- Refine button — CLAY (generation moment) (text: on-accent token, DRO-748) -->
   <rect x="1200" y="648" width="120" height="36" rx="5" fill="#c87c5e"/>
-  <text x="1260" y="671" font-size="13" font-weight="600" fill="#ffffff"
+  <text x="1260" y="671" font-size="13" font-weight="600" fill="#171614"
         text-anchor="middle">Refine →</text>
 
   <!-- ── Footer ──────────────────────────────────────────────────── -->
