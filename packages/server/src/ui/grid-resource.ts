@@ -52,7 +52,7 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { parse } from "parse5";
 
-import { compileManifest, type Manifest, type ManifestCard } from "../manifest/index.js";
+import { ensureManifest, type Manifest, type ManifestCard } from "../manifest/index.js";
 import { KIT_ID_PATTERN } from "../tools/get_kit.js";
 
 // ─── Public constants (AC1) ──────────────────────────────────────────────────
@@ -493,10 +493,9 @@ export function gridResourceMeta(previewsBaseUrl: string | undefined): Record<st
 
 // ─── Default seams ───────────────────────────────────────────────────────────
 
-/** Default compiler: the real M3-03 walk (returns just the manifest). */
+/** Default compiler: the shared `ensureManifest` seam (compiles + persists). */
 const defaultCompile: ManifestCompiler = async (kitDir) => {
-  const { manifest } = await compileManifest(kitDir);
-  return manifest;
+  return ensureManifest(kitDir);
 };
 
 /**

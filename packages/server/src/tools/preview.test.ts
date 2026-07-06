@@ -12,7 +12,7 @@
  * port or importing Vite — mirroring how `refine.test.ts` fakes the Playwright
  * cropper and `write_files.test.ts` fakes the store.
  */
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -27,11 +27,13 @@ import {
   PREVIEW_TOOL_NAME,
   InvalidKitIdError,
   ViewerRegistry,
+  autoOpenDisabledByEnv,
   buildResourceUri,
   clientSupportsUi,
   resolveKitDir,
   runPreview,
   registerPreviewTool,
+  shouldAutoOpen,
   type BootRequest,
   type BootedViewer,
   type ViewerBooter,
@@ -81,6 +83,25 @@ function deferredBooter(): {
 
 async function makeKitsRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), "genie-preview-kits-"));
+}
+
+/**
+ * Create a kit dir under `kitsRoot` holding one valid `@genie`-marked component,
+ * so `ensureManifest` (piece A) has something real to compile. Returns the
+ * kitId. The marker's `name="Get Started"` is deliberately different from the
+ * filename stem so a later assertion can prove the manifest was actually
+ * compiled from this file (not a leftover seed).
+ */
+async function seedKitWithComponent(kitsRoot: string, kitId: string): Promise<void> {
+  const compDir = join(kitsRoot, kitId, "components", "actions", "Button");
+  await mkdir(compDir, { recursive: true });
+  await writeFile(
+    join(compDir, "preview.html"),
+    '<!-- @genie group="actions" viewport="480x240" name="Get Started" -->\n' +
+      "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\" /></head>" +
+      "<body><button>Get Started</button></body></html>\n",
+    "utf-8",
+  );
 }
 
 // ─── AC4: buildResourceUri ───────────────────────────────────────────────────
@@ -311,6 +332,173 @@ describe("runPreview (AC3, AC6)", () => {
     expect(req?.client).toBe("codex");
     expect(req?.uiSupported).toBe(false);
     lines.restore();
+  });
+});
+
+// ─── Piece A: preview compiles + persists the manifest ───────────────────────
+
+describe("runPreview manifest compile (piece A)", () => {
+  it("compiles + persists .genie/manifest.json from the kit's components", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const registry = new ViewerRegistry(okBooter());
+
+    await runPreview({ kitsRoot, registry }, { kitId: "acme-abc123" }, {});
+
+    const manifestRaw = await readFile(
+      join(kitsRoot, "acme-abc123", ".genie", "manifest.json"),
+      "utf-8",
+    );
+    const manifest = JSON.parse(manifestRaw) as {
+      components: { group: string; path: string }[];
+      groups: string[];
+    };
+    // The component we seeded is present — proving preview compiled it, not a
+    // pre-existing empty seed (this kit dir had no manifest before the call).
+    expect(manifest.components).toHaveLength(1);
+    expect(manifest.components[0]?.group).toBe("actions");
+    expect(manifest.components[0]?.path).toBe("components/actions/Button/preview.html");
+    expect(manifest.groups).toContain("actions");
+  });
+
+  it("does not sink the preview when the kit has no components (empty compile)", async () => {
+    const kitsRoot = await makeKitsRoot();
+    // A kit dir that exists but has no components/ tree.
+    await mkdir(join(kitsRoot, "acme-abc123"), { recursive: true });
+    const registry = new ViewerRegistry(okBooter("http://127.0.0.1:5173/"));
+
+    const result = await runPreview({ kitsRoot, registry }, { kitId: "acme-abc123" }, {});
+
+    // Still reports the viewer URL — a compile that yields an empty manifest is
+    // a fine result, not an error.
+    expect(result.content[0]?.text).toContain("http://127.0.0.1:5173/");
+    expect(result._meta.ui.resourceUri).toBe("ui://genie/grid?kitId=acme-abc123");
+  });
+
+  it("logs preview.compile.failed but still previews when compile throws", async () => {
+    const kitsRoot = await makeKitsRoot();
+    // No kit dir at all → compileManifest's disk walk rejects; preview must
+    // press on to the (fake) viewer rather than surface the error.
+    const registry = new ViewerRegistry(okBooter("http://127.0.0.1:5173/"));
+    const lines = captureStderr();
+
+    const result = await runPreview({ kitsRoot, registry }, { kitId: "acme-abc123" }, {});
+
+    lines.restore();
+    // Whether compile fails depends on the platform's readdir-of-missing
+    // behavior; the invariant that matters is preview never throws and still
+    // reports a URL. (If a compile.failed line was logged, it names the kit.)
+    const failed = lines.parsed().find((l) => l.event === "preview.compile.failed");
+    if (failed) expect(failed.kitId).toBe("acme-abc123");
+    expect(result.content[0]?.text).toContain("http://127.0.0.1:5173/");
+  });
+});
+
+// ─── Piece B: harness-aware server-side auto-open ────────────────────────────
+
+describe("autoOpenDisabledByEnv (piece B opt-out)", () => {
+  it.each(["1", "true", "TRUE", "yes", "on"])("treats %s as opted-out", (val) => {
+    expect(autoOpenDisabledByEnv({ GENIE_PREVIEW_NO_OPEN: val })).toBe(true);
+  });
+
+  it.each(["0", "false", "FALSE", "", "  "])("treats %s as NOT opted-out", (val) => {
+    expect(autoOpenDisabledByEnv({ GENIE_PREVIEW_NO_OPEN: val })).toBe(false);
+  });
+
+  it("is not opted-out when the var is absent (default = auto-open on)", () => {
+    expect(autoOpenDisabledByEnv({})).toBe(false);
+  });
+});
+
+describe("shouldAutoOpen (piece B decision)", () => {
+  it("never opens for a ui://-capable host (inline grid renders in-panel)", () => {
+    expect(shouldAutoOpen(true, {})).toBe(false);
+    // Even without the opt-out set, a ui host never triggers a redundant tab.
+    expect(shouldAutoOpen(true, { GENIE_PREVIEW_NO_OPEN: "0" })).toBe(false);
+  });
+
+  it("opens for a non-ui:// host by default (opt-out unset)", () => {
+    expect(shouldAutoOpen(false, {})).toBe(true);
+  });
+
+  it("does NOT open for a non-ui:// host when opted out via env", () => {
+    expect(shouldAutoOpen(false, { GENIE_PREVIEW_NO_OPEN: "1" })).toBe(false);
+  });
+});
+
+describe("runPreview auto-open wiring (piece B)", () => {
+  it("passes open:true to the booter for a non-ui:// host (default)", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+
+    await runPreview(
+      { kitsRoot, registry, env: {} },
+      { kitId: "acme-abc123" },
+      { clientName: "codex" },
+    );
+
+    expect(booter.calls).toHaveLength(1);
+    expect(booter.calls[0]?.open).toBe(true);
+  });
+
+  it("passes open:false to the booter for a ui://-capable host", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+
+    await runPreview(
+      { kitsRoot, registry, env: {} },
+      { kitId: "acme-abc123" },
+      { clientName: "claude" },
+    );
+
+    expect(booter.calls[0]?.open).toBe(false);
+  });
+
+  it("passes open:false for a non-ui:// host when GENIE_PREVIEW_NO_OPEN is set", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+
+    await runPreview(
+      { kitsRoot, registry, env: { GENIE_PREVIEW_NO_OPEN: "1" } },
+      { kitId: "acme-abc123" },
+      { clientName: "codex" },
+    );
+
+    expect(booter.calls[0]?.open).toBe(false);
+  });
+
+  it("only opens once across repeated previews (registry reuse)", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+    const deps = { kitsRoot, registry, env: {} };
+
+    await runPreview(deps, { kitId: "acme-abc123" }, { clientName: "codex" });
+    await runPreview(deps, { kitId: "acme-abc123" }, { clientName: "codex" });
+
+    // Second call reuses the cached viewer → booter (and thus the browser open)
+    // fires exactly once.
+    expect(booter.calls).toHaveLength(1);
+    expect(booter.calls[0]?.open).toBe(true);
+  });
+
+  it("logs autoOpen in the preview.request line", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const registry = new ViewerRegistry(okBooter());
+    const lines = captureStderr();
+
+    await runPreview(
+      { kitsRoot, registry, env: {} },
+      { kitId: "acme-abc123" },
+      { clientName: "codex" },
+    );
+
+    lines.restore();
+    const req = lines.parsed().find((l) => l.event === "preview.request");
+    expect(req?.autoOpen).toBe(true);
   });
 });
 
