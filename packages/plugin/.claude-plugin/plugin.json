@@ -1,0 +1,16 @@
+{
+  "name": "genie",
+  "version": "0.0.0",
+  "description": "Harness-agnostic UI component generation against your own UI kit, with a live preview grid — inside your AI coding harness via MCP. Bundles the genie MCP server, the genie Agent Skill, and the /genie:preview command.",
+  "author": {
+    "name": "Roshan Gautam"
+  },
+  "mcpServers": {
+    "genie": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/../server/dist/cli.js", "--transport", "stdio"],
+      "env": {}
+    }
+  }
+}
