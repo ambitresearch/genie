@@ -62,7 +62,9 @@ export function registerReadFile(server: McpServer, kitStore: KitStore): void {
       title: "Read File",
       description:
         "Read the contents of a single file from a UI kit. Returns text (utf-8) " +
-        "or binary (base64) content. Files larger than 256 KiB are rejected.",
+        "or binary (base64) content. Files larger than 256 KiB are rejected. Typically " +
+        "follows list_files, to inspect one file's current content before refining it " +
+        "or editing by hand.",
       inputSchema: {
         kitId: z.string().min(1).describe("The UI kit identifier."),
         path: z.string().describe("Relative path within the kit directory."),

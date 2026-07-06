@@ -46,7 +46,8 @@ export function registerListProjectsTool(
       title: "List projects",
       description:
         "List genie workspace and blueprint projects visible to this server. " +
-        "Read-only and idempotent; returns local results even if an optional git-host backend is unreachable.",
+        "Read-only and idempotent; returns local results even if an optional git-host backend is unreachable. " +
+        "Reach for this as the discovery step before get_project, bind_kit, or conjure_screen.",
       inputSchema: listProjectsArgsSchema,
       outputSchema: {
         projects: z.array(z.object(projectSummaryShape).strict()),

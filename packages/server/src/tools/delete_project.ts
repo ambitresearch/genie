@@ -104,7 +104,8 @@ export function registerDeleteProjectTool(server: McpServer, store: ProjectStore
     {
       title: "Delete project",
       description:
-        "Delete a workspace or blueprint project. Deleting a blueprint does not delete derived workspaces.",
+        "Delete a workspace or blueprint project. Deleting a blueprint does not delete derived workspaces. " +
+        "Irreversible — confirm via get_project first if you need to check its bindings or screens before removing it.",
       inputSchema: {
         projectId: projectIdSchema,
       },

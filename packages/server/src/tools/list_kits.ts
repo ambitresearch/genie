@@ -6,7 +6,7 @@ import { KIT_TYPE } from "../store/interface.js";
 export const LIST_KITS_TOOL_NAME = "mcp__genie__list_kits";
 
 export const LIST_KITS_DESCRIPTION =
-  "List the user's writable UI kits. Returns every genie-native kit visible to the current store as an array of { id, name, owner, updatedAt, canEdit }. Filters out records whose stored type is not GENIE_KIT; interop adapters map Anthropic project types separately.";
+  "List the user's writable UI kits. Returns every genie-native kit visible to the current store as an array of { id, name, owner, updatedAt, canEdit }. Filters out records whose stored type is not GENIE_KIT; interop adapters map Anthropic project types separately. Reach for this as the discovery step before conjure, plan, or bind_kit — each needs a valid kitId from here (or from create_kit for a brand-new kit).";
 
 export interface ListKitsEntry extends Record<string, unknown> {
   id: string;

@@ -281,7 +281,8 @@ export function registerWriteFilesTool(server: McpServer, kitStore: KitStore): v
         "glob in the plan's writes. Reads content from localPath (resolved against the " +
         "plan's localDir, the local SOURCE base) so file contents never enter model " +
         "context, or from inline data for in-memory content. Atomic per call — if any " +
-        "file fails, nothing is written.",
+        "file fails, nothing is written. Requires a planId from mcp__genie__plan covering " +
+        "every path being written; call preview afterwards to show the result.",
       inputSchema: writeFilesInputSchema,
       outputSchema: writeFilesOutputSchema,
     },

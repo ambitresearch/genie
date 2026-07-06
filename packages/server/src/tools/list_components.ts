@@ -18,7 +18,9 @@ export const LIST_COMPONENTS_DESCRIPTION =
   "for deterministic ordering. When group is omitted, returns every component across all groups. Returns " +
   "[] when the kit has no components or the group filter matches nothing. Results are capped at 256 per " +
   "call; when more remain, an opaque cursor is returned in _meta.nextCursor — pass it back as `cursor` to " +
-  "fetch the next page.";
+  "fetch the next page. Reads the compiled manifest, so results reflect components as of the last " +
+  "compile; calling mcp__genie__preview and letting a ui://-capable host render the inline grid " +
+  "triggers a recompile — call preview first if recent writes might not be reflected yet.";
 
 /** Zod shape for a single component entry — reused by `outputSchema`. */
 const componentEntryShape = {

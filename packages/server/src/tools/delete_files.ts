@@ -249,7 +249,8 @@ export function registerDeleteFilesTool(server: McpServer, store: KitStore): voi
         "Delete kit files authorized by a plan. Every path must match a glob in " +
         "the plan's `deletes`; an out-of-plan path rejects the whole call. A path " +
         "that no longer exists is not an error — it is returned in `notFoundPaths`. " +
-        "Paths must name files, not directories.",
+        "Paths must name files, not directories. Requires a planId from mcp__genie__plan " +
+        "whose `deletes` globs cover every path being removed.",
       inputSchema: {
         planId: z
           .string()

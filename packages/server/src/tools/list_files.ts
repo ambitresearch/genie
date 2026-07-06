@@ -92,7 +92,9 @@ export function registerListFilesTool(server: McpServer, store: KitStore): void 
     {
       title: "List files",
       description:
-        "Return the UI kit file tree with kit-root-relative paths, byte sizes, SHA-256 SRI hashes, and modification times.",
+        "Return the UI kit file tree with kit-root-relative paths, byte sizes, SHA-256 SRI hashes, and modification times. " +
+        "Reads the raw on-disk tree (unlike list_components, which reads the compiled manifest) — " +
+        "reach for this before read_file, or to see exactly which paths a delete_files plan needs to cover.",
       inputSchema: {
         kitId: z.string().min(1),
       },

@@ -51,7 +51,9 @@ export function registerGetKitTool(server: McpServer, store: KitStore): void {
     {
       title: "Get kit",
       description:
-        "Return metadata for one writable UI kit and verify the kitId resolves to a GENIE_KIT.",
+        "Return metadata for one writable UI kit and verify the kitId resolves to a GENIE_KIT. " +
+        "Useful to confirm a kitId (e.g. from list_kits) is valid and writable before " +
+        "generating or binding against it.",
       inputSchema: {
         kitId: z.string().regex(KIT_ID_PATTERN),
       },

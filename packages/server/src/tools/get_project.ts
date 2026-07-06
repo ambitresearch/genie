@@ -79,7 +79,8 @@ export function registerGetProjectTool(server: McpServer, store: ProjectGetStore
       description:
         "Return metadata for one genie workspace or blueprint project, including its " +
         "kit bindings, recorded screens, and canEdit status. Blueprints use the same " +
-        'shape as workspaces (kind: "blueprint") — there is no separate tool family.',
+        'shape as workspaces (kind: "blueprint") — there is no separate tool family. ' +
+        "Typically follows list_projects; check kitBindings here before bind_kit or conjure_screen.",
       inputSchema: {
         projectId: projectIdSchema,
       },

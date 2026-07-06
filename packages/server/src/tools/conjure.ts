@@ -520,7 +520,9 @@ export function registerConjureTool(server: McpServer, deps: ConjureDeps = {}): 
         "(with an optional reference image or page). Returns the COMPONENT_SCHEMA file set — " +
         "{ componentName, group, files, manifestEntry } — validated against the schema (retried " +
         "once on a validation failure). Pure generation: it does NOT write the files; committing " +
-        "them to a kit is the caller's separate, plan-gated step.",
+        "them to a kit is the caller's separate, plan-gated step (plan, then write_files, then " +
+        "preview to show the result). Pass a concrete provider model id rather than the " +
+        "`design-default` alias for reproducible production output.",
       // Reuse the exact same field map the runtime parser uses (incl. the
       // SSRF-guarded refUrl) — no second, drift-prone copy (Copilot review).
       inputSchema: conjureInputShape,

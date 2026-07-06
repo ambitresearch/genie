@@ -603,7 +603,8 @@ export function registerCreateProjectTool(server: McpServer, store: ProjectStore
     {
       title: "Create project",
       description:
-        "Create a blank workspace, create a reusable blueprint project, or instantiate a workspace from a blueprint.",
+        "Create a blank workspace, create a reusable blueprint project, or instantiate a workspace from a blueprint. " +
+        "Reach for this first in project-based workflows — bind_kit and conjure_screen both need a projectId from here.",
       inputSchema: {
         name: z.string().min(1).max(128),
         kind: projectKindSchema,

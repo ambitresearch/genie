@@ -66,7 +66,8 @@ export function registerBindKitTool(server: McpServer, store: ProjectBindKitStor
         "Attach a UI kit to a workspace or blueprint project, optionally marking it the " +
         "default kit for screen generation. Binding the same kit twice updates the existing " +
         "binding in place. Setting default: true clears default status from every other " +
-        "binding on the project.",
+        "binding on the project. Typically precedes conjure_screen, which resolves its kit " +
+        "from these bindings when no explicit kitId is given.",
       inputSchema: {
         projectId: projectIdSchema,
         kitId: kitIdSchema,

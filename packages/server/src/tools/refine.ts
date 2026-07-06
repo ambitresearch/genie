@@ -753,7 +753,10 @@ export function registerRefineTool(server: McpServer, deps: RefineDeps): void {
         "updated files (the files are the source of truth; the diff is informational). Loads the " +
         "component's current source from the kit, validates the model's reply against " +
         "COMPONENT_SCHEMA (retried once on a validation failure), and — when a region is given — " +
-        "attaches a rendered crop of it as a visual reference.",
+        "attaches a rendered crop of it as a visual reference. Reach for this to adjust a " +
+        "component already written to the kit (typically after conjure → write_files → preview); " +
+        "like conjure, pass a concrete provider model id rather than the `design-default` alias, " +
+        "and persist the returned files again via plan + write_files before previewing.",
       inputSchema: refineInputShape,
       outputSchema: refineOutputShape,
     },
