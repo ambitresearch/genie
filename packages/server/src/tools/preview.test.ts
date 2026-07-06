@@ -30,6 +30,9 @@ import {
   autoOpenDisabledByEnv,
   buildResourceUri,
   clientSupportsUi,
+  hasUiExtensionCapability,
+  MCP_APP_MIME,
+  UI_EXTENSION_ID,
   resolveKitDir,
   runPreview,
   registerPreviewTool,
@@ -170,6 +173,44 @@ describe("clientSupportsUi (AC7)", () => {
   });
 });
 
+// ─── hasUiExtensionCapability (MCP Apps capability negotiation) ──────────────
+
+describe("hasUiExtensionCapability", () => {
+  it("recognizes the spec-shaped extension capability", () => {
+    expect(
+      hasUiExtensionCapability({
+        extensions: { [UI_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME] } },
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts extra mime types alongside the app profile", () => {
+    expect(
+      hasUiExtensionCapability({
+        extensions: { [UI_EXTENSION_ID]: { mimeTypes: ["text/plain", MCP_APP_MIME] } },
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["undefined caps", undefined],
+    ["null caps", null],
+    ["empty caps", {}],
+    ["no extensions", { tools: {} }],
+    ["extensions not an object", { extensions: "yes" }],
+    ["extension absent", { extensions: { "io.example/other": {} } }],
+    ["extension not an object", { extensions: { [UI_EXTENSION_ID]: true } }],
+    ["mimeTypes missing", { extensions: { [UI_EXTENSION_ID]: {} } }],
+    ["mimeTypes not an array", { extensions: { [UI_EXTENSION_ID]: { mimeTypes: MCP_APP_MIME } } }],
+    [
+      "app profile not offered",
+      { extensions: { [UI_EXTENSION_ID]: { mimeTypes: ["text/html"] } } },
+    ],
+  ])("returns false for %s", (_label, caps) => {
+    expect(hasUiExtensionCapability(caps)).toBe(false);
+  });
+});
+
 // ─── resolveKitDir (path-safety) ─────────────────────────────────────────────
 
 describe("resolveKitDir", () => {
@@ -294,6 +335,58 @@ describe("runPreview (AC3, AC6)", () => {
     expect(result._meta.ui.resourceUri).toBe(
       "ui://genie/grid?kitId=acme-abc123&componentName=Button&group=actions",
     );
+  });
+
+  it("returns structuredContent with kitId, filters, viewerUrl and fileUrl (spec §Tool Result)", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const registry = new ViewerRegistry(okBooter("http://127.0.0.1:5173/"));
+
+    const result = await runPreview(
+      { kitsRoot, registry },
+      { kitId: "acme-abc123", componentName: "Button", group: "actions" },
+      {},
+    );
+
+    expect(result.structuredContent).toEqual({
+      kitId: "acme-abc123",
+      componentName: "Button",
+      group: "actions",
+      viewerUrl: "http://127.0.0.1:5173/",
+      fileUrl: pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href,
+    });
+  });
+
+  it("omits viewerUrl from structuredContent on the file:// fallback", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const registry = new ViewerRegistry(failBooter("EADDRINUSE"));
+
+    const result = await runPreview({ kitsRoot, registry }, { kitId: "acme-abc123" }, {});
+
+    expect(result.structuredContent.viewerUrl).toBeUndefined();
+    expect(result.structuredContent.kitId).toBe("acme-abc123");
+    expect(result.structuredContent.fileUrl).toBe(
+      pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href,
+    );
+  });
+
+  it("uiCapable: true marks the host ui-supported regardless of client name (no auto-open)", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+    const lines = captureStderr();
+
+    await runPreview(
+      { kitsRoot, registry },
+      { kitId: "acme-abc123" },
+      { clientName: "totally-unknown-host", uiCapable: true },
+    );
+
+    lines.restore();
+    const req = lines.parsed().find((l) => l.event === "preview.request");
+    expect(req?.uiCapable).toBe(true);
+    expect(req?.uiSupported).toBe(true);
+    expect(req?.autoOpen).toBe(false);
+    expect(booter.calls[0]?.open).toBe(false);
   });
 
   it("rejects a malformed kitId before booting anything", async () => {
@@ -556,6 +649,76 @@ describe("mcp__genie__preview (wired)", () => {
     expect(result.content[0]?.type).toBe("text");
     expect(result.content[0]?.text).toContain("http://127.0.0.1:5173/");
     expect(result._meta?.ui?.resourceUri).toBe("ui://genie/grid?kitId=acme-abc123");
+  });
+
+  it("declares _meta.ui.resourceUri on the tool itself (ext-apps §Resource Discovery)", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const client = await connectPreview(kitsRoot, okBooter());
+    const { tools } = await client.listTools();
+    const preview = tools.find((t) => t.name === PREVIEW_TOOL_NAME);
+    // Registration-time discovery: the template URI is BARE — per-call params
+    // reach the app via structuredContent, not the URI.
+    expect((preview?._meta as { ui?: { resourceUri?: string } })?.ui?.resourceUri).toBe(
+      "ui://genie/grid",
+    );
+  });
+
+  it("returns structuredContent over the wire", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const client = await connectPreview(kitsRoot, okBooter("http://127.0.0.1:5173/"));
+
+    const result = (await client.callTool({
+      name: PREVIEW_TOOL_NAME,
+      arguments: { kitId: "acme-abc123" },
+    })) as { structuredContent?: { kitId?: string; viewerUrl?: string } };
+
+    expect(result.structuredContent?.kitId).toBe("acme-abc123");
+    expect(result.structuredContent?.viewerUrl).toBe("http://127.0.0.1:5173/");
+  });
+
+  it("falls back to the initialize handshake's clientInfo name when no per-request _meta is sent", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const server = new McpServer({ name: "genie-test", version: "0" });
+    registerPreviewTool(server, { kitsRoot, booter: okBooter() });
+    // A real ui:// host name in clientInfo — the way production hosts identify.
+    const client = new Client({ name: "cursor", version: "1.0.0" });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+    openClient = client;
+    const lines = captureStderr();
+
+    await client.callTool({ name: PREVIEW_TOOL_NAME, arguments: { kitId: "acme-abc123" } });
+
+    lines.restore();
+    const req = lines.parsed().find((l) => l.event === "preview.request");
+    expect(req?.client).toBe("cursor");
+    expect(req?.uiSupported).toBe(true);
+    expect(req?.autoOpen).toBe(false);
+  });
+
+  it("honours the MCP Apps extension capability from initialize (unknown client name)", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const server = new McpServer({ name: "genie-test", version: "0" });
+    const booter = okBooter();
+    registerPreviewTool(server, { kitsRoot, booter });
+    // Unknown name, but the client ADVERTISES the ui extension — capability wins.
+    const client = new Client(
+      { name: "some-future-host", version: "1.0.0" },
+      { capabilities: { extensions: { [UI_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME] } } } },
+    );
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+    openClient = client;
+    const lines = captureStderr();
+
+    await client.callTool({ name: PREVIEW_TOOL_NAME, arguments: { kitId: "acme-abc123" } });
+
+    lines.restore();
+    const req = lines.parsed().find((l) => l.event === "preview.request");
+    expect(req?.uiCapable).toBe(true);
+    expect(req?.uiSupported).toBe(true);
+    expect(req?.autoOpen).toBe(false);
+    expect(booter.calls[0]?.open).toBe(false);
   });
 
   it("AC7: sniffs params._meta.client.name off the request", async () => {

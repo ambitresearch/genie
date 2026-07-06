@@ -85,6 +85,36 @@ export function clientSupportsUi(clientName: string | undefined): boolean {
   return UI_HOST_MARKERS.some((marker) => lower.includes(marker));
 }
 
+/**
+ * The MCP Apps extension identifier (ext-apps spec 2026-01-26, "Client<>Server
+ * Capability Negotiation"): a host that renders `ui://` app resources
+ * advertises `capabilities.extensions["io.modelcontextprotocol/ui"]` in its
+ * `initialize` request, with `mimeTypes` naming the profiles it can render.
+ */
+export const UI_EXTENSION_ID = "io.modelcontextprotocol/ui";
+
+/** The MCP-Apps HTML profile the grid resource serves (spec §Resource Discovery). */
+export const MCP_APP_MIME = "text/html;profile=mcp-app";
+
+/**
+ * Authoritative `ui://` capability check: true when the client's `initialize`
+ * capabilities carry the MCP Apps extension with a `mimeTypes` array that
+ * includes {@link MCP_APP_MIME}. This is the spec-defined negotiation and takes
+ * precedence over the {@link clientSupportsUi} name sniff, which remains only
+ * as a fallback for hosts that render `ui://` without yet advertising the
+ * extension. `caps` is typed `unknown` because the SDK's `ClientCapabilities`
+ * models `extensions` as a passthrough bag — every level is checked defensively.
+ */
+export function hasUiExtensionCapability(caps: unknown): boolean {
+  if (typeof caps !== "object" || caps === null) return false;
+  const extensions = (caps as { extensions?: unknown }).extensions;
+  if (typeof extensions !== "object" || extensions === null) return false;
+  const ext = (extensions as Record<string, unknown>)[UI_EXTENSION_ID];
+  if (typeof ext !== "object" || ext === null) return false;
+  const mimeTypes = (ext as { mimeTypes?: unknown }).mimeTypes;
+  return Array.isArray(mimeTypes) && mimeTypes.includes(MCP_APP_MIME);
+}
+
 // ─── Structured stderr log (never stdout — it IS the stdio JSON-RPC stream) ───
 
 /**
@@ -322,6 +352,13 @@ export interface PreviewArgs {
 /** Per-request context sniffed off the wire (AC7). */
 export interface PreviewContext {
   clientName?: string;
+  /**
+   * True when the client advertised the MCP Apps extension in its `initialize`
+   * capabilities ({@link hasUiExtensionCapability}). Authoritative — when set,
+   * it decides `uiSupported` outright; the {@link clientSupportsUi} name sniff
+   * only applies when this is false/absent (hosts predating the extension).
+   */
+  uiCapable?: boolean;
 }
 
 /**
@@ -336,6 +373,22 @@ export interface PreviewContext {
  */
 export interface PreviewResult {
   content: { type: "text"; text: string }[];
+  /**
+   * Spec-shaped view payload (ext-apps §"Tool Result"): the host forwards the
+   * whole tool result to the rendered app via `ui/notifications/tool-result`,
+   * and `structuredContent` is the part meant for UI rendering (never added to
+   * model context). Carries what the grid app needs to know WHICH kit/filters
+   * this call was about — the registration-time template URI is bare, so this
+   * is the app's only per-call signal.
+   */
+  structuredContent: {
+    kitId: string;
+    componentName?: string;
+    group?: string;
+    /** The live Vite viewer URL when it booted; absent on the file:// fallback. */
+    viewerUrl?: string;
+    fileUrl: string;
+  };
   _meta: { ui: { resourceUri: string }; "openai/outputTemplate": string };
 }
 
@@ -403,13 +456,17 @@ export async function runPreview(
     group: args.group,
   });
 
-  const uiSupported = clientSupportsUi(ctx.clientName);
+  // Authoritative first: the MCP Apps extension capability from the initialize
+  // handshake. The name sniff remains only for hosts that render ui:// without
+  // advertising the extension yet (older Claude/VS Code/Cursor builds).
+  const uiSupported = ctx.uiCapable === true || clientSupportsUi(ctx.clientName);
   const autoOpen = shouldAutoOpen(uiSupported, deps.env);
   // AC7 — one structured line per request; the sniffed client + its ui:// support.
   logStderr({
     event: "preview.request",
     kitId: args.kitId,
     client: ctx.clientName ?? null,
+    uiCapable: ctx.uiCapable === true,
     uiSupported,
     autoOpen,
     ...(args.group !== undefined ? { group: args.group } : {}),
@@ -419,8 +476,10 @@ export async function runPreview(
   const fileUrl = pathToFileURL(join(kitDir, "index.html")).href;
 
   let text: string;
+  let viewerUrl: string | undefined;
   try {
     const viewer = await deps.registry.ensure(kitDir, DEFAULT_VIEWER_PORT, autoOpen); // AC5 + piece B
+    viewerUrl = viewer.url;
     text = `Preview running at ${viewer.url}\n` + `Or open the kit directly: ${fileUrl}`;
   } catch (error) {
     // AC6 — the viewer could not boot (Vite/@genie/viewer absent, port
@@ -439,6 +498,13 @@ export async function runPreview(
 
   return {
     content: [{ type: "text", text }],
+    structuredContent: {
+      kitId: args.kitId,
+      ...(args.componentName !== undefined ? { componentName: args.componentName } : {}),
+      ...(args.group !== undefined ? { group: args.group } : {}),
+      ...(viewerUrl !== undefined ? { viewerUrl } : {}),
+      fileUrl,
+    },
     // Same resourceUri under both the MCP-Apps key (`ui.resourceUri`) and the
     // ChatGPT Apps SDK key (`openai/outputTemplate`, AC6) — cross-vendor link.
     _meta: { ui: { resourceUri }, "openai/outputTemplate": resourceUri },
@@ -492,8 +558,9 @@ function sniffClientName(meta: unknown): string | undefined {
 /**
  * Register `mcp__genie__preview`. One {@link ViewerRegistry} is created per
  * registration and shared across every call so viewers are reused (AC5). The
- * handler reads the client name off `extra._meta` (AC7) and delegates to
- * {@link runPreview}.
+ * handler resolves the client's identity (per-request `_meta` escape hatch,
+ * else the initialize handshake) and its MCP Apps capability, then delegates
+ * to {@link runPreview}.
  */
 export function registerPreviewTool(server: McpServer, options: PreviewToolOptions): void {
   const registry = new ViewerRegistry(options.booter ?? defaultViewerBooter);
@@ -513,12 +580,27 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
         "browser tab itself (disable with GENIE_PREVIEW_NO_OPEN=1). Optionally focus one " +
         "component or group.",
       inputSchema: previewInputSchema,
+      // Registration-time app link (ext-apps spec §Resource Discovery): hosts
+      // discover a tool's UI from `tools/list` `_meta.ui.resourceUri` — the
+      // per-RESULT _meta alone is not discovery. The template URI is BARE by
+      // spec (per-call params reach the rendered app via `structuredContent`
+      // on the tool result, not the URI). Without this key, an MCP-Apps host
+      // (Claude Desktop) treats preview as a plain text tool and never renders
+      // the inline grid.
+      _meta: { ui: { resourceUri: GRID_RESOURCE_BASE } },
     },
     async (args: PreviewArgs, extra: { _meta?: unknown }) => {
-      const clientName = sniffClientName(extra._meta);
-      const result = await runPreview(deps, args, { clientName });
+      // Client identity: prefer the per-request `_meta.client.name` escape
+      // hatch (tests, exotic proxies), else the `initialize` handshake's
+      // clientInfo — what real hosts actually send (the per-request key was
+      // the original AC7 sniff's blind spot: no production host populates it).
+      const clientName = sniffClientName(extra._meta) ?? server.server.getClientVersion()?.name;
+      // Authoritative MCP Apps capability from the same handshake.
+      const uiCapable = hasUiExtensionCapability(server.server.getClientCapabilities());
+      const result = await runPreview(deps, args, { clientName, uiCapable });
       return {
         content: result.content,
+        structuredContent: result.structuredContent,
         _meta: result._meta,
       };
     },
