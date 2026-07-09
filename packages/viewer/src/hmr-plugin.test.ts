@@ -93,6 +93,27 @@ describe("classifyHmrPath", () => {
     });
   });
 
+  // DRO-821 — the REAL server generation path emits a component's preview as
+  // `<Name>.html` (e.g. `Button/Button.html`), forced by the LLM response_format
+  // schema. The classifier must fire `card.changed` for that filename, not only
+  // for the hand-authored fixtures' `preview.html`, or an edit to a real card
+  // broadcasts nothing and AC2/AC3 silently no-op end-to-end.
+  it("classifies a server-generated <Name>.html change as 'card' (DRO-821)", () => {
+    expect(classifyHmrPath(ROOT, `${ROOT}/components/actions/Button/Button.html`)).toEqual({
+      kind: "card",
+      path: "components/actions/Button/Button.html",
+    });
+  });
+
+  it("classifies a nested multi-group <Name>.html correctly (DRO-821)", () => {
+    expect(classifyHmrPath(ROOT, `${ROOT}/components/surfaces/PricingCard/PricingCard.html`)).toEqual(
+      {
+        kind: "card",
+        path: "components/surfaces/PricingCard/PricingCard.html",
+      },
+    );
+  });
+
   it("classifies a tokens/** change as 'tokens' (AC5)", () => {
     expect(classifyHmrPath(ROOT, `${ROOT}/tokens/colors.css`)).toEqual({ kind: "tokens" });
   });
@@ -118,12 +139,15 @@ describe("classifyHmrPath", () => {
     expect(classifyHmrPath(ROOT, `${ROOT}/meta.json`)).toBeUndefined();
   });
 
-  it("does NOT classify a non-preview.html file inside components/ (e.g. a .tsx source)", () => {
+  it("does NOT classify a non-.html source file inside components/ (e.g. a .tsx source)", () => {
     // The manifest compiler's own source watches .tsx/.d.ts/.md too, but the
-    // VIEWER only ever renders preview.html as an iframe src — reloading a
+    // VIEWER only ever renders the .html preview as an iframe src — reloading a
     // card on an unrelated .tsx save (which the iframe doesn't even fetch)
-    // would be a spurious reload with no visible effect.
+    // would be a spurious reload with no visible effect. (DRO-821 broadened the
+    // classifier from `preview.html` to any `*.html`, but a non-.html source
+    // still classifies as neither group.)
     expect(classifyHmrPath(ROOT, `${ROOT}/components/actions/Button/Button.tsx`)).toBeUndefined();
+    expect(classifyHmrPath(ROOT, `${ROOT}/components/actions/Button/Button.d.ts`)).toBeUndefined();
   });
 
   it("normalises a Windows-style backslash path to forward slashes in the output", () => {

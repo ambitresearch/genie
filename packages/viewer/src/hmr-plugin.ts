@@ -74,12 +74,14 @@
  * AC coverage map (DRO-266):
  *   - AC1 — `createHmrPlugin()` registers a WebSocket server on `/__genie_hmr`
  *     that pushes `{ event: "card.changed", path }` on a
- *     `components/**\/preview.html` change.
+ *     `components/**\/*.html` change (DRO-821: the server's real preview
+ *     filename is `<Name>.html`, so this is `*.html`, not `preview.html`).
  *   - AC5 — a `tokens/**` or root `styles.css` change instead broadcasts
  *     `{ event: "tokens.changed" }` (no single `path` — it means "every
  *     card", see `viewer.js`'s handling of this event).
- *   - Anything outside those two glob groups (e.g. `.genie/manifest.json`
- *     itself, or an unrelated root file) is NOT forwarded.
+ *   - Anything outside those two glob groups (e.g. a `.tsx`/`.vue` source,
+ *     `.genie/manifest.json` itself, or an unrelated root file) is NOT
+ *     forwarded.
  *   - `path` is always kit-root-relative POSIX (forward slashes on every OS),
  *     matching `card.path` in `.genie/manifest.json` / the rendered grid's
  *     `data-path`, so `viewer.js` can match one against the other with a
@@ -109,7 +111,32 @@ export interface HmrWatcherLike {
   on(event: "change" | "add" | "unlink", listener: (path: string) => void): unknown;
 }
 
-const CARD_GLOB_RE = /(?:^|\/)components\/.+\/preview\.html$/;
+/**
+ * Matches a component preview file: any `*.html` under `components/`, at any
+ * depth.
+ *
+ * DRO-821 — this MUST mirror the server manifest compiler's discovery walk
+ * (`server/src/manifest/compiler.ts` → `walkPreviewFiles`), which cards every
+ * `components/**\/*.html` carrying a valid `@genie` marker. The real
+ * `conjure`/`refine` path emits a component's preview as `<Name>.html` (e.g.
+ * `components/actions/Button/Button.html`), forced by the LLM `response_format`
+ * schema's `…/([A-Z][A-Za-z0-9]{1,63})/\1\.html$` constraint — the model cannot
+ * emit `preview.html`. The old `…/preview\.html$` pattern therefore NEVER matched
+ * a real generated card, so a real card edit broadcast nothing and the client
+ * `data-path === path` match could never be true (AC2/AC3 silently no-op'd). It
+ * only ever fired for hand-authored `preview.html` fixtures.
+ *
+ * We classify by PATH, not by marker (an fs `change` event carries no content),
+ * so this is deliberately the same superset the compiler's walk is: it matches
+ * both native `<Name>.html` and DesignSync-compat `preview.html`. Over-matching a
+ * co-located, non-card `.html` (e.g. a marker-less `dark-mode.html`) is a harmless
+ * no-op — `viewer.js`'s `reloadCardByPath` finds no iframe whose `data-path`
+ * equals that path and reloads zero cards. Card *identity* stays owned by
+ * `.genie/manifest.json`; this regex only decides which fs paths are eligible to
+ * become a per-card `card.changed`. A non-`.html` source edit (`.tsx`/`.vue`/
+ * `.d.ts`) still classifies as neither group — the iframe never fetches those.
+ */
+const CARD_GLOB_RE = /(?:^|\/)components\/.+\.html$/;
 
 /**
  * Classifies an absolute (or already-relative) changed path against the two

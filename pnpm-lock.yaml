@@ -38,6 +38,9 @@ importers:
       '@genie/server':
         specifier: workspace:*
         version: link:../server
+      '@genie/viewer':
+        specifier: workspace:*
+        version: link:../viewer
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)

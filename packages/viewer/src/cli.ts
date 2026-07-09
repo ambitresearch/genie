@@ -341,7 +341,7 @@ export function buildProgram(io: CliIO, deps: CliDeps = realCliDeps): Command {
     .usage(USAGE)
     .description(
       "Vite-backed UI-kit preview grid.\n" +
-        "Boots a live preview of <kit-dir> — every components/**/preview.html as a\n" +
+        "Boots a live preview of <kit-dir> — every components/**/*.html preview as a\n" +
         "card — prints the URL, and opens your browser. Ctrl-C stops it cleanly.",
     )
     .version(VIEWER_VERSION, "-v, --version", "print the version and exit")

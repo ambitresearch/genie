@@ -237,6 +237,61 @@ refinement stays parked R&D.
 
 ---
 
+## D-K — Preview filename: the viewer/HMR discovery mirrors the compiler's `*.html` walk
+
+> **Status: accepted (2026-07-09)** · Resolves DRO-821 (M4 follow-up to DRO-266). The
+> viewer's Vite entry glob and the HMR card classifier match **any `components/**/*.html`**,
+> not a fixed `preview.html`. This is a straight mirror of the manifest compiler's own
+> discovery walk — the single filename authority.
+
+**The mismatch.** The M4-02/03 viewer and the M4-04 HMR bridge were first written against a
+hand-authored `components/<group>/<Name>/preview.html`, but the **server generates
+`<Name>.html`** (e.g. `components/actions/Button/Button.html`). Against a real
+server-generated kit the viewer listed zero cards and HMR never fired — every fixture and the
+M4-10 e2e kit masked it by using `preview.html`.
+
+**Why `<Name>.html` is the fixed point (not `preview.html`).** The filename is not a free
+choice on the server side: the `conjure`/`refine` LLM call uses `response_format:
+json_schema`, and that schema's `files[]` `contains` constraint is
+`^components/[a-z0-9-]+/([A-Z][A-Za-z0-9]{1,63})/\1\.html$` (`server/src/llm/schema.ts`) —
+i.e. the preview MUST be `<Name>/<Name>.html`. The model **cannot** emit `preview.html`. The
+`<Name>/<Name>.html` self-consistency is also assumed throughout the RFC (§7.3/§7.4/§9.10),
+`validate/*`, `sync/anchor.ts`, and the compiler's `deriveName`. So the server output is the
+authority; the viewer must follow it.
+
+**Decision — broaden the viewer/HMR side (issue Option 2), as a compiler-faithful superset.**
+- `packages/viewer/src/config.ts` `PREVIEW_GLOB` → `components/**/*.html`.
+- `packages/viewer/src/hmr-plugin.ts` `CARD_GLOB_RE` → `/(?:^|\/)components\/.+\.html$/`.
+- Both now mirror the compiler's `walkPreviewFiles` (`components/**/*.html`, carded when a
+  valid `@genie` marker is present). Matching the compiler's *path* discovery exactly is what
+  makes divergence structurally impossible: three surfaces (manifest card `path` → grid iframe
+  `data-path`; the Vite preview entry; the HMR `card.changed` path) are now byte-identical for
+  a real card. This is a **backward-compatible superset** — it still matches the legacy
+  `preview.html` fixtures — so nothing that worked before regresses.
+
+**Why not the other options.**
+- **Rename server output → `preview.html` (Option 1): infeasible.** It would require defeating
+  the LLM `response_format` schema and rewriting `deriveName` + `validate.ts` `NAMED_HTML_PATH`
+  + `sync/anchor.ts` + the RFC-wide `<Name>/<Name>.html` invariant. Largest blast radius, and
+  it fights a contract the model is *forced* into rather than following it.
+- **Symlink/emit a `preview.html` alongside `<Name>.html` (Option 3): rejected.** A duplicated
+  per-card artifact breaks the "one artefact, three vehicles" byte-identity invariant (G-5) and
+  adds a bookkeeping file the compiler would then have to reason about.
+
+**Card identity stays owned by the manifest.** The client (`viewer.js`) is already fully
+data-driven — it sets `iframe.src`/`data-path` and matches HMR `card.changed.path` entirely
+from `.genie/manifest.json`'s `components[].path`, by plain `===`. The glob/regex only decide
+which fs paths are *eligible*; a co-located, marker-less `.html` that over-matches is a harmless
+no-op (unused Vite entry / an HMR path with no matching `data-path` → zero card reloads). No
+client change was needed.
+
+**Regression guard.** `packages/e2e/test/compiler-manifest-contract.test.ts` runs the **real**
+`compileManifest` against a `<Name>.html` kit and asserts the manifest path, the Vite entry, and
+the HMR classification all agree — so a hand-authored `preview.html` fixture can never hide this
+class of divergence again (DRO-821 AC3).
+
+---
+
 ## What did NOT change
 
 - The **protocol shape**: read freely → one `plan` permission gate → writes scoped to the

@@ -8,7 +8,7 @@ MCP tools produce, in a grid, with HMR — see the research report §3.4 and
 ## Status: booting dev-server CLI (M4-08)
 
 This package ships the `genie-viewer` CLI — it boots the Vite **multi-page dev
-server** against a kit directory (every `components/**/preview.html` is its own
+server** against a kit directory (every `components/**/*.html` preview is its own
 entry point), prints the preview URL, opens your browser, and stops cleanly on
 Ctrl-C. The grid renderer and HMR card-refresh that fill that page land next
 (M4-03 / M4-04).
@@ -16,7 +16,7 @@ Ctrl-C. The grid renderer and HMR card-refresh that fill that page land next
 | Milestone           | Adds                                                       |
 | ------------------- | ---------------------------------------------------------- |
 | M4-01               | package scaffold, CLI arg-parsing, usage/version           |
-| M4-02               | Vite multi-page config — one entry per `preview.html`      |
+| M4-02               | Vite multi-page config — one entry per component preview   |
 | M4-08 (this change) | dev-server boot: URL print, port fallback, open, Ctrl-C    |
 | M4-03               | iframe grid renderer                                       |
 | M4-04               | chokidar watch + HMR-driven card refresh via `postMessage` |
@@ -56,7 +56,7 @@ npx genie-viewer <kit-dir> [--port N] [--no-open]
 Usage: genie-viewer <kit-dir> [--port N]
 
 Vite-backed UI-kit preview grid.
-Boots a live preview of <kit-dir> — every components/**/preview.html as a
+Boots a live preview of <kit-dir> — every components/**/*.html preview as a
 card — prints the URL, and opens your browser. Ctrl-C stops it cleanly.
 
 Arguments:
@@ -74,7 +74,7 @@ Options:
 
 The Vite config (`vite.config.ts` → [`src/config.ts`](src/config.ts)) serves a
 kit directory as a **multi-page app**: the kit's root `index.html` is the
-always-present entry, and every `components/**/preview.html` becomes its own
+always-present entry, and every `components/**/*.html` preview becomes its own
 Vite entry point (globbed with `fast-glob`), hot-reloaded independently. The
 CLI above wraps this; to drive Vite yourself (e.g. debugging the config):
 
@@ -99,7 +99,7 @@ Behaviour (the config's acceptance criteria):
 
 | Aspect       | Behaviour                                                            |
 | ------------ | -------------------------------------------------------------------- |
-| Entries      | root `index.html` + one per `components/**/preview.html`             |
+| Entries      | root `index.html` + one per `components/**/*.html` preview           |
 | Host / port  | `127.0.0.1:5173` (loopback only, no LAN exposure); port via `--port` |
 | Build target | ES2022                                                               |
 | Kit statics  | `tokens/`, `styles.css`, `_vendor/` served at their kit-root paths   |

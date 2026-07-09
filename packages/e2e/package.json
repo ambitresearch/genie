@@ -13,6 +13,7 @@
   "author": "Roshan Gautam",
   "dependencies": {
     "@genie/server": "workspace:*",
+    "@genie/viewer": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
