@@ -27,6 +27,7 @@ import {
   VIEWER_CSS_URI,
   buildCspMeta,
   buildGridDocument,
+  cspMetaTag,
   escapeJsonForScript,
   filterManifest,
   inlineManifest,
@@ -265,7 +266,7 @@ describe("inlineManifest (AC2)", () => {
   });
 });
 
-// ─── buildCspMeta (AC5) ──────────────────────────────────────────────────────
+// ─── buildCspMeta (AC5 allow-list) + M4-07 hardening (AC1/AC3) ───────────────
 
 describe("buildCspMeta (AC5)", () => {
   it("connect-src is 'none' — the manifest is inlined, nothing to fetch", () => {
@@ -299,6 +300,123 @@ describe("buildCspMeta (AC5)", () => {
     expect(() => buildCspMeta("not a url")).not.toThrow();
     expect(buildCspMeta("not a url").frameDomains).toEqual(["data:"]);
     expect(buildCspMeta("previews.example.com").frameDomains).toEqual(["data:"]); // no scheme
+  });
+
+  // ── M4-07 (DRO-269) hardening ────────────────────────────────────────────
+  //
+  // AC3 forbids `unsafe-inline` and `unsafe-eval` anywhere. AC1 requires the
+  // hardened directive set (no `<form>`/`<object>`/`<embed>`, no arbitrary
+  // `<base href>`), plus a frame-ancestors clamp in the HEADER policy. The
+  // meta version must NOT carry frame-ancestors: browsers ignore that directive
+  // when it appears inside <meta http-equiv> (spec + verified empirically), so
+  // shipping it there is dead weight that muddies the audit.
+
+  it("AC3 — script-src has no unsafe-inline and no unsafe-eval", () => {
+    for (const url of [undefined, "https://previews.example.com"]) {
+      const csp = buildCspMeta(url);
+      expect(csp.policy).not.toContain("'unsafe-inline'");
+      expect(csp.policy).not.toContain("'unsafe-eval'");
+      expect(csp.metaPolicy).not.toContain("'unsafe-inline'");
+      expect(csp.metaPolicy).not.toContain("'unsafe-eval'");
+    }
+  });
+
+  it("AC3 — style-src has no unsafe-inline", () => {
+    const csp = buildCspMeta("https://previews.example.com");
+    // Regex against the specific `style-src …;` directive: assert unsafe-inline
+    // doesn't sneak in via a different directive without failing loudly.
+    const styleSrc = /style-src [^;]*/.exec(csp.policy)?.[0] ?? "";
+    expect(styleSrc).toContain("style-src");
+    expect(styleSrc).not.toContain("'unsafe-inline'");
+  });
+
+  it("AC1 — script-src / style-src reference the sibling ui://genie origin", () => {
+    const csp = buildCspMeta(undefined);
+    // The viewer.js/.css are served as sibling ui:// resources; both must be
+    // allowed. `'self'` alone is insufficient — some browsers scope 'self' to
+    // the containing document, not the ui:// origin these load from.
+    expect(csp.policy).toContain("script-src 'self' ui://genie");
+    expect(csp.policy).toContain("style-src 'self' ui://genie");
+  });
+
+  it("AC1 — adds base-uri 'none', form-action 'none', object-src 'none' (deny form/object/embed)", () => {
+    const csp = buildCspMeta(undefined);
+    expect(csp.policy).toContain("base-uri 'none'");
+    expect(csp.policy).toContain("form-action 'none'");
+    expect(csp.policy).toContain("object-src 'none'");
+  });
+
+  it("AC1 — img-src permits data: + https: (card thumbnails)", () => {
+    const csp = buildCspMeta(undefined);
+    expect(csp.policy).toContain("img-src");
+    const imgSrc = /img-src [^;]*/.exec(csp.policy)?.[0] ?? "";
+    expect(imgSrc).toContain("data:");
+    expect(imgSrc).toContain("https:");
+  });
+
+  it("T-15 (anti-reframe) — header policy has frame-ancestors 'self'", () => {
+    const csp = buildCspMeta(undefined);
+    expect(csp.policy).toContain("frame-ancestors 'self'");
+  });
+
+  it("metaPolicy OMITS frame-ancestors — browsers ignore it in a <meta> tag", () => {
+    // Reason: HTML spec §meta http-equiv Content-Security-Policy explicitly
+    // strips frame-ancestors (and report-uri / sandbox). Shipping it inside
+    // the injected <meta> is dead directive space — the header is where it
+    // actually enforces. Keeping metaPolicy trimmed makes the split explicit.
+    const csp = buildCspMeta(undefined);
+    expect(csp.metaPolicy).not.toContain("frame-ancestors");
+  });
+
+  it("metaPolicy and policy share the same core directives (single source of truth)", () => {
+    const csp = buildCspMeta(undefined);
+    for (const shared of [
+      "default-src 'none'",
+      "script-src 'self' ui://genie",
+      "style-src 'self' ui://genie",
+      "connect-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+      "object-src 'none'",
+    ]) {
+      expect(csp.metaPolicy).toContain(shared);
+      expect(csp.policy).toContain(shared);
+    }
+    // The one directive metaPolicy drops (frame-ancestors) is the ONLY
+    // difference between the two — meta is a strict subset of the header.
+    expect(csp.policy.length).toBeGreaterThan(csp.metaPolicy.length);
+  });
+});
+
+// ─── cspMetaTag (M4-07) ──────────────────────────────────────────────────────
+
+describe("cspMetaTag (AC1 — CSP enforced via injected meta)", () => {
+  it("emits a valid <meta http-equiv=Content-Security-Policy content=…> tag", () => {
+    const tag = cspMetaTag(buildCspMeta(undefined));
+    expect(tag.startsWith("<meta ")).toBe(true);
+    expect(tag).toContain('http-equiv="Content-Security-Policy"');
+    expect(tag).toContain("content=");
+    expect(tag).toContain("default-src 'none'");
+  });
+
+  it("uses the metaPolicy (no frame-ancestors), not the header policy", () => {
+    const csp = buildCspMeta(undefined);
+    const tag = cspMetaTag(csp);
+    expect(tag).not.toContain("frame-ancestors");
+    // And it carries no unsafe-inline/eval (AC3).
+    expect(tag).not.toContain("unsafe-inline");
+    expect(tag).not.toContain("unsafe-eval");
+  });
+
+  it("HTML-escapes the policy string safely for an attribute value", () => {
+    // The policy string is server-authored (no user input), so escaping is
+    // defence-in-depth — but a stray `"` in a future directive must not break
+    // the attribute. Verify the attribute delimiter itself is escaped.
+    const csp = { ...buildCspMeta(undefined), metaPolicy: `default-src 'none'; x "y` };
+    const tag = cspMetaTag(csp);
+    // The tag opens with a `"` and closes with a `"`; the interior `"y` must
+    // have been escaped so the attribute value doesn't terminate early.
+    expect(tag).toMatch(/content="[^"]*&quot;y[^"]*"/);
   });
 });
 
@@ -366,6 +484,57 @@ describe("buildGridDocument", () => {
     // Still valid HTML with an inline manifest, just no viewer chrome.
     expect(html).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
     expect(html.toLowerCase()).toContain('<main id="grid">');
+  });
+
+  // ── M4-07 (DRO-269) — CSP enforcement via injected meta tag ─────────────
+
+  it("AC1 — injects a Content-Security-Policy meta tag into the assembled document", async () => {
+    const html = await buildGridDocument(
+      { ...baseDeps, compile: okCompiler(manifest()) },
+      { kitId: "acme-abc123" },
+    );
+    // The meta MUST be present and placed inside <head> (so a hostile inline
+    // script later in the doc is already governed by the policy when parsed).
+    expect(html).toContain('http-equiv="Content-Security-Policy"');
+    const headOpen = html.indexOf("<head");
+    const headClose = html.indexOf("</head>");
+    const metaAt = html.indexOf('http-equiv="Content-Security-Policy"');
+    expect(headOpen).toBeGreaterThanOrEqual(0);
+    expect(headClose).toBeGreaterThan(headOpen);
+    expect(metaAt).toBeGreaterThan(headOpen);
+    expect(metaAt).toBeLessThan(headClose);
+  });
+
+  it("AC3 — the enforced CSP has no unsafe-inline / unsafe-eval", async () => {
+    const html = await buildGridDocument(
+      { ...baseDeps, compile: okCompiler(manifest()) },
+      { kitId: "acme-abc123" },
+    );
+    // Read just the meta's content=... attribute so we're not accidentally
+    // matching viewer.js/manifest bytes that mention the keywords.
+    const attr = /http-equiv="Content-Security-Policy"\s+content="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(attr).not.toContain("unsafe-inline");
+    expect(attr).not.toContain("unsafe-eval");
+    expect(attr).toContain("default-src 'none'");
+    expect(attr).toContain("connect-src 'none'");
+    expect(attr).toContain("object-src 'none'");
+    expect(attr).toContain("base-uri 'none'");
+  });
+
+  it("AC1 — the fallback shell ALSO carries the enforced CSP meta", async () => {
+    const badReader: AssetReader = async () => {
+      throw new Error("viewer package not installed");
+    };
+    const html = await buildGridDocument(
+      { ...baseDeps, readAsset: badReader, compile: okCompiler(manifest()) },
+      { kitId: "acme-abc123" },
+    );
+    // A viewer-asset failure must NOT downgrade the security posture — the
+    // dependency-free fallback shell must be as locked down as the real one.
+    expect(html).toContain('http-equiv="Content-Security-Policy"');
+    const attr = /http-equiv="Content-Security-Policy"\s+content="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(attr).not.toContain("unsafe-inline");
+    expect(attr).toContain("default-src 'none'");
   });
 });
 

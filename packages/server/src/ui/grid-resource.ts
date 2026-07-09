@@ -277,7 +277,28 @@ export function inlineManifest(indexHtml: string, manifest: Manifest): string {
 
 // ─── AC5 CSP allow-list ──────────────────────────────────────────────────────
 
-/** The MCP-Apps CSP allow-list carried on the resource `_meta` (AC5). */
+/**
+ * The MCP-Apps CSP allow-list carried on the resource `_meta` (AC5), plus the
+ * two concrete policy strings the embedded tier enforces (M4-07 / DRO-269).
+ *
+ * Two policy strings — same source of truth, different sinks:
+ *   • {@link metaPolicy} is what {@link cspMetaTag} writes into the served
+ *     document's `<meta http-equiv="Content-Security-Policy">`. Browsers
+ *     IGNORE `frame-ancestors` (and `report-uri` / `sandbox`) when they appear
+ *     inside a meta tag — HTML spec + CSP-3 §12.1 — so those directives are
+ *     stripped from `metaPolicy` to keep it truthful about what actually
+ *     enforces at parse time. Everything else the meta *can* enforce (`default-
+ *     src`, `script-src`, `style-src`, `img-src`, `frame-src`, `connect-src`,
+ *     `object-src`, `base-uri`, `form-action`) is present.
+ *   • {@link policy} is the FULL policy — same directives as `metaPolicy`,
+ *     plus `frame-ancestors 'self'` (T-15 anti-reframe). This is what a host
+ *     that also emits the CSP as an HTTP `Content-Security-Policy` HEADER
+ *     should use; browsers respect `frame-ancestors` there.
+ *
+ * Splitting the two is the point of M4-07/AC1: the enforced meta must not
+ * carry directives the browser will drop, and the header must not miss
+ * frame-ancestors just because the meta had to.
+ */
 export interface GridCspMeta {
   /** `fetch()`/XHR targets — empty: the manifest is inlined, nothing to fetch. */
   connectDomains: string[];
@@ -285,18 +306,52 @@ export interface GridCspMeta {
   resourceDomains: string[];
   /** Origins allowed as per-card iframe sources (the previews host or `data:`). */
   frameDomains: string[];
-  /** A concrete CSP header string derived from the allow-list (RFC §6.5). */
+  /**
+   * The full CSP string suitable for the HTTP `Content-Security-Policy`
+   * header, including `frame-ancestors 'self'`. Kept for hosts / operators
+   * who wire CSP at the response header (RFC §6.5 / §10 "Cross-cutting
+   * controls").
+   */
   policy: string;
+  /**
+   * The subset of {@link policy} that is legal inside an HTML `<meta
+   * http-equiv="Content-Security-Policy">`. Same directives except
+   * `frame-ancestors` — browsers ignore that one in a meta and callers should
+   * not be misled into thinking they've clamped reframing when they haven't.
+   * Written into the served document by {@link cspMetaTag}.
+   */
+  metaPolicy: string;
 }
 
 /**
- * Build the AC5 CSP allow-list for a given previews configuration. The card
- * iframes load from the previews origin when configured, else from `data:`
- * (solo dev). `connectDomains` is always empty — `connect-src 'none'` — because
- * the manifest travels inline (AC2); there is nothing to fetch. `img-src`
- * permits `data:`/`https:` for card thumbnails. This is the shape
- * `@modelcontextprotocol/ext-apps` would carry; reproduced here since that dep
- * is absent (see module header).
+ * Build the AC5 CSP allow-list AND the two hardened policy strings (M4-07 /
+ * DRO-269 AC1+AC3) for a given previews configuration.
+ *
+ * The card iframes load from the previews origin when configured, else from
+ * `data:` (solo dev). `connectDomains` is always empty — `connect-src 'none'`
+ * — because the manifest travels inline (AC2); there is nothing to fetch.
+ * `img-src` permits `data:`/`https:` for card thumbnails. The shape mirrors
+ * what `@modelcontextprotocol/ext-apps` would carry; reproduced here since
+ * that dep is absent (see module header).
+ *
+ * Hardening applied vs the pre-M4-07 policy:
+ *   • Removed `'unsafe-inline'` from `script-src` and `style-src` (AC3).
+ *     The embedded shell has ZERO executable inline scripts — the manifest
+ *     data island is `<script type="application/json">`, which is NOT executed
+ *     by the browser and needs no hash. `viewer.js` and `viewer.css` are
+ *     EXTERNAL siblings served as `ui://genie/viewer.js` /
+ *     `ui://genie/viewer.css`; `script-src 'self' ui://genie` allows them
+ *     (whether the browser scopes `'self'` to the containing document or the
+ *     ui:// origin, one of the two matches — belt + braces). `viewer.js` sets
+ *     `iframe.style.aspectRatio` via CSSOM (`el.style.*`), which does NOT
+ *     require `'unsafe-inline'` — style-src governs `<style>`/`style="…"`
+ *     attributes, not scripted CSSOM mutations.
+ *   • Added `base-uri 'none'` — no `<base href>` can redirect relative URLs
+ *     (viewer.js's `./viewer.css` reference in particular) out from under us.
+ *   • Added `form-action 'none'` and `object-src 'none'` — deny `<form>` /
+ *     `<object>` / `<embed>` per AC1's "deny form/object/embed" line.
+ *   • Split into `metaPolicy` (injected) and `policy` (header, +frame-
+ *     ancestors 'self'). See {@link GridCspMeta}.
  */
 export function buildCspMeta(previewsBaseUrl: string | undefined): GridCspMeta {
   // Validate via the shared normaliser so a malformed GENIE_PREVIEWS_BASE_URL
@@ -307,16 +362,82 @@ export function buildCspMeta(previewsBaseUrl: string | undefined): GridCspMeta {
   const frameDomains = base !== undefined ? [base.origin] : ["data:"];
   const resourceDomains = [RESOURCE_ORIGIN];
   const frameSrc = frameDomains.join(" ");
-  const resourceSrc = resourceDomains.join(" ");
-  const policy = [
+  // The `'self'` keyword pairs with the sibling `ui://genie` origin so both
+  // possible browser interpretations resolve: `'self'` may scope to the
+  // containing document, `ui://genie` is the explicit origin the sibling
+  // viewer.js/.css load from. Same list for script and style — the two live
+  // in the same origin as external files.
+  const siblingSrc = `'self' ${resourceDomains.join(" ")}`;
+
+  // ── Core directives shared by BOTH strings ──
+  // (Kept as an ordered list so `metaPolicy` and `policy` differ only in the
+  // `frame-ancestors` append; the two are provably in lockstep and the unit
+  // test "metaPolicy and policy share the same core directives" enforces it.)
+  const core = [
     "default-src 'none'",
-    `script-src 'unsafe-inline' ${resourceSrc}`,
-    `style-src 'unsafe-inline' ${resourceSrc}`,
+    `script-src ${siblingSrc}`,
+    `style-src ${siblingSrc}`,
     "img-src data: https:",
     `frame-src ${frameSrc}`,
     "connect-src 'none'",
-  ].join("; ");
-  return { connectDomains: [], resourceDomains, frameDomains, policy };
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+  ];
+
+  const metaPolicy = core.join("; ");
+  // Header policy = core + frame-ancestors 'self' (T-15 anti-reframe). The
+  // browser silently DROPS frame-ancestors when it's inside a meta, so this
+  // directive only ever appears on the header form — see GridCspMeta.
+  const policy = [...core, "frame-ancestors 'self'"].join("; ");
+
+  return { connectDomains: [], resourceDomains, frameDomains, policy, metaPolicy };
+}
+
+/**
+ * Render a `<meta http-equiv="Content-Security-Policy" content="…">` tag for
+ * the given policy meta. Uses {@link GridCspMeta.metaPolicy} — the subset of
+ * directives browsers actually enforce inside a meta (see GridCspMeta).
+ *
+ * The `content` attribute value is HTML-attribute-escaped (`&`, `"`, `<`, `>`)
+ * defensively. In current use the policy string is server-authored with no
+ * user input, so the escape is defence-in-depth against a future change that
+ * accidentally embeds a `"` — without it the attribute would terminate early
+ * and the policy would silently degrade.
+ */
+export function cspMetaTag(meta: GridCspMeta): string {
+  const attr = escapeHtmlAttribute(meta.metaPolicy);
+  return `<meta http-equiv="Content-Security-Policy" content="${attr}">`;
+}
+
+/**
+ * Escape a string for safe embedding inside a `"`-quoted HTML attribute value.
+ * Handles the four characters `&` (must be first, else it double-escapes
+ * subsequent `&`s), `"` (attribute delimiter), `<`, `>`. Defence-in-depth for
+ * {@link cspMetaTag} — the policy is server-authored today, but a future
+ * directive that legitimately contains a `"` (e.g. a hostname in quotes) must
+ * not break the attribute.
+ */
+function escapeHtmlAttribute(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * Inject the enforced CSP meta into an assembled document. Placed at the very
+ * top of `<head>` so every subsequent element — the manifest data island,
+ * external `viewer.js`/`viewer.css`, any inline attributes — is parsed under
+ * the policy. If the shell has no `<head>` (defensive; every shipped shell
+ * does) the tag is prepended so it still parses first.
+ */
+export function injectCspMeta(html: string, meta: GridCspMeta): string {
+  const tag = cspMetaTag(meta);
+  const headOpen = html.indexOf("<head>");
+  if (headOpen === -1) return tag + html;
+  return html.slice(0, headOpen + "<head>".length) + tag + html.slice(headOpen + "<head>".length);
 }
 
 /** The `_meta` object attached to the grid resource (namespaced; provisional). */
@@ -390,11 +511,15 @@ function isInside(parent: string, child: string): boolean {
 }
 
 /** A minimal, dependency-free shell used only when the viewer assets can't be
- * read — keeps `resources/read` answering with valid HTML rather than erroring. */
-function fallbackShell(manifest: Manifest): string {
+ * read — keeps `resources/read` answering with valid HTML rather than erroring.
+ * Carries the SAME enforced CSP meta as the full shell: an asset-read failure
+ * must not silently downgrade the security posture (M4-07 AC1). */
+function fallbackShell(manifest: Manifest, cspMeta: GridCspMeta): string {
   const json = escapeJsonForScript(JSON.stringify(manifest));
   return (
-    '<!doctype html><html lang="en"><head><meta charset="utf-8" />' +
+    "<!doctype html><html lang=\"en\"><head>" +
+    cspMetaTag(cspMeta) +
+    "<meta charset=\"utf-8\" />" +
     `<title>genie — preview</title>` +
     `<script type="application/json" id="${MANIFEST_ELEMENT_ID}">${json}</script>` +
     '</head><body><main id="grid"></main>' +
@@ -417,16 +542,19 @@ interface ResolvedDeps {
 /**
  * Produce the embedded grid HTML for a resource URI's query params. Resolves
  * the kit (path-guarded), compiles + filters the manifest, rewrites card paths
- * for the embedded tier (AC4), and inlines the result into the viewer shell
- * (AC2/AC3). Every failure mode degrades to a still-valid document: an absent/
- * invalid `kitId` or an uncompilable kit yields an EMPTY manifest (the viewer's
- * empty state); unreadable viewer assets yield the {@link fallbackShell}.
+ * for the embedded tier (AC4), inlines the result into the viewer shell
+ * (AC2/AC3), and injects the enforced CSP meta (M4-07 AC1) so browsers apply
+ * the hardened policy at parse time. Every failure mode degrades to a still-
+ * valid, still-hardened document: an absent/invalid `kitId` or an
+ * uncompilable kit yields an EMPTY manifest (the viewer's empty state);
+ * unreadable viewer assets yield the {@link fallbackShell} (also CSP-injected).
  */
 export async function buildGridDocument(
   deps: ResolvedDeps,
   params: { kitId?: string; componentName?: string; group?: string },
 ): Promise<string> {
   const kitDir = resolveKitDir(deps.kitsRoot, params.kitId);
+  const cspMeta = buildCspMeta(deps.previewsBaseUrl);
 
   let manifest: Manifest = emptyManifest();
   if (kitDir !== null) {
@@ -451,9 +579,9 @@ export async function buildGridDocument(
   try {
     indexHtml = await deps.readAsset("index.html");
   } catch {
-    return fallbackShell(manifest);
+    return fallbackShell(manifest, cspMeta);
   }
-  return inlineManifest(indexHtml, manifest);
+  return injectCspMeta(inlineManifest(indexHtml, manifest), cspMeta);
 }
 
 /** An empty-but-valid manifest (viewer renders its empty state). */

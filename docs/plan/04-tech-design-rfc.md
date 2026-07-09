@@ -796,9 +796,30 @@ calls.
 
 Message origin is validated against `config.hostOrigin`; unknown origins are silently dropped.
 
-**CSP.** The HTML payload sets `Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: https:; frame-src 'self'; connect-src 'none'`. `connect-src 'none'` deliberately blocks all `fetch()` — the manifest is inlined, there is nothing to fetch.
+**CSP.** The HTML payload injects a `<meta http-equiv="Content-Security-Policy">` into the served document AND (recommended, for hosts that also front the response with a real HTTP header) exposes the equivalent header string on the resource `_meta`. The hardened policy (M4-07 / DRO-269):
 
-**Iframe sandbox.** The harness embeds `ui://genie/grid` with `<iframe sandbox="allow-scripts">` (no `allow-same-origin`); per-card preview iframes inside the grid use `<iframe sandbox="allow-scripts">` too, so card scripts cannot read the parent's storage even if they escape their own iframe.
+```
+default-src 'none';
+script-src 'self' ui://genie;   # NO 'unsafe-inline', NO 'unsafe-eval'
+style-src  'self' ui://genie;   # NO 'unsafe-inline'
+img-src    data: https:;
+frame-src  <previews-origin> | data:;
+connect-src 'none';
+object-src 'none';
+base-uri   'none';
+form-action 'none';
+frame-ancestors 'self';         # HEADER ONLY — browsers drop this in <meta>
+```
+
+The two strings are one source of truth: the injected `metaPolicy` is the header form minus `frame-ancestors`. Browsers ignore `frame-ancestors` (and `report-uri` / `sandbox`) when they appear inside a meta tag per the HTML spec + CSP-3 §12.1, so shipping it there would be dead directive space — the split keeps the meta truthful about what actually enforces at parse time while the header still clamps reframing (T-15).
+
+Why the strict `script-src` works: the embedded shell has ZERO executable inline scripts. The manifest travels as `<script type="application/json">` — a data island the browser does not execute (and therefore does not need a hash for). `viewer.js` and `viewer.css` are EXTERNAL siblings served as `ui://genie/viewer.js` / `ui://genie/viewer.css`, allowed by `'self' ui://genie` (belt + braces: whichever the browser scopes `'self'` to, the sibling origin is also explicitly named). `viewer.js` sets `iframe.style.aspectRatio` via CSSOM (`el.style.*`), which is NOT governed by `style-src` — that directive controls `<style>` and `style="…"` attributes, not scripted CSSOM mutations. So the hardened policy is a strict superset of the shell's actual needs.
+
+`connect-src 'none'` deliberately blocks all `fetch()` — the manifest is inlined, there is nothing to fetch.
+
+**Iframe sandbox.** The harness embeds `ui://genie/grid` with `<iframe sandbox="allow-scripts">` (no `allow-same-origin`); per-card preview iframes inside the grid use `<iframe sandbox="allow-scripts">` too, so card scripts cannot read the parent's storage even if they escape their own iframe. `data:` card iframes INHERIT the outer grid's CSP, so the same "no inline script" ban applies inside them — solo-dev `data:` transport is safe by construction. Verified end-to-end with real Chromium in `packages/server/src/ui/grid-resource.csp.chromium.test.ts` (skipped locally when Chromium can't launch; the `viewer-a11y` CI leg sets `GENIE_REQUIRE_CSP_BROWSER=1` so the leg fails loudly on any regression).
+
+**HMR (M4-04 / DRO-266) non-intersection.** The embedded `ui://` tier NEVER runs HMR — the manifest is inlined, `connect-src 'none'` blocks the Vite WebSocket, and there is no dev server in this vehicle. HMR lives ONLY on the Vite standalone tier (`file://` / localhost), which carries NO injected CSP (brand fonts + fetch(manifest) are its point). The two vehicles never coexist in one document, so hardening the embedded tier CANNOT break HMR: they are orthogonal, not layered.
 
 ### 6.6 LLM endpoint client
 
@@ -2613,7 +2634,7 @@ Threats listed below cover the MCP server, the LLM endpoint call path, the git-h
 | T-12 | **Denial of Service**      | Chokidar watcher exhausts inotify handles on the host                     | Watcher only watches `**/components/**/*.html`, not the whole tree; uses `useFsEvents` on macOS where possible; ulimit recommendation in deployment doc.                                                                                                                                              | 2        |
 | T-13 | **Elevation of privilege** | Path traversal in `write_files` overwrites `/etc/passwd`                  | Same normalization as T-08 applied at write time; additional check that resolved path is inside the active plan's `localDir`; reject paths matching `/^\.{1,2}([\/\\]                                                                                                                                 | $)/`.    | 1   |
 | T-14 | **Elevation of privilege** | OAuth refresh token reuse                                                 | Per OAuth 2.1 BCP, refresh tokens rotate on every refresh; presenting an old refresh token after rotation triggers global revocation of the lineage.                                                                                                                                                  | 2        |
-| T-15 | **Elevation of privilege** | `ui://` payload escapes iframe sandbox via opener / postMessage           | `sandbox="allow-scripts"` without `allow-same-origin` prevents DOM access; `window.opener` is null; outgoing `postMessage` is validated against `config.hostOrigin` whitelist. CSP `frame-ancestors 'self'` blocks reframing.                                                                         | 2        |
+| T-15 | **Elevation of privilege** | `ui://` payload escapes iframe sandbox via opener / postMessage           | `sandbox="allow-scripts"` without `allow-same-origin` prevents DOM access; `window.opener` is null; outgoing `postMessage` is validated against `config.hostOrigin` whitelist. CSP `frame-ancestors 'self'` blocks reframing (HEADER form only — browsers drop `frame-ancestors` from `<meta>`, so the injected meta omits it; the response header carries it). M4-07 hardening additionally removes `'unsafe-inline'`/`'unsafe-eval'`, adds `object-src 'none'`, `base-uri 'none'`, `form-action 'none'`, and injects the meta directly into the served document as belt + braces so a mis-configured host that forgets the HTTP header still gets the parse-time enforcement.                                                                         | 2        |
 | T-16 | **Information disclosure** | LLM gateway logs the model prompt server-side, leaking proprietary tokens | Operators keep gateways on private networks when self-hosted; when the gateway is LiteLLM we add `X-Litellm-Log-Body: false` header per [docs.litellm.ai] to suppress body logging; sensitive tokens (e.g. `tokens.json` private values) are redacted from the prompt with `[REDACTED]` placeholders. | 3        |
 | T-17 | **DoS / Tampering**        | Disk fills on the operator storage volume, all writes hang                | Reject writes when `df` reports <5% free on the storage volume; emit `genie.storage.disk_full_block` metric; alert at 90%.                                                                                                                                                                            | 3        |
 
@@ -2628,7 +2649,7 @@ Threats listed below cover the MCP server, the LLM endpoint call path, the git-h
   previews.genie.local  { root * /var/lib/genie/previews; file_server }
   ```
   This puts each preview's `file://`-equivalent on a cookieless, storageless origin.
-- **CSP** — On every HTML response from the viewer or the `ui://` resource: `Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: https:; frame-src 'self'; connect-src 'none'; frame-ancestors 'self'`.
+- **CSP** — On every HTML response from the viewer or the `ui://` resource: `Content-Security-Policy: default-src 'none'; script-src 'self' ui://genie; style-src 'self' ui://genie; img-src data: https:; frame-src <previews-origin> | data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`. **No `'unsafe-inline'`, no `'unsafe-eval'`** (M4-07 / DRO-269) — the embedded shell has zero executable inline scripts (the manifest is a `<script type="application/json">` data island; viewer.js/.css are external siblings), so the strict `script-src` / `style-src` is a superset of the shell's actual needs. The policy is BOTH injected as a `<meta http-equiv="Content-Security-Policy">` into the served document (browsers strip `frame-ancestors` / `report-uri` / `sandbox` from meta — the meta form omits those) AND emitted on the response header (which carries `frame-ancestors 'self'` for T-15). Verified in Chromium end-to-end: hostile `<img src=x onerror=…>` never fires; `top.location = …` from a sandboxed card iframe is refused; a `data:` card inherits the outer CSP and its own inline script is likewise blocked (`packages/server/src/ui/grid-resource.csp.chromium.test.ts`, CI leg `viewer-a11y` with `GENIE_REQUIRE_CSP_BROWSER=1`).
 - **LLM API-key handling** — Loaded from `process.env[config.llmApiKeyEnv]` exactly once at startup. Held in a `Symbol`-keyed module-private slot:
   - not enumerable;
   - not assignable;
