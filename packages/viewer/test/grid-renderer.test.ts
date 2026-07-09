@@ -814,6 +814,37 @@ describe("inlined manifest (embedded tier — no fetch under connect-src 'none')
     expect(visible.map((el) => el.getAttribute("data-name"))).toEqual(["primary buttons"]);
   });
 
+  // M4-04 (DRO-266) — regression coverage for a Copilot PR-review finding on
+  // PR #175: the postMessage bridge exists SPECIFICALLY for this tier (its
+  // `connect-src 'none'` CSP blocks a direct WebSocket, same as it blocks
+  // fetch), but an earlier revision's `boot` never called `initHmr` on the
+  // inline-manifest path — only on the fetch path — so the bridge was dead
+  // code exactly where it was needed. This proves `boot`, on the SAME inline
+  // path the tests above exercise, actually wires the `message` listener.
+  it("boot wires the postMessage HMR bridge on the inline path too (embedded ui:// tier)", async () => {
+    const { hooks, document, window } = loadHooksFromHtml(
+      htmlWithInlineManifest(JSON.stringify(twoGroupManifest())),
+    );
+    const grid = document.getElementById("grid") as HTMLElement;
+    await hooks.boot(document, forbiddenFetch());
+
+    const buttonIframe = grid.querySelector(
+      'iframe[data-path="components/actions/Button/preview.html"]',
+    ) as HTMLIFrameElement;
+    const originalSrc = buttonIframe.getAttribute("src");
+
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        data: { type: "refresh", path: "components/actions/Button/preview.html" },
+      }),
+    );
+
+    // A live bridge cache-busts the targeted card's src; a dead one (the bug)
+    // leaves it untouched.
+    expect(buttonIframe.getAttribute("src")).not.toBe(originalSrc);
+    expect(buttonIframe.getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
+  });
+
   it("boot renders the empty state from an inline empty manifest (still no fetch)", async () => {
     const { hooks, document } = loadHooksFromHtml(
       htmlWithInlineManifest(JSON.stringify(manifest([]))),

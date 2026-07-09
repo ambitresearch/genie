@@ -903,6 +903,21 @@
       try {
         renderGrid(doc, grid, inline);
         wireSearch(doc, grid);
+        // M4-04 (DRO-266) — this tier is EXACTLY who the postMessage bridge
+        // exists for (its strict CSP, connect-src 'none', blocks fetch AND a
+        // direct WebSocket alike — see initHmr's own header). hmrSocketUrl
+        // resolves to null here (no http(s) origin with a host — see its own
+        // doc), so initHmr transparently skips the WS + polling paths and
+        // wires ONLY the `message` listener: no network access is attempted,
+        // satisfying the CSP without special-casing this branch. Omitting
+        // this call (as an earlier revision did) left the bridge dead code in
+        // the one tier it was built for. Best-effort, like the fetch path
+        // below: a throw here must never take down an otherwise-good render.
+        try {
+          initHmr(doc, { initialManifest: inline });
+        } catch {
+          /* live refresh is an enhancement, never a boot blocker */
+        }
       } catch (err) {
         var inlineDetail = err && err.message ? err.message : String(err);
         renderError(doc, grid, inlineDetail);
