@@ -28,6 +28,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import fg from "fast-glob";
 import type { Plugin, UserConfig } from "vite";
 
+import { createHmrPlugin } from "./hmr-plugin.js";
+
 /** RFC §6.9 / §14 default dev-server port. Overridable via `--port` (M4-08). */
 export const DEFAULT_VIEWER_PORT = 5173;
 
@@ -204,6 +206,11 @@ export function createViewerConfig(options: ViewerConfigOptions): UserConfig {
       target: BUILD_TARGET,
       rollupOptions: { input },
     },
-    plugins: [noStoreHtmlPlugin()],
+    // AC6 (M4-02) — never let the browser reuse a cached preview; M4-04 (DRO-266)
+    // — the per-card HMR bridge (a WebSocket on `/__genie_hmr`, driven by Vite's
+    // own file watcher). Both are `apply: "serve"`, so `vite build` never sees
+    // them; order is irrelevant (no-store touches HTTP responses, HMR touches the
+    // `upgrade` handshake + watcher — disjoint surfaces).
+    plugins: [noStoreHtmlPlugin(), createHmrPlugin()],
   };
 }

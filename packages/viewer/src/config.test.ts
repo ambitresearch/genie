@@ -209,6 +209,18 @@ describe("createViewerConfig", () => {
     expect(names).toContain("genie-viewer:no-store-html");
   });
 
+  it("M4-04 (DRO-266): registers the per-card HMR plugin", () => {
+    // The HMR bridge (WebSocket on /__genie_hmr) is a serve-only plugin wired
+    // in alongside the no-store one; assert it's present by name so a
+    // regression that drops it from the plugins array trips here rather than
+    // silently disabling live per-card refresh.
+    const config = createViewerConfig({ root: KIT });
+    const names = (config.plugins ?? [])
+      .flat()
+      .map((p) => (p && typeof p === "object" && "name" in p ? p.name : undefined));
+    expect(names).toContain("genie-viewer:hmr");
+  });
+
   it("is JSON-serialisable in its data-only shape (config snapshot)", () => {
     // The DoD asks for a "config snapshot test". Snapshot the serialisable
     // core (paths made root-relative so the snapshot is host-independent);

@@ -61,6 +61,27 @@
           spellcheck="false"
         />
       </div>
+
+      <!--
+        M4-04 (DRO-266) — HMR reload counter (AC6): a debugging read-out of how
+        many per-card refreshes have fired this session. Collapsible via a native
+        <details> (no JS needed to toggle). Structural chrome only — neutral
+        ink/mono, NEVER the clay accent (identity contract: clay marks
+        generate/refine moments, not diagnostics). `viewer.js`'s bumpReloadCounter
+        writes the live total into #hmr-count (and mirrors it to data-count for
+        tests). Static tools (file:// open, embedded ui:// grid) that never
+        receive an HMR event simply leave it at 0.
+      -->
+      <details class="hmr-meter">
+        <summary class="hmr-meter__summary">
+          HMR
+          <span id="hmr-count" class="hmr-meter__count" data-count="0" aria-live="polite">0</span>
+        </summary>
+        <p class="hmr-meter__detail">
+          Per-card reloads since load. Edit a component's <code>preview.html</code> to see one card
+          refresh in place.
+        </p>
+      </details>
     </header>
 
     <main id="grid" class="app-grid" aria-live="polite">

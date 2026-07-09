@@ -294,6 +294,50 @@
     color: var(--color-ink-3);
   }
 
+  /* M4-04 (DRO-266) — HMR reload meter (AC6): a quiet, collapsible diagnostic.
+     Structural chrome ONLY — neutral ink + mono, NEVER the clay accent (identity
+     contract: clay is for generate/refine, not diagnostics). */
+  .hmr-meter {
+    flex: 0 0 auto;
+    font-size: var(--text-xs);
+    color: var(--color-ink-3);
+  }
+
+  .hmr-meter__summary {
+    cursor: pointer;
+    list-style: none;
+    padding: var(--space-2xs) var(--space-xs);
+    font-family: var(--font-mono);
+    letter-spacing: var(--tracking-wide);
+    color: var(--color-ink-3);
+    background: var(--color-paper-2);
+    border: var(--rule-hair) solid var(--color-hairline-2);
+    border-radius: var(--radius-sm);
+    user-select: none;
+  }
+
+  .hmr-meter__summary::-webkit-details-marker {
+    display: none;
+  }
+
+  /* The live count — inks up (ink-2) so a nonzero total reads at a glance,
+     still neutral (no clay). */
+  .hmr-meter__count {
+    font-weight: 600;
+    color: var(--color-ink-2);
+  }
+
+  .hmr-meter__detail {
+    max-width: 30ch;
+    margin: var(--space-2xs) 0 0;
+    color: var(--color-ink-3);
+  }
+
+  .hmr-meter__detail code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+
   /* Group section: a hairline-ruled title, then the card grid. */
   .ds-group__title {
     margin-bottom: var(--space-md);

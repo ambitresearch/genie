@@ -34,8 +34,10 @@
     "@axe-core/playwright": "4.12.1",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^26.0.0",
+    "@types/ws": "^8.18.1",
     "chokidar": "^3.6.0",
     "jsdom": "^25.0.1",
-    "playwright": "^1.61.1"
+    "playwright": "^1.61.1",
+    "ws": "^8.21.0"
   }
 }

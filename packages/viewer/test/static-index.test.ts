@@ -89,6 +89,24 @@ describe("static/index.html (AC1)", () => {
       (q.id ? doc.querySelector(`label[for="${q.id}"]`)?.textContent : null);
     expect(labelled, "search input needs an aria-label or a <label for>").toBeTruthy();
   });
+
+  it("M4-04 (DRO-266) — has a collapsible HMR reload counter (#hmr-count) in the header (AC6)", () => {
+    // AC6: "Reload count shown in viewer header for debugging (collapsible)."
+    // A native <details> makes it collapsible with zero JS; #hmr-count is the
+    // live read-out viewer.js's bumpReloadCounter writes into.
+    const meter = doc.querySelector("header details.hmr-meter");
+    expect(meter, "collapsible <details> HMR meter in the header").not.toBeNull();
+    expect(
+      meter?.querySelector("summary"),
+      "the <details> needs a <summary> to toggle",
+    ).not.toBeNull();
+
+    const count = doc.getElementById("hmr-count");
+    expect(count, "#hmr-count live read-out").not.toBeNull();
+    // Starts at zero (a fresh page has fired no reloads yet).
+    expect(count?.getAttribute("data-count")).toBe("0");
+    expect(count?.textContent?.trim()).toBe("0");
+  });
 });
 
 // ── viewer.css (AC7 + Impl Notes) ───────────────────────────────────────────
