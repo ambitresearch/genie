@@ -207,6 +207,78 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # ── Viewer end-to-end gate (M4-10 / DRO-272) ─────────────────────────────────
+  # `packages/e2e/test/m4-viewer.test.ts` — real headless Chromium driving the
+  # three delivery vehicles for one fixture kit (file:// / localhost-Vite /
+  # ui://genie/grid) and asserting they render byte-identical cards (RFC G-5).
+  # This is the M4 ACCEPTANCE GATE. Kept as its own job (not folded into the
+  # `check` matrix) for the same reason as `viewer-a11y` above: it needs a real
+  # browser binary the fast matrix legs deliberately don't install, AND it boots
+  # a real Vite dev server per run. The suite's own Chromium self-probe (see the
+  # test file header) makes it skip cleanly on the matrix legs rather than fail;
+  # GENIE_REQUIRE_VIEWER_E2E=1 below makes THIS job fail loudly instead of
+  # silently skipping if its browser install ever breaks — the same "vacuous
+  # skip must fail somewhere" contract the Gitea/M2/a11y legs already use. Runs
+  # on every PR (needs no daemon or paid API), like the a11y leg.
+  viewer-e2e:
+    name: viewer E2E gate (three vehicles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        # Same ERR_PNPM_EAGAIN hardlink-fallback retry as the other jobs.
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build @genie/server + @genie/viewer
+        # The E2E suite imports the compiled viewer package (createViewerConfig)
+        # for vehicle (b) and the server's manifest compiler + grid-resource for
+        # vehicle (c). Build both so those imports resolve to real dist output.
+        run: pnpm -r --filter @genie/server --filter @genie/viewer build
+
+      - name: Install Playwright Chromium
+        # --with-deps pulls the OS package closure (libglib/libnss/fontconfig
+        # etc.) ubuntu-latest doesn't ship by default; a real CI runner apt-gets
+        # it. Installed from @genie/e2e (where playwright is now a devDependency).
+        run: pnpm --filter @genie/e2e exec playwright install --with-deps chromium
+
+      - name: Run viewer E2E gate (AC1-AC4, AC7, AC8)
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_REQUIRE_VIEWER_E2E: "1"
+        run: pnpm --filter @genie/e2e test:e2e:viewer
+
+      - name: Upload vehicle screenshots (AC7)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: m4-viewer-screenshots
+          path: reports/m4-viewer
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-viewer-e2e
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
   # ── M2 real-LLM-endpoint canary (M2-09 / DRO-256) ────────────────────────────
   # `packages/e2e/test/m2-generation.test.ts` — the ONE test in the whole suite
   # that spends real dollars against a real model. Kept as its own job, gated

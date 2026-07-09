@@ -6,7 +6,8 @@
   "description": "genie end-to-end + harness smoke tests. Hosts the M1 19-tool conformance suite (M1-14 / DRO-318).",
   "scripts": {
     "build": "echo \"@genie/e2e: test-only package, nothing to build\"",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:e2e:viewer": "vitest run --root ../.. --config vitest.config.ts packages/e2e/test/m4-viewer.test.ts"
   },
   "license": "MIT",
   "author": "Roshan Gautam",
@@ -15,7 +16,10 @@
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
+    "@genie/viewer": "workspace:*",
     "@types/node": "^26.0.0",
-    "testcontainers": "^12.0.4"
+    "playwright": "^1.61.1",
+    "testcontainers": "^12.0.4",
+    "vite": "^8.1.3"
   }
 }
