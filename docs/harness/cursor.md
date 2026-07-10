@@ -1,12 +1,29 @@
 # genie in Cursor / VS Code / ChatGPT
 
-These harnesses are **`ui://`-capable** but do **not** load Agent Skills. So:
+Cursor and VS Code Copilot support Agent Skills as well as inline `ui://`
+rendering. ChatGPT's remote connector renders `ui://`, but does not consume a
+Skill from your local filesystem.
 
-- You do **not** install a Skill. The workflow guidance is carried by the MCP
-  **tool descriptions** themselves — the model reads them and sequences
-  `conjure → plan → write_files → preview` on its own.
+- Cursor can load genie's portable Skill; tool descriptions remain fallback
+  guidance when it is not installed or enabled.
 - `preview` renders the `ui://genie/grid` card grid **inline, in-panel** — no
   browser tab, so `GENIE_PREVIEW_NO_OPEN` doesn't apply.
+
+## Install the Agent Skill in Cursor
+
+Cursor discovers skills from the locations documented in its
+[Agent Skills guide](https://cursor.com/docs/skills). For a user-level install
+available across projects:
+
+```bash
+mkdir -p ~/.cursor/skills
+cp -R packages/plugin/skills/genie ~/.cursor/skills/genie
+```
+
+For a project-only install, copy the same directory to
+`.cursor/skills/genie` (or the shared `.agents/skills/genie` location). Restart
+Cursor or reload skills after copying. VS Code Copilot uses its own Skill path;
+see [copilot.md](./copilot.md).
 
 ## Register a local server (Cursor / VS Code)
 
@@ -41,6 +58,6 @@ the Cursor stdio snippet into ChatGPT.
 
 ## Using it
 
-Just ask in chat — "generate a Card component and show me." The model reads the
-tool descriptions, runs the four-verb chain, and the inline grid appears when
-`preview` is called. Relay the viewer URL it returns as a backup way in.
+Just ask in chat — "generate a Card component and show me." The Skill (or the
+tool-description fallback) runs the four-verb chain, and the inline grid appears
+when `preview` is called. Relay the viewer URL it returns as a backup way in.

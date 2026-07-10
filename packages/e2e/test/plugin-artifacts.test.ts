@@ -45,4 +45,21 @@ describe("Claude plugin artifacts", () => {
     expect(claude).toMatch(/claude\.ai cannot launch a\s+local stdio command/);
     expect(claude).toContain("mkdir -p ~/.claude/skills ~/.claude/commands");
   });
+
+  it("documents portable Agent Skill installation for supported harnesses", () => {
+    const cursor = readFileSync(resolve(ROOT, "docs/harness/cursor.md"), "utf8");
+    const codex = readFileSync(resolve(ROOT, "docs/harness/codex.md"), "utf8");
+    const copilot = readFileSync(resolve(ROOT, "docs/harness/copilot.md"), "utf8");
+    const overview = readFileSync(resolve(ROOT, "docs/harness/README.md"), "utf8");
+    const design = readFileSync(
+      resolve(ROOT, "docs/superpowers/specs/2026-07-05-genie-chat-invocation-design.md"),
+      "utf8",
+    );
+
+    expect(cursor).toContain("~/.cursor/skills/genie");
+    expect(codex).toContain("~/.agents/skills/genie");
+    expect(copilot).toContain("~/.copilot/skills/genie");
+    expect(overview).not.toContain("Only Claude Code / Claude Desktop / claude.ai do");
+    expect(design).not.toContain("Cursor, Codex CLI, and Copilot have no equivalent");
+  });
 });

@@ -1,14 +1,29 @@
 # genie in Codex CLI
 
-Codex is **neither** `ui://`-capable **nor** Skill-loading. So genie leans on the
-two levers that always work:
+Codex does not render `ui://` inline, but it does support the portable Agent
+Skills format:
 
-- **Tool descriptions** carry the `conjure → plan → write_files → preview`
-  workflow — the model sequences the verbs by reading them.
+- **Agent Skill** carries the `conjure → plan → write_files → preview` workflow;
+  tool descriptions remain fallback guidance.
 - **Server-opened browser tab** — when you call `preview`, the genie server
   opens your system browser at the viewer URL **itself** (it doesn't rely on the
   model to shell `open`). Disable with `GENIE_PREVIEW_NO_OPEN=1` if you'd rather
   open the URL yourself.
+
+## Install the Agent Skill
+
+Codex scans the directories documented in its
+[Agent Skills guide](https://developers.openai.com/codex/skills). For a
+user-level install:
+
+```bash
+mkdir -p ~/.agents/skills
+cp -R packages/plugin/skills/genie ~/.agents/skills/genie
+```
+
+For a project-only install, copy the same directory to
+`.agents/skills/genie` at the repository root. Restart Codex if the newly copied
+Skill does not appear.
 
 ## Register the server
 
@@ -26,8 +41,8 @@ in `/v1`.
 
 ## Using it
 
-Ask for a component in chat; the model runs the four-verb chain from the tool
-descriptions. When `preview` fires, a browser tab opens at the live grid. If
+Ask for a component in chat; the Skill (or tool-description fallback) runs the
+four-verb chain. When `preview` fires, a browser tab opens at the live grid. If
 the viewer can't boot (e.g. headless), `preview` returns a `file://` path to the
 kit's `index.html` — open that instead.
 

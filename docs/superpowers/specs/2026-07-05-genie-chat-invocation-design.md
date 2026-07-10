@@ -2,7 +2,8 @@
 
 > Spec for making genie's viewer + verb workflow invokable from a natural chat
 > conversation across popular AI coding harnesses.
-> Status: **approved design, pre-plan.** Author date: 2026-07-05.
+> Status: **approved design, implemented.** Author date: 2026-07-05; Agent
+> Skills capability matrix corrected 2026-07-10 as harness support evolved.
 
 ## Problem
 
@@ -25,34 +26,35 @@ Three concrete gaps, found during manual testing (2026-07-05):
    that opens the returned Vite / `file://` URL — or MCP Inspector, which
    cannot read `ui://` resources at all — sees an **empty grid**.
 3. **`preview` never opens anything itself.** The default booter hardcodes
-   `open: false`, so on a **non-`ui://`** harness (e.g. Codex, Copilot, plain
-   MCP Inspector) whether a browser/panel appears depends on the calling model
-   choosing to shell `open <url>` — which those harnesses do inconsistently or
-   not at all. (`ui://`-capable harnesses render the inline grid instead, so
-   they don't have this gap.)
+   `open: false`, so on a **non-`ui://`** local harness (e.g. Codex, tools-only
+   Copilot, plain MCP Inspector) whether a browser/panel appears depends on the
+   calling model choosing to shell `open <url>` — which those harnesses do
+   inconsistently or not at all. (`ui://`-capable harnesses render the inline
+   grid instead, so they don't have this gap.)
 
 ## Key constraint that shapes the whole design
 
-**Agent Skills (`SKILL.md`) load only in Claude Code / Claude Desktop /
-claude.ai.** Cursor, Codex CLI, and Copilot have no equivalent skill-loading
-mechanism; the _only_ guidance they ever see is the MCP tool `description`
-strings, and the only thing that reliably produces a visible GUI on those
-harnesses is **genie opening the browser itself, server-side, on the user's own
-machine.** genie's own RFC §15.1 already rejected agentskills.io as an
-unverified cross-harness substrate, so we do not attempt a portable-skill
-abstraction here.
+**Agent Skills (`SKILL.md`) are now a portable guidance channel.** Claude,
+Cursor, Codex CLI, and GitHub Copilot support the open Agent Skills format,
+though their install directories differ. Tool `description` strings remain the
+universal fallback, and non-`ui://` local hosts still rely on **genie opening
+the browser itself, server-side, on the user's own machine.** This capability
+correction supersedes the original 2026-07-05 assumption that Agent Skills were
+Claude-only.
 
 **Two orthogonal harness axes.** Because Skill-loading and `ui://`-rendering are
 independent capabilities, harnesses fall into a grid, and a given harness can
 need different pieces of this design:
 
-| Harness                           | `ui://`-capable? (inline grid, no auto-open) | Loads Agent Skills? | Gets guidance from                          |
-| --------------------------------- | -------------------------------------------- | ------------------- | ------------------------------------------- |
-| Claude Code / Desktop / claude.ai | yes                                          | **yes**             | Skill (C) + descriptions (D)                |
-| Cursor                            | **yes**                                      | no                  | inline grid; descriptions (D)               |
-| VS Code (≥Jan 2026)               | yes                                          | no                  | inline grid; descriptions (D)               |
-| ChatGPT                           | yes                                          | no                  | inline grid; descriptions (D)               |
-| Codex / Copilot / MCP Inspector   | **no**                                       | no                  | **server auto-open (B)** + descriptions (D) |
+| Harness                           | `ui://`-capable? (inline grid, no auto-open) | Loads Agent Skills? | Gets guidance from                           |
+| --------------------------------- | -------------------------------------------- | ------------------- | -------------------------------------------- |
+| Claude Code / Desktop / claude.ai | yes                                          | **yes**             | Skill (C) + descriptions (D)                 |
+| Cursor                            | **yes**                                      | **yes**             | Skill (C) + inline grid + descriptions (D)   |
+| VS Code Copilot (≥Jan 2026)       | capability-dependent                         | **yes**             | Skill (C) + negotiated UI + descriptions (D) |
+| ChatGPT remote connector          | yes                                          | no                  | inline grid + descriptions (D)               |
+| Codex CLI                         | **no**                                       | **yes**             | Skill (C) + **server auto-open (B)**         |
+| GitHub Copilot                    | capability-dependent                         | **yes**             | Skill (C) + negotiated UI/browser fallback   |
+| MCP Inspector                     | **no**                                       | no                  | **server auto-open (B)** + descriptions (D)  |
 
 Corollary that drives priority: **reliability comes from the server (piece A/B);
 the Skill, tool-descriptions, and slash-command (C/D/E) are the ergonomic layer
@@ -64,8 +66,8 @@ In scope (approved 2026-07-05):
 
 - **A.** Fix `preview` to compile + persist the manifest via a shared helper.
 - **B.** Harness-aware server-side auto-open in `preview`.
-- **C.** A genie-authored bundled **Agent Skill** (`SKILL.md`) teaching the full
-  verb workflow — Claude-family harnesses.
+- **C.** A genie-authored portable **Agent Skill** (`SKILL.md`) teaching the full
+  verb workflow across supported Agent Skills harnesses.
 - **D.** Hardened MCP tool `description` strings — every harness.
 - **E.** A Claude Code **slash-command** (`/genie:preview`) escape hatch.
 - **F.** Delivery via **both** a Claude Code marketplace plugin _and_ documented
@@ -115,16 +117,19 @@ manifest) returns populated results without needing a prior `ui://` read.
 
 ## B. Harness-aware server-side auto-open
 
-**Unit:** the auto-open branch inside `runPreview`, gated on the **existing**
-`clientSupportsUi(ctx.clientName)` sniff (`preview.ts`, `UI_HOST_MARKERS`).
+**Unit:** the auto-open branch inside `runPreview`, gated first on negotiated
+MCP Apps capability and then, only when extension negotiation is unavailable,
+on the legacy `clientSupportsUi(ctx.clientName)` sniff.
 
-- **ui://-capable host** (Claude, VS Code, ChatGPT, Cursor, Goose/Postman/MCPJam):
-  keep `open: false`. The inline `ui://genie/grid` grid renders in-panel; a
-  browser tab would be redundant.
-- **Non-ui host** (Codex, Copilot, plain MCP Inspector):
-  boot the viewer with `open: true` so **the server** opens the system browser
-  at the Vite URL. The existing `ViewerRegistry` caches one viewer per kit dir,
-  so the tab opens on **first boot only**, not on every `preview` call.
+- **MCP Apps-capable host:** keep `open: false`. The inline
+  `ui://genie/grid` grid renders in-panel; a browser tab would be redundant.
+- **Local stdio client without UI support:** request `open: true` so **the
+  server** opens the system browser at the Vite URL. `ViewerRegistry` caches one
+  viewer per kit dir while tracking browser-open state separately, so an inline
+  caller can boot first and the first later tools-only caller still opens that
+  cached viewer exactly once.
+- **HTTP deployment:** force `open: false`; a remote caller must never launch a
+  browser on the server machine.
 - **Override:** `GENIE_PREVIEW_NO_OPEN=1` forces `open: false` everywhere
   (opt-out; default is on for non-ui hosts).
 - **Degradation:** the viewer CLI already catches "could not open a browser
@@ -135,7 +140,7 @@ The default booter's hardcoded `open: false` becomes a computed value threaded
 from `runPreview` through `BootRequest`. `defaultViewerBooter` passes it into
 `bootViewer({ open })`.
 
-## C. Bundled Agent Skill (Claude-family)
+## C. Portable bundled Agent Skill
 
 **Unit:** `SKILL.md` (+ any `references/` files) describing genie's full verb
 workflow.
@@ -149,15 +154,16 @@ workflow.
 - **Trigger:** natural requests like "build/show/preview a component," "let me
   see my kit," "make a button and open it."
 - **Depends on:** the genie MCP server being registered in the harness.
-- **Loads in:** Claude Code / Desktop / claude.ai only (constraint above).
+- **Loads in:** Claude, Cursor, Codex, and GitHub Copilot from each harness's
+  documented project/user Skill directory.
 
 ## D. Hardened MCP tool descriptions (every harness)
 
 **Unit:** the `description` strings on the 19 registered tools.
 
 - Encode the same "when to reach for me / what typically comes next" hints the
-  Skill carries, but inside each tool's own `description` — the only guidance
-  Cursor/Codex/Copilot ever see.
+  Skill carries inside each tool's own `description` — universal fallback
+  guidance when a host does not load or invoke the Skill.
 - Example shape: `preview`'s description states it compiles the manifest and
   opens/points to the live grid, and that it's the verb to call after
   `write_files` when the user wants to _see_ a component.
@@ -185,9 +191,10 @@ without a plugin namespace as `/genie-preview`.
    (`.claude-plugin/plugin.json`, `hooks/`, `commands/`, `skills/`).
 2. **Manual artifact copy.** Ship `SKILL.md` + command files inside the
    npm/`.mcpb` package with docs (`docs/harness/*.md`) instructing users to copy
-   them into their own `.claude/skills/` and `.claude/commands/` — for anyone
-   not using the marketplace, and the reference for non-Claude harnesses (who
-   take only the hardened tool descriptions from D).
+   the portable Skill into each host's supported directory
+   (`.claude/skills`, `.cursor/skills`, `.agents/skills`, or
+   `.github/skills`/`~/.copilot/skills`). The slash command remains
+   Claude-Code-specific; every host also receives hardened descriptions from D.
 
 ## Testing
 

@@ -52,4 +52,13 @@ describe("startTransport", () => {
     await expect(startTransport(server, { kind: "stdio" })).resolves.toBe("stdio");
     expect(getServerTransportKind(server)).toBe("stdio");
   });
+
+  it("clears the recorded kind and rethrows when connection startup fails", async () => {
+    const server = {
+      connect: vi.fn().mockRejectedValue(new Error("connect failed")),
+    } as unknown as McpServer;
+
+    await expect(startTransport(server, { kind: "stdio" })).rejects.toThrow("connect failed");
+    expect(getServerTransportKind(server)).toBeUndefined();
+  });
 });

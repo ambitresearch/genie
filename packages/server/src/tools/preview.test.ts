@@ -23,6 +23,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createServer } from "../server.js";
+import type { Manifest } from "../manifest/index.js";
 import {
   PREVIEW_TOOL_NAME,
   DEFAULT_VIEWER_PORT,
@@ -506,6 +507,20 @@ describe("runPreview (AC3, AC6)", () => {
       KitNotFoundError,
     );
     await expect(readFile(join(missingDir, ".genie", "manifest.json"))).rejects.toThrow();
+    expect(booter.calls).toHaveLength(0);
+  });
+
+  it("rejects a valid-shaped kit path that is a file before compile or viewer boot", async () => {
+    const kitsRoot = await mkdtemp(join(tmpdir(), "genie-preview-kits-"));
+    await writeFile(join(kitsRoot, "acme-abc123"), "not a directory", "utf8");
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+    const compile = vi.fn(async () => ({ version: 1, groups: [], components: [] }) as Manifest);
+
+    await expect(
+      runPreview({ kitsRoot, registry, ensureManifest: compile }, { kitId: "acme-abc123" }, {}),
+    ).rejects.toThrow(KitNotFoundError);
+    expect(compile).not.toHaveBeenCalled();
     expect(booter.calls).toHaveLength(0);
   });
 

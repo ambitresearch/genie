@@ -1,10 +1,11 @@
 # genie in VS Code Copilot / GitHub Copilot
 
-Copilot does not load Agent Skills, so workflow guidance always comes from the
-MCP tool descriptions. Its preview behavior depends on the specific host:
+GitHub Copilot supports Agent Skills in its cloud agent, code review, CLI, app,
+and agent mode in VS Code and JetBrains. Its preview behavior still depends on
+the specific host:
 
-- **Tool descriptions** to carry the `conjure → plan → write_files → preview`
-  workflow.
+- **Agent Skill** carries the `conjure → plan → write_files → preview` workflow;
+  tool descriptions remain fallback guidance.
 - **VS Code Copilot agent** on an MCP Apps-capable build advertises the
   `io.modelcontextprotocol/ui` extension during initialization. genie detects
   that negotiated capability and renders `ui://genie/grid` inline without
@@ -12,6 +13,21 @@ MCP tool descriptions. Its preview behavior depends on the specific host:
 - **Other Copilot MCP surfaces** that do not advertise MCP Apps receive the
   live viewer in a server-opened browser tab. Disable that fallback with
   `GENIE_PREVIEW_NO_OPEN=1`.
+
+## Install the Agent Skill
+
+Copilot supports project and personal locations documented in
+[Adding agent skills for GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills).
+For a personal Skill shared across Copilot projects:
+
+```bash
+mkdir -p ~/.copilot/skills
+cp -R packages/plugin/skills/genie ~/.copilot/skills/genie
+```
+
+For a project Skill, copy the same directory to `.github/skills/genie` (Copilot
+also recognizes `.agents/skills/genie`). Reload skills or restart the host after
+copying.
 
 ## Register the server
 
@@ -36,10 +52,10 @@ in `/v1`.
 
 ## Using it
 
-Ask for a component in chat; Copilot runs the four-verb chain from the tool
-descriptions. On an MCP Apps-capable VS Code build, `preview` renders the grid
-inline. On a tools-only Copilot host, it opens a browser tab at the live grid.
-If the viewer cannot boot, use the `file://` fallback path returned by
+Ask for a component in chat; the Skill (or tool-description fallback) runs the
+four-verb chain. On an MCP Apps-capable VS Code build, `preview` renders the
+grid inline. On a tools-only Copilot host, it opens a browser tab at the live
+grid. If the viewer cannot boot, use the `file://` fallback path returned by
 `preview`.
 
 The broader M5 VS Code distribution issue still owns the production HTTP
