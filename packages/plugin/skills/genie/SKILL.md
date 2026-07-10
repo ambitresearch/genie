@@ -54,9 +54,9 @@ User: _"Build me a primary CTA button that says Get Started, and show me."_
 conjure  { kitId, kit: "<one-line kit description>",
            prompt: "A primary CTA button that says Get Started" }
    → { componentName: "GetStartedButton",
-       files: [{ path: "components/actions/GetStartedButton/preview.html", ... }] }
+       files: [{ path: "components/actions/GetStartedButton/GetStartedButton.html", ... }] }
 
-plan     { kitId, writes: ["components/actions/GetStartedButton/preview.html"] }
+plan     { kitId, writes: ["components/actions/GetStartedButton/GetStartedButton.html"] }
    → { planId }
 
 write_files {

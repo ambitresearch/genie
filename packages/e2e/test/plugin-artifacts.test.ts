@@ -25,5 +25,7 @@ describe("Claude plugin artifacts", () => {
     expect(skill).toContain("data: file.content");
     expect(skill).toContain("`design-default` is the valid default routing alias");
     expect(skill).not.toContain("the `design-default` alias is not a real endpoint");
+    expect(skill).toContain("components/actions/GetStartedButton/GetStartedButton.html");
+    expect(skill).not.toContain("components/actions/GetStartedButton/preview.html");
   });
 });
