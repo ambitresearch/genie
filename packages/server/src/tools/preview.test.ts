@@ -475,7 +475,7 @@ describe("runPreview (AC3, AC6)", () => {
     await runPreview(
       { kitsRoot, registry, env: {} },
       { kitId: "acme-abc123" },
-      { clientName: "cursor", uiCapable: false },
+      { clientName: "cursor", uiCapable: false, transportKind: "stdio" },
     );
 
     lines.restore();
@@ -513,6 +513,21 @@ describe("runPreview (AC3, AC6)", () => {
   it("rejects a valid-shaped kit path that is a file before compile or viewer boot", async () => {
     const kitsRoot = await mkdtemp(join(tmpdir(), "genie-preview-kits-"));
     await writeFile(join(kitsRoot, "acme-abc123"), "not a directory", "utf8");
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+    const compile = vi.fn(async () => ({ version: 1, groups: [], components: [] }) as Manifest);
+
+    await expect(
+      runPreview({ kitsRoot, registry, ensureManifest: compile }, { kitId: "acme-abc123" }, {}),
+    ).rejects.toThrow(KitNotFoundError);
+    expect(compile).not.toHaveBeenCalled();
+    expect(booter.calls).toHaveLength(0);
+  });
+
+  it("maps ENOTDIR from a file-valued kits root to KitNotFoundError", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "genie-preview-kits-"));
+    const kitsRoot = join(tempRoot, "kits");
+    await writeFile(kitsRoot, "not a directory", "utf8");
     const booter = okBooter();
     const registry = new ViewerRegistry(booter);
     const compile = vi.fn(async () => ({ version: 1, groups: [], components: [] }) as Manifest);
@@ -638,15 +653,19 @@ describe("shouldAutoOpen (piece B decision)", () => {
   });
 
   it("opens for a non-ui:// host by default (opt-out unset)", () => {
-    expect(shouldAutoOpen(false, {})).toBe(true);
+    expect(shouldAutoOpen(false, {}, "stdio")).toBe(true);
   });
 
   it("does NOT open for a non-ui:// host when opted out via env", () => {
-    expect(shouldAutoOpen(false, { GENIE_PREVIEW_NO_OPEN: "1" })).toBe(false);
+    expect(shouldAutoOpen(false, { GENIE_PREVIEW_NO_OPEN: "1" }, "stdio")).toBe(false);
   });
 
   it("does NOT open on HTTP even for a non-ui client without the env opt-out", () => {
     expect(shouldAutoOpen(false, {}, "http")).toBe(false);
+  });
+
+  it("does NOT open when the embedding transport is unknown", () => {
+    expect(shouldAutoOpen(false, {})).toBe(false);
   });
 });
 
@@ -659,7 +678,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: {} },
       { kitId: "acme-abc123" },
-      { clientName: "codex" },
+      { clientName: "codex", transportKind: "stdio" },
     );
 
     expect(booter.calls).toHaveLength(1);
@@ -688,7 +707,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: { GENIE_PREVIEW_NO_OPEN: "1" } },
       { kitId: "acme-abc123" },
-      { clientName: "codex" },
+      { clientName: "codex", transportKind: "stdio" },
     );
 
     expect(booter.calls[0]?.open).toBe(false);
@@ -714,8 +733,16 @@ describe("runPreview auto-open wiring (piece B)", () => {
     const registry = new ViewerRegistry(booter);
     const deps = { kitsRoot, registry, env: {} };
 
-    await runPreview(deps, { kitId: "acme-abc123" }, { clientName: "codex" });
-    await runPreview(deps, { kitId: "acme-abc123" }, { clientName: "codex" });
+    await runPreview(
+      deps,
+      { kitId: "acme-abc123" },
+      { clientName: "codex", transportKind: "stdio" },
+    );
+    await runPreview(
+      deps,
+      { kitId: "acme-abc123" },
+      { clientName: "codex", transportKind: "stdio" },
+    );
 
     // Second call reuses the cached viewer → booter (and thus the browser open)
     // fires exactly once.
@@ -731,7 +758,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: {} },
       { kitId: "acme-abc123" },
-      { clientName: "codex" },
+      { clientName: "codex", transportKind: "stdio" },
     );
 
     lines.restore();
@@ -752,7 +779,7 @@ afterEach(async () => {
 
 async function connectPreview(kitsRoot: string, booter: ViewerBooter): Promise<Client> {
   const server = new McpServer({ name: "genie-test", version: "0" });
-  registerPreviewTool(server, { kitsRoot, booter });
+  registerPreviewTool(server, { kitsRoot, booter, transportKind: "stdio" });
   const client = new Client({ name: "test", version: "0" });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverT), client.connect(clientT)]);
@@ -872,7 +899,7 @@ describe("mcp__genie__preview (wired)", () => {
     const kitsRoot = await makeKitsRoot();
     const server = new McpServer({ name: "genie-test", version: "0" });
     const booter = okBooter();
-    registerPreviewTool(server, { kitsRoot, booter });
+    registerPreviewTool(server, { kitsRoot, booter, transportKind: "stdio" });
     // Unknown name, but the client ADVERTISES the ui extension — capability wins.
     const client = new Client(
       { name: "some-future-host", version: "1.0.0" },
@@ -897,7 +924,7 @@ describe("mcp__genie__preview (wired)", () => {
     const kitsRoot = await makeKitsRoot();
     const server = new McpServer({ name: "genie-test", version: "0" });
     const booter = okBooter();
-    registerPreviewTool(server, { kitsRoot, booter });
+    registerPreviewTool(server, { kitsRoot, booter, transportKind: "stdio" });
     const client = new Client(
       { name: "cursor", version: "1.0.0" },
       { capabilities: { extensions: {} } },

@@ -169,6 +169,7 @@ export function appendRetryFeedback(userText: string, retry: RetryContext): stri
 /** Builds the messages for one attempt. `retry` is `undefined` on the first
  * attempt and carries the validation feedback on the (single) retry. */
 export type BuildMessagesFn = (retry: RetryContext | undefined) => ChatCompletionInput["messages"];
+export type ValidateGeneratedComponent = (component: ValidatedComponent) => string | undefined;
 
 /** Result of {@link runComponentGeneration}: the parse outcome plus the accounting
  * a caller needs for its per-call log (attempts + summed usage). */
@@ -192,8 +193,10 @@ export async function runComponentGeneration(params: {
   chat: ChatCompletionFn;
   model: string;
   buildMessages: BuildMessagesFn;
+  /** Optional tool-specific validation applied after the shared JSON schema. */
+  validateGeneratedComponent?: ValidateGeneratedComponent;
 }): Promise<GenerationRun> {
-  const { chat, model, buildMessages } = params;
+  const { chat, model, buildMessages, validateGeneratedComponent } = params;
   const usage = emptyUsage();
   const responseFormat = buildComponentResponseFormat();
 
@@ -205,7 +208,10 @@ export async function runComponentGeneration(params: {
   });
   addUsage(usage, first);
   const firstRaw = first.choices[0]?.message?.content ?? null;
-  let outcome = parseAndValidate(firstRaw);
+  let outcome = applyGeneratedComponentValidation(
+    parseAndValidate(firstRaw),
+    validateGeneratedComponent,
+  );
   let attempts = 1;
 
   // Attempt 2 (retry once) — feed the validation error + prior output back.
@@ -217,8 +223,20 @@ export async function runComponentGeneration(params: {
     });
     addUsage(usage, second);
     attempts = 2;
-    outcome = parseAndValidate(second.choices[0]?.message?.content ?? null);
+    outcome = applyGeneratedComponentValidation(
+      parseAndValidate(second.choices[0]?.message?.content ?? null),
+      validateGeneratedComponent,
+    );
   }
 
   return { outcome, usage, attempts };
+}
+
+function applyGeneratedComponentValidation(
+  outcome: ParseResult,
+  validateGeneratedComponent: ValidateGeneratedComponent | undefined,
+): ParseResult {
+  if (!outcome.ok || validateGeneratedComponent === undefined) return outcome;
+  const reason = validateGeneratedComponent(outcome.component);
+  return reason === undefined ? outcome : { ok: false, reason };
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createServer, SERVER_INFO } from "./server.js";
-import { startTransport } from "./transport.js";
+import { resolveTransport, startTransport } from "./transport.js";
 
 /** Minimal flag parser — no dependency needed for M0's tiny surface. */
 function parseArgs(argv: string[]): {
@@ -71,9 +71,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const server = createServer();
+  const transportKind = resolveTransport(args.transport);
+  const server = createServer({ transportKind });
   await startTransport(server, {
-    kind: args.transport,
+    kind: transportKind,
     port: args.port,
     host: args.host,
   });

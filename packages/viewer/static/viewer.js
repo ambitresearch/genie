@@ -498,12 +498,13 @@
    * libraries are silently ignored). Accepts both wire shapes:
    *   - `{ event: "card.changed", path }`  → `{ kind: "card", path }`   (WS, AC2)
    *   - `{ event: "tokens.changed" }`       → `{ kind: "tokens" }`       (WS, AC5)
+   *   - `{ event: "manifest.changed" }`     → `{ kind: "manifest" }`     (WS, structural)
    *   - `{ type: "refresh", path, src? }`   → `{ kind: "card", path, src? }` (postMessage)
    *   - `{ type: "refresh", id }`           → `{ kind: "card", path:id }` (postMessage; `id` is the card path)
    *   - `{ type: "refresh" }` (no target)   → `{ kind: "tokens" }`       (refresh-all)
    *
    * @param {unknown} raw
-   * @returns {{ kind: "card", path: string, src?: string } | { kind: "tokens" } | null}
+   * @returns {{ kind: "card", path: string, src?: string } | { kind: "tokens" } | { kind: "manifest" } | null}
    */
   function normalizeHmrMessage(raw) {
     var data = raw;
@@ -523,6 +524,7 @@
         : { kind: "card", path: data.path };
     }
     if (data.event === "tokens.changed") return { kind: "tokens" };
+    if (data.event === "manifest.changed") return { kind: "manifest" };
 
     if (data.type === "refresh") {
       var target = typeof data.path === "string" && data.path ? data.path : data.id;
@@ -621,6 +623,7 @@
   function applyHmrMessage(grid, message, token) {
     var cmd = normalizeHmrMessage(message);
     if (!cmd) return 0;
+    if (cmd.kind === "manifest") return 0;
     var t = token === undefined ? ++hmrReloadToken : token;
     return cmd.kind === "card"
       ? reloadCardByPath(grid, cmd.path, t, cmd.src)
@@ -661,6 +664,37 @@
       }
     }
     return changed;
+  }
+
+  /**
+   * True when component membership/order or declared group order changed.
+   * Content-only hash changes keep the lightweight per-card reload path.
+   *
+   * @param {object} prev
+   * @param {object} next
+   * @returns {boolean}
+   */
+  function manifestStructureChanged(prev, next) {
+    function identity(manifest) {
+      var components = (manifest && manifest.components) || [];
+      var paths = [];
+      for (var i = 0; i < components.length; i++) {
+        var component = components[i] || {};
+        paths.push(component.sourcePath || component.path || "");
+      }
+      return JSON.stringify({
+        groups: (manifest && manifest.groups) || [],
+        paths: paths,
+      });
+    }
+    return identity(prev) !== identity(next);
+  }
+
+  /** Re-render from a fresh manifest while preserving the active search query. */
+  function renderManifestUpdate(doc, grid, manifest) {
+    renderGrid(doc, grid, manifest);
+    var search = doc.getElementById("q");
+    if (search) applyFilter(grid, search.value || "");
   }
 
   /**
@@ -758,8 +792,34 @@
     var pollInFlight = false;
     var torn = false;
 
+    function fetchManifestUpdate() {
+      if (torn || pollInFlight || !fetchImpl) return;
+      pollInFlight = true;
+      fetchImpl(manifestUrl)
+        .then(function (res) {
+          return res && res.ok ? res.json() : null;
+        })
+        .then(function (next) {
+          if (torn || !next) return;
+          renderManifestUpdate(doc, grid, next);
+          lastManifest = next;
+          bumpReloadCounter(doc, 1);
+        })
+        .catch(function () {
+          // Keep the current grid; a later manifest event/poll can retry.
+        })
+        .then(function () {
+          pollInFlight = false;
+        });
+    }
+
     /** Apply any inbound message (WS or postMessage) and bump the counter. */
     function handle(rawData) {
+      var command = normalizeHmrMessage(rawData);
+      if (command && command.kind === "manifest") {
+        fetchManifestUpdate();
+        return;
+      }
       var reloaded = applyHmrMessage(grid, rawData);
       if (reloaded > 0) bumpReloadCounter(doc, reloaded);
     }
@@ -799,12 +859,17 @@
         .then(function (next) {
           if (torn || !next) return;
           if (lastManifest) {
-            var changed = diffManifestHashes(lastManifest, next);
-            var total = 0;
-            for (var i = 0; i < changed.length; i++) {
-              total += reloadCardByPath(grid, changed[i], ++hmrReloadToken);
+            if (manifestStructureChanged(lastManifest, next)) {
+              renderManifestUpdate(doc, grid, next);
+              bumpReloadCounter(doc, 1);
+            } else {
+              var changed = diffManifestHashes(lastManifest, next);
+              var total = 0;
+              for (var i = 0; i < changed.length; i++) {
+                total += reloadCardByPath(grid, changed[i], ++hmrReloadToken);
+              }
+              if (total > 0) bumpReloadCounter(doc, total);
             }
-            if (total > 0) bumpReloadCounter(doc, total);
           }
           lastManifest = next;
         })
@@ -1036,6 +1101,8 @@
     window.__genieViewerTestHooks.reloadAllCards = reloadAllCards;
     window.__genieViewerTestHooks.applyHmrMessage = applyHmrMessage;
     window.__genieViewerTestHooks.diffManifestHashes = diffManifestHashes;
+    window.__genieViewerTestHooks.manifestStructureChanged = manifestStructureChanged;
+    window.__genieViewerTestHooks.renderManifestUpdate = renderManifestUpdate;
     window.__genieViewerTestHooks.bumpReloadCounter = bumpReloadCounter;
     window.__genieViewerTestHooks.hmrSocketUrl = hmrSocketUrl;
     window.__genieViewerTestHooks.initHmr = initHmr;

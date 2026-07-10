@@ -91,7 +91,7 @@ function setup(manifest: Record<string, unknown> = twoCardManifest()): {
       '<details class="hmr-meter"><summary>HMR <span id="hmr-count" data-count="0">0</span></summary></details>' +
       "</header>" +
       '<main id="grid"></main></body></html>',
-    { runScripts: "outside-only" },
+    { runScripts: "outside-only", url: "http://127.0.0.1:5173/" },
   );
   const { window } = dom;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -165,6 +165,13 @@ describe("normalizeHmrMessage", () => {
   it("maps tokens.changed to a tokens command", () => {
     const { hooks } = setup();
     expect(hooks.normalizeHmrMessage({ event: "tokens.changed" })).toEqual({ kind: "tokens" });
+  });
+
+  it("maps manifest.changed to a structural refresh command", () => {
+    const { hooks } = setup();
+    expect(hooks.normalizeHmrMessage({ event: "manifest.changed" })).toEqual({
+      kind: "manifest",
+    });
   });
 
   it("maps the postMessage {type:'refresh', path} sketch shape to a card command", () => {
@@ -462,6 +469,30 @@ describe("initHmr — WebSocket transport (AC2/AC5)", () => {
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
     expect(iframeFor(grid, CARD_PATH).getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
     expect(document.getElementById("hmr-count")!.getAttribute("data-count")).toBe("2");
+  });
+
+  it("a manifest.changed frame refetches and removes deleted cards from the open grid", async () => {
+    const { hooks, window, document, grid } = setup();
+    FakeWebSocket.instances = [];
+    const next = twoCardManifest();
+    (next.components as unknown[]).splice(1, 1);
+    const fetchImpl = async () => ({ ok: true, json: async () => next }) as Response;
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: FakeWebSocket,
+      fetchImpl,
+      initialManifest: twoCardManifest(),
+    });
+
+    FakeWebSocket.instances[0]!.onmessage!({
+      data: JSON.stringify({ event: "manifest.changed" }),
+    });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(iframeFor(grid, BUTTON_PATH)).toBeDefined();
+    expect(grid.querySelector(`iframe[data-path="${CARD_PATH}"]`)).toBeNull();
   });
 });
 

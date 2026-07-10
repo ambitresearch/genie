@@ -20,7 +20,7 @@ export const LIST_COMPONENTS_DESCRIPTION =
   "call; when more remain, an opaque cursor is returned in _meta.nextCursor — pass it back as `cursor` to " +
   "fetch the next page. Reads the compiled manifest, so results reflect components as of the last " +
   "compile. Calling mcp__genie__preview recompiles before it returns, regardless of whether the " +
-  "host renders ui:// inline or opens a browser — call preview first after recent writes.";
+  "host renders ui:// inline or opens a browser — call preview first after recent writes or deletions.";
 
 /** Zod shape for a single component entry — reused by `outputSchema`. */
 const componentEntryShape = {

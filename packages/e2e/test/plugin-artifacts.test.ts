@@ -29,6 +29,11 @@ describe("Claude plugin artifacts", () => {
     expect(skill).not.toContain("components/actions/GetStartedButton/preview.html");
     expect(skill).toContain("does persist a timestamped validation report and metrics");
     expect(skill).not.toContain("No plan needed; nothing is written");
+    expect(skill).toContain("## Refine: `refine → plan → write_files → preview`");
+    expect(skill).toContain("refineResult.files.map");
+    expect(skill).toContain("`refine` is pure with respect to kit files");
+    expect(skill).toContain("encoding: file.encoding");
+    expect(skill).toMatch(/After\s+`delete_files`, call `preview`/);
     expect(skill).toContain("without negotiated UI support");
     expect(skill).not.toContain("**other host** (Codex, Copilot");
   });
@@ -61,5 +66,7 @@ describe("Claude plugin artifacts", () => {
     expect(copilot).toContain("~/.copilot/skills/genie");
     expect(overview).not.toContain("Only Claude Code / Claude Desktop / claude.ai do");
     expect(design).not.toContain("Cursor, Codex CLI, and Copilot have no equivalent");
+    expect(design).toContain("source checkout");
+    expect(design).not.toContain("Ship `SKILL.md` + command files inside the npm/`.mcpb` package");
   });
 });

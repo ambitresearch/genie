@@ -491,7 +491,7 @@ export function shouldAutoOpen(
   transportKind?: TransportKind,
 ): boolean {
   if (uiSupported) return false;
-  if (transportKind === "http") return false;
+  if (transportKind !== "stdio") return false;
   return !autoOpenDisabledByEnv(env);
 }
 
@@ -517,7 +517,8 @@ export async function runPreview(
   try {
     kitStat = await stat(kitDir);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
       throw new KitNotFoundError(args.kitId);
     }
     throw error;

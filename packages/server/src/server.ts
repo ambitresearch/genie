@@ -22,6 +22,7 @@ import { registerGridResource } from "./ui/grid-resource.js";
 import { LocalFsKitStore } from "./store/local.js";
 import type { KitStore } from "./store/interface.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
+import type { TransportKind } from "./transport.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -44,6 +45,13 @@ export const SERVER_INFO = {
  * registration — see transport.ts.
  */
 export interface CreateServerOptions {
+  /**
+   * Transport used by an embedder that connects the returned server directly.
+   * Pass `"http"` for Streamable HTTP so preview never opens a browser on the
+   * server machine. {@link startTransport} records its own resolved kind when
+   * the built-in transport launcher is used.
+   */
+  transportKind?: TransportKind;
   projectsRoot?: string;
   kitsRoot?: string;
   reportsDir?: string;
@@ -263,7 +271,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // falling back to `file://<kitDir>/index.html` when the viewer can't boot.
   // Bound to the same `kitsRoot` the kit verbs resolve against so a `kitId`
   // maps to the same on-disk kit dir the viewer serves.
-  registerPreviewTool(server, { kitsRoot });
+  registerPreviewTool(server, { kitsRoot, transportKind: options.transportKind });
 
   // ui://genie/grid (M4-06 / DRO-268): the embedded MCP-Apps resource the
   // `preview` tool's `_meta.ui.resourceUri` points at. A ui://-capable host

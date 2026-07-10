@@ -189,12 +189,14 @@ without a plugin namespace as `/genie-preview`.
    out-of-root local server path would make a marketplace install non-runnable.
    Modeled on the existing `claude-plugins-official` plugin layout
    (`.claude-plugin/plugin.json`, `hooks/`, `commands/`, `skills/`).
-2. **Manual artifact copy.** Ship `SKILL.md` + command files inside the
-   npm/`.mcpb` package with docs (`docs/harness/*.md`) instructing users to copy
-   the portable Skill into each host's supported directory
+2. **Manual artifact copy from a source checkout.** The implemented
+   `packages/plugin/skills/genie` source and `docs/harness/*.md` guides let users
+   copy the portable Skill into each host's supported directory
    (`.claude/skills`, `.cursor/skills`, `.agents/skills`, or
    `.github/skills`/`~/.copilot/skills`). The slash command remains
    Claude-Code-specific; every host also receives hardened descriptions from D.
+   Shipping these artifacts inside npm / `.mcpb` remains M5 packaging scope and
+   is not claimed by this PR.
 
 ## Testing
 

@@ -83,6 +83,7 @@ import {
 // `conjure.ts`; DRO-253 / DRO-618: `refine` shares the exact same gap
 // conjure had — `withRetry` existed but no production call site applied it).
 import { withRetry } from "../llm/retry.js";
+import { isTextMime, isValidBase64Content } from "../store/kit-files.js";
 import { KIT_ID_PATTERN } from "./get_kit.js";
 
 export const REFINE_TOOL_NAME = "mcp__genie__refine";
@@ -148,10 +149,15 @@ export interface RefineResult extends Record<string, unknown> {
   group: string;
   /** Unified diff (git-style) from the original file set to the updated one. */
   diff: string;
-  files: ValidatedComponent["files"];
+  files: RefinedFile[];
   manifestEntry: ValidatedComponent["manifestEntry"];
   usage: UsageInfo;
 }
+
+export type RefinedFile = ValidatedComponent["files"][number] & {
+  /** Encoding required when forwarding `content` to write_files as inline data. */
+  encoding: "utf-8" | "base64";
+};
 
 // ── Store port (AC3) ──────────────────────────────────────────────────────────
 
@@ -463,6 +469,24 @@ function isTextFile(file: LoadedFile): boolean {
   return file.encoding !== "base64";
 }
 
+function encodingForGeneratedFile(
+  file: ValidatedComponent["files"][number],
+): RefinedFile["encoding"] {
+  return isTextMime(file.mimeType) ? "utf-8" : "base64";
+}
+
+function validateRefineGeneratedFiles(component: ValidatedComponent): string | undefined {
+  for (const [index, file] of component.files.entries()) {
+    if (!isTextMime(file.mimeType) && !isValidBase64Content(file.content)) {
+      return (
+        `- /files/${index}/content must be valid base64 for binary MIME type ` +
+        `"${file.mimeType}" (${file.path}).`
+      );
+    }
+  }
+  return undefined;
+}
+
 /** Build the natural-language user instruction block (everything except the
  * optional vision crop image, attached separately). */
 function buildUserText(
@@ -624,6 +648,7 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
   const { outcome, usage, attempts } = await runComponentGeneration({
     chat,
     model: parsed.model,
+    validateGeneratedComponent: validateRefineGeneratedFiles,
     buildMessages: (retry) =>
       buildMessages(systemPrompt.text, parsed, group, originalFiles, cropDataUrl, retry),
   });
@@ -679,11 +704,20 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
   // The guard below (`!returnedPaths.has`) means a model that DOES return a
   // binary path wins: its entry is kept as-is and the original is not re-added,
   // so no path is ever duplicated.
-  const returnedPaths = new Set(component.files.map((f) => f.path));
-  const carriedBinaries: ValidatedComponent["files"] = originalFiles
+  const returnedFiles: RefinedFile[] = component.files.map((file) => ({
+    ...file,
+    encoding: encodingForGeneratedFile(file),
+  }));
+  const returnedPaths = new Set(returnedFiles.map((f) => f.path));
+  const carriedBinaries: RefinedFile[] = originalFiles
     .filter((f) => !isTextFile(f) && !returnedPaths.has(f.path))
-    .map((f) => ({ path: f.path, content: f.content, mimeType: f.mimeType }));
-  const files: ValidatedComponent["files"] = [...component.files, ...carriedBinaries];
+    .map((f) => ({
+      path: f.path,
+      content: f.content,
+      mimeType: f.mimeType,
+      encoding: "base64",
+    }));
+  const files: RefinedFile[] = [...returnedFiles, ...carriedBinaries];
 
   // AC5 — unified diff (informational) from originals → updated, by path. Built
   // from the merged `files` so carried-forward binaries (identical on both sides)
@@ -723,7 +757,14 @@ const refineOutputShape = {
   group: z.string(),
   diff: z.string(),
   files: z.array(
-    z.object({ path: z.string(), content: z.string(), mimeType: z.string() }).strict(),
+    z
+      .object({
+        path: z.string(),
+        content: z.string(),
+        mimeType: z.string(),
+        encoding: z.enum(["utf-8", "base64"]),
+      })
+      .strict(),
   ),
   manifestEntry: z
     .object({
@@ -756,8 +797,8 @@ export function registerRefineTool(server: McpServer, deps: RefineDeps): void {
         "attaches a rendered crop of it as a visual reference. Reach for this to adjust a " +
         "component already written to the kit (typically after conjure → write_files → preview); " +
         "`design-default` is the valid gateway routing alias. Persist the returned files via " +
-        "plan, mapping each {path, content, mimeType} to write_files " +
-        "{path, data: content, mimeType}, before previewing.",
+        "plan, mapping each {path, content, mimeType, encoding} to write_files " +
+        "{path, data: content, mimeType, encoding}, before previewing.",
       inputSchema: refineInputShape,
       outputSchema: refineOutputShape,
     },

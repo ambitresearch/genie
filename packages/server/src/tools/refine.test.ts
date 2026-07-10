@@ -353,9 +353,28 @@ describe("AC5 — returns { diff, files }", () => {
   it("returns the full updated files as the source of truth", async () => {
     const res = await refine(deps(), args());
     expect(res.files).toHaveLength(3);
+    expect(res.files.every((file) => file.encoding === "utf-8")).toBe(true);
     expect(res.files.find((f) => f.path.endsWith("Button.tsx"))?.content).toContain("radius: 12px");
     expect(res.componentName).toBe("Button");
     expect(res.group).toBe("actions");
+  });
+
+  it("uses the canonical text MIME classification for generated files", async () => {
+    const component = refinedComponent({
+      files: [
+        ...refinedComponent().files,
+        {
+          path: "components/actions/Button/theme.toml",
+          content: 'accent = "clay"',
+          mimeType: "application/toml",
+        },
+      ],
+    });
+    const chat = stubChat([completionOf(JSON.stringify(component))]);
+
+    const res = await refine(deps({ chat }), args());
+
+    expect(res.files.find((file) => file.path.endsWith("theme.toml"))?.encoding).toBe("utf-8");
   });
 
   it("returns a unified diff that shows the change (4px → 12px) and only changed files", async () => {
@@ -419,6 +438,7 @@ describe("AC5 — returns { diff, files }", () => {
     expect(carried).toBeDefined();
     expect(carried?.content).toBe(files.find((f) => f.path.endsWith("icon.png"))!.content);
     expect(carried?.mimeType).toBe("image/png");
+    expect(carried?.encoding).toBe("base64");
 
     // And it is NOT misreported as deleted (or anything) in the diff.
     expect(res.diff).not.toContain("icon.png");
@@ -442,7 +462,7 @@ describe("AC5 — returns { diff, files }", () => {
     ];
     const kitStore = stubKitStore(files);
     // The model returns the standard component PLUS a new icon.png (its own bytes).
-    const modelPng = "REPLACED_ICON_BYTES_BASE64==";
+    const modelPng = "UkVQTEFDRURfSUNPTg==";
     const withIcon = refinedComponent({
       files: [
         ...refinedComponent().files,
@@ -462,6 +482,43 @@ describe("AC5 — returns { diff, files }", () => {
     // The model's entry wins; the original was NOT re-added over it.
     expect(icons[0]!.content).toBe(modelPng);
     expect(icons[0]!.content).not.toBe(originalPng);
+    expect(icons[0]!.encoding).toBe("base64");
+  });
+
+  it("retries when a model-returned binary file is not valid base64", async () => {
+    const invalid = refinedComponent({
+      files: [
+        ...refinedComponent().files,
+        {
+          path: "components/actions/Button/icon.png",
+          content: "not base64!",
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const valid = refinedComponent({
+      files: [
+        ...refinedComponent().files,
+        {
+          path: "components/actions/Button/icon.png",
+          content: "aGVsbG8=",
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const chat = stubChat([
+      completionOf(JSON.stringify(invalid)),
+      completionOf(JSON.stringify(valid)),
+    ]);
+
+    const res = await refine(deps({ chat }), args());
+
+    expect(chat.calls).toHaveLength(2);
+    expect(chat.calls[1]?.messages.at(-1)?.content).toContain("valid base64");
+    expect(res.files.find((file) => file.path.endsWith("icon.png"))).toMatchObject({
+      content: "aGVsbG8=",
+      encoding: "base64",
+    });
   });
 });
 
@@ -677,10 +734,15 @@ describe("tool boundary", () => {
     await Promise.all([server.connect(a), client.connect(b)]);
     try {
       const res = (await client.callTool({ name: REFINE_TOOL_NAME, arguments: args() })) as {
-        structuredContent?: { componentName: string; diff: string };
+        structuredContent?: {
+          componentName: string;
+          diff: string;
+          files: { encoding: string }[];
+        };
       };
       expect(res.structuredContent?.componentName).toBe("Button");
       expect(typeof res.structuredContent?.diff).toBe("string");
+      expect(res.structuredContent?.files.every((file) => file.encoding === "utf-8")).toBe(true);
     } finally {
       await client.close();
       await server.close();

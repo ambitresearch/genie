@@ -68,7 +68,6 @@ function expectedOrder(components: ComponentEntry[]): string[] {
     .map((c) => `${c.group}/${c.name}/${c.path}`);
 }
 
-
 describe("LocalFsKitStore.listComponents", () => {
   let tempDir: string;
   let store: KitStore;
@@ -115,9 +114,7 @@ describe("LocalFsKitStore.listComponents", () => {
   });
 
   it("throws NotFoundError when kit does not exist", async () => {
-    await expect(
-      store.listComponents({ kitId: "nonexistent-kit" }),
-    ).rejects.toThrow("Kit");
+    await expect(store.listComponents({ kitId: "nonexistent-kit" })).rejects.toThrow("Kit");
   });
 
   it("reads components from .genie/manifest.json and sorts deterministically (AC6)", async () => {
@@ -127,9 +124,7 @@ describe("LocalFsKitStore.listComponents", () => {
 
     const out = await store.listComponents({ kitId: kit.id });
     expect(out).toHaveLength(15);
-    expect(out.map((c) => `${c.group}/${c.name}/${c.path}`)).toEqual(
-      expectedOrder(fixture),
-    );
+    expect(out.map((c) => `${c.group}/${c.name}/${c.path}`)).toEqual(expectedOrder(fixture));
   });
 
   it("filters by group and preserves ordering (AC4/AC6)", async () => {
@@ -141,6 +136,12 @@ describe("LocalFsKitStore.listComponents", () => {
     expect(forms).toHaveLength(4);
     expect(forms.every((c) => c.group === "forms")).toBe(true);
     expect(forms.map((c) => c.name)).toEqual(["Comp0", "Comp1", "Comp2", "Comp3"]);
+  });
+});
+
+describe("list_components guidance", () => {
+  it("requires preview after both writes and deletions", () => {
+    expect(LIST_COMPONENTS_DESCRIPTION).toContain("recent writes or deletions");
   });
 });
 
@@ -184,21 +185,18 @@ describe("mcp__genie__list_components tool", () => {
   });
 
   it("keeps the MCP tool description under Claude's 2 KB truncation limit", () => {
-    expect(Buffer.byteLength(LIST_COMPONENTS_DESCRIPTION, "utf8")).toBeLessThanOrEqual(
-      2048,
-    );
+    expect(Buffer.byteLength(LIST_COMPONENTS_DESCRIPTION, "utf8")).toBeLessThanOrEqual(2048);
   });
 
   it("advertises a Draft-7-clean schema — no anyOf / $ref / oneOf / allOf (AC3)", async () => {
     const { tools } = await client.listTools();
     const tool = tools.find((t) => t.name === LIST_COMPONENTS_TOOL_NAME);
-    const blob =
-      JSON.stringify(tool?.inputSchema ?? {}) + JSON.stringify(tool?.outputSchema ?? {});
+    const blob = JSON.stringify(tool?.inputSchema ?? {}) + JSON.stringify(tool?.outputSchema ?? {});
     expect(/anyOf|\$ref|oneOf|allOf/.test(blob)).toBe(false);
     // cursor is an accepted optional input (AC7 pagination).
-    expect((tool?.inputSchema as { properties?: Record<string, unknown> }).properties).toHaveProperty(
-      "cursor",
-    );
+    expect(
+      (tool?.inputSchema as { properties?: Record<string, unknown> }).properties,
+    ).toHaveProperty("cursor");
   });
 
   it("returns [] through MCP when the kit has no components", async () => {
@@ -312,17 +310,15 @@ describe("mcp__genie__list_components — AC10 integration fixture", () => {
     expect(all.structuredContent?.components).toHaveLength(50);
 
     // Deterministic ordering (AC6) — matches the independent reference sort.
-    expect(
-      all.structuredContent!.components.map((c) => `${c.group}/${c.name}/${c.path}`),
-    ).toEqual(expectedOrder(fixture));
+    expect(all.structuredContent!.components.map((c) => `${c.group}/${c.name}/${c.path}`)).toEqual(
+      expectedOrder(fixture),
+    );
 
     // Group-filtered count — each of the 5 groups holds exactly 10.
     for (const group of FIXTURE_GROUPS) {
       const filtered = await call(kitId, { group });
       expect(filtered.structuredContent?.components).toHaveLength(10);
-      expect(filtered.structuredContent!.components.every((c) => c.group === group)).toBe(
-        true,
-      );
+      expect(filtered.structuredContent!.components.every((c) => c.group === group)).toBe(true);
     }
 
     // 50 < 256 → single page, no continuation cursor (AC7 boundary).

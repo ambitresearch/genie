@@ -76,14 +76,43 @@ preview  { kitId }
 
 - **`refine`** — iterate on an existing component from a free-form instruction
   ("make the corners a pill", "soften the border"). Returns a diff + updated
-  files. Uses `design-default` unless the user requests an exposed model override.
+  files but does not persist them. Uses `design-default` unless the user requests
+  an exposed model override. Complete the persist-and-show sequence below.
 - **`validate`** — advisory quality counts (`markerMissing` / `thin` /
   `variantsIdentical`). No plan needed and component/kit source files are not
   modified, but genie does persist a timestamped validation report and metrics.
 - **`delete_files`** — remove a component. Needs a `planId` whose **`deletes`**
-  globs cover the paths (same capability model as writes).
+  globs cover the paths (same capability model as writes). After
+  `delete_files`, call `preview` to recompile the manifest so the grid and
+  `list_components` stop exposing the removed component.
 - **`conjure_screen`** — a full-page screen inside a project (resolves its kit
   from the project's bindings; `bind_kit` a kit to the project first).
+
+## Refine: `refine → plan → write_files → preview`
+
+`refine` is pure with respect to kit files. After it returns the full updated
+file set, persist and show the result just like a conjured component:
+
+```
+refineResult = refine { kitId, componentName, instruction }
+
+planResult = plan {
+  kitId,
+  writes: refineResult.files.map(file => file.path)
+}
+
+write_files {
+  planId: planResult.planId,
+  files: refineResult.files.map(file => ({
+    path: file.path,
+    data: file.content,
+    encoding: file.encoding,
+    mimeType: file.mimeType
+  }))
+}
+
+preview { kitId, componentName: refineResult.componentName }
+```
 
 ## Two rules that trip people up
 
