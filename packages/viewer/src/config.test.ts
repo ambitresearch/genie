@@ -47,8 +47,10 @@ import {
   DEFAULT_HOST,
   DEFAULT_VIEWER_PORT,
   noStoreHtmlPlugin,
+  noViteClientPlugin,
   parseViewerPortEnv,
   previewEntryKey,
+  stripViteClientScript,
 } from "./config.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -182,6 +184,11 @@ describe("createViewerConfig", () => {
     expect(config.server?.strictPort).toBe(false);
   });
 
+  it("M4-04: disables Vite's built-in HMR transport", () => {
+    const config = createViewerConfig({ root: KIT });
+    expect(config.server?.hmr).toBe(false);
+  });
+
   it("AC4: builds for the ES2022 target", () => {
     const config = createViewerConfig({ root: KIT });
     expect(config.build?.target).toBe("es2022");
@@ -207,6 +214,26 @@ describe("createViewerConfig", () => {
       .flat()
       .map((p) => (p && typeof p === "object" && "name" in p ? p.name : undefined));
     expect(names).toContain("genie-viewer:no-store-html");
+  });
+
+  it("M4-04 (DRO-266): registers the per-card HMR plugin", () => {
+    // The HMR bridge (WebSocket on /__genie_hmr) is a serve-only plugin wired
+    // in alongside the no-store one; assert it's present by name so a
+    // regression that drops it from the plugins array trips here rather than
+    // silently disabling live per-card refresh.
+    const config = createViewerConfig({ root: KIT });
+    const names = (config.plugins ?? [])
+      .flat()
+      .map((p) => (p && typeof p === "object" && "name" in p ? p.name : undefined));
+    expect(names).toContain("genie-viewer:hmr");
+  });
+
+  it("M4-04: registers the post-transform that removes Vite's reload client", () => {
+    const config = createViewerConfig({ root: KIT });
+    const names = (config.plugins ?? [])
+      .flat()
+      .map((p) => (p && typeof p === "object" && "name" in p ? p.name : undefined));
+    expect(names).toContain("genie-viewer:no-vite-client");
   });
 
   it("is JSON-serialisable in its data-only shape (config snapshot)", () => {
@@ -247,6 +274,20 @@ describe("createViewerConfig", () => {
         },
       }
     `);
+  });
+
+  describe("noViteClientPlugin", () => {
+    it("removes Vite's injected client while preserving card markup", () => {
+      const html =
+        '<!doctype html><head><script type="module" src="/@vite/client"></script>' +
+        "</head><body>Card</body>";
+      expect(stripViteClientScript(html)).toBe("<!doctype html><head></head><body>Card</body>");
+    });
+
+    it("uses a post HTML transform so it runs after Vite injection", () => {
+      const plugin = noViteClientPlugin();
+      expect(plugin.transformIndexHtml).toMatchObject({ order: "post" });
+    });
   });
 });
 

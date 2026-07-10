@@ -2,11 +2,12 @@
  * M4-02 (DRO-264) — `@genie/viewer` Vite multi-page dev config.
  *
  * Serves a kit directory (`<kit-dir>`) so that every
- * `components/**\/preview.html` is its own Vite entry point, in addition to
+ * `components/**\/*.html` preview is its own Vite entry point, in addition to
  * the always-present root `index.html`. Vite supports this natively — "each
  * `index.html` is treated as source code and part of the module graph"
  * (vite.dev/guide) — so all we do is enumerate the previews and hand Rollup
- * the `input` map.
+ * the `input` map. (DRO-821: the glob is `*.html`, not `preview.html`, to match
+ * the server compiler's real `<Name>.html` output — see {@link PREVIEW_GLOB}.)
  *
  * WHY a factory (`createViewerConfig`) instead of inlining everything in
  * `vite.config.ts`: the config is pure, deterministic data derived from a kit
@@ -28,6 +29,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import fg from "fast-glob";
 import type { Plugin, UserConfig } from "vite";
 
+import { createHmrPlugin } from "./hmr-plugin.js";
+
 /** RFC §6.9 / §14 default dev-server port. Overridable via `--port` (M4-08). */
 export const DEFAULT_VIEWER_PORT = 5173;
 
@@ -42,8 +45,29 @@ export const DEFAULT_HOST = "127.0.0.1";
 /** AC4 — the previews are authored against modern browsers; ship ES2022. */
 export const BUILD_TARGET = "es2022";
 
-/** The glob AC1 requires, relative to the kit root. */
-const PREVIEW_GLOB = "components/**/preview.html";
+/**
+ * The preview-file glob, relative to the kit root.
+ *
+ * DRO-821 — this MUST mirror the server manifest compiler's own discovery walk
+ * (`packages/server/src/manifest/compiler.ts` → `walkPreviewFiles`), which cards
+ * every `components/**\/*.html` that carries a valid `@genie` marker. The real
+ * `conjure`/`refine` path emits a component's preview as `<Name>.html` (e.g.
+ * `components/actions/Button/Button.html`) — forced by the LLM `response_format`
+ * schema's `^…/([A-Z][A-Za-z0-9]{1,63})/\1\.html$` `contains` constraint
+ * (`server/src/llm/schema.ts`), so the model literally cannot emit a `preview.html`.
+ * AC1's original `components/**\/preview.html` therefore globbed ZERO entries
+ * against a real server-generated kit (the grid rendered empty); it only ever
+ * worked because every hand-authored fixture used `preview.html`.
+ *
+ * `*.html` is the tightest superset that can't MISS a real card path: it matches
+ * both the native `<Name>.html` AND the DesignSync-compat `preview.html`, exactly
+ * as the compiler's walk does. A marker-less `.html` it over-includes becomes an
+ * unused Rollup input (never referenced by a manifest card, so never iframed) —
+ * harmless. Card *identity* stays owned by `.genie/manifest.json`, whose
+ * `components[].path` the grid keys off directly; this glob only decides which
+ * files Vite is willing to serve/transform as entries.
+ */
+const PREVIEW_GLOB = "components/**/*.html";
 
 /**
  * Turns a kit-relative preview path into a Rollup `input` key that is safe as
@@ -58,12 +82,14 @@ export function previewEntryKey(previewPath: string): string {
 }
 
 /**
- * Globs every `components/**\/preview.html` under `kitRoot`, returning
+ * Globs every `components/**\/*.html` under `kitRoot`, returning
  * kit-relative POSIX paths (forward slashes on every OS — fast-glob
  * guarantees this) in a stable sorted order so the derived config is
  * deterministic (and its snapshot test doesn't flake on FS iteration order).
  * A kit with no component previews yields `[]`; the root `index.html` entry is
- * added by {@link createViewerConfig}, not here.
+ * added by {@link createViewerConfig}, not here. See {@link PREVIEW_GLOB} for
+ * why the glob is `*.html` (the server's real preview filename) rather than the
+ * hand-authored fixtures' `preview.html`.
  */
 export function collectPreviewEntries(kitRoot: string): string[] {
   return fg
@@ -148,6 +174,7 @@ export function noStoreHtmlPlugin(): Plugin {
               if (cacheControlSeen) {
                 setHeader("Cache-Control", "no-store");
               }
+
               return setHeader(name, value);
             }
 
@@ -164,6 +191,25 @@ export function noStoreHtmlPlugin(): Plugin {
           next();
         },
       );
+    },
+  };
+}
+
+const VITE_CLIENT_SCRIPT = /<script\b[^>]*\bsrc=(["'])\/@vite\/client\1[^>]*><\/script>\s*/gi;
+
+/** Remove Vite's injected full-reload client; genie owns card refreshes. */
+export function stripViteClientScript(html: string): string {
+  return html.replace(VITE_CLIENT_SCRIPT, "");
+}
+
+/** Run after Vite's built-in HTML transform so the injected client is present. */
+export function noViteClientPlugin(): Plugin {
+  return {
+    name: "genie-viewer:no-vite-client",
+    apply: "serve",
+    transformIndexHtml: {
+      order: "post",
+      handler: stripViteClientScript,
     },
   };
 }
@@ -199,11 +245,18 @@ export function createViewerConfig(options: ViewerConfigOptions): UserConfig {
       port: options.port ?? DEFAULT_VIEWER_PORT,
       // Port-fallback (EADDRINUSE → next port) is M4-08's CLI concern.
       strictPort: false,
+      // Disable Vite's built-in HMR transport. Vite 8 still injects its client
+      // script with this flag, so noViteClientPlugin removes that script below.
+      hmr: false,
     },
     build: {
       target: BUILD_TARGET,
       rollupOptions: { input },
     },
-    plugins: [noStoreHtmlPlugin()],
+    // AC6 (M4-02) — never let the browser reuse a cached preview; M4-04 (DRO-266)
+    // — the per-card HMR bridge (a WebSocket on `/__genie_hmr`, driven by Vite's
+    // own file watcher). All are `apply: "serve"`, so `vite build` never sees
+    // them.
+    plugins: [noStoreHtmlPlugin(), noViteClientPlugin(), createHmrPlugin()],
   };
 }

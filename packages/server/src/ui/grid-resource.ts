@@ -52,7 +52,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 
-import { compileManifest, type Manifest } from "../manifest/index.js";
+import { compileManifest, type Manifest, type ManifestCard } from "../manifest/index.js";
 import { KIT_ID_PATTERN } from "../tools/get_kit.js";
 
 // ─── Public constants (AC1) ──────────────────────────────────────────────────
@@ -86,6 +86,16 @@ export type AssetReader = (name: ViewerAssetName) => Promise<string>;
 
 /** Reads a preview file's raw bytes for the `data:` fallback, or null. */
 export type PreviewReader = (kitDir: string, relPath: string) => Promise<Buffer | null>;
+
+/** Embedded transport card: stable kit identity plus its vehicle-specific URL. */
+export interface EmbeddedManifestCard extends ManifestCard {
+  sourcePath: string;
+}
+
+/** Manifest shape inlined into the embedded viewer document. */
+export interface EmbeddedManifest extends Omit<Manifest, "components"> {
+  components: EmbeddedManifestCard[];
+}
 
 /** Options for {@link registerGridResource}. Every collaborator is injectable. */
 export interface GridResourceOptions {
@@ -179,8 +189,9 @@ export function normalizePreviewsBaseUrl(raw: string | undefined): URL | undefin
 }
 
 /**
- * Rewrite every card `path` to the URL the EMBEDDED tier's iframe should load
- * (AC4). With a valid `previewsBaseUrl`, that's an absolute `https://` URL on
+ * Preserve every card's kit-relative identity as `sourcePath`, then rewrite
+ * `path` to the URL the EMBEDDED tier's iframe should load (AC4). With a valid
+ * `previewsBaseUrl`, that's an absolute `https://` URL on
  * the separate previews origin (`${base}/${kitId}/${path}`) — the cross-origin
  * isolation the RFC §6/T-09 recommends. Without one — OR when the configured
  * base URL is malformed (see {@link normalizePreviewsBaseUrl}) — the preview's
@@ -194,8 +205,13 @@ export function normalizePreviewsBaseUrl(raw: string | undefined): URL | undefin
  */
 export async function rewriteCardPaths(
   manifest: Manifest,
-  opts: { kitId: string; kitDir: string; previewsBaseUrl?: string; readPreviewBytes: PreviewReader },
-): Promise<Manifest> {
+  opts: {
+    kitId: string;
+    kitDir: string;
+    previewsBaseUrl?: string;
+    readPreviewBytes: PreviewReader;
+  },
+): Promise<EmbeddedManifest> {
   const { kitId, kitDir, previewsBaseUrl, readPreviewBytes } = opts;
 
   // Validate the previews base URL ONCE up front; a malformed value degrades to
@@ -204,18 +220,19 @@ export async function rewriteCardPaths(
 
   const components = await Promise.all(
     manifest.components.map(async (card) => {
+      const sourcePath = card.path;
       if (base !== undefined) {
         // Absolute https:// on the separate previews origin. `base` already ends
         // in `/` (normalizePreviewsBaseUrl) so the kitId segment is appended,
         // not replacing the last path part; `URL` percent-encodes the join.
         const src = new URL(`${encodeURIComponent(kitId)}/${card.path}`, base).toString();
-        return { ...card, path: src };
+        return { ...card, sourcePath, path: src };
       }
       // Solo-dev fallback: inline the preview bytes as a data: URL.
       const bytes = await readPreviewBytes(kitDir, card.path);
-      if (bytes === null) return card; // keep relative path; degrade gracefully
+      if (bytes === null) return { ...card, sourcePath }; // keep relative path; degrade gracefully
       const src = `data:text/html;base64,${bytes.toString("base64")}`;
-      return { ...card, path: src };
+      return { ...card, sourcePath, path: src };
     }),
   );
 
@@ -252,8 +269,7 @@ export function escapeJsonForScript(json: string): string {
  */
 export function inlineManifest(indexHtml: string, manifest: Manifest): string {
   const json = escapeJsonForScript(JSON.stringify(manifest));
-  const tag =
-    `<script type="application/json" id="${MANIFEST_ELEMENT_ID}">${json}</script>`;
+  const tag = `<script type="application/json" id="${MANIFEST_ELEMENT_ID}">${json}</script>`;
   const headClose = indexHtml.indexOf("</head>");
   if (headClose === -1) return tag + indexHtml;
   return indexHtml.slice(0, headClose) + tag + indexHtml.slice(headClose);
@@ -378,10 +394,10 @@ function isInside(parent: string, child: string): boolean {
 function fallbackShell(manifest: Manifest): string {
   const json = escapeJsonForScript(JSON.stringify(manifest));
   return (
-    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\" />" +
+    '<!doctype html><html lang="en"><head><meta charset="utf-8" />' +
     `<title>genie — preview</title>` +
     `<script type="application/json" id="${MANIFEST_ELEMENT_ID}">${json}</script>` +
-    "</head><body><main id=\"grid\"></main>" +
+    '</head><body><main id="grid"></main>' +
     "<p>genie viewer assets unavailable in this environment.</p>" +
     "</body></html>"
   );

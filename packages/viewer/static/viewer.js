@@ -306,7 +306,9 @@
     iframe.setAttribute("sandbox", "allow-scripts");
     // AC4 — never eagerly load offscreen previews.
     iframe.setAttribute("loading", "lazy");
-    iframe.setAttribute("src", card.path || "");
+    var cardSrc = card.path || "";
+    var cardIdentity = card.sourcePath || cardSrc;
+    iframe.setAttribute("src", cardSrc);
     // M4-09 AC5 — the accessible name axe-core's `frame-title` rule checks
     // for. `accessibleName` guards the same empty-string trap as the card's
     // own aria-label above: `title=""` is indistinguishable from a missing
@@ -321,6 +323,16 @@
     // search → card → iframe → card → iframe instead of the required
     // search → card → card.
     iframe.setAttribute("tabindex", "-1");
+    // M4-04 (DRO-266) — the canonical, kit-root-relative preview path, kept
+    // verbatim (never cache-busted) so the HMR bridge can match a
+    // `card.changed` message's `path` against exactly this attribute. The
+    // live `src` may later carry an `?__genie_hmr=N` cache-bust (see
+    // reloadIframeEl); `data-path` stays the stable identity.
+    iframe.setAttribute("data-path", cardIdentity);
+    // Embedded manifests replace `path` with an absolute/data transport URL.
+    // Keep that source separate from the kit-relative identity above so a host
+    // can target the card by sourcePath and replace its bytes safely.
+    iframe.setAttribute("data-src", cardSrc);
 
     // AC2 — size from the viewport when it is a real WxH; otherwise reserve
     // a sane default height and let CSS own the width (responsive column).
@@ -442,6 +454,419 @@
     grid.appendChild(box);
   }
 
+  // ── HMR: per-card live refresh (M4-04 / DRO-266) ───────────────────────────
+  //
+  // Two transports, one pure dispatcher (`applyHmrMessage`):
+  //   1. A WebSocket on `/__genie_hmr` (AC1/AC2) — the primary channel on the
+  //      Vite dev server (`http(s)://…`). The server plugin
+  //      (`src/hmr-plugin.ts`) pushes `{event:"card.changed",path}` /
+  //      `{event:"tokens.changed"}` off Vite's own file watcher.
+  //   2. `window` `postMessage` — the bridge for the EMBEDDED `ui://` tier,
+  //      where the grid runs inside a host iframe under strict CSP
+  //      (`default-src 'none'`, coordinated with DRO-269) that may forbid a
+  //      direct WebSocket. A host forwards the same refresh signal as a
+  //      message; we accept both the WS shape AND the research sketch's
+  //      `{type:"refresh", id|path}` shape (M4-04 summary).
+  //
+  // Why src-reassignment, not `iframe.contentWindow.location.reload()` (which
+  // AC2 literally names): every preview iframe is `sandbox="allow-scripts"`
+  // with NO `allow-same-origin` (M4-03 AC3, a hard security rule) — so it has
+  // an opaque origin and touching `contentWindow.location` throws cross-origin.
+  // Reassigning `src` with a fresh cache-bust token is the cross-origin-safe
+  // equivalent with the identical observable outcome: ONLY that one iframe
+  // refetches its `preview.html` and reloads; the grid never re-renders and no
+  // sibling card reflows (AC3 — the sub-100 ms, one-card-only guarantee is
+  // structural, not a timing hack). `data-path` stays the stable identity the
+  // bridge matches on; the `?__genie_hmr=N` token rides only on the live `src`.
+
+  /** AC1's WebSocket endpoint path — must match `GENIE_HMR_PATH` server-side. */
+  var HMR_PATH = "/__genie_hmr";
+
+  /** Cache-bust query param appended to a reloaded iframe's live `src`. */
+  var HMR_CACHE_BUST_PARAM = "__genie_hmr";
+
+  /** AC4 — polling-fallback cadence when the WebSocket is unavailable. */
+  var HMR_POLL_INTERVAL_MS = 2000;
+
+  /** Monotonic cache-bust token source (never `Date.now`, so tests are pure). */
+  var hmrReloadToken = 0;
+
+  /**
+   * Normalise a raw WS frame (a JSON string) or a `postMessage` payload (a
+   * string or already-parsed object) into an internal reload command, or
+   * `null` for anything unrecognised (so unrelated `postMessage`s from other
+   * libraries are silently ignored). Accepts both wire shapes:
+   *   - `{ event: "card.changed", path }`  → `{ kind: "card", path }`   (WS, AC2)
+   *   - `{ event: "tokens.changed" }`       → `{ kind: "tokens" }`       (WS, AC5)
+   *   - `{ type: "refresh", path, src? }`   → `{ kind: "card", path, src? }` (postMessage)
+   *   - `{ type: "refresh", id }`           → `{ kind: "card", path:id }` (postMessage; `id` is the card path)
+   *   - `{ type: "refresh" }` (no target)   → `{ kind: "tokens" }`       (refresh-all)
+   *
+   * @param {unknown} raw
+   * @returns {{ kind: "card", path: string, src?: string } | { kind: "tokens" } | null}
+   */
+  function normalizeHmrMessage(raw) {
+    var data = raw;
+    if (typeof data === "string") {
+      try {
+        data = JSON.parse(data);
+      } catch {
+        return null;
+      }
+    }
+    if (!data || typeof data !== "object") return null;
+
+    if (data.event === "card.changed") {
+      if (typeof data.path !== "string" || !data.path) return null;
+      return typeof data.src === "string" && data.src
+        ? { kind: "card", path: data.path, src: data.src }
+        : { kind: "card", path: data.path };
+    }
+    if (data.event === "tokens.changed") return { kind: "tokens" };
+
+    if (data.type === "refresh") {
+      var target = typeof data.path === "string" && data.path ? data.path : data.id;
+      if (typeof target === "string" && target) {
+        return typeof data.src === "string" && data.src
+          ? { kind: "card", path: target, src: data.src }
+          : { kind: "card", path: target };
+      }
+      return { kind: "tokens" }; // a target-less refresh means "reload everything".
+    }
+    return null;
+  }
+
+  /**
+   * Reassign one iframe's `src` to its stable `data-src` plus a fresh
+   * cache-bust token, or install `freshSrc` from the embedded host for a
+   * data-backed card. Returns `true` when a navigation was started.
+   *
+   * @param {HTMLIFrameElement} iframe
+   * @param {number|string} token
+   * @param {string=} freshSrc
+   * @returns {boolean}
+   */
+  function reloadIframeEl(iframe, token, freshSrc) {
+    if (freshSrc) {
+      iframe.setAttribute("data-src", freshSrc);
+      iframe.setAttribute("src", freshSrc);
+      return true;
+    }
+
+    var src =
+      iframe.getAttribute("data-src") ||
+      iframe.getAttribute("src") ||
+      iframe.getAttribute("data-path");
+    if (!src || /^data:/i.test(src)) return false;
+    var sep = src.indexOf("?") === -1 ? "?" : "&";
+    iframe.setAttribute("src", src + sep + HMR_CACHE_BUST_PARAM + "=" + token);
+    return true;
+  }
+
+  /**
+   * AC2 — reload ONLY the card(s) whose `data-path` equals `path`. Iterates
+   * (rather than a `[data-path="…"]` selector) so a path with selector-special
+   * characters can't break matching. Returns how many iframes were reloaded.
+   *
+   * @param {HTMLElement} grid
+   * @param {string} path
+   * @param {number|string} token
+   * @param {string=} freshSrc
+   * @returns {number}
+   */
+  function reloadCardByPath(grid, path, token, freshSrc) {
+    if (!grid || !path) return 0;
+    var iframes = grid.querySelectorAll("iframe[data-path]");
+    var n = 0;
+    for (var i = 0; i < iframes.length; i++) {
+      if (
+        iframes[i].getAttribute("data-path") === path &&
+        reloadIframeEl(iframes[i], token, freshSrc)
+      )
+        n++;
+    }
+    return n;
+  }
+
+  /**
+   * AC5 — reload EVERY card iframe (a tokens/styles change repaints them all).
+   * One shared token for the batch is fine: each iframe has a distinct path, so
+   * the token only needs to differ from that iframe's previous `src`.
+   *
+   * @param {HTMLElement} grid
+   * @param {number|string} token
+   * @returns {number}
+   */
+  function reloadAllCards(grid, token) {
+    if (!grid) return 0;
+    var iframes = grid.querySelectorAll("iframe[data-path]");
+    var n = 0;
+    for (var i = 0; i < iframes.length; i++) {
+      if (reloadIframeEl(iframes[i], token)) n++;
+    }
+    return n;
+  }
+
+  /**
+   * Pure dispatcher: normalise a message and apply it to the grid, returning
+   * the number of iframes reloaded (0 for an unrecognised or no-match message).
+   * A caller may pin `token` for determinism; otherwise a monotonic token is
+   * used so each dispatch actually changes every affected `src`.
+   *
+   * @param {HTMLElement} grid
+   * @param {unknown} message
+   * @param {number|string=} token
+   * @returns {number}
+   */
+  function applyHmrMessage(grid, message, token) {
+    var cmd = normalizeHmrMessage(message);
+    if (!cmd) return 0;
+    var t = token === undefined ? ++hmrReloadToken : token;
+    return cmd.kind === "card"
+      ? reloadCardByPath(grid, cmd.path, t, cmd.src)
+      : reloadAllCards(grid, t);
+  }
+
+  /**
+   * AC4 (polling fallback) — pure diff of two manifests: the kit-relative paths
+   * of components PRESENT in both whose `hash` changed. A brand-new or removed
+   * component changes grid STRUCTURE (needs a full re-render, out of scope for
+   * the lightweight fallback — picked up on the next boot), so only in-place
+   * content edits are surfaced here. Never throws on a partial/absent manifest.
+   *
+   * @param {object} prev
+   * @param {object} next
+   * @returns {string[]}
+   */
+  function diffManifestHashes(prev, next) {
+    var prevByPath = {};
+    var pc = (prev && prev.components) || [];
+    for (var i = 0; i < pc.length; i++) {
+      if (!pc[i]) continue;
+      var prevPath = pc[i].sourcePath || pc[i].path;
+      if (typeof prevPath === "string") prevByPath[prevPath] = pc[i].hash;
+    }
+    var changed = [];
+    var nc = (next && next.components) || [];
+    for (var j = 0; j < nc.length; j++) {
+      var comp = nc[j];
+      if (!comp) continue;
+      var nextPath = comp.sourcePath || comp.path;
+      if (typeof nextPath !== "string") continue;
+      if (
+        Object.prototype.hasOwnProperty.call(prevByPath, nextPath) &&
+        prevByPath[nextPath] !== comp.hash
+      ) {
+        changed.push(nextPath);
+      }
+    }
+    return changed;
+  }
+
+  /**
+   * AC6 — increment the header's reload counter by `n` (a no-op when `n<=0` or
+   * the counter element is absent, e.g. the embedded shell). The count is
+   * mirrored in a `data-count` attribute so a test can read it without parsing
+   * display text.
+   *
+   * @param {Document} doc
+   * @param {number} n
+   * @returns {number} the new total
+   */
+  function bumpReloadCounter(doc, n) {
+    var el = doc.getElementById("hmr-count");
+    if (!el || !(n > 0)) return el ? Number(el.getAttribute("data-count") || "0") : 0;
+    var next = Number(el.getAttribute("data-count") || "0") + n;
+    el.setAttribute("data-count", String(next));
+    el.textContent = String(next);
+    return next;
+  }
+
+  /**
+   * The `ws(s)://…/__genie_hmr` URL for the current location, or `null` when
+   * there is no dev server to connect to — a `file://` open or an opaque/`ui://`
+   * embedded origin. That `null` is what makes the script byte-identical across
+   * vehicles (RFC G-5): the SAME `viewer.js` simply skips the live socket where
+   * one can't exist and leans on the `postMessage` bridge instead.
+   *
+   * @param {Location|{protocol?:string,host?:string}} loc
+   * @returns {string|null}
+   */
+  function hmrSocketUrl(loc) {
+    if (!loc || (loc.protocol !== "http:" && loc.protocol !== "https:") || !loc.host) return null;
+    return (loc.protocol === "https:" ? "wss:" : "ws:") + "//" + loc.host + HMR_PATH;
+  }
+
+  /**
+   * Wire the live-refresh channels and return a teardown function. Everything
+   * the browser touches is injectable so `hmr-client.test.ts` drives the whole
+   * thing in jsdom with fakes — no real socket, no real timers, no network:
+   *
+   *   - `win`            — the window to bind `message`/`WebSocket` on (default `window`)
+   *   - `location`       — used to derive the WS URL (default `win.location`)
+   *   - `WebSocketImpl`  — the WebSocket constructor (default `win.WebSocket`)
+   *   - `fetchImpl`      — manifest fetch for the poll fallback (default `win.fetch`)
+   *   - `setIntervalImpl` / `clearIntervalImpl` — poll timer seam (default `win`'s)
+   *   - `manifestUrl`    — poll target (default `MANIFEST_URL`)
+   *   - `initialManifest`— baseline so the FIRST poll can already detect a change
+   *   - `pollIntervalMs` — cadence (default `HMR_POLL_INTERVAL_MS`)
+   *   - `parentOrigin`   — optional trusted embedding-host origin; otherwise
+   *                        derived from `document.referrer` when available
+   *
+   * The `postMessage` bridge is ALWAYS active (harmless where unused). The WS +
+   * polling only engage when {@link hmrSocketUrl} resolves (a real dev server);
+   * on `file://`/`ui://` there is nothing to poll, so we don't spin a timer
+   * against a static snapshot.
+   *
+   * @param {Document} doc
+   * @param {object=} options
+   * @returns {() => void} teardown
+   */
+  function initHmr(doc, options) {
+    var opts = options || {};
+    var grid = doc.getElementById("grid");
+    if (!grid) return function () {};
+
+    // Resolve each injectable via an explicit "key in opts" check (not `||`), so
+    // a test can DISABLE a capability by passing it as `undefined`/`null` — e.g.
+    // `WebSocketImpl: undefined` to exercise the no-WebSocket polling path even
+    // though the ambient jsdom `window` provides a real one. Production callers
+    // omit the key entirely and get the ambient default.
+    var win = "win" in opts ? opts.win : typeof window !== "undefined" ? window : undefined;
+    var location = "location" in opts ? opts.location : win && win.location;
+    var WebSocketImpl =
+      "WebSocketImpl" in opts
+        ? opts.WebSocketImpl
+        : (win && win.WebSocket) || (typeof WebSocket !== "undefined" ? WebSocket : undefined);
+    var fetchImpl = "fetchImpl" in opts ? opts.fetchImpl : win && win.fetch;
+    var setIntervalImpl =
+      "setIntervalImpl" in opts
+        ? opts.setIntervalImpl
+        : (win && win.setInterval) ||
+          (typeof setInterval !== "undefined" ? setInterval : undefined);
+    var clearIntervalImpl =
+      "clearIntervalImpl" in opts
+        ? opts.clearIntervalImpl
+        : (win && win.clearInterval) ||
+          (typeof clearInterval !== "undefined" ? clearInterval : undefined);
+    var manifestUrl = opts.manifestUrl || MANIFEST_URL;
+    var pollIntervalMs = opts.pollIntervalMs || HMR_POLL_INTERVAL_MS;
+
+    var socket = null;
+    var pollTimer = null;
+    var lastManifest = opts.initialManifest || null;
+    var pollInFlight = false;
+    var torn = false;
+
+    /** Apply any inbound message (WS or postMessage) and bump the counter. */
+    function handle(rawData) {
+      var reloaded = applyHmrMessage(grid, rawData);
+      if (reloaded > 0) bumpReloadCounter(doc, reloaded);
+    }
+
+    // ── Transport 2: the postMessage bridge (embedded ui:// tier) ────────────
+    var parentOrigin = null;
+    var configuredParentOrigin = "parentOrigin" in opts ? opts.parentOrigin : doc.referrer;
+    var ParentURL = win && win.URL;
+    if (configuredParentOrigin && typeof ParentURL === "function") {
+      try {
+        var parsedParentOrigin = new ParentURL(configuredParentOrigin).origin;
+        if (parsedParentOrigin !== "null") parentOrigin = parsedParentOrigin;
+      } catch {
+        parentOrigin = null;
+      }
+    }
+
+    function onMessage(event) {
+      // Sandboxed cards can call parent.postMessage despite lacking
+      // allow-same-origin. Only the embedding host may issue refresh commands.
+      if (!event || !win || event.source !== win.parent) return;
+      if (parentOrigin && event.origin !== parentOrigin) return;
+      handle(event && "data" in event ? event.data : event);
+    }
+    if (win && typeof win.addEventListener === "function") {
+      win.addEventListener("message", onMessage);
+    }
+
+    // ── AC4: polling fallback ────────────────────────────────────────────────
+    function poll() {
+      if (torn || pollInFlight || !fetchImpl) return;
+      pollInFlight = true;
+      fetchImpl(manifestUrl)
+        .then(function (res) {
+          return res && res.ok ? res.json() : null;
+        })
+        .then(function (next) {
+          if (torn || !next) return;
+          if (lastManifest) {
+            var changed = diffManifestHashes(lastManifest, next);
+            var total = 0;
+            for (var i = 0; i < changed.length; i++) {
+              total += reloadCardByPath(grid, changed[i], ++hmrReloadToken);
+            }
+            if (total > 0) bumpReloadCounter(doc, total);
+          }
+          lastManifest = next;
+        })
+        .catch(function () {
+          // A transient fetch failure must not kill the poll loop — try again
+          // next tick.
+        })
+        .then(function () {
+          pollInFlight = false;
+        });
+    }
+
+    function startPolling() {
+      if (torn || pollTimer || !setIntervalImpl || !fetchImpl) return;
+      pollTimer = setIntervalImpl(poll, pollIntervalMs);
+    }
+
+    // ── Transport 1: the WebSocket (primary, dev-server only) ────────────────
+    var url = hmrSocketUrl(location);
+    if (url && WebSocketImpl) {
+      try {
+        socket = new WebSocketImpl(url);
+        socket.onmessage = function (event) {
+          handle(event && "data" in event ? event.data : event);
+        };
+        // A socket error or close (server gone, CSP block, network drop) falls
+        // back to polling — but only once (guarded inside startPolling).
+        socket.onerror = startPolling;
+        socket.onclose = startPolling;
+      } catch {
+        // Constructing the socket threw (e.g. a CSP `connect-src` block) — go
+        // straight to the polling fallback.
+        startPolling();
+      }
+    } else if (url && !WebSocketImpl) {
+      // A dev server is present but this environment has no WebSocket at all —
+      // poll from the start.
+      startPolling();
+    }
+    // else (url === null): file:// / ui:// — no dev server to reach; the
+    // postMessage bridge above is the only live channel, by design.
+
+    return function teardown() {
+      torn = true;
+      if (win && typeof win.removeEventListener === "function") {
+        win.removeEventListener("message", onMessage);
+      }
+      if (socket) {
+        socket.onmessage = socket.onerror = socket.onclose = null;
+        try {
+          socket.close();
+        } catch {
+          /* already closed */
+        }
+      }
+      if (pollTimer && clearIntervalImpl) {
+        clearIntervalImpl(pollTimer);
+        pollTimer = null;
+      }
+    };
+  }
+
   /**
    * Read the manifest inlined by the embedded `ui://genie/grid` tier (M4-06):
    * a `<script type="application/json" id="manifest">` data island whose text
@@ -521,6 +946,21 @@
       try {
         renderGrid(doc, grid, inline);
         wireSearch(doc, grid);
+        // M4-04 (DRO-266) — this tier is EXACTLY who the postMessage bridge
+        // exists for (its strict CSP, connect-src 'none', blocks fetch AND a
+        // direct WebSocket alike — see initHmr's own header). hmrSocketUrl
+        // resolves to null here (no http(s) origin with a host — see its own
+        // doc), so initHmr transparently skips the WS + polling paths and
+        // wires ONLY the `message` listener: no network access is attempted,
+        // satisfying the CSP without special-casing this branch. Omitting
+        // this call (as an earlier revision did) left the bridge dead code in
+        // the one tier it was built for. Best-effort, like the fetch path
+        // below: a throw here must never take down an otherwise-good render.
+        try {
+          initHmr(doc, { initialManifest: inline });
+        } catch {
+          /* live refresh is an enhancement, never a boot blocker */
+        }
       } catch (err) {
         var inlineDetail = err && err.message ? err.message : String(err);
         renderError(doc, grid, inlineDetail);
@@ -541,6 +981,19 @@
         if (manifest === null) return; // error already rendered above
         renderGrid(doc, grid, manifest);
         wireSearch(doc, grid);
+
+        // M4-04 (DRO-266) — engage live per-card refresh AFTER the grid exists,
+        // handing the just-fetched manifest in as the polling baseline so the
+        // fallback's very first tick can already spot a hash change. Best-effort:
+        // if it throws (an exotic embed with no window at all), the static grid
+        // still stands. The teardown fn is intentionally unused here — the
+        // browser page lives until navigation; tests call `initHmr` directly and
+        // own their own teardown.
+        try {
+          initHmr(doc, { initialManifest: manifest });
+        } catch {
+          /* live refresh is an enhancement, never a boot blocker */
+        }
       })
       .catch(function (err) {
         var detail = err && err.message ? err.message : String(err);
@@ -574,5 +1027,17 @@
     window.__genieViewerTestHooks.wireSearch = wireSearch;
     window.__genieViewerTestHooks.MANIFEST_ELEMENT_ID = MANIFEST_ELEMENT_ID;
     window.__genieViewerTestHooks.boot = boot;
+    // M4-04 (DRO-266) — HMR client seam.
+    window.__genieViewerTestHooks.HMR_PATH = HMR_PATH;
+    window.__genieViewerTestHooks.HMR_CACHE_BUST_PARAM = HMR_CACHE_BUST_PARAM;
+    window.__genieViewerTestHooks.HMR_POLL_INTERVAL_MS = HMR_POLL_INTERVAL_MS;
+    window.__genieViewerTestHooks.normalizeHmrMessage = normalizeHmrMessage;
+    window.__genieViewerTestHooks.reloadCardByPath = reloadCardByPath;
+    window.__genieViewerTestHooks.reloadAllCards = reloadAllCards;
+    window.__genieViewerTestHooks.applyHmrMessage = applyHmrMessage;
+    window.__genieViewerTestHooks.diffManifestHashes = diffManifestHashes;
+    window.__genieViewerTestHooks.bumpReloadCounter = bumpReloadCounter;
+    window.__genieViewerTestHooks.hmrSocketUrl = hmrSocketUrl;
+    window.__genieViewerTestHooks.initHmr = initHmr;
   }
 })();

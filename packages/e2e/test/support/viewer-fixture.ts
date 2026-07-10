@@ -66,11 +66,13 @@ type ViewerAsset = "index.html" | "viewer.js" | "viewer.css";
  * duplicated card is detectable; the file on disk is `<Name>/<Name>.html`, the
  * layout `compileManifest`'s `deriveName` expects.
  */
-export const FIXTURE_COMPONENTS: ReadonlyArray<{
+export interface ViewerFixtureComponent {
   group: string;
   name: string;
   viewport: string;
-}> = [
+}
+
+export const FIXTURE_COMPONENTS: ReadonlyArray<ViewerFixtureComponent> = [
   { group: "actions", name: "Button", viewport: "480x240" },
   { group: "actions", name: "IconButton", viewport: "240x240" },
   { group: "actions", name: "SplitButton", viewport: "480x240" },
@@ -128,12 +130,14 @@ function previewHtml(group: string, name: string, viewport: string): string {
  * real M3-03 compiler. The returned {@link ViewerFixture.manifest} is the one
  * every vehicle renders from.
  */
-export async function createViewerFixture(): Promise<ViewerFixture> {
+export async function createViewerFixture(
+  components: ReadonlyArray<ViewerFixtureComponent> = FIXTURE_COMPONENTS,
+): Promise<ViewerFixture> {
   const kitsRoot = await mkdtemp(join(tmpdir(), "genie-m4-e2e-"));
   const kitId = FIXTURE_KIT_ID;
   const kitDir = join(kitsRoot, kitId);
 
-  for (const { group, name, viewport } of FIXTURE_COMPONENTS) {
+  for (const { group, name, viewport } of components) {
     const dir = join(kitDir, "components", group, name);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, `${name}.html`), previewHtml(group, name, viewport), "utf8");
@@ -223,10 +227,11 @@ export interface ViteVehicle {
  * (no clash with a dev instance or a parallel test worker).
  */
 export async function startViteVehicle(kitDir: string): Promise<ViteVehicle> {
-  // Import the viewer's Vite + config lazily (heavy, and only vehicle b needs
-  // them) via the non-literal specifiers the viewer package resolves to.
+  // Import Vite + the viewer source lazily (heavy, and only vehicle b needs
+  // them). The source-relative import keeps clean-tree typecheck independent
+  // of dist/index.d.ts, which does not exist until the separate build job runs.
   const { createServer } = await import("vite");
-  const { createViewerConfig } = await import("@genie/viewer");
+  const { createViewerConfig } = await import("../../../viewer/src/index.js");
   const server = await createServer({
     ...createViewerConfig({ root: kitDir, port: 0 }),
     clearScreen: false,

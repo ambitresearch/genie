@@ -61,6 +61,11 @@ export default tseslint.config(
         HTMLElement: "readonly",
         HTMLInputElement: "readonly",
         HTMLIFrameElement: "readonly",
+        // M4-04 (DRO-266) — the HMR client touches these browser globals: the
+        // live-refresh WebSocket and the polling-fallback timers.
+        WebSocket: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
       },
     },
   },

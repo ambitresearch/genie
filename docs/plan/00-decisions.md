@@ -34,7 +34,7 @@ fell out of designing them.
   round-trip a Claude Design project, and (separately) import from Google Stitch.
 - We still **describe** Claude Design accurately as the inspiration, and we still
   **preserve Anthropic's exact terms** (`@dsCard`, `DesignSync`, `_ds_*`, `design-sync`)
-  *as references* — in explanatory prose and in the future interop adapter — never as
+  _as references_ — in explanatory prose and in the future interop adapter — never as
   genie's own native surface.
 
 **Consequence:** genie's native surface is "own conventions, optional bridges": the
@@ -46,32 +46,32 @@ in the native surface.
 
 ## D-A — Tool names: 16 inherited verbs → genie's 13
 
-Same protocol *shape* as DesignSync (read freely → one permission gate → write scoped to
+Same protocol _shape_ as DesignSync (read freely → one permission gate → write scoped to
 a plan), but genie's own names. Structural verbs stay boringly clear; only the generation
 verbs carry the genie identity (the same scarcity rule as the clay accent).
 
-| Claude Design verb | genie verb | Note |
-|---|---|---|
-| `list_projects` | **`list_kits`** | "kit", not "project" — *project* now means screens (D-F) |
-| `get_project` | **`get_kit`** | metadata + `canEdit` |
-| `list_files` | **`list_files`** | kept — already clear |
-| `get_file` | **`read_file`** | verb-first reads better than `get_` |
-| `create_project` | **`create_kit`** | scaffold a new kit |
-| `list_components` | **`list_components`** | kept |
-| `finalize_plan` | **`plan`** | the one permission gate → returns `planId` |
-| `write_files` | **`write_files`** | kept — cite `planId`, ≤256/call |
-| `delete_files` | **`delete_files`** | kept — cite `planId` |
-| `report_validate` + `validate_design_system` | **`validate`** | **two verbs merged into one** |
-| `register_assets` | **✕ dropped** | the marker IS the registration (D-B) |
-| `unregister_assets` | **✕ dropped** | delete the file instead |
-| `generate_component` | **`conjure`** | the front-door CTA already says "Conjure" |
-| `refine_component` | **`refine`** | comment-pins + region-scoped sliders |
-| `render_preview` | **`preview`** | returns the `ui://` grid for MCP-App hosts |
+| Claude Design verb                           | genie verb            | Note                                                     |
+| -------------------------------------------- | --------------------- | -------------------------------------------------------- |
+| `list_projects`                              | **`list_kits`**       | "kit", not "project" — _project_ now means screens (D-F) |
+| `get_project`                                | **`get_kit`**         | metadata + `canEdit`                                     |
+| `list_files`                                 | **`list_files`**      | kept — already clear                                     |
+| `get_file`                                   | **`read_file`**       | verb-first reads better than `get_`                      |
+| `create_project`                             | **`create_kit`**      | scaffold a new kit                                       |
+| `list_components`                            | **`list_components`** | kept                                                     |
+| `finalize_plan`                              | **`plan`**            | the one permission gate → returns `planId`               |
+| `write_files`                                | **`write_files`**     | kept — cite `planId`, ≤256/call                          |
+| `delete_files`                               | **`delete_files`**    | kept — cite `planId`                                     |
+| `report_validate` + `validate_design_system` | **`validate`**        | **two verbs merged into one**                            |
+| `register_assets`                            | **✕ dropped**         | the marker IS the registration (D-B)                     |
+| `unregister_assets`                          | **✕ dropped**         | delete the file instead                                  |
+| `generate_component`                         | **`conjure`**         | the front-door CTA already says "Conjure"                |
+| `refine_component`                           | **`refine`**          | comment-pins + region-scoped sliders                     |
+| `render_preview`                             | **`preview`**         | returns the `ui://` grid for MCP-App hosts               |
 
 **Net for the kit/component core: 16 → 13 verbs.** Namespace every harness sees:
 `mcp__genie__<verb>`. M1 also adds the project verbs in D-F:
 `list_projects`, `get_project`, `create_project`, `delete_project`, `bind_kit`, and
-`conjure_screen`. Reusing the freed-up name `list_projects` for *screens* projects is
+`conjure_screen`. Reusing the freed-up name `list_projects` for _screens_ projects is
 intentional and safe, since the kit enumerator is now `list_kits`.
 
 ---
@@ -95,7 +95,7 @@ intentional and safe, since the kit enumerator is now `list_kits`.
   - `.genie/recompile` — sentinel (was `_ds_needs_recompile`)
   - `.genie/manifest.json` — compiled card index (D-D)
   - `.genie/plans.sqlite` — in-flight plan/TTL scratch (the only sqlite, throwaway)
-- The atomic write *sequence* is unchanged: sentinel → writes ≤256 → deletes → re-arm → anchor last.
+- The atomic write _sequence_ is unchanged: sentinel → writes ≤256 → deletes → re-arm → anchor last.
 
 ---
 
@@ -120,9 +120,9 @@ intentional and safe, since the kit enumerator is now `list_kits`.
 genie works on **both ends of the library→consumer arrow** that already exists in the world.
 
 - A **kit** is the library — components (Button, Card, Input), tokens, the design language.
-  Produces a *card* in the grid.
-- A **project** is the screens you build *with* a kit — web / app / mobile pages and flows.
-  Produces a *full-page preview*, constrained to the bound kit's components.
+  Produces a _card_ in the grid.
+- A **project** is the screens you build _with_ a kit — web / app / mobile pages and flows.
+  Produces a _full-page preview_, constrained to the bound kit's components.
 - A project binds one or more kits and names a **default**.
 - A **blueprint** is a reusable project template: `project.kind = "blueprint"`.
   Instantiating it creates a new `workspace` project with copied starter files and explicit
@@ -137,8 +137,8 @@ genie works on **both ends of the library→consumer arrow** that already exists
 3. **sole** — exactly one kit is reachable → use it, and name which
 4. **none / ambiguous** → **stop and ask** before using UI-kit-specific components.
    A kitless project may generate basic structure, but it must never invent a kit or fall
-   back to generic component APIs. e.g. *"No kit bound to `marketing-site`. Bind one, or
-   pick: acme-ui, icons-kit."*
+   back to generic component APIs. e.g. _"No kit bound to `marketing-site`. Bind one, or
+   pick: acme-ui, icons-kit."_
 
 A "screen" is a generated, previewed, refined, committed artifact — the **same loop** as a
 component, one step up. It is **not** a freeform drag-to-reflow canvas (that remains the
@@ -156,13 +156,13 @@ parked NG-1 anti-goal).
   - **B — monorepo subtree** (common case): a single repo; genie is scoped to e.g.
     `packages/ui/`. genie writes files; **you** commit, your flow.
   - **C — local folder** (solo): a directory genie writes to; `git init` optional.
-- **Hard invariant:** never a repo nested inside a repo. A kit is *either* its own repo
-  *or* a subtree, never a `git init` inside your working tree. `create_kit` refuses it.
+- **Hard invariant:** never a repo nested inside a repo. A kit is _either_ its own repo
+  _or_ a subtree, never a `git init` inside your working tree. `create_kit` refuses it.
 - The slick mapping — `plan`→branch, `write_files`→commits, finalize→PR, merge→publish,
   rollback→`git revert`, `git log`→audit — is **full-fidelity only in Shape A** (genie
   owns the repo). In Shape B it degrades gracefully: `plan` still scopes & validates, but
   the commit is yours; no PRs opened behind your back.
-- **No database for content.** The git log is the audit log. sqlite is used *only* for
+- **No database for content.** The git log is the audit log. sqlite is used _only_ for
   throwaway server scratch (`.genie/plans.sqlite`, plan TTLs).
 
 ---
@@ -196,24 +196,24 @@ The model writes the code; genie makes it **provably yours**. Grounding in, vali
    - actually **renders**? (Playwright headless — non-trivial body, not blank/thin)
    - any failure → **one self-repair retry**, feeding the validator's error back to the model.
 5. **Extract the contract:** ts-morph reads the `.tsx` → emits the `.d.ts` — the grounding
-   the *next* generation reads.
+   the _next_ generation reads.
 6. **Seal:** `plan` → `write_files` → anchor; lands as a real, validated git commit.
 
 ### `refine` — mutate one thing, provably freeze the rest
 
 1. **Diff, not rewrite (solid):** current files + instruction → the model returns a
    **unified diff**, applied with `patch`, re-validated through the same gauntlet. Asking
-   for a diff is what makes "the rest is untouched" *provable* — it can't restate what it
+   for a diff is what makes "the rest is untouched" _provable_ — it can't restate what it
    didn't change.
 2. **Sliders = re-parameterization (solid):** at generation, genie detects the component's
    axes (size, radius, shadow, accent) and surfaces knobs mapped to token values. Dragging
-   a slider makes **no model call** — instant & free. Only a *structural* change hits the LLM.
+   a slider makes **no model call** — instant & free. Only a _structural_ change hits the LLM.
 3. **Region-scoped refine (R&D edge):** a comment-pin gives a rect; genie annotates the
    prompt ("limit changes to this region") and scopes the diff where it can. Mapping a
-   *pixel rect → source lines* is the hard part — **in v1 it's a hint, not a hard constraint.**
+   _pixel rect → source lines_ is the hard part — **in v1 it's a hint, not a hard constraint.**
 
-**The honest line:** genie mechanically verifies *"it's your code"* (imports tokens, no raw
-hex, passes adherence, renders). It **cannot** verify *"it's beautiful."* Taste scales with
+**The honest line:** genie mechanically verifies _"it's your code"_ (imports tokens, no raw
+hex, passes adherence, renders). It **cannot** verify _"it's beautiful."_ Taste scales with
 whatever model you point it at; genie is the harness, not the brain. This is exactly the
 NG-2 split — genie ships the **headless generation loop** in v1; pixel-precise canvas
 refinement stays parked R&D.
@@ -234,6 +234,65 @@ refinement stays parked R&D.
 - **Post-core project UX:** richer full-page previews and review flows build on the M1
   project model rather than introducing new nouns.
 - **Parked R&D (Year 2/3):** region→source precision, the visual canvas, the interop bridges.
+
+---
+
+## D-K — Preview filename: the viewer/HMR discovery mirrors the compiler's `*.html` walk
+
+> **Status: accepted (2026-07-09)** · Resolves DRO-821 (M4 follow-up to DRO-266). The
+> viewer's Vite entry glob and the HMR card classifier match **any `components/**/\*.html`**,
+not a fixed `preview.html`. This is a straight mirror of the manifest compiler's own
+> discovery walk — the single filename authority.
+
+**The mismatch.** The M4-02/03 viewer and the M4-04 HMR bridge were first written against a
+hand-authored `components/<group>/<Name>/preview.html`, but the **server generates
+`<Name>.html`** (e.g. `components/actions/Button/Button.html`). Against a real
+server-generated kit the viewer listed zero cards and HMR never fired — every fixture and the
+M4-10 e2e kit masked it by using `preview.html`.
+
+**Why `<Name>.html` is the fixed point (not `preview.html`).** The filename is not a free
+choice on the server side: the `conjure`/`refine` LLM call uses `response_format:
+json_schema`, and that schema's `files[]` `contains` constraint is
+`^components/[a-z0-9-]+/([A-Z][A-Za-z0-9]{1,63})/\1\.html$` (`server/src/llm/schema.ts`) —
+i.e. the preview MUST be `<Name>/<Name>.html`. The model **cannot** emit `preview.html`. The
+`<Name>/<Name>.html` self-consistency is also assumed throughout the RFC (§7.3/§7.4/§9.10),
+`validate/*`, `sync/anchor.ts`, and the compiler's `deriveName`. So the server output is the
+authority; the viewer must follow it.
+
+**Decision — broaden the viewer/HMR side (issue Option 2), as a compiler-faithful superset.**
+
+- `packages/viewer/src/config.ts` `PREVIEW_GLOB` → `components/**/*.html`.
+- `packages/viewer/src/hmr-plugin.ts` `CARD_GLOB_RE` → `/(?:^|\/)components\/.+\.html$/`.
+- Both now mirror the compiler's `walkPreviewFiles` (`components/**/*.html`, carded when a
+  valid `@genie` marker is present). Matching the compiler's _path_ discovery exactly is what
+  makes divergence structurally impossible: three surfaces (manifest card `path` → grid iframe
+  `data-path`; the Vite preview entry; the HMR `card.changed` path) are now byte-identical for
+  a real card. In the embedded vehicle, `rewriteCardPaths` preserves this identity as
+  `sourcePath` before replacing `path` with its absolute/data transport URL. This is a
+  **backward-compatible superset** — it still matches the legacy
+  `preview.html` fixtures — so nothing that worked before regresses.
+
+**Why not the other options.**
+
+- **Rename server output → `preview.html` (Option 1): infeasible.** It would require defeating
+  the LLM `response_format` schema and rewriting `deriveName` + `validate.ts` `NAMED_HTML_PATH`
+  - `sync/anchor.ts` + the RFC-wide `<Name>/<Name>.html` invariant. Largest blast radius, and
+    it fights a contract the model is _forced_ into rather than following it.
+- **Symlink/emit a `preview.html` alongside `<Name>.html` (Option 3): rejected.** A duplicated
+  per-card artifact breaks the "one artefact, three vehicles" byte-identity invariant (G-5) and
+  adds a bookkeeping file the compiler would then have to reason about.
+
+**Card identity stays owned by the manifest.** The client (`viewer.js`) is fully data-driven:
+standalone manifests use `components[].path` for both `iframe.src` and `data-path`; embedded
+manifests use rewritten `path` for `iframe.src` and preserved `sourcePath` for `data-path`.
+HMR still matches `card.changed.path` by plain `===`. The glob/regex only decide which fs paths
+are _eligible_; a co-located, marker-less `.html` that over-matches is a harmless no-op (unused
+Vite entry / an HMR path with no matching `data-path` → zero card reloads).
+
+**Regression guard.** `packages/e2e/test/compiler-manifest-contract.test.ts` runs the **real**
+`compileManifest` against a `<Name>.html` kit and asserts the manifest path, the Vite entry, and
+the HMR classification all agree — so a hand-authored `preview.html` fixture can never hide this
+class of divergence again (DRO-821 AC3).
 
 ---
 
