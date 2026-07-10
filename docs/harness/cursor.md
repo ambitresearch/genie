@@ -8,7 +8,7 @@ These harnesses are **`ui://`-capable** but do **not** load Agent Skills. So:
 - `preview` renders the `ui://genie/grid` card grid **inline, in-panel** — no
   browser tab, so `GENIE_PREVIEW_NO_OPEN` doesn't apply.
 
-## Register the server (Cursor)
+## Register a local server (Cursor / VS Code)
 
 Add genie to your MCP config (Cursor: `.cursor/mcp.json` in the project, or the
 global MCP settings):
@@ -28,9 +28,16 @@ Provide `GENIE_LLM_BASE_URL` / `GENIE_LLM_API_KEY` to the server process as
 environment — **never hardcode secrets** in the config. The base URL must end
 in `/v1`. `preview` / `validate` / read tools work even without an LLM set.
 
-VS Code (≥ Jan 2026) and ChatGPT follow the same pattern in their own MCP
-configuration surfaces — register the same stdio command, supply the LLM env,
-and `preview` renders inline.
+VS Code (≥ Jan 2026) uses its own top-level `servers` configuration (see
+[copilot.md](./copilot.md)) but can run the same local stdio command.
+
+## ChatGPT requires a remote connector
+
+ChatGPT cannot launch a command from your local filesystem. Register genie only
+after deploying a reachable authenticated HTTP MCP endpoint, then add that URL
+through ChatGPT's connector/app configuration. The M5 ChatGPT distribution work
+owns the production auth and smoke-tested connector instructions; do not paste
+the Cursor stdio snippet into ChatGPT.
 
 ## Using it
 

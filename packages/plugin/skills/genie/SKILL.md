@@ -78,7 +78,8 @@ preview  { kitId }
   ("make the corners a pill", "soften the border"). Returns a diff + updated
   files. Uses `design-default` unless the user requests an exposed model override.
 - **`validate`** — advisory quality counts (`markerMissing` / `thin` /
-  `variantsIdentical`). No plan needed; nothing is written.
+  `variantsIdentical`). No plan needed and component/kit source files are not
+  modified, but genie does persist a timestamped validation report and metrics.
 - **`delete_files`** — remove a component. Needs a `planId` whose **`deletes`**
   globs cover the paths (same capability model as writes).
 - **`conjure_screen`** — a full-page screen inside a project (resolves its kit

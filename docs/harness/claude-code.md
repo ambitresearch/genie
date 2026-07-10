@@ -4,9 +4,9 @@ Claude harnesses are the only ones that load genie's **Agent Skill** — so this
 is where you get the full "just ask for a component" experience plus the
 `/genie:preview` command.
 
-## 1. Register the MCP server (required)
+## 1. Register the MCP server (Claude Code only)
 
-Register genie in `~/.claude.json` (or a project `.mcp.json`):
+For Claude Code, register genie in `~/.claude.json` (or a project `.mcp.json`):
 
 ```json
 {
@@ -23,6 +23,11 @@ Register genie in `~/.claude.json` (or a project `.mcp.json`):
 
 Provide `GENIE_LLM_BASE_URL` / `GENIE_LLM_API_KEY` to the server process as
 environment (for example through a launcher script), never in committed JSON.
+
+Claude Desktop uses `claude_desktop_config.json` (or, once M5 packaging lands,
+the `.mcpb` installer), not these Claude Code files. claude.ai cannot launch a
+local stdio command and requires a deployed remote connector. Their dedicated
+M5 harness issues own those configuration and smoke-test instructions.
 
 ## 2A. Install the guidance plugin (recommended)
 

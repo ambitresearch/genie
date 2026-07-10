@@ -27,5 +27,18 @@ describe("Claude plugin artifacts", () => {
     expect(skill).not.toContain("the `design-default` alias is not a real endpoint");
     expect(skill).toContain("components/actions/GetStartedButton/GetStartedButton.html");
     expect(skill).not.toContain("components/actions/GetStartedButton/preview.html");
+    expect(skill).toContain("does persist a timestamped validation report and metrics");
+    expect(skill).not.toContain("No plan needed; nothing is written");
+  });
+
+  it("keeps local stdio registration scoped to hosts that can launch it", () => {
+    const cursor = readFileSync(resolve(ROOT, "docs/harness/cursor.md"), "utf8");
+    const claude = readFileSync(resolve(ROOT, "docs/harness/claude-code.md"), "utf8");
+
+    expect(cursor).toContain("ChatGPT cannot launch a command from your local filesystem");
+    expect(cursor).toContain("ChatGPT requires a remote connector");
+    expect(claude).toContain("Claude Code only");
+    expect(claude).toContain("Claude Desktop uses `claude_desktop_config.json`");
+    expect(claude).toMatch(/claude\.ai cannot launch a\s+local stdio command/);
   });
 });
