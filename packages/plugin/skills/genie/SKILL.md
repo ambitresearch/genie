@@ -42,9 +42,9 @@ This is the canonical sequence. Do all four unless the user asks for less.
    `{ path, content, mimeType }` to `{ path, data: content, mimeType }`.
    Every path must be covered by the plan's `writes` globs.
 4. **`preview`** — compile the kit manifest and **show the user the component**.
-   This is how a component becomes _visible_: ui://-capable hosts (Claude, VS
-   Code, ChatGPT, Cursor) get an inline card grid; other hosts get a browser
-   tab the server opens for them.
+   This is how a component becomes _visible_: MCP Apps-capable hosts get an
+   inline card grid; local stdio clients without negotiated UI support get a
+   browser tab the server opens for them.
 
 ### Concrete example
 
@@ -103,9 +103,10 @@ preview  { kitId }
 `preview` compiles + persists the kit's manifest, so the grid always reflects
 what's on disk (`list_components` reads that compiled manifest). Then:
 
-- **ui://-capable host** (Claude, VS Code, ChatGPT, Cursor): the inline card
-  grid renders in-panel — no browser tab needed.
-- **other host** (Codex, Copilot, MCP Inspector): the server opens a browser
-  tab at the viewer URL itself. Set `GENIE_PREVIEW_NO_OPEN=1` to suppress that.
+- **MCP Apps-capable host:** the inline card grid renders in-panel — no browser
+  tab needed.
+- **local stdio client without negotiated UI support:** the server opens a
+  browser tab at the viewer URL itself. Set `GENIE_PREVIEW_NO_OPEN=1` to
+  suppress that. HTTP deployments never auto-open on the server machine.
 
 Either way, relay the viewer URL to the user so they always have a way in.

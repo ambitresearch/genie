@@ -29,6 +29,8 @@ describe("Claude plugin artifacts", () => {
     expect(skill).not.toContain("components/actions/GetStartedButton/preview.html");
     expect(skill).toContain("does persist a timestamped validation report and metrics");
     expect(skill).not.toContain("No plan needed; nothing is written");
+    expect(skill).toContain("without negotiated UI support");
+    expect(skill).not.toContain("**other host** (Codex, Copilot");
   });
 
   it("keeps local stdio registration scoped to hosts that can launch it", () => {
@@ -37,8 +39,10 @@ describe("Claude plugin artifacts", () => {
 
     expect(cursor).toContain("ChatGPT cannot launch a command from your local filesystem");
     expect(cursor).toContain("ChatGPT requires a remote connector");
+    expect(claude).toMatch(/^# genie in Claude Code$/m);
     expect(claude).toContain("Claude Code only");
     expect(claude).toContain("Claude Desktop uses `claude_desktop_config.json`");
     expect(claude).toMatch(/claude\.ai cannot launch a\s+local stdio command/);
+    expect(claude).toContain("mkdir -p ~/.claude/skills ~/.claude/commands");
   });
 });

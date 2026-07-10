@@ -31,6 +31,7 @@ import {
   autoOpenDisabledByEnv,
   buildResourceUri,
   clientSupportsUi,
+  getUiExtensionCapability,
   hasUiExtensionCapability,
   MCP_APP_MIME,
   UI_EXTENSION_ID,
@@ -229,6 +230,32 @@ describe("resolveKitDir", () => {
   );
 });
 
+describe("getUiExtensionCapability", () => {
+  it.each([
+    ["undefined caps", undefined],
+    ["empty caps", {}],
+    ["no extensions", { tools: {} }],
+  ])("returns undefined when extension negotiation is unavailable: %s", (_label, caps) => {
+    expect(getUiExtensionCapability(caps)).toBeUndefined();
+  });
+
+  it.each([
+    ["empty extensions", { extensions: {} }],
+    ["different extension", { extensions: { "io.example/other": {} } }],
+    ["missing app MIME", { extensions: { [UI_EXTENSION_ID]: { mimeTypes: ["text/html"] } } }],
+  ])("returns false for a negotiated negative: %s", (_label, caps) => {
+    expect(getUiExtensionCapability(caps)).toBe(false);
+  });
+
+  it("returns true when the app MIME is negotiated", () => {
+    expect(
+      getUiExtensionCapability({
+        extensions: { [UI_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME] } },
+      }),
+    ).toBe(true);
+  });
+});
+
 // ─── AC5: ViewerRegistry boot-once + reuse + reboot ──────────────────────────
 
 describe("ViewerRegistry (AC5)", () => {
@@ -392,6 +419,26 @@ describe("runPreview (AC3, AC6)", () => {
     expect(booter.calls[0]?.open).toBe(false);
   });
 
+  it("uiCapable: false overrides a known UI host name", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+    const lines = captureStderr();
+
+    await runPreview(
+      { kitsRoot, registry, env: {} },
+      { kitId: "acme-abc123" },
+      { clientName: "cursor", uiCapable: false },
+    );
+
+    lines.restore();
+    const req = lines.parsed().find((l) => l.event === "preview.request");
+    expect(req?.uiCapable).toBe(false);
+    expect(req?.uiSupported).toBe(false);
+    expect(req?.autoOpen).toBe(true);
+    expect(booter.calls[0]?.open).toBe(true);
+  });
+
   it("rejects a malformed kitId before booting anything", async () => {
     const kitsRoot = await makeKitsRoot();
     const booter = okBooter();
@@ -536,6 +583,10 @@ describe("shouldAutoOpen (piece B decision)", () => {
   it("does NOT open for a non-ui:// host when opted out via env", () => {
     expect(shouldAutoOpen(false, { GENIE_PREVIEW_NO_OPEN: "1" })).toBe(false);
   });
+
+  it("does NOT open on HTTP even for a non-ui client without the env opt-out", () => {
+    expect(shouldAutoOpen(false, {}, "http")).toBe(false);
+  });
 });
 
 describe("runPreview auto-open wiring (piece B)", () => {
@@ -577,6 +628,20 @@ describe("runPreview auto-open wiring (piece B)", () => {
       { kitsRoot, registry, env: { GENIE_PREVIEW_NO_OPEN: "1" } },
       { kitId: "acme-abc123" },
       { clientName: "codex" },
+    );
+
+    expect(booter.calls[0]?.open).toBe(false);
+  });
+
+  it("passes open:false for a non-ui:// host over HTTP", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+
+    await runPreview(
+      { kitsRoot, registry, env: {} },
+      { kitId: "acme-abc123" },
+      { clientName: "codex", transportKind: "http" },
     );
 
     expect(booter.calls[0]?.open).toBe(false);
@@ -678,6 +743,16 @@ describe("mcp__genie__preview (wired)", () => {
     expect((preview?._meta as { ui?: { resourceUri?: string } } | undefined)?.ui).toBeUndefined();
   });
 
+  it("describes browser fallback by negotiated capability rather than client brand", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const client = await connectPreview(kitsRoot, okBooter());
+    const { tools } = await client.listTools();
+    const preview = tools.find((t) => t.name === PREVIEW_TOOL_NAME);
+
+    expect(preview?.description).toContain("do not negotiate UI support");
+    expect(preview?.description).not.toContain("other hosts (Codex, Copilot)");
+  });
+
   it("advertises an outputSchema matching structuredContent", async () => {
     const kitsRoot = await makeKitsRoot();
     const client = await connectPreview(kitsRoot, okBooter());
@@ -754,6 +829,45 @@ describe("mcp__genie__preview (wired)", () => {
     expect(req?.uiCapable).toBe(true);
     expect(req?.uiSupported).toBe(true);
     expect(req?.autoOpen).toBe(false);
+    expect(booter.calls[0]?.open).toBe(false);
+  });
+
+  it("honours an explicit negative capability instead of a known host name", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const server = new McpServer({ name: "genie-test", version: "0" });
+    const booter = okBooter();
+    registerPreviewTool(server, { kitsRoot, booter });
+    const client = new Client(
+      { name: "cursor", version: "1.0.0" },
+      { capabilities: { extensions: {} } },
+    );
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+    openClient = client;
+    const lines = captureStderr();
+
+    await client.callTool({ name: PREVIEW_TOOL_NAME, arguments: { kitId: "acme-abc123" } });
+
+    lines.restore();
+    const req = lines.parsed().find((l) => l.event === "preview.request");
+    expect(req?.uiCapable).toBe(false);
+    expect(req?.uiSupported).toBe(false);
+    expect(req?.autoOpen).toBe(true);
+    expect(booter.calls[0]?.open).toBe(true);
+  });
+
+  it("never auto-opens a browser when registered for HTTP transport", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const server = new McpServer({ name: "genie-test", version: "0" });
+    const booter = okBooter();
+    registerPreviewTool(server, { kitsRoot, booter, transportKind: "http" });
+    const client = new Client({ name: "codex", version: "1.0.0" });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+    openClient = client;
+
+    await client.callTool({ name: PREVIEW_TOOL_NAME, arguments: { kitId: "acme-abc123" } });
+
     expect(booter.calls[0]?.open).toBe(false);
   });
 

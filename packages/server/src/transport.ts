@@ -5,6 +5,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 export type TransportKind = "stdio" | "http";
 
+const serverTransportKinds = new WeakMap<McpServer, TransportKind>();
+
+/** Return the transport selected for a started server, if startup has begun. */
+export function getServerTransportKind(server: McpServer): TransportKind | undefined {
+  return serverTransportKinds.get(server);
+}
+
 /**
  * Resolve which transport to use (RFC §5.2 transport multiplexer):
  *   1. explicit `kind` argument (from the --transport CLI flag), else
@@ -78,10 +85,16 @@ export async function startTransport(
   opts: StartOptions = {},
 ): Promise<TransportKind> {
   const kind = resolveTransport(opts.kind);
-  if (kind === "http") {
-    await startHttp(server, opts.port ?? 3000, opts.host ?? "127.0.0.1");
-  } else {
-    await startStdio(server);
+  serverTransportKinds.set(server, kind);
+  try {
+    if (kind === "http") {
+      await startHttp(server, opts.port ?? 3000, opts.host ?? "127.0.0.1");
+    } else {
+      await startStdio(server);
+    }
+  } catch (error) {
+    serverTransportKinds.delete(server);
+    throw error;
   }
   return kind;
 }

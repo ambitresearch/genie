@@ -37,6 +37,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { ensureManifest, type Manifest } from "../manifest/index.js";
+import { getServerTransportKind, type TransportKind } from "../transport.js";
 
 import { KIT_ID_PATTERN } from "./get_kit.js";
 
@@ -107,7 +108,19 @@ export const MCP_APP_MIME = "text/html;profile=mcp-app";
  * models `extensions` as a passthrough bag — every level is checked defensively.
  */
 export function hasUiExtensionCapability(caps: unknown): boolean {
-  if (typeof caps !== "object" || caps === null) return false;
+  return getUiExtensionCapability(caps) === true;
+}
+
+/**
+ * Resolve MCP Apps negotiation without collapsing "not advertised" and
+ * "explicitly not supported." A missing `extensions` mechanism returns
+ * `undefined` so legacy name sniffing may apply. Once an extensions bag is
+ * present, only the required app MIME is positive; every other shape is a
+ * negotiated negative.
+ */
+export function getUiExtensionCapability(caps: unknown): boolean | undefined {
+  if (typeof caps !== "object" || caps === null) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(caps, "extensions")) return undefined;
   const extensions = (caps as { extensions?: unknown }).extensions;
   if (typeof extensions !== "object" || extensions === null) return false;
   const ext = (extensions as Record<string, unknown>)[UI_EXTENSION_ID];
@@ -201,9 +214,10 @@ export interface BootRequest {
    * FIRST boot (design 2026-07-05, piece B). Set by {@link runPreview} from the
    * harness capability sniff: `false` for a `ui://`-capable host (the inline
    * grid renders in-panel, so a browser tab would be redundant) and `true` for
-   * a non-`ui://` host (Codex, Copilot, MCP Inspector) so the SERVER pops the
-   * browser rather than hoping the calling model shells `open <url>`. The
-   * registry only boots once per kit dir, so this open happens at most once.
+   * a local client without UI support so the SERVER pops the browser rather
+   * than hoping the calling model shells `open <url>`. HTTP deployments never
+   * auto-open on the server machine. The registry only boots once per kit dir,
+   * so this open happens at most once.
    * Undefined is treated as `false` (a booter that never opens is always safe).
    */
   open?: boolean;
@@ -365,12 +379,13 @@ export interface PreviewArgs {
 export interface PreviewContext {
   clientName?: string;
   /**
-   * True when the client advertised the MCP Apps extension in its `initialize`
-   * capabilities ({@link hasUiExtensionCapability}). Authoritative — when set,
-   * it decides `uiSupported` outright; the {@link clientSupportsUi} name sniff
-   * only applies when this is false/absent (hosts predating the extension).
+   * Tri-state MCP Apps negotiation from `initialize`: true/false are
+   * authoritative, while undefined means the client exposed no extensions
+   * mechanism and allows the legacy {@link clientSupportsUi} name fallback.
    */
   uiCapable?: boolean;
+  /** Active server transport; HTTP suppresses server-machine browser opening. */
+  transportKind?: TransportKind;
 }
 
 /**
@@ -427,8 +442,10 @@ export function autoOpenDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boo
 export function shouldAutoOpen(
   uiSupported: boolean,
   env: NodeJS.ProcessEnv = process.env,
+  transportKind?: TransportKind,
 ): boolean {
   if (uiSupported) return false;
+  if (transportKind === "http") return false;
   return !autoOpenDisabledByEnv(env);
 }
 
@@ -479,16 +496,17 @@ export async function runPreview(
   // Authoritative first: the MCP Apps extension capability from the initialize
   // handshake. The name sniff remains only for hosts that render ui:// without
   // advertising the extension yet (older Claude/VS Code/Cursor builds).
-  const uiSupported = ctx.uiCapable === true || clientSupportsUi(ctx.clientName);
-  const autoOpen = shouldAutoOpen(uiSupported, deps.env);
+  const uiSupported = ctx.uiCapable ?? clientSupportsUi(ctx.clientName);
+  const autoOpen = shouldAutoOpen(uiSupported, deps.env, ctx.transportKind);
   // AC7 — one structured line per request; the sniffed client + its ui:// support.
   logStderr({
     event: "preview.request",
     kitId: args.kitId,
     client: ctx.clientName ?? null,
-    uiCapable: ctx.uiCapable === true,
+    uiCapable: ctx.uiCapable ?? null,
     uiSupported,
     autoOpen,
+    transport: ctx.transportKind ?? null,
     ...(args.group !== undefined ? { group: args.group } : {}),
     ...(args.componentName !== undefined ? { componentName: args.componentName } : {}),
   });
@@ -569,6 +587,8 @@ export interface PreviewToolOptions {
   env?: NodeJS.ProcessEnv;
   /** Injectable manifest seam for tests. */
   ensureManifest?: (kitDir: string) => Promise<Manifest>;
+  /** Explicit transport override for embedded servers and tests. */
+  transportKind?: TransportKind;
 }
 
 /**
@@ -610,10 +630,10 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
         "(typically right after write_files persists one). Compiles + persists the kit " +
         "manifest so the grid always reflects what's on disk, then returns the viewer URL " +
         "(booting the Vite viewer on demand and reusing it across calls) plus a file:// " +
-        "fallback. ui://-capable hosts (Claude, VS Code, ChatGPT, Cursor) get the inline " +
-        "grid via _meta.ui.resourceUri; on other hosts (Codex, Copilot) the server opens a " +
-        "browser tab itself (disable with GENIE_PREVIEW_NO_OPEN=1). Optionally focus one " +
-        "component or group.",
+        "fallback. MCP Apps-capable hosts get the inline grid via _meta.ui.resourceUri. " +
+        "Local stdio clients that do not negotiate UI support get a server-opened browser " +
+        "tab (disable with GENIE_PREVIEW_NO_OPEN=1); HTTP deployments never auto-open on " +
+        "the server machine. Optionally focus one component or group.",
       inputSchema: previewInputSchema,
       outputSchema: previewOutputSchema,
       // Keep the app link on each result: its query-bearing URI carries the
@@ -627,8 +647,13 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
       // the original AC7 sniff's blind spot: no production host populates it).
       const clientName = sniffClientName(extra._meta) ?? server.server.getClientVersion()?.name;
       // Authoritative MCP Apps capability from the same handshake.
-      const uiCapable = hasUiExtensionCapability(server.server.getClientCapabilities());
-      const result = await runPreview(deps, args, { clientName, uiCapable });
+      const uiCapable = getUiExtensionCapability(server.server.getClientCapabilities());
+      const transportKind = options.transportKind ?? getServerTransportKind(server);
+      const result = await runPreview(deps, args, {
+        clientName,
+        uiCapable,
+        transportKind,
+      });
       return {
         content: result.content,
         structuredContent: result.structuredContent,

@@ -1,5 +1,6 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { resolveTransport } from "./transport.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { getServerTransportKind, resolveTransport, startTransport } from "./transport.js";
 
 describe("resolveTransport", () => {
   const savedEnv = process.env.MCP_TRANSPORT;
@@ -39,5 +40,16 @@ describe("resolveTransport", () => {
 
   it("throws on an unknown transport name", () => {
     expect(() => resolveTransport("carrier-pigeon")).toThrow(/Unknown transport/);
+  });
+});
+
+describe("startTransport", () => {
+  it("records the resolved transport kind for request-time policy checks", async () => {
+    const server = {
+      connect: vi.fn().mockResolvedValue(undefined),
+    } as unknown as McpServer;
+
+    await expect(startTransport(server, { kind: "stdio" })).resolves.toBe("stdio");
+    expect(getServerTransportKind(server)).toBe("stdio");
   });
 });

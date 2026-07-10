@@ -1,8 +1,7 @@
-# genie in Claude Code / Claude Desktop / claude.ai
+# genie in Claude Code
 
-Claude harnesses are the only ones that load genie's **Agent Skill** — so this
-is where you get the full "just ask for a component" experience plus the
-`/genie:preview` command.
+Claude Code loads genie's **Agent Skill**, so this is where you get the full
+"just ask for a component" experience plus the `/genie:preview` command.
 
 ## 1. Register the MCP server (Claude Code only)
 
@@ -43,13 +42,19 @@ checkout during development.
 
 If you're not using the marketplace:
 
-1. **Copy the Skill** into your skills dir:
+1. **Create the local extension directories:**
+
+   ```
+   mkdir -p ~/.claude/skills ~/.claude/commands
+   ```
+
+2. **Copy the Skill** into your skills dir:
 
    ```
    cp -r packages/plugin/skills/genie ~/.claude/skills/genie
    ```
 
-2. **Copy the command**, choosing its non-plugin command name:
+3. **Copy the command**, choosing its non-plugin command name:
 
    ```
    cp packages/plugin/commands/preview.md ~/.claude/commands/genie-preview.md
