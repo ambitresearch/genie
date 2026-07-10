@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.1.0](https://github.com/roshangautam/genie/compare/server-v1.0.0...server-v1.1.0) (2026-07-10)
+
+
+### Features
+
+* **server:** .genie/manifest.json writer — client-side compiler (M3-03) ([#147](https://github.com/roshangautam/genie/issues/147)) ([088f761](https://github.com/roshangautam/genie/commit/088f7617efee82362f18bf03a167280d9a0dc44a))
+* **server:** .genie/sync.json verification anchor (DRO-262) ([#144](https://github.com/roshangautam/genie/issues/144)) ([2163ca2](https://github.com/roshangautam/genie/commit/2163ca2ba9b2f418c070b4d2d6ad92891fc49573))
+* **server:** [@genie](https://github.com/genie) first-line marker validator (DRO-257) ([#142](https://github.com/roshangautam/genie/issues/142)) ([59d88da](https://github.com/roshangautam/genie/commit/59d88da5616d91b5a4ce932b42e5392554f0094d))
+* **server:** 5-step atomic write orchestrator (DRO-261 / M3-05) ([#148](https://github.com/roshangautam/genie/issues/148)) ([609b7d8](https://github.com/roshangautam/genie/commit/609b7d8ff9311b00d92dac3ee8ad62154919a765))
+* **server:** chokidar watcher for component tree (DRO-258) ([#146](https://github.com/roshangautam/genie/issues/146)) ([fda2961](https://github.com/roshangautam/genie/commit/fda296122ee188c9d784060c275562cd8a378d6d))
+* **server:** harden ui:// grid CSP and sandbox (M4-07) ([6d21290](https://github.com/roshangautam/genie/commit/6d212901d8388ba282e10f4da6bb26c5846676b9))
+* **server:** implement HtmlAdapter — vanilla-HTML framework adapter (DRO-617) ([#162](https://github.com/roshangautam/genie/issues/162)) ([ea80afb](https://github.com/roshangautam/genie/commit/ea80afb9d7ac2a247ab2a07fc462773d70d3982e))
+* **server:** preview tool — returns _meta.ui.resourceUri (M4-05) ([#166](https://github.com/roshangautam/genie/issues/166)) ([6f4f353](https://github.com/roshangautam/genie/commit/6f4f35337c0f1181e9da02e8ed4962f132a3998b))
+* **server:** register ui://genie/grid MCP-Apps resource (M4-06) ([#168](https://github.com/roshangautam/genie/issues/168)) ([4e51c7b](https://github.com/roshangautam/genie/commit/4e51c7b237960a2d9bfc2417e62bec5456e66040))
+* **server:** validate full-scan facet — marker + thin + variants (DRO-260 / M3-04) ([#152](https://github.com/roshangautam/genie/issues/152)) ([a769c1f](https://github.com/roshangautam/genie/commit/a769c1f76d495289994d7cf92003a30892d0164f))
+* **viewer:** per-card HMR via WebSocket and postMessage (M4-04) ([6b9d3bc](https://github.com/roshangautam/genie/commit/6b9d3bcf13ff79c54f200bc988d5d0de71fdb475))
+
+
+### Bug Fixes
+
+* **server:** address Copilot review findings on atomic sync orchestrator ([#150](https://github.com/roshangautam/genie/issues/150)) ([91204ce](https://github.com/roshangautam/genie/commit/91204ceb730a8b3a3c2d71b870104a9ca60cae73))
+* **server:** create_kit scaffolds viewer assets into new kit root (DRO-764) ([#170](https://github.com/roshangautam/genie/issues/170)) ([cbdfe2d](https://github.com/roshangautam/genie/commit/cbdfe2d4dacbc60dab7972565ce3296c6128d98e))
+* **server:** hue-aware color veto for validate pHash variantsIdentical (DRO-717) ([#157](https://github.com/roshangautam/genie/issues/157)) ([b56831f](https://github.com/roshangautam/genie/commit/b56831fbda51e2490ac6d76ebe8af0e13e5f22fb))
+* **server:** validate full-scan honors marker viewport, not just meta.json (DRO-711) ([#154](https://github.com/roshangautam/genie/issues/154)) ([d485ec1](https://github.com/roshangautam/genie/commit/d485ec117379d5cb3887002e803703567adea0f3))
+
 ## 1.0.0 (2026-07-04)
 
 
