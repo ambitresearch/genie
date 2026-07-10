@@ -27,9 +27,8 @@
  * ── Why the cross-origin AC5 case below is not redundant with the data: one ──
  * The original AC5 test ("cannot reassign top.location") uses a `data:` URL
  * card. This file's OWN next test proves `data:` iframes INHERIT the outer
- * document's CSP — so under the hardened `script-src 'self' ui://genie` (no
- * `unsafe-inline`), the card's inline `<script>` may never even START running
- * in that transport. The original test only asserts the outer URL didn't
+ * document's CSP — so an unlisted inline `<script>` may never even START
+ * running in that transport. The original test only asserts the outer URL didn't
  * change; it never confirms the card's script actually executed first. That
  * makes it possible for the assertion to pass for the WRONG reason (CSP
  * silently prevented the script from running at all) rather than the reason
@@ -45,13 +44,9 @@
  * ── Chromium-absent skip (mirrors packages/viewer/test/a11y.test.ts) ────────
  * Same self-skip probe as the a11y suite: this sandbox may not have the system
  * libraries Chromium needs, so we skip when Chromium can't launch. CI's
- * dedicated viewer-a11y-shaped job (or any environment that installed
- * `npx playwright install --with-deps chromium`) will run it for real. Setting
- * `GENIE_REQUIRE_CSP_BROWSER=1` in that job would upgrade a silent skip to a
- * loud failure — same "vacuous-skip must fail somewhere" contract the a11y
- * suite uses. Deliberately left OFF today: the ci.yml server-test leg does
- * not install Chromium, and this test's assertions are already reinforced by
- * the pure-unit CSP shape tests + the a11y suite's own real-browser coverage.
+ * dedicated viewer-a11y job installs Chromium and sets
+ * `GENIE_REQUIRE_CSP_BROWSER=1`, upgrading a silent skip to a loud failure —
+ * the same "vacuous skip must fail somewhere" contract the a11y suite uses.
  */
 import { createServer } from "node:http";
 import type { Server } from "node:http";
@@ -64,6 +59,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Manifest, ManifestCard } from "../manifest/index.js";
 import {
   buildCspMeta,
+  collectInlineCspHashes,
   cspMetaTag,
   escapeJsonForScript,
   inlineManifest,
@@ -121,10 +117,8 @@ async function newPage(): Promise<{ context: BrowserContext; page: Page }> {
 
 /**
  * The minimal shell we serve — same shape as `viewer/static/index.html` but
- * without pulling `viewer.js` (there's no matching sibling resource on this
- * plain HTTP server; the viewer.js probe layer is what `grid-resource.
- * integration.test.ts` already covers). This test is about the CSP + sandbox,
- * not the viewer runtime.
+ * without pulling the full viewer runtime. This test is about the CSP +
+ * sandbox, not grid rendering.
  */
 const BASE_SHELL =
   '<!doctype html><html><head><meta charset="utf-8"><title>t</title></head>' +
@@ -153,26 +147,13 @@ function manifest(components: ManifestCard[]): Manifest {
 }
 
 /**
- * Serve a single HTML document with the enforced CSP header (belt-and-braces:
- * the meta is in the doc, and we also emit the header form) so we exercise
- * the browser under a header + meta stack that mirrors production.
- *
- * `policy` defaults to `buildCspMeta(undefined).policy` (the solo-dev,
- * `frame-src data:` shape) but callers that embed a card on a DYNAMIC
- * cross-origin port must pass the matching policy explicitly — browsers
- * enforce the INTERSECTION of every CSP delivered for a document (here: the
- * injected `<meta>` and this header), so if the header still said `frame-src
- * data:` while the meta allowed the dynamic origin, the iframe would be
- * blocked by the header regardless of what the meta says, and the test would
- * hang/fail for the wrong reason (frame never loads) rather than proving
- * anything about script-src or sandbox.
+ * Serve a single HTML document. MCP resources/read cannot deliver HTTP
+ * response headers; the real host constructs its own CSP from `_meta.ui.csp`.
+ * These probes exercise genie's additional in-document meta directly.
  */
-function serveOne(doc: string, policy: string = buildCspMeta(undefined).policy): Server {
+function serveOne(doc: string): Server {
   return createServer((_req, res) => {
-    res.writeHead(200, {
-      "content-type": "text/html; charset=utf-8",
-      "content-security-policy": policy,
-    });
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(doc);
   });
 }
@@ -306,7 +287,7 @@ describe.skipIf(!chromiumAvailable)("M4-07 AC4 — script-src blocks inline exec
     }
   }, 30_000);
 
-  it("the injected CSP meta is present in the delivered document (belt + braces vs the header)", async () => {
+  it("the injected CSP meta is present in the delivered document", async () => {
     const doc = injectCspMeta(
       inlineManifest(BASE_SHELL, manifest([card()])),
       buildCspMeta(undefined),
@@ -337,16 +318,15 @@ describe.skipIf(!chromiumAvailable)("M4-07 AC5 — sandbox blocks top-navigation
     // Build a document that contains one such iframe pointed at a data: URL
     // whose body script tries the escalation. If the sandbox fails, the outer
     // page's URL changes to `/pwned` and the test fails.
+    const hostileScript = "try{top.location='/pwned'}catch(e){document.title='blocked:'+e.name}";
     const hostileCard = escapeJsonForScript(
       "data:text/html;base64," +
-        Buffer.from(
-          "<script>try{top.location='/pwned'}catch(e){document.title='blocked:'+e.name}</script>",
-          "utf8",
-        ).toString("base64"),
+        Buffer.from(`<script>${hostileScript}</script>`, "utf8").toString("base64"),
     );
     // The `<iframe sandbox="allow-scripts">` markup, built the same way the
     // viewer would build it.
-    const doc = injectCspMeta(BASE_SHELL, buildCspMeta(undefined)).replace(
+    const hashes = collectInlineCspHashes(`<script>${hostileScript}</script>`);
+    const doc = injectCspMeta(BASE_SHELL, buildCspMeta(undefined, hashes)).replace(
       '<main id="grid"></main>',
       `<main id="grid"><iframe id="c" sandbox="allow-scripts" src="${hostileCard}"></iframe></main>`,
     );
@@ -359,17 +339,20 @@ describe.skipIf(!chromiumAvailable)("M4-07 AC5 — sandbox blocks top-navigation
       await page.waitForTimeout(250);
       // The URL must NOT have been navigated to `/pwned` — the top-nav was blocked.
       expect(new URL(page.url()).pathname).toBe("/");
+      const frame = page.frames().find((candidate) => candidate !== page.mainFrame());
+      expect(frame).toBeDefined();
+      expect(await frame!.title()).toMatch(/^blocked:/);
     } finally {
       await context.close();
       await close(server);
     }
   }, 30_000);
 
-  it("the outer grid document's CSP INHERITS into a data: card iframe (its inline script is blocked)", async () => {
+  it("a data: card inherits the grid CSP and blocks an unlisted inline script", async () => {
     // Solo-dev card transport is `data:text/html;base64,…` (rewriteCardPaths
     // fallback). A `data:` iframe inherits the embedder's CSP — so the
-    // outer grid's `script-src 'self' ui://genie` (no unsafe-inline) must
-    // block an inline script inside the framed data: document too.
+    // outer grid's hash-only script-src must block an unlisted inline script
+    // inside the framed data: document too.
     // The card's inline script tries to open an alert; if the inheritance
     // fails, we would see the dialog on the outer page.
     const dataUrl =
@@ -388,6 +371,36 @@ describe.skipIf(!chromiumAvailable)("M4-07 AC5 — sandbox blocks top-navigation
         await page.waitForTimeout(250);
       });
       expect(dialogs.length).toBe(0);
+    } finally {
+      await context.close();
+      await close(server);
+    }
+  }, 30_000);
+
+  it("hashes preserve legitimate data-card script/style while event handlers stay blocked", async () => {
+    const cardHtml =
+      "<!doctype html><style>body{display:grid}</style><body>" +
+      "<script>window.name='trusted-ran'</script>" +
+      "<img src=x onerror=\"window.name='handler-ran'\">" +
+      "</body>";
+    const dataUrl = "data:text/html;base64," + Buffer.from(cardHtml, "utf8").toString("base64");
+    const hashes = collectInlineCspHashes(cardHtml);
+    const doc = injectCspMeta(BASE_SHELL, buildCspMeta(undefined, hashes)).replace(
+      '<main id="grid"></main>',
+      `<main id="grid"><iframe id="c" sandbox="allow-scripts" src="${dataUrl}"></iframe></main>`,
+    );
+    const server = serveOne(doc);
+    const port = await listen(server);
+    const { context, page } = await newPage();
+    try {
+      await page.goto(`http://127.0.0.1:${port}/`);
+      await page.waitForTimeout(250);
+      const frame = page.frames().find((candidate) => candidate !== page.mainFrame());
+      expect(frame).toBeDefined();
+      expect(await frame!.evaluate(() => window.name)).toBe("trusted-ran");
+      expect(await frame!.locator("body").evaluate((body) => getComputedStyle(body).display)).toBe(
+        "grid",
+      );
     } finally {
       await context.close();
       await close(server);
@@ -419,16 +432,13 @@ describe.skipIf(!chromiumAvailable)("M4-07 AC5 — sandbox blocks top-navigation
       "</script></body></html>";
     const card = await serveCrossOriginHostileCard(cardHtml);
     // frame-src must legitimately allow the card's dynamic origin — mirrors
-    // configuring GENIE_PREVIEWS_BASE_URL to that origin in production. Using
-    // the SAME policy for both the <meta> and the HTTP header (serveOne's 2nd
-    // arg) avoids the two disagreeing and the browser enforcing whichever is
-    // stricter (see serveOne's doc).
+    // configuring GENIE_PREVIEWS_BASE_URL to that origin in production.
     const cspMeta = buildCspMeta(card.url);
     const doc = injectCspMeta(BASE_SHELL, cspMeta).replace(
       '<main id="grid"></main>',
       `<main id="grid"><iframe id="c" sandbox="allow-scripts" src="${card.url}"></iframe></main>`,
     );
-    const server = serveOne(doc, cspMeta.policy);
+    const server = serveOne(doc);
     const port = await listen(server);
     const { context, page } = await newPage();
     try {
@@ -475,7 +485,7 @@ describe.skipIf(!chromiumAvailable)("M4-07 AC5 — sandbox blocks top-navigation
       '<main id="grid"></main>',
       `<main id="grid"><iframe id="c" sandbox="allow-scripts" src="${card.url}"></iframe></main>`,
     );
-    const server = serveOne(doc, cspMeta.policy);
+    const server = serveOne(doc);
     const port = await listen(server);
     const { context, page } = await newPage();
     try {
@@ -501,34 +511,14 @@ describe.skipIf(!chromiumAvailable)("M4-07 AC5 — sandbox blocks top-navigation
     }
   }, 30_000);
 
-  it("the legit viewer path (external ui:// sibling asset) is NOT accidentally broken by the CSP", async () => {
-    // Regression guard: prove the hardened policy still allows the EXTERNAL
-    // sibling script the shipped shell references (`<script src="./viewer.js">`)
-    // — via `script-src 'self' ui://genie`. We simulate this by serving the
-    // shell + a real /viewer.js sibling on the same origin, and asserting no
-    // CSP violation is logged for the external load path.
-    const doc = injectCspMeta(BASE_SHELL, buildCspMeta(undefined)).replace(
+  it("an exact hash allows the trusted inline viewer script but not an injected neighbour", async () => {
+    const trusted = "document.title='viewer-ran';";
+    const hashes = collectInlineCspHashes(`<script>${trusted}</script>`);
+    const doc = injectCspMeta(BASE_SHELL, buildCspMeta(undefined, hashes)).replace(
       "</body>",
-      '<script src="./viewer.js"></script></body>',
+      `<script>${trusted}</script><script>window.name='untrusted-ran'</script></body>`,
     );
-    // Manual server so we can serve both `/` and `/viewer.js` with matching
-    // CSP headers.
-    const server = createServer((req, res) => {
-      const csp = buildCspMeta(undefined).policy;
-      if (req.url === "/viewer.js") {
-        res.writeHead(200, {
-          "content-type": "text/javascript; charset=utf-8",
-          "content-security-policy": csp,
-        });
-        res.end("document.title='viewer-ran';");
-        return;
-      }
-      res.writeHead(200, {
-        "content-type": "text/html; charset=utf-8",
-        "content-security-policy": csp,
-      });
-      res.end(doc);
-    });
+    const server = serveOne(doc);
     const port = await listen(server);
     const { context, page } = await newPage();
     try {
@@ -536,11 +526,10 @@ describe.skipIf(!chromiumAvailable)("M4-07 AC5 — sandbox blocks top-navigation
         await page.goto(`http://127.0.0.1:${port}/`);
         await page.waitForTimeout(200);
       });
-      // The external script's `document.title` mutation ran → viewer.js loaded
-      // and executed under the hardened policy.
       expect(await page.title()).toBe("viewer-ran");
+      expect(await page.evaluate(() => window.name)).toBe("");
       const cspErrors = errors.filter((e) => e.text().toLowerCase().includes("content security"));
-      expect(cspErrors.length).toBe(0);
+      expect(cspErrors.length).toBeGreaterThan(0);
     } finally {
       await context.close();
       await close(server);

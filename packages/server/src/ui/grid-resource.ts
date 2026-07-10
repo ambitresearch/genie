@@ -12,13 +12,12 @@
  *   AC2  handler resolves `?kitId=…`, compiles the manifest (M3-03), inlines it
  *        as `<script type="application/json" id="manifest">…</script>` — the
  *        sandboxed iframe needs NO fetch (its CSP is `connect-src 'none'`).
- *   AC3  the HTML keeps RELATIVE `./viewer.js` / `./viewer.css`, served as
- *        sibling `ui://genie/viewer.js` / `ui://genie/viewer.css` resources.
+ *   AC3  viewer.js / viewer.css are inlined byte-for-byte into the one raw HTML
+ *        resource a compliant MCP Apps host sends to its sandbox proxy.
  *   AC4  each card's iframe `src` is rewritten to an absolute `https://` URL on
  *        a separate-origin previews host, or (solo dev) a `data:` inline URL.
  *   AC5  the CSP allow-list (`connectDomains` / `resourceDomains` /
- *        `frameDomains`, plus a concrete `policy` string) is declared in the
- *        resource `_meta`.
+ *        `frameDomains`) is declared at canonical `_meta.ui.csp`.
  *   (AC6 — `_meta["openai/outputTemplate"]` on the *tool* result — lives on the
  *   `preview` tool in `../tools/preview.ts`, not here.)
  *
@@ -30,13 +29,12 @@
  * (see {@link buildCspMeta}), so an ext-apps adoption later is a lift-and-shift,
  * not a rewrite.
  *
- * ── AC3-vs-RFC note ──────────────────────────────────────────────────────────
- * The RFC §6.5 sketch inlines viewer.js/.css into ONE document. This issue's
- * AC3 instead mandates RELATIVE asset paths loaded as sibling resources, and
- * AC5 mandates the MCP-Apps domain allow-list — i.e. the app loads its own
- * sub-resources from `resourceDomains`. We follow the ACs (the binding contract
- * for this issue); the manifest is still inlined (AC2), so `connect-src 'none'`
- * holds and the iframe issues zero `fetch()`.
+ * ── Self-contained host contract ──────────────────────────────────────────────
+ * MCP Apps hosts receive raw HTML in `resources/read` and do not translate
+ * browser-relative URLs into additional MCP resource reads. The shipped shell's
+ * relative asset tags are therefore replaced with exact inline bytes, each
+ * allow-listed by SHA-256 in the injected CSP. Sibling resources remain
+ * registered only for backwards compatibility with older host experiments.
  *
  * ── Byte-identical cards (RFC G-5) ───────────────────────────────────────────
  * Only the card *transport* differs per vehicle: `file://`/localhost fetch the
@@ -45,12 +43,14 @@
  * The preview HTML bytes themselves are untouched — the card renders identically
  * in all three vehicles.
  */
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
+import { parse } from "parse5";
 
 import { compileManifest, type Manifest, type ManifestCard } from "../manifest/index.js";
 import { KIT_ID_PATTERN } from "../tools/get_kit.js";
@@ -66,12 +66,9 @@ export const GRID_RESOURCE_MIME = "text/html;profile=mcp-app";
 /** The DOM id `viewer.js` reads the inlined manifest from (must match it). */
 export const MANIFEST_ELEMENT_ID = "manifest";
 
-/** Sibling asset URIs the relative `./viewer.js` / `./viewer.css` resolve to. */
+/** Legacy sibling asset URIs retained for older experimental hosts. */
 export const VIEWER_JS_URI = "ui://genie/viewer.js";
 export const VIEWER_CSS_URI = "ui://genie/viewer.css";
-
-/** The `ui://` origin the app's own sub-resources are served from (AC5). */
-export const RESOURCE_ORIGIN = "ui://genie";
 
 // ─── Injectable seams (keep the server core free of a hard viewer/fs edge) ────
 
@@ -95,6 +92,12 @@ export interface EmbeddedManifestCard extends ManifestCard {
 /** Manifest shape inlined into the embedded viewer document. */
 export interface EmbeddedManifest extends Omit<Manifest, "components"> {
   components: EmbeddedManifestCard[];
+}
+
+/** Exact CSP hashes for trusted inline executable/style blocks. */
+export interface InlineCspHashes {
+  scriptHashes: string[];
+  styleHashes: string[];
 }
 
 /** Options for {@link registerGridResource}. Every collaborator is injectable. */
@@ -210,9 +213,10 @@ export async function rewriteCardPaths(
     kitDir: string;
     previewsBaseUrl?: string;
     readPreviewBytes: PreviewReader;
+    onPreviewHtml?: (html: string) => void;
   },
 ): Promise<EmbeddedManifest> {
-  const { kitId, kitDir, previewsBaseUrl, readPreviewBytes } = opts;
+  const { kitId, kitDir, previewsBaseUrl, readPreviewBytes, onPreviewHtml } = opts;
 
   // Validate the previews base URL ONCE up front; a malformed value degrades to
   // the solo-dev `data:` path rather than throwing per-card.
@@ -231,6 +235,7 @@ export async function rewriteCardPaths(
       // Solo-dev fallback: inline the preview bytes as a data: URL.
       const bytes = await readPreviewBytes(kitDir, card.path);
       if (bytes === null) return { ...card, sourcePath }; // keep relative path; degrade gracefully
+      onPreviewHtml?.(bytes.toString("utf8"));
       const src = `data:text/html;base64,${bytes.toString("base64")}`;
       return { ...card, sourcePath, path: src };
     }),
@@ -275,108 +280,150 @@ export function inlineManifest(indexHtml: string, manifest: Manifest): string {
   return indexHtml.slice(0, headClose) + tag + indexHtml.slice(headClose);
 }
 
+interface ParsedHtmlNode {
+  nodeName: string;
+  tagName?: string;
+  value?: string;
+  attrs?: Array<{ name: string; value: string }>;
+  childNodes?: ParsedHtmlNode[];
+}
+
+function cspSha256(content: string): string {
+  return `'sha256-${createHash("sha256").update(content, "utf8").digest("base64")}'`;
+}
+
+function rawText(node: ParsedHtmlNode): string {
+  if (node.nodeName === "#text") return node.value ?? "";
+  return (node.childNodes ?? []).map(rawText).join("");
+}
+
+/**
+ * Parse HTML and hash its trusted inline `<script>` / `<style>` text exactly as
+ * the browser sees it. External scripts have no inline bytes and are ignored.
+ */
+export function collectInlineCspHashes(html: string): InlineCspHashes {
+  const scripts = new Set<string>();
+  const styles = new Set<string>();
+  const root = parse(html) as unknown as ParsedHtmlNode;
+
+  function visit(node: ParsedHtmlNode): void {
+    if (node.tagName === "script") {
+      const hasSrc = node.attrs?.some((attr) => attr.name.toLowerCase() === "src") ?? false;
+      const content = rawText(node);
+      if (!hasSrc && content !== "") scripts.add(cspSha256(content));
+    } else if (node.tagName === "style") {
+      const content = rawText(node);
+      if (content !== "") styles.add(cspSha256(content));
+    }
+    for (const child of node.childNodes ?? []) visit(child);
+  }
+
+  visit(root);
+  return { scriptHashes: [...scripts], styleHashes: [...styles] };
+}
+
+function escapeRawTextEndTag(content: string, tagName: "script" | "style"): string {
+  return content.replace(new RegExp(`</${tagName}`, "gi"), `<\\/${tagName}`);
+}
+
+/**
+ * Make the MCP App document self-contained. A host receives one raw HTML
+ * resource; browser-relative `ui://` siblings are not additional resources/read
+ * calls, so the exact viewer JS/CSS bytes must travel inside that document.
+ */
+export function inlineViewerAssets(
+  indexHtml: string,
+  viewerJs: string,
+  viewerCss: string,
+): { html: string; hashes: InlineCspHashes } {
+  const script = escapeRawTextEndTag(viewerJs, "script");
+  const style = escapeRawTextEndTag(viewerCss, "style");
+  const styleTag = `<style>${style}</style>`;
+  const scriptTag = `<script>${script}</script>`;
+
+  const cssLink = /<link\b[^>]*href=["']\.\/viewer\.css["'][^>]*>/i;
+  const jsScript = /<script\b[^>]*src=["']\.\/viewer\.js["'][^>]*><\/script>/i;
+  let html = cssLink.test(indexHtml)
+    ? indexHtml.replace(cssLink, styleTag)
+    : injectBeforeClosingTag(indexHtml, "head", styleTag);
+  html = jsScript.test(html)
+    ? html.replace(jsScript, scriptTag)
+    : injectBeforeClosingTag(html, "body", scriptTag);
+
+  return {
+    html,
+    hashes: {
+      scriptHashes: [cspSha256(script)],
+      styleHashes: [cspSha256(style)],
+    },
+  };
+}
+
+function injectBeforeClosingTag(html: string, tagName: "head" | "body", content: string): string {
+  const close = `</${tagName}>`;
+  const at = html.indexOf(close);
+  return at === -1 ? html + content : html.slice(0, at) + content + html.slice(at);
+}
+
 // ─── AC5 CSP allow-list ──────────────────────────────────────────────────────
 
 /**
- * The MCP-Apps CSP allow-list carried on the resource `_meta` (AC5), plus the
- * two concrete policy strings the embedded tier enforces (M4-07 / DRO-269).
- *
- * Two policy strings — same source of truth, different sinks:
- *   • {@link metaPolicy} is what {@link cspMetaTag} writes into the served
- *     document's `<meta http-equiv="Content-Security-Policy">`. Browsers
- *     IGNORE `frame-ancestors` (and `report-uri` / `sandbox`) when they appear
- *     inside a meta tag — HTML spec + CSP-3 §12.1 — so those directives are
- *     stripped from `metaPolicy` to keep it truthful about what actually
- *     enforces at parse time. Everything else the meta *can* enforce (`default-
- *     src`, `script-src`, `style-src`, `img-src`, `frame-src`, `connect-src`,
- *     `object-src`, `base-uri`, `form-action`) is present.
- *   • {@link policy} is the FULL policy — same directives as `metaPolicy`,
- *     plus `frame-ancestors 'self'` (T-15 anti-reframe). This is what a host
- *     that also emits the CSP as an HTTP `Content-Security-Policy` HEADER
- *     should use; browsers respect `frame-ancestors` there.
- *
- * Splitting the two is the point of M4-07/AC1: the enforced meta must not
- * carry directives the browser will drop, and the header must not miss
- * frame-ancestors just because the meta had to.
+ * MCP Apps domain declarations plus genie's stricter in-document CSP.
+ * Resources/read cannot deliver an HTTP response header; compliant hosts build
+ * their sandbox CSP from the domain arrays under `_meta.ui.csp`.
  */
 export interface GridCspMeta {
   /** `fetch()`/XHR targets — empty: the manifest is inlined, nothing to fetch. */
   connectDomains: string[];
-  /** Origins the app loads its OWN sub-resources (viewer.js/.css) from. */
+  /** External static-resource origins; empty because the document is self-contained. */
   resourceDomains: string[];
   /** Origins allowed as per-card iframe sources (the previews host or `data:`). */
   frameDomains: string[];
-  /**
-   * The full CSP string suitable for the HTTP `Content-Security-Policy`
-   * header, including `frame-ancestors 'self'`. Kept for hosts / operators
-   * who wire CSP at the response header (RFC §6.5 / §10 "Cross-cutting
-   * controls").
-   */
-  policy: string;
-  /**
-   * The subset of {@link policy} that is legal inside an HTML `<meta
-   * http-equiv="Content-Security-Policy">`. Same directives except
-   * `frame-ancestors` — browsers ignore that one in a meta and callers should
-   * not be misled into thinking they've clamped reframing when they haven't.
-   * Written into the served document by {@link cspMetaTag}.
-   */
+  /** Strict hash-based policy injected into the self-contained HTML document. */
   metaPolicy: string;
 }
 
 /**
- * Build the AC5 CSP allow-list AND the two hardened policy strings (M4-07 /
- * DRO-269 AC1+AC3) for a given previews configuration.
+ * Build the AC5 domain allow-list and strict hash-based document policy.
  *
  * The card iframes load from the previews origin when configured, else from
  * `data:` (solo dev). `connectDomains` is always empty — `connect-src 'none'`
  * — because the manifest travels inline (AC2); there is nothing to fetch.
- * `img-src` permits `data:`/`https:` for card thumbnails. The shape mirrors
- * what `@modelcontextprotocol/ext-apps` would carry; reproduced here since
- * that dep is absent (see module header).
+ * `img-src` permits `data:`/`https:` for card thumbnails. The domain shape
+ * matches the stable MCP Apps 2026-01-26 `_meta.ui.csp` contract.
  *
  * Hardening applied vs the pre-M4-07 policy:
- *   • Removed `'unsafe-inline'` from `script-src` and `style-src` (AC3).
- *     The embedded shell has ZERO executable inline scripts — the manifest
- *     data island is `<script type="application/json">`, which is NOT executed
- *     by the browser and needs no hash. `viewer.js` and `viewer.css` are
- *     EXTERNAL siblings served as `ui://genie/viewer.js` /
- *     `ui://genie/viewer.css`; `script-src 'self' ui://genie` allows them
- *     (whether the browser scopes `'self'` to the containing document or the
- *     ui:// origin, one of the two matches — belt + braces). `viewer.js` sets
- *     `iframe.style.aspectRatio` via CSSOM (`el.style.*`), which does NOT
- *     require `'unsafe-inline'` — style-src governs `<style>`/`style="…"`
- *     attributes, not scripted CSSOM mutations.
- *   • Added `base-uri 'none'` — no `<base href>` can redirect relative URLs
- *     (viewer.js's `./viewer.css` reference in particular) out from under us.
+ *   • Removed `'unsafe-inline'` / `'unsafe-eval'` (AC3). The exact inlined
+ *     viewer assets and legitimate inline blocks inside data-backed cards are
+ *     allow-listed by SHA-256. Event-handler attributes remain blocked because
+ *     the policy does not opt into `'unsafe-hashes'`.
+ *   • Added `base-uri 'none'` — no `<base href>` can redirect URLs.
  *   • Added `form-action 'none'` and `object-src 'none'` — deny `<form>` /
  *     `<object>` / `<embed>` per AC1's "deny form/object/embed" line.
- *   • Split into `metaPolicy` (injected) and `policy` (header, +frame-
- *     ancestors 'self'). See {@link GridCspMeta}.
+ * Resources/read has no HTTP-header channel, so no raw header policy or
+ * `frame-ancestors` claim is advertised.
  */
-export function buildCspMeta(previewsBaseUrl: string | undefined): GridCspMeta {
+export function buildCspMeta(
+  previewsBaseUrl: string | undefined,
+  inlineHashes: InlineCspHashes = { scriptHashes: [], styleHashes: [] },
+): GridCspMeta {
   // Validate via the shared normaliser so a malformed GENIE_PREVIEWS_BASE_URL
   // NEVER throws here — an invalid value degrades to the solo-dev `data:` frame
   // origin exactly as `rewriteCardPaths` does, keeping the two in lockstep and
   // never crashing `registerGridResource`/server startup (reviewer flag).
   const base = normalizePreviewsBaseUrl(previewsBaseUrl);
   const frameDomains = base !== undefined ? [base.origin] : ["data:"];
-  const resourceDomains = [RESOURCE_ORIGIN];
+  const resourceDomains: string[] = [];
   const frameSrc = frameDomains.join(" ");
-  // The `'self'` keyword pairs with the sibling `ui://genie` origin so both
-  // possible browser interpretations resolve: `'self'` may scope to the
-  // containing document, `ui://genie` is the explicit origin the sibling
-  // viewer.js/.css load from. Same list for script and style — the two live
-  // in the same origin as external files.
-  const siblingSrc = `'self' ${resourceDomains.join(" ")}`;
+  const scriptHashes = validCspHashes(inlineHashes.scriptHashes);
+  const styleHashes = validCspHashes(inlineHashes.styleHashes);
+  const scriptSrc = scriptHashes.length > 0 ? scriptHashes.join(" ") : "'none'";
+  const styleSrc = styleHashes.length > 0 ? styleHashes.join(" ") : "'none'";
 
-  // ── Core directives shared by BOTH strings ──
-  // (Kept as an ordered list so `metaPolicy` and `policy` differ only in the
-  // `frame-ancestors` append; the two are provably in lockstep and the unit
-  // test "metaPolicy and policy share the same core directives" enforces it.)
   const core = [
     "default-src 'none'",
-    `script-src ${siblingSrc}`,
-    `style-src ${siblingSrc}`,
+    `script-src ${scriptSrc}`,
+    `style-src ${styleSrc}`,
     "img-src data: https:",
     `frame-src ${frameSrc}`,
     "connect-src 'none'",
@@ -386,18 +433,16 @@ export function buildCspMeta(previewsBaseUrl: string | undefined): GridCspMeta {
   ];
 
   const metaPolicy = core.join("; ");
-  // Header policy = core + frame-ancestors 'self' (T-15 anti-reframe). The
-  // browser silently DROPS frame-ancestors when it's inside a meta, so this
-  // directive only ever appears on the header form — see GridCspMeta.
-  const policy = [...core, "frame-ancestors 'self'"].join("; ");
+  return { connectDomains: [], resourceDomains, frameDomains, metaPolicy };
+}
 
-  return { connectDomains: [], resourceDomains, frameDomains, policy, metaPolicy };
+function validCspHashes(hashes: string[]): string[] {
+  return [...new Set(hashes.filter((hash) => /^'sha256-[A-Za-z0-9+/]+={0,2}'$/.test(hash)))];
 }
 
 /**
  * Render a `<meta http-equiv="Content-Security-Policy" content="…">` tag for
- * the given policy meta. Uses {@link GridCspMeta.metaPolicy} — the subset of
- * directives browsers actually enforce inside a meta (see GridCspMeta).
+ * the given policy meta. Uses {@link GridCspMeta.metaPolicy}.
  *
  * The `content` attribute value is HTML-attribute-escaped (`&`, `"`, `<`, `>`)
  * defensively. In current use the policy string is server-authored with no
@@ -429,7 +474,7 @@ function escapeHtmlAttribute(str: string): string {
 /**
  * Inject the enforced CSP meta into an assembled document. Placed at the very
  * top of `<head>` so every subsequent element — the manifest data island,
- * external `viewer.js`/`viewer.css`, any inline attributes — is parsed under
+ * inlined `viewer.js`/`viewer.css`, any inline attributes — is parsed under
  * the policy. If the shell has no `<head>` (defensive; every shipped shell
  * does) the tag is prepended so it still parses first.
  */
@@ -440,13 +485,10 @@ export function injectCspMeta(html: string, meta: GridCspMeta): string {
   return html.slice(0, headOpen + "<head>".length) + tag + html.slice(headOpen + "<head>".length);
 }
 
-/** The `_meta` object attached to the grid resource (namespaced; provisional). */
+/** Canonical MCP Apps resource metadata (stable 2026-01-26 shape). */
 export function gridResourceMeta(previewsBaseUrl: string | undefined): Record<string, unknown> {
-  // Namespace is provisional pending an `@modelcontextprotocol/ext-apps`
-  // adoption, which would define the canonical key. Kept descriptive so a
-  // reviewer/host can find it. Both a structured allow-list AND a concrete
-  // policy string are exposed so either consumption style works.
-  return { "mcp-app/csp": buildCspMeta(previewsBaseUrl) };
+  const { connectDomains, resourceDomains, frameDomains } = buildCspMeta(previewsBaseUrl);
+  return { ui: { csp: { connectDomains, resourceDomains, frameDomains } } };
 }
 
 // ─── Default seams ───────────────────────────────────────────────────────────
@@ -517,9 +559,9 @@ function isInside(parent: string, child: string): boolean {
 function fallbackShell(manifest: Manifest, cspMeta: GridCspMeta): string {
   const json = escapeJsonForScript(JSON.stringify(manifest));
   return (
-    "<!doctype html><html lang=\"en\"><head>" +
+    '<!doctype html><html lang="en"><head>' +
     cspMetaTag(cspMeta) +
-    "<meta charset=\"utf-8\" />" +
+    '<meta charset="utf-8" />' +
     `<title>genie — preview</title>` +
     `<script type="application/json" id="${MANIFEST_ELEMENT_ID}">${json}</script>` +
     '</head><body><main id="grid"></main>' +
@@ -554,7 +596,17 @@ export async function buildGridDocument(
   params: { kitId?: string; componentName?: string; group?: string },
 ): Promise<string> {
   const kitDir = resolveKitDir(deps.kitsRoot, params.kitId);
-  const cspMeta = buildCspMeta(deps.previewsBaseUrl);
+  const scriptHashes = new Set<string>();
+  const styleHashes = new Set<string>();
+  const addHashes = (html: string): void => {
+    const hashes = collectInlineCspHashes(html);
+    for (const hash of hashes.scriptHashes) scriptHashes.add(hash);
+    for (const hash of hashes.styleHashes) styleHashes.add(hash);
+  };
+  const currentHashes = (): InlineCspHashes => ({
+    scriptHashes: [...scriptHashes],
+    styleHashes: [...styleHashes],
+  });
 
   let manifest: Manifest = emptyManifest();
   if (kitDir !== null) {
@@ -572,16 +624,28 @@ export async function buildGridDocument(
       kitDir,
       previewsBaseUrl: deps.previewsBaseUrl,
       readPreviewBytes: deps.readPreviewBytes,
+      onPreviewHtml: addHashes,
     });
   }
 
   let indexHtml: string;
+  let viewerJs: string;
+  let viewerCss: string;
   try {
-    indexHtml = await deps.readAsset("index.html");
+    [indexHtml, viewerJs, viewerCss] = await Promise.all([
+      deps.readAsset("index.html"),
+      deps.readAsset("viewer.js"),
+      deps.readAsset("viewer.css"),
+    ]);
   } catch {
-    return fallbackShell(manifest, cspMeta);
+    return fallbackShell(manifest, buildCspMeta(deps.previewsBaseUrl, currentHashes()));
   }
-  return injectCspMeta(inlineManifest(indexHtml, manifest), cspMeta);
+
+  const inlinedAssets = inlineViewerAssets(indexHtml, viewerJs, viewerCss);
+  for (const hash of inlinedAssets.hashes.scriptHashes) scriptHashes.add(hash);
+  for (const hash of inlinedAssets.hashes.styleHashes) styleHashes.add(hash);
+  const cspMeta = buildCspMeta(deps.previewsBaseUrl, currentHashes());
+  return injectCspMeta(inlineManifest(inlinedAssets.html, manifest), cspMeta);
 }
 
 /** An empty-but-valid manifest (viewer renders its empty state). */
@@ -607,7 +671,7 @@ function paramsFromUri(uri: URL): { kitId?: string; componentName?: string; grou
  * or-nothing) would miss most real URIs. We therefore register BOTH a static
  * `ui://genie/grid` (the bare URI) and a `{+rest}` catch-all template that
  * matches any query-bearing URI; both dispatch to the same handler, which reads
- * its params off the full `URL`. The two sibling assets (AC3) are plain statics.
+ * its params off the full `URL`. Legacy sibling assets remain plain statics.
  */
 export function registerGridResource(server: McpServer, options: GridResourceOptions): void {
   const deps: ResolvedDeps = {
@@ -645,8 +709,8 @@ export function registerGridResource(server: McpServer, options: GridResourceOpt
   const template = new ResourceTemplate(`${GRID_RESOURCE_URI}{+rest}`, { list: undefined });
   server.registerResource("genie-grid-query", template, gridConfig, (uri) => readGrid(uri));
 
-  // AC3 — the relative `./viewer.js` / `./viewer.css` in the shell resolve to
-  // these siblings; the host reads them from the same resource handler.
+  // Compatibility for older experimental hosts. The standard MCP Apps payload
+  // is self-contained and does not reference these sibling resources.
   registerAsset(server, "genie-viewer-js", VIEWER_JS_URI, "text/javascript", () =>
     deps.readAsset("viewer.js"),
   );

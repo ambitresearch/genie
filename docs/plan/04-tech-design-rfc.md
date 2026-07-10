@@ -7,15 +7,15 @@
 | **RFC number**               | DS-RFC-0001                                                                                                                                              |
 | **Title**                    | genie — Harness-Agnostic Design-Generation MCP Server Architecture                                                                                       |
 | **Status**                   | Draft                                                                                                                                                    |
-| **Author**                   | Maintainer                                                                                                                                                |
+| **Author**                   | Maintainer                                                                                                                                               |
 | **Reviewers**                | TBD — slot proposed: 1× MCP/protocol reviewer, 1× security reviewer, 1× front-end/preview reviewer, 1× ops reviewer                                      |
 | **Created**                  | 2026-06-21                                                                                                                                               |
-| **Last revised**             | 2026-06-27                                                                                                                                                       |
+| **Last revised**             | 2026-06-27                                                                                                                                               |
 | **Supersedes**               | — (none)                                                                                                                                                 |
 | **Superseded by**            | — (none)                                                                                                                                                 |
 | **Related RFCs**             | DS-RFC-0002 _(planned)_ — Adherence rule generator; DS-RFC-0003 _(planned)_ — Storybook adapter                                                          |
 | **Related docs**             | `docs/plan/01-product-vision.md`, `docs/plan/02-brd.md`, `docs/plan/03-prd.md`, `docs/plan/05-gtm-and-postprod.md`, `docs/plan/06-operations-runbook.md` |
-| **Source-of-truth research** | `docs/research/`                                                                                                                                          |
+| **Source-of-truth research** | `docs/research/`                                                                                                                                         |
 | **Implementation tracker**   | `github/milestones.md` (M0–M5)                                                                                                                           |
 | **License**                  | MIT                                                                                                                                                      |
 | **Primary language**         | TypeScript (Node ≥ 22, ESM)                                                                                                                              |
@@ -26,11 +26,11 @@
 
 ### 1.1 Revision history
 
-| Date       | Author        | Change                                                                                                                                                                              |
-| ---------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Date       | Author     | Change                                                                                                                                                                              |
+| ---------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-06-21 | Maintainer | Initial draft (DS-RFC-0001).                                                                                                                                                        |
 | 2026-06-24 | Maintainer | Raised minimum Node.js from 18 to 22 (Node 18 & 20 reached EOL; Node 22 is the current Active LTS). Toolchain (pnpm 10.34, Vitest 4) requires Node ≥ 20+; 22 is the safe LTS floor. |
-| 2026-06-27 | Maintainer | BRD-feedback sweep: UI-kit terminology (not "design system"), blueprints not templates, M1 19-tool surface restructure with projects-as-peer verbs. |
+| 2026-06-27 | Maintainer | BRD-feedback sweep: UI-kit terminology (not "design system"), blueprints not templates, M1 19-tool surface restructure with projects-as-peer verbs.                                 |
 
 ---
 
@@ -783,43 +783,40 @@ calls.
 
 **postMessage protocol** between the iframe and the host:
 
-| Direction     | `type`                 | Payload                         | Purpose                               |
-| ------------- | ---------------------- | ------------------------------- | ------------------------------------- |
-| iframe → host | `genie:ready`          | `{ version, manifestCount }`    | Signals viewer mounted                |
-| iframe → host | `genie:select`         | `{ name, group }`               | User clicked a card                   |
-| iframe → host | `genie:request-conjure` | `{ kitId, group, prompt, model? }` | Generate a new card                |
-| iframe → host | `genie:request-refine` | `{ name, instruction, region? }` | Refine an existing card              |
-| iframe → host | `genie:request-validate` | `{ kitId }`                   | Audit the current kit                 |
-| host → iframe | `genie:manifest`       | `{ manifest }`                  | Push new manifest after a write_files |
-| host → iframe | `genie:focus`          | `{ name }`                      | Scroll/highlight specific card        |
-| host → iframe | `genie:theme`          | `{ scheme: "light" \| "dark" }` | Match harness theme                   |
+| Direction     | `type`                   | Payload                            | Purpose                               |
+| ------------- | ------------------------ | ---------------------------------- | ------------------------------------- |
+| iframe → host | `genie:ready`            | `{ version, manifestCount }`       | Signals viewer mounted                |
+| iframe → host | `genie:select`           | `{ name, group }`                  | User clicked a card                   |
+| iframe → host | `genie:request-conjure`  | `{ kitId, group, prompt, model? }` | Generate a new card                   |
+| iframe → host | `genie:request-refine`   | `{ name, instruction, region? }`   | Refine an existing card               |
+| iframe → host | `genie:request-validate` | `{ kitId }`                        | Audit the current kit                 |
+| host → iframe | `genie:manifest`         | `{ manifest }`                     | Push new manifest after a write_files |
+| host → iframe | `genie:focus`            | `{ name }`                         | Scroll/highlight specific card        |
+| host → iframe | `genie:theme`            | `{ scheme: "light" \| "dark" }`    | Match harness theme                   |
 
 Message origin is validated against `config.hostOrigin`; unknown origins are silently dropped.
 
-**CSP.** The HTML payload injects a `<meta http-equiv="Content-Security-Policy">` into the served document AND (recommended, for hosts that also front the response with a real HTTP header) exposes the equivalent header string on the resource `_meta`. The hardened policy (M4-07 / DRO-269):
+**CSP.** A compliant MCP Apps host receives one raw HTML document, not a browser-addressable `ui://` origin. The server therefore inlines the exact `viewer.js` / `viewer.css` bytes and publishes the standard resource metadata at `contents[]._meta.ui.csp` (`connectDomains`, `resourceDomains`, `frameDomains`). The host constructs its sandbox CSP from those domains. Genie additionally injects a stricter hash-only `<meta http-equiv="Content-Security-Policy">` into the document (M4-07 / DRO-269):
 
 ```
 default-src 'none';
-script-src 'self' ui://genie;   # NO 'unsafe-inline', NO 'unsafe-eval'
-style-src  'self' ui://genie;   # NO 'unsafe-inline'
+script-src 'sha256-<viewer-js>' 'sha256-<trusted-card-script>' …;
+style-src  'sha256-<viewer-css>' 'sha256-<trusted-card-style>' …;
 img-src    data: https:;
 frame-src  <previews-origin> | data:;
 connect-src 'none';
 object-src 'none';
 base-uri   'none';
 form-action 'none';
-frame-ancestors 'self';         # HEADER ONLY — browsers drop this in <meta>
 ```
 
-The two strings are one source of truth: the injected `metaPolicy` is the header form minus `frame-ancestors`. Browsers ignore `frame-ancestors` (and `report-uri` / `sandbox`) when they appear inside a meta tag per the HTML spec + CSP-3 §12.1, so shipping it there would be dead directive space — the split keeps the meta truthful about what actually enforces at parse time while the header still clamps reframing (T-15).
-
-Why the strict `script-src` works: the embedded shell has ZERO executable inline scripts. The manifest travels as `<script type="application/json">` — a data island the browser does not execute (and therefore does not need a hash for). `viewer.js` and `viewer.css` are EXTERNAL siblings served as `ui://genie/viewer.js` / `ui://genie/viewer.css`, allowed by `'self' ui://genie` (belt + braces: whichever the browser scopes `'self'` to, the sibling origin is also explicitly named). `viewer.js` sets `iframe.style.aspectRatio` via CSSOM (`el.style.*`), which is NOT governed by `style-src` — that directive controls `<style>` and `style="…"` attributes, not scripted CSSOM mutations. So the hardened policy is a strict superset of the shell's actual needs.
+The server computes SHA-256 over the exact raw-text bytes it inlines. For solo-dev `data:` cards, parse5 extracts each legitimate `<script>` / `<style>` block and adds its hash because data frames inherit the outer policy. Inline event handlers remain blocked (no `'unsafe-hashes'`), as do injected neighbouring script/style blocks whose bytes are not listed. The manifest remains a non-executed `<script type="application/json">` data island and needs no hash. Resources/read cannot deliver an HTTP response header, so genie does not advertise a fictional raw policy or `frame-ancestors`; reframing is owned by the compliant host's mandatory sandbox proxy.
 
 `connect-src 'none'` deliberately blocks all `fetch()` — the manifest is inlined, there is nothing to fetch.
 
-**Iframe sandbox.** The harness embeds `ui://genie/grid` with `<iframe sandbox="allow-scripts">` (no `allow-same-origin`); per-card preview iframes inside the grid use `<iframe sandbox="allow-scripts">` too, so card scripts cannot read the parent's storage even if they escape their own iframe. `data:` card iframes INHERIT the outer grid's CSP, so the same "no inline script" ban applies inside them — solo-dev `data:` transport is safe by construction. Verified end-to-end with real Chromium in `packages/server/src/ui/grid-resource.csp.chromium.test.ts` (skipped locally when Chromium can't launch; the `viewer-a11y` CI leg sets `GENIE_REQUIRE_CSP_BROWSER=1` so the leg fails loudly on any regression).
+**Iframe sandbox.** The host wraps the View in the MCP Apps sandbox proxy; per-card preview iframes inside the grid use `<iframe sandbox="allow-scripts">` (no `allow-same-origin`, top-navigation, forms, or modals), so card scripts cannot read parent storage or escape. `data:` card iframes inherit the hash policy: trusted script/style bytes run, while injected handlers and unlisted blocks do not. Verified end-to-end with real Chromium in `packages/server/src/ui/grid-resource.csp.chromium.test.ts` (the `viewer-a11y` CI leg sets `GENIE_REQUIRE_CSP_BROWSER=1` so a missing browser cannot silently skip).
 
-**HMR (M4-04 / DRO-266) non-intersection.** The embedded `ui://` tier NEVER runs HMR — the manifest is inlined, `connect-src 'none'` blocks the Vite WebSocket, and there is no dev server in this vehicle. HMR lives ONLY on the Vite standalone tier (`file://` / localhost), which carries NO injected CSP (brand fonts + fetch(manifest) are its point). The two vehicles never coexist in one document, so hardening the embedded tier CANNOT break HMR: they are orthogonal, not layered.
+**HMR (M4-04 / DRO-266).** The embedded tier never opens the Vite WebSocket or polls (`connect-src 'none'`). Its trusted parent may post a refresh carrying the stable kit path plus a fresh absolute/data source; the viewer accepts only `event.source === window.parent` and enforces the configured/referrer parent origin when non-opaque. Standalone localhost uses the dedicated `/__genie_hmr` socket.
 
 ### 6.6 LLM endpoint client
 
@@ -1160,11 +1157,11 @@ Tokens are signed JWTs (RS256, keys rotated every 90 d). Access tokens TTL = 1 h
 
 **Scope model.**
 
-| Scope            | Grants                                                                        |
-| ---------------- | ----------------------------------------------------------------------------- |
-| `genie:read`     | `list_*`, `get_*`, `preview`, `validate`, all resource reads                              |
+| Scope            | Grants                                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------------- |
+| `genie:read`     | `list_*`, `get_*`, `preview`, `validate`, all resource reads                                                    |
 | `genie:write`    | `create_kit`, `create_project`, `delete_project`, `bind_kit`, `plan`, `write_files`, `delete_files`, `validate` |
-| `genie:generate` | `conjure`, `refine`, `conjure_screen` (separated so a viewer-only token cannot burn LLM budget) |
+| `genie:generate` | `conjure`, `refine`, `conjure_screen` (separated so a viewer-only token cannot burn LLM budget)                 |
 
 A token without `genie:write` calling `write_files` returns `genie.forbidden`. The server publishes its supported scopes in the resource metadata; harnesses request the union of what they need.
 
@@ -1406,9 +1403,9 @@ The `version: 1` integer follows the same evolution rule as `manifest.json`
 version-2-aware reader still parses `version: 1` anchors. The reference
 implementation's `zod` schema does not set `additionalProperties: false` (so
 a future additive field never fails validation) — but unlike
-`store/manifest.ts`'s `.passthrough()`, which explicitly *retains*
+`store/manifest.ts`'s `.passthrough()`, which explicitly _retains_
 unrecognized keys in the parsed result, `anchorSchema` is a plain
-`z.object({...})`, whose default mode silently *strips* unrecognized keys
+`z.object({...})`, whose default mode silently _strips_ unrecognized keys
 instead. The two schemas diverge on that point rather than mirroring each
 other; either way, a genuinely malformed anchor (bad JSON, wrong `version`,
 or a missing required field) throws `AnchorParseError` from `readAnchor`
@@ -1603,7 +1600,7 @@ The server validates the LLM endpoint response against this schema after parsing
   `<cwd>/.genie`) on every create and every access (refreshes `lastAccessedAt`), and are
   re-hydrated from disk on lookup if not already in the in-process `Map`. This means a plan
   **survives a server restart** — supersedes this section's earlier "v1: in-process Map, lost
-  on restart" — the on-disk snapshot *is* the v1 durability story; a v2 shared store (Redis or
+  on restart" — the on-disk snapshot _is_ the v1 durability story; a v2 shared store (Redis or
   otherwise) remains future scope for multi-host deployments, keyed by `plan:<planId>`.
 - Each plan stores `{ planId, kitId, writes[], deletes[], localDir, createdAt, lastAccessedAt }`
   (ISO-8601 timestamps). `expiresAt` is not stored; expiry is computed at read time from
@@ -1968,7 +1965,10 @@ audited error responses below.
       "kitId": { "type": "string", "minLength": 1 },
       "writes": {
         "type": "array",
-        "items": { "type": "string", "description": "Glob pattern, ≤3 wildcards (enforced at runtime, not by this schema — see above)" }
+        "items": {
+          "type": "string",
+          "description": "Glob pattern, ≤3 wildcards (enforced at runtime, not by this schema — see above)"
+        }
       },
       "deletes": {
         "type": "array",
@@ -1991,11 +1991,11 @@ audited error responses below.
 
 Error responses (`isError: true`, `content[0].text` is JSON):
 
-| `error` | Cause |
-| --- | --- |
-| `InvalidLocalDir` | `localDir` (explicit or defaulted to `cwd()`) does not exist, or exists but is not a directory (e.g. a regular file). |
-| `TooManyWritesError` | `writes.length > 256`. Payload includes `count`, `max`. |
-| `TooComplexGlobError` | A `writes`/`deletes` pattern has >3 `*`/`**` wildcards. Payload includes `pattern`, `wildcardCount`, `max`. |
+| `error`               | Cause                                                                                                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `InvalidLocalDir`     | `localDir` (explicit or defaulted to `cwd()`) does not exist, or exists but is not a directory (e.g. a regular file). |
+| `TooManyWritesError`  | `writes.length > 256`. Payload includes `count`, `max`.                                                               |
+| `TooComplexGlobError` | A `writes`/`deletes` pattern has >3 `*`/`**` wildcards. Payload includes `pattern`, `wildcardCount`, `max`.           |
 
 On success, a `plan.created` line (`{event, kitId, planId, writeCount, deleteCount, timestamp}`,
 no path contents — AC10) is written to **stderr**, never stdout: on the stdio transport (the
@@ -2065,18 +2065,18 @@ silently overriding the issue's literal graded AC.
 
 Error responses (`isError: true`, `content[0].text` is JSON):
 
-| `error` | Cause |
-| --- | --- |
-| `TooManyFilesError` | `files.length > 256`. Payload includes `count`, `max`. |
-| `DuplicatePathError` | Two or more files in the call target the same `path`. Payload includes `path`. |
-| `PathOutsidePlanError` | A `path` doesn't match any `writes` glob (`reason: "glob"`), or resolves outside `localDir` even if the glob matched (`reason: "escapesLocalDir"` — e.g. an absolute path under a permissive `**`). Payload includes `path`, `reason`. |
-| `PlanNotFoundError` | `planId` doesn't exist or has expired (M1-07's `getPlan` collapses both cases). Payload includes `planId`. |
-| `LocalPathEscapeError` | A `localPath` resolves outside the plan's `localDir`. Payload includes `localPath`, `localDir`. |
-| `InvalidFileInputError` | A file set both `localPath` and `data`, or neither. Payload includes `path`. |
-| `InvalidEncodingError` | `data` isn't valid base64 when `encoding: "base64"` is declared. Payload includes `path`. |
-| `-32099` (`PayloadTooLargeError`) | Total decoded payload exceeds the configured byte cap (`GENIE_WRITE_BYTE_CAP`, default 16 MiB). Payload includes `data.retryWith.maxFiles`, `data.totalBytes`, `data.maxBytes` — see numbering note above. |
-| `WriteFailedError` | A file failed to write/rename mid-commit (including a destination that already exists as a directory) — the whole call is rolled back (AC10). Payload includes `path`, `cause`. |
-| `RollbackIncompleteError` | A commit failed AND the rollback itself could not fully undo/restore every step (e.g. a permission error during the undo pass) — unlike `WriteFailedError`, this does NOT guarantee the tree matches its pre-call state. Payload includes `commitError`, `rollbackFailures`. |
+| `error`                           | Cause                                                                                                                                                                                                                                                                        |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TooManyFilesError`               | `files.length > 256`. Payload includes `count`, `max`.                                                                                                                                                                                                                       |
+| `DuplicatePathError`              | Two or more files in the call target the same `path`. Payload includes `path`.                                                                                                                                                                                               |
+| `PathOutsidePlanError`            | A `path` doesn't match any `writes` glob (`reason: "glob"`), or resolves outside `localDir` even if the glob matched (`reason: "escapesLocalDir"` — e.g. an absolute path under a permissive `**`). Payload includes `path`, `reason`.                                       |
+| `PlanNotFoundError`               | `planId` doesn't exist or has expired (M1-07's `getPlan` collapses both cases). Payload includes `planId`.                                                                                                                                                                   |
+| `LocalPathEscapeError`            | A `localPath` resolves outside the plan's `localDir`. Payload includes `localPath`, `localDir`.                                                                                                                                                                              |
+| `InvalidFileInputError`           | A file set both `localPath` and `data`, or neither. Payload includes `path`.                                                                                                                                                                                                 |
+| `InvalidEncodingError`            | `data` isn't valid base64 when `encoding: "base64"` is declared. Payload includes `path`.                                                                                                                                                                                    |
+| `-32099` (`PayloadTooLargeError`) | Total decoded payload exceeds the configured byte cap (`GENIE_WRITE_BYTE_CAP`, default 16 MiB). Payload includes `data.retryWith.maxFiles`, `data.totalBytes`, `data.maxBytes` — see numbering note above.                                                                   |
+| `WriteFailedError`                | A file failed to write/rename mid-commit (including a destination that already exists as a directory) — the whole call is rolled back (AC10). Payload includes `path`, `cause`.                                                                                              |
+| `RollbackIncompleteError`         | A commit failed AND the rollback itself could not fully undo/restore every step (e.g. a permission error during the undo pass) — unlike `WriteFailedError`, this does NOT guarantee the tree matches its pre-call state. Payload includes `commitError`, `rollbackFailures`. |
 
 ### 9.8 `mcp__genie__delete_files`
 
@@ -2124,12 +2124,12 @@ with `DeleteFailed`.
 
 Error responses (`isError: true`, `content[0].text` is JSON):
 
-| `error` | Cause |
-| --- | --- |
-| `InvalidArguments` | `planId` empty, `paths` empty, an empty path string, or an unknown key. |
-| `PlanNotFoundError` | `planId` is unknown, expired, or not a UUID. |
+| `error`                | Cause                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `InvalidArguments`     | `planId` empty, `paths` empty, an empty path string, or an unknown key.                                      |
+| `PlanNotFoundError`    | `planId` is unknown, expired, or not a UUID.                                                                 |
 | `PathOutsidePlanError` | A `path` matches no `deletes` glob, or resolves outside the kit root. Payload includes the offending `path`. |
-| `DeleteFailed` | A non-`ENOENT`/`ENOTDIR` filesystem error (e.g. `EISDIR`, `EACCES`). Payload includes the offending `path`. |
+| `DeleteFailed`         | A non-`ENOENT`/`ENOTDIR` filesystem error (e.g. `EISDIR`, `EACCES`). Payload includes the offending `path`.  |
 
 ### 9.9 `mcp__genie__validate`
 
@@ -2618,25 +2618,25 @@ ran validation locally persist the summary without a re-scan.
 
 Threats listed below cover the MCP server, the LLM endpoint call path, the git-host storage path, the Vite viewer, and the `ui://` MCP-UI Apps payload. Residual risk uses a 1-5 scale (1 = negligible, 5 = unacceptable).
 
-| #    | Category                   | Threat                                                                    | Mitigation                                                                                                                                                                                                                                                                                            | Residual |
-| ---- | -------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --- |
-| T-01 | **Spoofing**               | Malicious local process pretends to be the harness on stdio               | stdio is intrinsically scoped to parent process; OS-level process isolation is sufficient. We pin spawned subprocess UID/GID matching parent in `.mcpb` installer; no extra protocol-level handshake.                                                                                                 | 1        |
-| T-02 | **Spoofing**               | Attacker intercepts HTTP transport without TLS                            | Refuse to listen on a non-loopback interface without TLS (`config.host` ≠ `127.0.0.1` requires `tls.cert` + `tls.key` or fronting reverse-proxy detected via `X-Forwarded-Proto: https`). Exit 1 on misconfig.                                                                                        | 1        |
-| T-03 | **Tampering**              | Attacker modifies `.mcpb` bundle in transit                               | Sigstore-sign every release with `cosign sign-blob` against the GitHub Actions OIDC identity; publish `.sig` and `.cert` alongside the bundle; `.mcpb` installer validates before unpack.                                                                                                             | 2        |
-| T-04 | **Tampering**              | Compromised npm package serves backdoored server                          | Provenance attestations (`npm publish --provenance`); subscribe to `npm audit signatures` in CI; pin top-level deps with exact versions; weekly `npm audit` SARIF upload.                                                                                                                             | 2        |
-| T-05 | **Tampering**              | Attacker substitutes `.genie/sync.json` to vouch for malicious files      | Server signs `.genie/sync.json` with the OAuth signing key; viewer ignores unsigned anchors when `GENIE_REQUIRE_SIGNED_ANCHOR=true`. Future: anchor commits to a transparency log (Rekor).                                                                                                            | 3        |
-| T-06 | **Repudiation**            | User denies running a destructive `delete_files`                          | Every tool call logs to immutable journal (append-only file + git-host commit author trail). Logs include `request_id`, OAuth subject, `planId`, paths. Retention 365 d.                                                                                                                              | 2        |
-| T-07 | **Information disclosure** | LLM API key leaks via error message                                       | Logger redacts known secrets via a Pino transport; error responses scrub `Authorization` headers; the key is only in `process.env`, never written to disk or stdout. `GENIE_DEBUG=1` does not unlock the redaction.                                                                                   | 2        |
-| T-08 | **Information disclosure** | `read_file` returns a file outside the kit                                | Path normalization (`path.normalize`) + assertion that the resolved absolute path is a descendant of `localRoot/<kitId>/`. Symlink resolution disabled (`{nofollow: true}`); symlinked files return `genie.notFound`.                                                                                 | 1        |
-| T-09 | **Information disclosure** | Per-card preview iframe reads parent's localStorage                       | Per-card iframes use `sandbox="allow-scripts"` (no `allow-same-origin`); even with `<script>parent.localStorage</script>` the browser returns `SecurityError`. Recommend a separate origin for previews (e.g. `previews.genie.local` vs `app.genie.local`) for defence-in-depth.                      | 1        |
-| T-10 | **Denial of Service**      | Attacker submits `write_files` with 256 × 1 MiB files                     | Default cap: 16 MiB per tool call; hard ceiling 64 MiB configurable via `GENIE_WRITE_BYTE_CAP` env var. Payloads exceeding the active cap return `genie.byteCapExceeded`.                                                                                                                             | 3        |
-| T-11 | **Denial of Service**      | Attacker burns LLM budget via `conjure` loop                              | Per-OAuth-subject rate limit (config: 10 req/min, 100 req/hour); endpoint/gateway key has its own budget cap where supported; soft alert at 80%, hard cap (return `genie.budgetExhausted`) at 100%.                                                                                                   | 2        |
-| T-12 | **Denial of Service**      | Chokidar watcher exhausts inotify handles on the host                     | Watcher only watches `**/components/**/*.html`, not the whole tree; uses `useFsEvents` on macOS where possible; ulimit recommendation in deployment doc.                                                                                                                                              | 2        |
-| T-13 | **Elevation of privilege** | Path traversal in `write_files` overwrites `/etc/passwd`                  | Same normalization as T-08 applied at write time; additional check that resolved path is inside the active plan's `localDir`; reject paths matching `/^\.{1,2}([\/\\]                                                                                                                                 | $)/`.    | 1   |
-| T-14 | **Elevation of privilege** | OAuth refresh token reuse                                                 | Per OAuth 2.1 BCP, refresh tokens rotate on every refresh; presenting an old refresh token after rotation triggers global revocation of the lineage.                                                                                                                                                  | 2        |
-| T-15 | **Elevation of privilege** | `ui://` payload escapes iframe sandbox via opener / postMessage           | `sandbox="allow-scripts"` without `allow-same-origin` prevents DOM access; `window.opener` is null; outgoing `postMessage` is validated against `config.hostOrigin` whitelist. CSP `frame-ancestors 'self'` blocks reframing (HEADER form only — browsers drop `frame-ancestors` from `<meta>`, so the injected meta omits it; the response header carries it). M4-07 hardening additionally removes `'unsafe-inline'`/`'unsafe-eval'`, adds `object-src 'none'`, `base-uri 'none'`, `form-action 'none'`, and injects the meta directly into the served document as belt + braces so a mis-configured host that forgets the HTTP header still gets the parse-time enforcement.                                                                         | 2        |
-| T-16 | **Information disclosure** | LLM gateway logs the model prompt server-side, leaking proprietary tokens | Operators keep gateways on private networks when self-hosted; when the gateway is LiteLLM we add `X-Litellm-Log-Body: false` header per [docs.litellm.ai] to suppress body logging; sensitive tokens (e.g. `tokens.json` private values) are redacted from the prompt with `[REDACTED]` placeholders. | 3        |
-| T-17 | **DoS / Tampering**        | Disk fills on the operator storage volume, all writes hang                | Reject writes when `df` reports <5% free on the storage volume; emit `genie.storage.disk_full_block` metric; alert at 90%.                                                                                                                                                                            | 3        |
+| #    | Category                   | Threat                                                                    | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Residual |
+| ---- | -------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --- |
+| T-01 | **Spoofing**               | Malicious local process pretends to be the harness on stdio               | stdio is intrinsically scoped to parent process; OS-level process isolation is sufficient. We pin spawned subprocess UID/GID matching parent in `.mcpb` installer; no extra protocol-level handshake.                                                                                                                                                                                                                                                                                                                                                                                                                                   | 1        |
+| T-02 | **Spoofing**               | Attacker intercepts HTTP transport without TLS                            | Refuse to listen on a non-loopback interface without TLS (`config.host` ≠ `127.0.0.1` requires `tls.cert` + `tls.key` or fronting reverse-proxy detected via `X-Forwarded-Proto: https`). Exit 1 on misconfig.                                                                                                                                                                                                                                                                                                                                                                                                                          | 1        |
+| T-03 | **Tampering**              | Attacker modifies `.mcpb` bundle in transit                               | Sigstore-sign every release with `cosign sign-blob` against the GitHub Actions OIDC identity; publish `.sig` and `.cert` alongside the bundle; `.mcpb` installer validates before unpack.                                                                                                                                                                                                                                                                                                                                                                                                                                               | 2        |
+| T-04 | **Tampering**              | Compromised npm package serves backdoored server                          | Provenance attestations (`npm publish --provenance`); subscribe to `npm audit signatures` in CI; pin top-level deps with exact versions; weekly `npm audit` SARIF upload.                                                                                                                                                                                                                                                                                                                                                                                                                                                               | 2        |
+| T-05 | **Tampering**              | Attacker substitutes `.genie/sync.json` to vouch for malicious files      | Server signs `.genie/sync.json` with the OAuth signing key; viewer ignores unsigned anchors when `GENIE_REQUIRE_SIGNED_ANCHOR=true`. Future: anchor commits to a transparency log (Rekor).                                                                                                                                                                                                                                                                                                                                                                                                                                              | 3        |
+| T-06 | **Repudiation**            | User denies running a destructive `delete_files`                          | Every tool call logs to immutable journal (append-only file + git-host commit author trail). Logs include `request_id`, OAuth subject, `planId`, paths. Retention 365 d.                                                                                                                                                                                                                                                                                                                                                                                                                                                                | 2        |
+| T-07 | **Information disclosure** | LLM API key leaks via error message                                       | Logger redacts known secrets via a Pino transport; error responses scrub `Authorization` headers; the key is only in `process.env`, never written to disk or stdout. `GENIE_DEBUG=1` does not unlock the redaction.                                                                                                                                                                                                                                                                                                                                                                                                                     | 2        |
+| T-08 | **Information disclosure** | `read_file` returns a file outside the kit                                | Path normalization (`path.normalize`) + assertion that the resolved absolute path is a descendant of `localRoot/<kitId>/`. Symlink resolution disabled (`{nofollow: true}`); symlinked files return `genie.notFound`.                                                                                                                                                                                                                                                                                                                                                                                                                   | 1        |
+| T-09 | **Information disclosure** | Per-card preview iframe reads parent's localStorage                       | Per-card iframes use `sandbox="allow-scripts"` (no `allow-same-origin`); even with `<script>parent.localStorage</script>` the browser returns `SecurityError`. Recommend a separate origin for previews (e.g. `previews.genie.local` vs `app.genie.local`) for defence-in-depth.                                                                                                                                                                                                                                                                                                                                                        | 1        |
+| T-10 | **Denial of Service**      | Attacker submits `write_files` with 256 × 1 MiB files                     | Default cap: 16 MiB per tool call; hard ceiling 64 MiB configurable via `GENIE_WRITE_BYTE_CAP` env var. Payloads exceeding the active cap return `genie.byteCapExceeded`.                                                                                                                                                                                                                                                                                                                                                                                                                                                               | 3        |
+| T-11 | **Denial of Service**      | Attacker burns LLM budget via `conjure` loop                              | Per-OAuth-subject rate limit (config: 10 req/min, 100 req/hour); endpoint/gateway key has its own budget cap where supported; soft alert at 80%, hard cap (return `genie.budgetExhausted`) at 100%.                                                                                                                                                                                                                                                                                                                                                                                                                                     | 2        |
+| T-12 | **Denial of Service**      | Chokidar watcher exhausts inotify handles on the host                     | Watcher only watches `**/components/**/*.html`, not the whole tree; uses `useFsEvents` on macOS where possible; ulimit recommendation in deployment doc.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | 2        |
+| T-13 | **Elevation of privilege** | Path traversal in `write_files` overwrites `/etc/passwd`                  | Same normalization as T-08 applied at write time; additional check that resolved path is inside the active plan's `localDir`; reject paths matching `/^\.{1,2}([\/\\]                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | $)/`.    | 1   |
+| T-14 | **Elevation of privilege** | OAuth refresh token reuse                                                 | Per OAuth 2.1 BCP, refresh tokens rotate on every refresh; presenting an old refresh token after rotation triggers global revocation of the lineage.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | 2        |
+| T-15 | **Elevation of privilege** | `ui://` payload escapes iframe sandbox via opener / postMessage           | The MCP Apps host wraps the View in its mandatory cross-origin sandbox proxy; per-card frames use `sandbox="allow-scripts"` without same-origin/top-navigation/forms/modals. `window.opener` is null. Refresh messages require `event.source === window.parent` and, when non-opaque, the configured/referrer parent origin. The resource declares canonical `_meta.ui.csp` domains; genie's in-document hash CSP removes `'unsafe-inline'`/`'unsafe-eval'` and adds `object-src 'none'`, `base-uri 'none'`, `form-action 'none'`. Resources/read cannot deliver a raw HTTP header, so it makes no unsupported `frame-ancestors` claim. | 2        |
+| T-16 | **Information disclosure** | LLM gateway logs the model prompt server-side, leaking proprietary tokens | Operators keep gateways on private networks when self-hosted; when the gateway is LiteLLM we add `X-Litellm-Log-Body: false` header per [docs.litellm.ai] to suppress body logging; sensitive tokens (e.g. `tokens.json` private values) are redacted from the prompt with `[REDACTED]` placeholders.                                                                                                                                                                                                                                                                                                                                   | 3        |
+| T-17 | **DoS / Tampering**        | Disk fills on the operator storage volume, all writes hang                | Reject writes when `df` reports <5% free on the storage volume; emit `genie.storage.disk_full_block` metric; alert at 90%.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | 3        |
 
 **Cross-cutting controls:**
 
@@ -2649,7 +2649,7 @@ Threats listed below cover the MCP server, the LLM endpoint call path, the git-h
   previews.genie.local  { root * /var/lib/genie/previews; file_server }
   ```
   This puts each preview's `file://`-equivalent on a cookieless, storageless origin.
-- **CSP** — On every HTML response from the viewer or the `ui://` resource: `Content-Security-Policy: default-src 'none'; script-src 'self' ui://genie; style-src 'self' ui://genie; img-src data: https:; frame-src <previews-origin> | data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`. **No `'unsafe-inline'`, no `'unsafe-eval'`** (M4-07 / DRO-269) — the embedded shell has zero executable inline scripts (the manifest is a `<script type="application/json">` data island; viewer.js/.css are external siblings), so the strict `script-src` / `style-src` is a superset of the shell's actual needs. The policy is BOTH injected as a `<meta http-equiv="Content-Security-Policy">` into the served document (browsers strip `frame-ancestors` / `report-uri` / `sandbox` from meta — the meta form omits those) AND emitted on the response header (which carries `frame-ancestors 'self'` for T-15). Verified in Chromium end-to-end: hostile `<img src=x onerror=…>` never fires; `top.location = …` from a sandboxed card iframe is refused; a `data:` card inherits the outer CSP and its own inline script is likewise blocked (`packages/server/src/ui/grid-resource.csp.chromium.test.ts`, CI leg `viewer-a11y` with `GENIE_REQUIRE_CSP_BROWSER=1`).
+- **CSP** — The `ui://` resource declares standard `_meta.ui.csp` domain arrays so the host constructs its sandbox policy. Its self-contained HTML additionally injects `default-src 'none'; script-src <exact sha256 hashes>; style-src <exact sha256 hashes>; img-src data: https:; frame-src <previews-origin> | data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`. **No `'unsafe-inline'`, no `'unsafe-eval'`, no `'unsafe-hashes'`** (M4-07 / DRO-269). Exact hashes allow the inlined viewer assets and trusted `<script>`/`<style>` blocks in data-backed cards; event-handler attributes and injected neighbouring blocks remain denied. Verified in Chromium end to end: hostile `<img src=x onerror=…>` never fires; trusted data-card script/style bytes still run; `top.location = …` is refused by the sandbox (`packages/server/src/ui/grid-resource.csp.chromium.test.ts`, CI leg `viewer-a11y` with `GENIE_REQUIRE_CSP_BROWSER=1`).
 - **LLM API-key handling** — Loaded from `process.env[config.llmApiKeyEnv]` exactly once at startup. Held in a `Symbol`-keyed module-private slot:
   - not enumerable;
   - not assignable;
@@ -2759,13 +2759,13 @@ secrets:
   genie_bearer_tokens: { file: ./secrets/genie_bearer_tokens.json }
 ```
 
-| Setting       | Value                                                                |
-| ------------- | -------------------------------------------------------------------- |
-| Storage       | Configured git host (Gitea in the reference compose file)            |
-| Auth          | static bearer per harness, hashed in config                          |
-| Transport     | http over private network                                            |
-| Observability | Prometheus scrape plus optional dashboard and OTLP trace export       |
-| Backup        | Filesystem snapshot of the git-data volume (existing schedule)       |
+| Setting       | Value                                                           |
+| ------------- | --------------------------------------------------------------- |
+| Storage       | Configured git host (Gitea in the reference compose file)       |
+| Auth          | static bearer per harness, hashed in config                     |
+| Transport     | http over private network                                       |
+| Observability | Prometheus scrape plus optional dashboard and OTLP trace export |
+| Backup        | Filesystem snapshot of the git-data volume (existing schedule)  |
 
 ### 11.3 Scenario C — Shared team (multi-user, fronted by SSO)
 
@@ -2787,15 +2787,15 @@ flowchart TD
   Cluster --> Git
 ```
 
-| Setting        | Value                                                                                                               |
-| -------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Storage        | Managed git host (HA where available), backed by shared durable storage                                             |
+| Setting        | Value                                                                                                                         |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Storage        | Managed git host (HA where available), backed by shared durable storage                                                       |
 | Auth           | OAuth 2.0 + DCR via the operator's OIDC provider; scopes `genie:read` / `genie:write` / `genie:generate` mapped to IdP groups |
-| Transport      | `https://genie.<operator-domain>/mcp` (Streamable HTTP)                                                             |
-| Observability  | Prometheus metrics, structured logs, OTLP traces; alerts route through the operator's incident channel               |
-| Backup         | Git-host repo backup nightly to off-site; secret rotation 90 d; OAuth key rotation 90 d                             |
-| Capacity       | 3 replicas × 1 vCPU / 1 GiB RAM (the LLM endpoint is the bottleneck, not the MCP server)                            |
-| Failure budget | 99.5% monthly availability                                                                                          |
+| Transport      | `https://genie.<operator-domain>/mcp` (Streamable HTTP)                                                                       |
+| Observability  | Prometheus metrics, structured logs, OTLP traces; alerts route through the operator's incident channel                        |
+| Backup         | Git-host repo backup nightly to off-site; secret rotation 90 d; OAuth key rotation 90 d                                       |
+| Capacity       | 3 replicas × 1 vCPU / 1 GiB RAM (the LLM endpoint is the bottleneck, not the MCP server)                                      |
+| Failure budget | 99.5% monthly availability                                                                                                    |
 
 ---
 
@@ -2803,30 +2803,30 @@ flowchart TD
 
 ### 12.1 Prometheus metrics (named, typed, labeled)
 
-| #   | Name                               | Type      | Labels                 | Description                                                                                                |
-| --- | ---------------------------------- | --------- | ---------------------- | ---------------------------------------------------------------------------------------------------------- |
-| 1   | `genie_tool_calls_total`           | counter   | `tool, result, model?` | Total tool invocations; `result` ∈ `ok, error`                                                             |
-| 2   | `genie_tool_latency_seconds`       | histogram | `tool, result`         | Buckets 0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30, 60                                                          |
-| 3   | `genie_tool_input_bytes`           | histogram | `tool`                 | Request payload size                                                                                       |
-| 4   | `genie_tool_output_bytes`          | histogram | `tool`                 | Response payload size                                                                                      |
-| 5   | `llm_requests_total`               | counter   | `model, result`        | Outbound LLM endpoint calls                                                                                |
-| 6   | `llm_latency_seconds`              | histogram | `model, result`        | Same buckets as #2                                                                                         |
-| 7   | `llm_retries_total`                | counter   | `model, result`        | `result` ∈ `ok, exhausted`                                                                                 |
-| 8   | `llm_tokens_total`                 | counter   | `model, direction`     | `direction` ∈ `prompt, completion`                                                                         |
-| 9   | `llm_cost_usd_total`               | counter   | `model`                | USD spend; computed from endpoint usage data or a static price table                                       |
-| 10  | `llm_budget_remaining_usd`         | gauge     | `model`                | Set from the endpoint or gateway admin API when available                                                  |
-| 11  | `genie_plan_active`                | gauge     | —                      | Number of plans not yet expired                                                                            |
-| 12  | `genie_plan_age_seconds`           | histogram | —                      | Lifetime of plans at finalize time                                                                         |
+| #   | Name                               | Type      | Labels                 | Description                                                                                        |
+| --- | ---------------------------------- | --------- | ---------------------- | -------------------------------------------------------------------------------------------------- |
+| 1   | `genie_tool_calls_total`           | counter   | `tool, result, model?` | Total tool invocations; `result` ∈ `ok, error`                                                     |
+| 2   | `genie_tool_latency_seconds`       | histogram | `tool, result`         | Buckets 0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30, 60                                                  |
+| 3   | `genie_tool_input_bytes`           | histogram | `tool`                 | Request payload size                                                                               |
+| 4   | `genie_tool_output_bytes`          | histogram | `tool`                 | Response payload size                                                                              |
+| 5   | `llm_requests_total`               | counter   | `model, result`        | Outbound LLM endpoint calls                                                                        |
+| 6   | `llm_latency_seconds`              | histogram | `model, result`        | Same buckets as #2                                                                                 |
+| 7   | `llm_retries_total`                | counter   | `model, result`        | `result` ∈ `ok, exhausted`                                                                         |
+| 8   | `llm_tokens_total`                 | counter   | `model, direction`     | `direction` ∈ `prompt, completion`                                                                 |
+| 9   | `llm_cost_usd_total`               | counter   | `model`                | USD spend; computed from endpoint usage data or a static price table                               |
+| 10  | `llm_budget_remaining_usd`         | gauge     | `model`                | Set from the endpoint or gateway admin API when available                                          |
+| 11  | `genie_plan_active`                | gauge     | —                      | Number of plans not yet expired                                                                    |
+| 12  | `genie_plan_age_seconds`           | histogram | —                      | Lifetime of plans at finalize time                                                                 |
 | 13  | `genie_storage_writes_total`       | counter   | `provider, result`     | `provider` ∈ `local, git` (`git` = any configured git host; `gitea` used in the reference compose) |
-| 14  | `genie_storage_latency_seconds`    | histogram | `provider, op`         | `op` ∈ `read, write, delete, commit, branch`                                                               |
-| 15  | `genie_storage_disk_free_ratio`    | gauge     | `provider`             | 0-1, scraped every 60 s                                                                                    |
-| 16  | `genie_manifest_compile_total`     | counter   | `result`               | Compiler runs; `result` ∈ `ok, sentinel_present, error`                                                    |
-| 17  | `genie_manifest_compile_seconds`   | histogram | —                      | Latency                                                                                                    |
-| 18  | `genie_marker_missing_total`       | counter   | `kitId`                | Cumulative count of missing markers                                                                        |
-| 19  | `genie_oauth_tokens_issued_total`  | counter   | `grant_type`           | `grant_type` ∈ `authorization_code, refresh_token`                                                         |
-| 20  | `genie_oauth_tokens_revoked_total` | counter   | `reason`               | `reason` ∈ `logout, rotation, abuse`                                                                       |
-| 21  | `genie_viewer_connections_active`  | gauge     | —                      | WebSocket count to Vite HMR                                                                                |
-| 22  | `process_*`                        | (default) | —                      | Standard Node.js process metrics from `prom-client`                                                        |
+| 14  | `genie_storage_latency_seconds`    | histogram | `provider, op`         | `op` ∈ `read, write, delete, commit, branch`                                                       |
+| 15  | `genie_storage_disk_free_ratio`    | gauge     | `provider`             | 0-1, scraped every 60 s                                                                            |
+| 16  | `genie_manifest_compile_total`     | counter   | `result`               | Compiler runs; `result` ∈ `ok, sentinel_present, error`                                            |
+| 17  | `genie_manifest_compile_seconds`   | histogram | —                      | Latency                                                                                            |
+| 18  | `genie_marker_missing_total`       | counter   | `kitId`                | Cumulative count of missing markers                                                                |
+| 19  | `genie_oauth_tokens_issued_total`  | counter   | `grant_type`           | `grant_type` ∈ `authorization_code, refresh_token`                                                 |
+| 20  | `genie_oauth_tokens_revoked_total` | counter   | `reason`               | `reason` ∈ `logout, rotation, abuse`                                                               |
+| 21  | `genie_viewer_connections_active`  | gauge     | —                      | WebSocket count to Vite HMR                                                                        |
+| 22  | `process_*`                        | (default) | —                      | Standard Node.js process metrics from `prom-client`                                                |
 
 Endpoint: `GET /metrics` on the HTTP transport. stdio transport does not expose `/metrics`; metrics are written to disk at `~/.cache/genie/metrics.prom` and a sidecar `prometheus-pushgateway` is recommended for solo deployments.
 
@@ -3349,7 +3349,7 @@ Each entry is tagged with one of `spike-needed` / `decision-needed` / `external-
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | 17.1  | **`_ds_manifest.json` exact filename** — bundled `SKILL.md` writes `ds_manifest`, tool-schema description says `_ds_manifest.json`. Unknown which is on-disk truth. | spike-needed        | Inspect a real `claude.ai/design` upload via `list_files`. Owner: M3 milestone.                                                    |
 | 17.2  | **Canvas-side generation loop prompt shape** — undocumented; we invent.                                                                                             | acceptable-as-is    | Treat as the open R&D workstream. Iterate via prompt evals on a fixed test set.                                                    |
-| 17.3  | **`.genie/sync.json` exact schema** — settled by D-C + shipped in M3-06 (DRO-262); see §7.2.                                                                        | ✅ resolved          | `packages/server/src/sync/anchor.ts`; schema committed at §7.2.                                                                    |
+| 17.3  | **`.genie/sync.json` exact schema** — settled by D-C + shipped in M3-06 (DRO-262); see §7.2.                                                                        | ✅ resolved         | `packages/server/src/sync/anchor.ts`; schema committed at §7.2.                                                                    |
 | 17.4  | **Adherence config exact schema** (`_adherence.oxlintrc.json`) — only mentioned, never specified.                                                                   | external-dependency | Inspect after a real upload; otherwise defer to DS-RFC-0002.                                                                       |
 | 17.5  | **`write_files` byte cap** — Anthropic's server caps bytes, not just file count. Our cap (64 MiB) is a guess.                                                       | spike-needed        | Empirical: trip Anthropic's 500, halve, repeat. Or accept our 64 MiB as authoritative since we don't ship to Anthropic's endpoint. |
 | 17.6  | **"Claude Opus 4.7"** — named in the announcement, not in the public catalog.                                                                                       | external-dependency | Wait for Anthropic. Our endpoint alias routing is unaffected.                                                                      |

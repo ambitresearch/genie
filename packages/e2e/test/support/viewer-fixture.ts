@@ -120,7 +120,8 @@ function previewHtml(group: string, name: string, viewport: string): string {
     `<!-- @genie group="${group}" viewport="${viewport}" name="${name}" -->\n` +
     `<!doctype html>\n<html lang="en"><head><meta charset="utf-8" />` +
     `<style>body{margin:0;font-family:system-ui;display:grid;place-items:center;height:100vh}</style>` +
-    `</head><body><div data-component="${name}">${name}</div></body></html>\n`
+    `</head><body><div data-component="${name}">${name}</div>` +
+    `<script>document.body.dataset.previewReady="true"</script></body></html>\n`
   );
 }
 
@@ -335,22 +336,15 @@ export interface UiVehicle {
 }
 
 /**
- * Stand up vehicle (c) as a live page. `buildGridDocument`'s HTML keeps the
- * shell's RELATIVE `./viewer.js` / `./viewer.css` (grid-resource.ts AC3 — a real
- * `ui://` host serves them as sibling `ui://genie/viewer.js` resources), so the
- * document cannot render from a base-less `page.setContent` (nothing resolves
- * the relative script). This mirrors the host faithfully: write the generated
- * document as `index.html` alongside the two sibling assets and serve the trio
- * over plain http, exactly as the host serves the resource + its siblings. The
- * manifest still travels INLINE inside the document (AC2) — the server issues no
- * `fetch` for it — so this is the embedded transport, not the localhost one.
+ * Stand up vehicle (c) as a live page from the one self-contained HTML resource
+ * a compliant MCP Apps host receives. No sibling files are copied: if the
+ * document still depended on `./viewer.js` or `./viewer.css`, this vehicle would
+ * fail instead of masking the broken resource contract with a fake HTTP origin.
  */
 export async function startUiVehicle(fixture: ViewerFixture): Promise<UiVehicle> {
   const html = await buildUiGridDocument(fixture);
   const root = await mkdtemp(join(fixture.kitsRoot, "ui-vehicle-"));
   await writeFile(join(root, "index.html"), html, "utf8");
-  await cp(join(VIEWER_STATIC_DIR, "viewer.js"), join(root, "viewer.js"));
-  await cp(join(VIEWER_STATIC_DIR, "viewer.css"), join(root, "viewer.css"));
   const { server, url } = await serveDir(root);
   return { url, close: () => closeServer(server) };
 }

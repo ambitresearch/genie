@@ -90,6 +90,9 @@ importers:
       openai:
         specifier: ^6.45.0
         version: 6.45.0(ws@8.21.0)(zod@4.4.3)
+      parse5:
+        specifier: ^7.3.0
+        version: 7.3.0
       pngjs:
         specifier: ^7.0.0
         version: 7.0.0

@@ -168,6 +168,28 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
     }
   }, 30_000);
 
+  it("vehicle (c) ui:// — preserves legitimate inline card styles and scripts", async () => {
+    const ui = await startUiVehicle(fixture);
+    const page = await browser.newPage();
+    try {
+      await gotoAndWaitForGrid(page, ui.url);
+      const frame = page.locator("iframe").first().contentFrame();
+      await expect
+        .poll(() => frame.locator("body").getAttribute("data-preview-ready"))
+        .toBe("true");
+      await expect
+        .poll(() =>
+          frame
+            .locator("body")
+            .evaluate((body) => body.ownerDocument.defaultView?.getComputedStyle(body).display),
+        )
+        .toBe("grid");
+    } finally {
+      await page.close();
+      await ui.close();
+    }
+  }, 30_000);
+
   // ── The embedded doc carries its manifest INLINE (AC2 transport check) ─────
   it("vehicle (c) ui:// — the document inlines the manifest (no fetch transport)", async () => {
     const html = await buildUiGridDocument(fixture);
@@ -175,8 +197,9 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
     // inside the document as the id="manifest" JSON island, never fetched.
     expect(html).toContain('id="manifest"');
     expect(html).toContain('type="application/json"');
-    // And the shell keeps its relative sibling-asset refs (grid-resource AC3).
-    expect(html).toContain('src="./viewer.js"');
+    // One raw MCP Apps resource must boot without browser-relative siblings.
+    expect(html).toContain("<script>");
+    expect(html).toContain("<style>");
   });
 
   it("vehicle (c) ui:// — refreshes a data-backed card by stable source path with fresh bytes", async () => {
