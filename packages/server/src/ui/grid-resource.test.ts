@@ -27,10 +27,13 @@ import {
   VIEWER_CSS_URI,
   buildCspMeta,
   buildGridDocument,
+  collectInlineCspHashes,
+  cspMetaTag,
   escapeJsonForScript,
   filterManifest,
   inlineManifest,
   normalizePreviewsBaseUrl,
+  gridResourceMeta,
   registerGridResource,
   resolveKitDir,
   rewriteCardPaths,
@@ -265,20 +268,20 @@ describe("inlineManifest (AC2)", () => {
   });
 });
 
-// ─── buildCspMeta (AC5) ──────────────────────────────────────────────────────
+// ─── buildCspMeta (AC5 allow-list) + M4-07 hardening (AC1/AC3) ───────────────
 
 describe("buildCspMeta (AC5)", () => {
   it("connect-src is 'none' — the manifest is inlined, nothing to fetch", () => {
     const csp = buildCspMeta(undefined);
     expect(csp.connectDomains).toEqual([]);
-    expect(csp.policy).toContain("connect-src 'none'");
-    expect(csp.policy).toContain("default-src 'none'");
+    expect(csp.metaPolicy).toContain("connect-src 'none'");
+    expect(csp.metaPolicy).toContain("default-src 'none'");
   });
 
   it("frameDomains is the previews origin when configured", () => {
     const csp = buildCspMeta("https://previews.example.com");
     expect(csp.frameDomains).toEqual(["https://previews.example.com"]);
-    expect(csp.policy).toContain("frame-src https://previews.example.com");
+    expect(csp.metaPolicy).toContain("frame-src https://previews.example.com");
   });
 
   it("frameDomains falls back to data: in solo dev", () => {
@@ -291,6 +294,7 @@ describe("buildCspMeta (AC5)", () => {
     expect(csp).toHaveProperty("connectDomains");
     expect(csp).toHaveProperty("resourceDomains");
     expect(csp).toHaveProperty("frameDomains");
+    expect(csp.resourceDomains).toEqual([]);
   });
 
   it("does NOT throw on a malformed previews base URL — degrades to data: (server startup safe)", () => {
@@ -299,6 +303,112 @@ describe("buildCspMeta (AC5)", () => {
     expect(() => buildCspMeta("not a url")).not.toThrow();
     expect(buildCspMeta("not a url").frameDomains).toEqual(["data:"]);
     expect(buildCspMeta("previews.example.com").frameDomains).toEqual(["data:"]); // no scheme
+  });
+
+  // ── M4-07 (DRO-269) hardening ────────────────────────────────────────────
+  //
+  // AC3 forbids `unsafe-inline` and `unsafe-eval` anywhere. AC1 requires the
+  // hardened directive set while allowing only exact hashes for trusted inline
+  // viewer/card assets.
+
+  it("AC3 — script-src has no unsafe-inline and no unsafe-eval", () => {
+    for (const url of [undefined, "https://previews.example.com"]) {
+      const csp = buildCspMeta(url);
+      expect(csp.metaPolicy).not.toContain("'unsafe-inline'");
+      expect(csp.metaPolicy).not.toContain("'unsafe-eval'");
+    }
+  });
+
+  it("AC3 — style-src has no unsafe-inline", () => {
+    const csp = buildCspMeta("https://previews.example.com");
+    const styleSrc = /style-src [^;]*/.exec(csp.metaPolicy)?.[0] ?? "";
+    expect(styleSrc).toContain("style-src");
+    expect(styleSrc).not.toContain("'unsafe-inline'");
+  });
+
+  it("AC1/AC2 — allows only exact hashes for trusted inline script and style blocks", () => {
+    const hashes = collectInlineCspHashes(
+      "<!doctype html><style>body{color:red}</style><script>window.x=1</script>",
+    );
+    const csp = buildCspMeta(undefined, hashes);
+
+    expect(hashes.scriptHashes).toHaveLength(1);
+    expect(hashes.styleHashes).toHaveLength(1);
+    expect(hashes.scriptHashes[0]).toMatch(/^'sha256-[A-Za-z0-9+/]+=*'$/);
+    expect(hashes.styleHashes[0]).toMatch(/^'sha256-[A-Za-z0-9+/]+=*'$/);
+    expect(csp.metaPolicy).toContain(hashes.scriptHashes[0]!);
+    expect(csp.metaPolicy).toContain(hashes.styleHashes[0]!);
+  });
+
+  it("AC1 — uses 'none' for script/style when no trusted inline blocks exist", () => {
+    const csp = buildCspMeta(undefined);
+    expect(csp.metaPolicy).toContain("script-src 'none'");
+    expect(csp.metaPolicy).toContain("style-src 'none'");
+  });
+
+  it("AC1 — adds base-uri 'none', form-action 'none', object-src 'none' (deny form/object/embed)", () => {
+    const csp = buildCspMeta(undefined);
+    expect(csp.metaPolicy).toContain("base-uri 'none'");
+    expect(csp.metaPolicy).toContain("form-action 'none'");
+    expect(csp.metaPolicy).toContain("object-src 'none'");
+  });
+
+  it("AC1 — img-src permits data: + https: (card thumbnails)", () => {
+    const csp = buildCspMeta(undefined);
+    expect(csp.metaPolicy).toContain("img-src");
+    const imgSrc = /img-src [^;]*/.exec(csp.metaPolicy)?.[0] ?? "";
+    expect(imgSrc).toContain("data:");
+    expect(imgSrc).toContain("https:");
+  });
+
+  it("does not advertise a raw header policy or frame-ancestors", () => {
+    const csp = buildCspMeta(undefined);
+    expect(csp).not.toHaveProperty("policy");
+    expect(csp.metaPolicy).not.toContain("frame-ancestors");
+  });
+
+  it("publishes the canonical MCP Apps _meta.ui.csp domain shape only", () => {
+    expect(gridResourceMeta("https://previews.example.com")).toEqual({
+      ui: {
+        csp: {
+          connectDomains: [],
+          resourceDomains: [],
+          frameDomains: ["https://previews.example.com"],
+        },
+      },
+    });
+  });
+});
+
+// ─── cspMetaTag (M4-07) ──────────────────────────────────────────────────────
+
+describe("cspMetaTag (AC1 — CSP enforced via injected meta)", () => {
+  it("emits a valid <meta http-equiv=Content-Security-Policy content=…> tag", () => {
+    const tag = cspMetaTag(buildCspMeta(undefined));
+    expect(tag.startsWith("<meta ")).toBe(true);
+    expect(tag).toContain('http-equiv="Content-Security-Policy"');
+    expect(tag).toContain("content=");
+    expect(tag).toContain("default-src 'none'");
+  });
+
+  it("uses the hash-based metaPolicy and omits frame-ancestors", () => {
+    const csp = buildCspMeta(undefined);
+    const tag = cspMetaTag(csp);
+    expect(tag).not.toContain("frame-ancestors");
+    // And it carries no unsafe-inline/eval (AC3).
+    expect(tag).not.toContain("unsafe-inline");
+    expect(tag).not.toContain("unsafe-eval");
+  });
+
+  it("HTML-escapes the policy string safely for an attribute value", () => {
+    // The policy string is server-authored (no user input), so escaping is
+    // defence-in-depth — but a stray `"` in a future directive must not break
+    // the attribute. Verify the attribute delimiter itself is escaped.
+    const csp = { ...buildCspMeta(undefined), metaPolicy: `default-src 'none'; x "y` };
+    const tag = cspMetaTag(csp);
+    // The tag opens with a `"` and closes with a `"`; the interior `"y` must
+    // have been escaped so the attribute value doesn't terminate early.
+    expect(tag).toMatch(/content="[^"]*&quot;y[^"]*"/);
   });
 });
 
@@ -320,6 +430,43 @@ describe("buildGridDocument", () => {
     expect(html).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
     expect(html).toContain("Button"); // the card name made it into the inline JSON
     expect(html).toContain("previews.example.com"); // AC4 rewrite applied
+  });
+
+  it("inlines viewer.js/viewer.css and hash-allows their exact bytes", async () => {
+    const html = await buildGridDocument(
+      { ...baseDeps, compile: okCompiler(manifest()) },
+      { kitId: "acme-abc123" },
+    );
+    expect(html).not.toContain('href="./viewer.css"');
+    expect(html).not.toContain('src="./viewer.js"');
+    expect(html).toContain("<style>/* viewer.css bytes */</style>");
+    expect(html).toContain("<script>/* viewer.js bytes */</script>");
+
+    const hashes = collectInlineCspHashes(
+      "<style>/* viewer.css bytes */</style><script>/* viewer.js bytes */</script>",
+    );
+    for (const hash of [...hashes.scriptHashes, ...hashes.styleHashes]) {
+      expect(html).toContain(hash);
+    }
+  });
+
+  it("hash-allows legitimate inline script/style bytes in data-backed previews", async () => {
+    const preview =
+      "<!doctype html><style>body{display:grid}</style>" +
+      "<script>document.body.dataset.ready='true'</script><body>card</body>";
+    const html = await buildGridDocument(
+      {
+        ...baseDeps,
+        previewsBaseUrl: undefined,
+        readPreviewBytes: bytesPreviewReader(Buffer.from(preview, "utf8")),
+        compile: okCompiler(manifest()),
+      },
+      { kitId: "acme-abc123" },
+    );
+    const hashes = collectInlineCspHashes(preview);
+    for (const hash of [...hashes.scriptHashes, ...hashes.styleHashes]) {
+      expect(html).toContain(hash);
+    }
   });
 
   it("inlines an EMPTY manifest for an absent/invalid kitId (no error)", async () => {
@@ -367,6 +514,57 @@ describe("buildGridDocument", () => {
     expect(html).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
     expect(html.toLowerCase()).toContain('<main id="grid">');
   });
+
+  // ── M4-07 (DRO-269) — CSP enforcement via injected meta tag ─────────────
+
+  it("AC1 — injects a Content-Security-Policy meta tag into the assembled document", async () => {
+    const html = await buildGridDocument(
+      { ...baseDeps, compile: okCompiler(manifest()) },
+      { kitId: "acme-abc123" },
+    );
+    // The meta MUST be present and placed inside <head> (so a hostile inline
+    // script later in the doc is already governed by the policy when parsed).
+    expect(html).toContain('http-equiv="Content-Security-Policy"');
+    const headOpen = html.indexOf("<head");
+    const headClose = html.indexOf("</head>");
+    const metaAt = html.indexOf('http-equiv="Content-Security-Policy"');
+    expect(headOpen).toBeGreaterThanOrEqual(0);
+    expect(headClose).toBeGreaterThan(headOpen);
+    expect(metaAt).toBeGreaterThan(headOpen);
+    expect(metaAt).toBeLessThan(headClose);
+  });
+
+  it("AC3 — the enforced CSP has no unsafe-inline / unsafe-eval", async () => {
+    const html = await buildGridDocument(
+      { ...baseDeps, compile: okCompiler(manifest()) },
+      { kitId: "acme-abc123" },
+    );
+    // Read just the meta's content=... attribute so we're not accidentally
+    // matching viewer.js/manifest bytes that mention the keywords.
+    const attr = /http-equiv="Content-Security-Policy"\s+content="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(attr).not.toContain("unsafe-inline");
+    expect(attr).not.toContain("unsafe-eval");
+    expect(attr).toContain("default-src 'none'");
+    expect(attr).toContain("connect-src 'none'");
+    expect(attr).toContain("object-src 'none'");
+    expect(attr).toContain("base-uri 'none'");
+  });
+
+  it("AC1 — the fallback shell ALSO carries the enforced CSP meta", async () => {
+    const badReader: AssetReader = async () => {
+      throw new Error("viewer package not installed");
+    };
+    const html = await buildGridDocument(
+      { ...baseDeps, readAsset: badReader, compile: okCompiler(manifest()) },
+      { kitId: "acme-abc123" },
+    );
+    // A viewer-asset failure must NOT downgrade the security posture — the
+    // dependency-free fallback shell must be as locked down as the real one.
+    expect(html).toContain('http-equiv="Content-Security-Policy"');
+    const attr = /http-equiv="Content-Security-Policy"\s+content="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(attr).not.toContain("unsafe-inline");
+    expect(attr).toContain("default-src 'none'");
+  });
 });
 
 // ─── End-to-end: registration + resources/read routing (AC1/AC3) ─────────────
@@ -394,6 +592,15 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
     expect(grid).toBeDefined();
     expect(grid?.mimeType).toBe(GRID_RESOURCE_MIME);
     expect(GRID_RESOURCE_MIME).toBe("text/html;profile=mcp-app");
+    expect(grid?._meta).toEqual({
+      ui: {
+        csp: {
+          connectDomains: [],
+          resourceDomains: [],
+          frameDomains: ["https://previews.example.com"],
+        },
+      },
+    });
   });
 
   it("reads the bare ui://genie/grid URI", async () => {
@@ -401,6 +608,15 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
     const res = await client.readResource({ uri: GRID_RESOURCE_URI });
     expect(res.contents[0]?.mimeType).toBe(GRID_RESOURCE_MIME);
     expect(String(res.contents[0]?.text)).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
+    expect(res.contents[0]?._meta).toEqual({
+      ui: {
+        csp: {
+          connectDomains: [],
+          resourceDomains: [],
+          frameDomains: ["https://previews.example.com"],
+        },
+      },
+    });
   });
 
   it("reads the query-bearing URI preview emits (?kitId=…&group=…) via the catch-all", async () => {
@@ -424,7 +640,7 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
     expect(String(res.contents[0]?.text)).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
   });
 
-  it("serves the sibling viewer.js / viewer.css assets (AC3)", async () => {
+  it("keeps sibling viewer.js / viewer.css resources available for compatibility", async () => {
     const { client } = await connectedClient(okCompiler(manifest()));
     const js = await client.readResource({ uri: VIEWER_JS_URI });
     const css = await client.readResource({ uri: VIEWER_CSS_URI });

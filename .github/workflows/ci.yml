@@ -198,6 +198,17 @@ jobs:
           GENIE_REQUIRE_A11Y_BROWSER: "1"
         run: pnpm --filter @genie/viewer test:a11y
 
+      # M4-07 (DRO-269) — real-Chromium CSP + sandbox probes for the
+      # `ui://genie/grid` payload. Same runner already has Chromium installed
+      # (previous step); GENIE_REQUIRE_CSP_BROWSER=1 upgrades a silent skip
+      # to a loud failure so this leg cannot vacuously pass — the "vacuous
+      # skip must fail somewhere" contract the a11y/M2/Gitea legs also honour.
+      - name: Run M4-07 CSP + sandbox probes (AC4/AC5)
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_REQUIRE_CSP_BROWSER: "1"
+        run: pnpm exec vitest run packages/server/src/ui/grid-resource.csp.chromium.test.ts
+
       - name: Upload test report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

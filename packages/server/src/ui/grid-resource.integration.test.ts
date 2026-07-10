@@ -24,11 +24,11 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { Manifest, ManifestCard } from "../manifest/index.js";
-import { MANIFEST_ELEMENT_ID, inlineManifest } from "./grid-resource.js";
+import { MANIFEST_ELEMENT_ID, inlineManifest, inlineViewerAssets } from "./grid-resource.js";
 
 // The real shipped viewer static dir — one level under packages/server → ../../viewer/static.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -36,10 +36,12 @@ const VIEWER_STATIC = resolve(HERE, "..", "..", "..", "viewer", "static");
 
 let realIndexHtml: string;
 let realViewerJs: string;
+let realViewerCss: string;
 
 beforeAll(() => {
   realIndexHtml = readFileSync(resolve(VIEWER_STATIC, "index.html"), "utf8");
   realViewerJs = readFileSync(resolve(VIEWER_STATIC, "viewer.js"), "utf8");
+  realViewerCss = readFileSync(resolve(VIEWER_STATIC, "viewer.css"), "utf8");
 });
 
 function card(overrides: Partial<ManifestCard> = {}): ManifestCard {
@@ -60,13 +62,20 @@ function manifest(components: ManifestCard[]): Manifest {
   return { version: 1, name: "live", generatedAt: "2026-07-05T00:00:00.000Z", groups, components };
 }
 
+function assemble(m: Manifest): string {
+  return inlineManifest(inlineViewerAssets(realIndexHtml, realViewerJs, realViewerCss).html, m);
+}
+
 /**
  * Boot the REAL viewer.js against `doc` in a fresh jsdom window whose `fetch`
  * THROWS — proving the embedded tier issues zero network requests. Returns the
  * booted document for assertions.
  */
 async function bootRealViewer(doc: string): Promise<Document> {
-  const dom = new JSDOM(doc, { runScripts: "outside-only" });
+  const dom = new JSDOM(doc, {
+    runScripts: "outside-only",
+    virtualConsole: new VirtualConsole(),
+  });
   const { window } = dom;
   // Embedded tier: connect-src 'none' — any fetch is a contract violation.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -81,16 +90,17 @@ async function bootRealViewer(doc: string): Promise<Document> {
 
 describe("M4-06 integration — real viewer assets + real assembly", () => {
   it("assembles the real index.html with an inline manifest node", () => {
-    const doc = inlineManifest(realIndexHtml, manifest([card()]));
+    const doc = assemble(manifest([card()]));
     expect(doc).toContain(`<script type="application/json" id="${MANIFEST_ELEMENT_ID}">`);
-    // The real shell's relative assets remain (AC3) — the host serves the siblings.
-    expect(doc).toContain('src="./viewer.js"');
-    expect(doc).toContain('href="./viewer.css"');
+    const parsed = new JSDOM(doc, { virtualConsole: new VirtualConsole() }).window.document;
+    expect(parsed.querySelector('script[src="./viewer.js"]')).toBeNull();
+    expect(parsed.querySelector('link[href="./viewer.css"]')).toBeNull();
+    expect(doc).toContain("<style>");
+    expect(doc).toContain("<script>");
   });
 
   it("the real viewer.js renders the grid from the inlined manifest with ZERO fetch", async () => {
-    const doc = inlineManifest(
-      realIndexHtml,
+    const doc = assemble(
       manifest([
         card({ name: "Primary", group: "Actions" }),
         card({
@@ -115,7 +125,7 @@ describe("M4-06 integration — real viewer assets + real assembly", () => {
   });
 
   it("renders the real viewer's empty state for an empty inlined manifest (still no fetch)", async () => {
-    const doc = inlineManifest(realIndexHtml, manifest([]));
+    const doc = assemble(manifest([]));
     const rendered = await bootRealViewer(doc);
     expect(rendered.querySelector(".ds-empty")).not.toBeNull();
     expect(rendered.querySelectorAll("iframe").length).toBe(0);
