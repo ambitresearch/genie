@@ -207,6 +207,16 @@ describe("bootViewer", () => {
     expect(openBrowser).not.toHaveBeenCalled();
   });
 
+  it("can open an already-running viewer through the returned handle", async () => {
+    const io = createRecordingIO();
+    const { deps, openBrowser } = fakeBootDeps(5173);
+    const handle = await bootViewer({ root: KIT, port: 5173, open: false }, io, deps);
+
+    expect(openBrowser).not.toHaveBeenCalled();
+    await handle.open();
+    expect(openBrowser).toHaveBeenCalledOnce();
+  });
+
   it("keeps serving even if opening a browser fails (non-fatal)", async () => {
     const io = createRecordingIO();
     const { deps } = fakeBootDeps(5173);
@@ -263,6 +273,7 @@ describe("installShutdown (AC5)", () => {
       port: 5173,
       requestedPort: 5173,
       fellBack: false,
+      open: async () => {},
       close,
     };
   }

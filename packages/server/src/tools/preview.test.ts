@@ -25,6 +25,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "../server.js";
 import {
   PREVIEW_TOOL_NAME,
+  DEFAULT_VIEWER_PORT,
   InvalidKitIdError,
   KitNotFoundError,
   ViewerRegistry,
@@ -54,6 +55,7 @@ function okBooter(url = "http://127.0.0.1:5173/"): ViewerBooter & { calls: BootR
     return Promise.resolve({
       url,
       port: 5173,
+      open: () => Promise.resolve(),
       close: () => Promise.resolve(),
     });
   };
@@ -291,6 +293,7 @@ describe("ViewerRegistry (AC5)", () => {
         : Promise.resolve({
             url: "http://127.0.0.1:5173/",
             port: 5173,
+            open: () => Promise.resolve(),
             close: () => Promise.resolve(),
           });
     };
@@ -309,11 +312,54 @@ describe("ViewerRegistry (AC5)", () => {
 
     const p1 = registry.ensure("/kits/k1");
     const p2 = registry.ensure("/kits/k1");
-    resolve({ url: "http://127.0.0.1:5173/", port: 5173, close: () => Promise.resolve() });
+    resolve({
+      url: "http://127.0.0.1:5173/",
+      port: 5173,
+      open: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+    });
 
     const [a, b] = await Promise.all([p1, p2]);
     expect(booter.calls).toHaveLength(1);
     expect(a).toBe(b);
+  });
+
+  it("opens an already-cached viewer once when a later local caller needs browser fallback", async () => {
+    const open = vi.fn(async () => {});
+    const booter: ViewerBooter = async () => ({
+      url: "http://127.0.0.1:5173/",
+      port: 5173,
+      open,
+      close: async () => {},
+    });
+    const registry = new ViewerRegistry(booter);
+
+    await registry.ensure("/kits/k1", DEFAULT_VIEWER_PORT, false);
+    await registry.ensure("/kits/k1", DEFAULT_VIEWER_PORT, true);
+    await registry.ensure("/kits/k1", DEFAULT_VIEWER_PORT, true);
+
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a cached viewer usable and closes it when its browser opener rejects", async () => {
+    const close = vi.fn(async () => {});
+    const booter: ViewerBooter = async () => ({
+      url: "http://127.0.0.1:5173/",
+      port: 5173,
+      open: async () => {
+        throw new Error("no display");
+      },
+      close,
+    });
+    const registry = new ViewerRegistry(booter);
+
+    await registry.ensure("/kits/k1", DEFAULT_VIEWER_PORT, false);
+    await expect(registry.ensure("/kits/k1", DEFAULT_VIEWER_PORT, true)).resolves.toMatchObject({
+      port: 5173,
+    });
+    await registry.closeAll();
+
+    expect(close).toHaveBeenCalledOnce();
   });
 });
 

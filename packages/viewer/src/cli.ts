@@ -161,6 +161,8 @@ export interface ViewerHandle {
   requestedPort: number;
   /** True when {@link port} differs from {@link requestedPort} (AC2 fallback). */
   fellBack: boolean;
+  /** Best-effort browser open for an already-running viewer. */
+  open: () => Promise<void>;
   /** Tears down the watcher + http server (AC5). Idempotent-safe to await. */
   close: () => Promise<void>;
 }
@@ -220,7 +222,7 @@ export async function bootViewer(
   // AC1 — the canonical, copy-pasteable preview line.
   io.stdout(`\n  Preview: http://${DEFAULT_HOST}:${port}\n\n`);
 
-  if (options.open) {
+  const openPreview = async (): Promise<void> => {
     try {
       await deps.openBrowser(url); // AC3
     } catch (err) {
@@ -231,6 +233,10 @@ export async function bootViewer(
           `  Open ${url} yourself.\n`,
       );
     }
+  };
+
+  if (options.open) {
+    await openPreview();
   }
 
   return {
@@ -238,6 +244,7 @@ export async function bootViewer(
     port,
     requestedPort,
     fellBack,
+    open: openPreview,
     close: () => server.close(),
   };
 }

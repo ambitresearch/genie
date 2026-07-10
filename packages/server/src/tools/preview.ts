@@ -229,6 +229,8 @@ export interface BootedViewer {
   url: string;
   /** The port the viewer actually bound. */
   port: number;
+  /** Best-effort browser open for this already-running viewer. */
+  open: () => Promise<void>;
   /** Tear the viewer down (used by {@link ViewerRegistry.closeAll}). */
   close: () => Promise<void>;
 }
@@ -244,7 +246,10 @@ export type ViewerBooter = (req: BootRequest) => Promise<BootedViewer>;
  * later call retries rather than replaying the dead promise forever.
  */
 export class ViewerRegistry {
-  private readonly viewers = new Map<string, Promise<BootedViewer>>();
+  private readonly viewers = new Map<
+    string,
+    { viewer: Promise<BootedViewer>; browserOpen?: Promise<void> }
+  >();
 
   constructor(private readonly booter: ViewerBooter) {}
 
@@ -252,14 +257,32 @@ export class ViewerRegistry {
    * Return the viewer for `kitDir`, booting it on first request. Subsequent
    * calls for the same dir return the cached (in-flight or resolved) promise.
    *
-   * `open` is honoured only on the FIRST boot for a dir (piece B): once a viewer
-   * is cached, later calls reuse it and never re-open a browser, so a repeated
-   * `preview` on a non-`ui://` host pops at most one tab. A call that reuses an
-   * already-booted viewer ignores its `open` argument by construction.
+   * Booting and browser opening are tracked separately. If an inline-capable
+   * caller boots first with `open:false`, the first later `open:true` call opens
+   * that cached viewer without booting another server. Concurrent/repeated open
+   * requests share one promise, so at most one browser tab is requested.
    */
   ensure(kitDir: string, port = DEFAULT_VIEWER_PORT, open = false): Promise<BootedViewer> {
     const existing = this.viewers.get(kitDir);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      if (open && existing.browserOpen === undefined) {
+        existing.browserOpen = existing.viewer.then(async (viewer) => {
+          try {
+            await viewer.open();
+          } catch (error) {
+            logStderr({
+              event: "preview.browser.open-failed",
+              kitDir,
+              error: String(error),
+            });
+          }
+        });
+      }
+      if (open) {
+        return Promise.all([existing.viewer, existing.browserOpen]).then(([viewer]) => viewer);
+      }
+      return existing.viewer;
+    }
 
     const booting = this.booter({ kitDir, port, open }).catch((error: unknown) => {
       // Evict the failed boot so the next call retries with a fresh attempt
@@ -267,18 +290,25 @@ export class ViewerRegistry {
       this.viewers.delete(kitDir);
       throw error;
     });
-    this.viewers.set(kitDir, booting);
+    this.viewers.set(kitDir, {
+      viewer: booting,
+      ...(open ? { browserOpen: Promise.resolve() } : {}),
+    });
     return booting;
   }
 
   /** Tear down every booted viewer (best-effort). For clean shutdown/tests. */
   async closeAll(): Promise<void> {
-    const handles = Array.from(this.viewers.values());
+    const entries = Array.from(this.viewers.values());
     this.viewers.clear();
     await Promise.allSettled(
-      handles.map(async (p) => {
-        const viewer = await p;
-        await viewer.close();
+      entries.map(async ({ viewer: viewerPromise, browserOpen }) => {
+        const viewer = await viewerPromise;
+        try {
+          await browserOpen;
+        } finally {
+          await viewer.close();
+        }
       }),
     );
   }
@@ -302,6 +332,7 @@ interface ViewerCliIo {
 interface ViewerHandleLike {
   url: string;
   port: number;
+  open?: () => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -349,7 +380,22 @@ export const defaultViewerBooter: ViewerBooter = async ({ kitDir, port, open }) 
     { root: kitDir, port: port ?? DEFAULT_VIEWER_PORT, open: open ?? false },
     io,
   );
-  return { url: handle.url, port: handle.port, close: () => handle.close() };
+  return {
+    url: handle.url,
+    port: handle.port,
+    open: async () => {
+      if (handle.open === undefined) {
+        logStderr({
+          event: "preview.browser.open-unavailable",
+          reason: "viewer-handle-does-not-support-open",
+          url: handle.url,
+        });
+        return;
+      }
+      await handle.open();
+    },
+    close: () => handle.close(),
+  };
 };
 
 // ─── Core: runPreview ────────────────────────────────────────────────────────
