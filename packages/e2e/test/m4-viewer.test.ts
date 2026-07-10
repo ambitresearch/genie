@@ -19,22 +19,17 @@
  *   AC1 — this file, `packages/e2e/test/m4-viewer.test.ts`.               ✅
  *   AC2 — Playwright Chromium (headless in CI; `--headed` locally).       ✅
  *   AC3 — a 12-component fixture kit; 12 cards visible in all 3 vehicles. ✅
- *   AC4 — the same canonical card identity across vehicles. The issue     ✅
- *         sketch says `data-path`, but the shipped viewer.js emits no
- *         `data-path`, the compiler derives `name` from the FILENAME, and
- *         the ui:// tier rewrites each `path` to a `data:` URL — so `path`
- *         is per-vehicle transport, NOT the invariant. The real G-5
- *         invariant is the rendered `(group, name, viewport)` triple the
- *         viewer paints into each card; this suite asserts THAT is identical
- *         across all three. (Deviation documented in the PR / issue.)
+ *   AC4 — canonical card identity and kit-relative `data-path` agree across ✅
+ *         all vehicles. The ui:// tier keeps its data/absolute transport URL
+ *         in `path` and preserves the compiler path separately as sourcePath.
  *   AC7 — screenshots of all three vehicles, written to reports/m4-viewer/. ✅
  *   AC8 — the whole suite runs well under 90 s (a soft budget is asserted). ✅
  *
- * ── Deferred to a tracked follow-up (dependencies not yet merged) ────────────
- *   AC5 — HMR per-card refresh via postMessage: DRO-266 (M4-04) is still
- *         `in_progress` (not merged to main). The postMessage bridge it adds
- *         does not exist in viewer.js yet, so an HMR assertion here would test
- *         nothing. Tracked as a follow-up to layer in once DRO-266 lands.
+ *   AC5 — HMR is covered through the real Vite server (50-card save → one
+ *         iframe load under 100ms) and the assembled ui:// resource (trusted
+ *         postMessage installs fresh bytes by stable sourcePath).             ✅
+ *
+ * ── Deferred to a tracked follow-up (dependency not yet merged) ──────────────
  *   AC6-CSP — the embedded tier's `default-src 'none'` + iframe `sandbox`
  *         ENFORCEMENT check depends on DRO-269 (M4-07, dispatched as DRO-796),
  *         also unmerged. AC6's core — "vehicle (c) renders the same DOM" — IS
@@ -54,8 +49,8 @@
  * less machine stays green; CI's dedicated `viewer-e2e` job sets
  * `GENIE_REQUIRE_VIEWER_E2E=1` so a broken install there fails loudly instead.
  */
-import { mkdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { Browser, Page } from "playwright";
@@ -75,6 +70,7 @@ import {
   startViteVehicle,
   type CardIdentity,
   type ViewerFixture,
+  type ViewerFixtureComponent,
 } from "./support/viewer-fixture.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -183,6 +179,129 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
     expect(html).toContain('src="./viewer.js"');
   });
 
+  it("vehicle (c) ui:// — refreshes a data-backed card by stable source path with fresh bytes", async () => {
+    const ui = await startUiVehicle(fixture);
+    const page = await browser.newPage();
+    try {
+      await gotoAndWaitForGrid(page, ui.url);
+      const sourcePath = fixture.manifest.components[0]!.path;
+      const iframe = page.locator(`iframe[data-path="${sourcePath}"]`);
+      const initialSrc = await iframe.getAttribute("src");
+      expect(initialSrc).toMatch(/^data:text\/html;base64,/);
+
+      const freshSrc =
+        "data:text/html;base64," +
+        Buffer.from("<!doctype html><body>embedded refresh v2</body>", "utf8").toString("base64");
+      await page.evaluate(
+        ({ path, src }) => {
+          const browserWindow = globalThis as unknown as {
+            location: { origin: string };
+            postMessage: (message: unknown, targetOrigin: string) => void;
+          };
+          browserWindow.postMessage({ type: "refresh", path, src }, browserWindow.location.origin);
+        },
+        { path: sourcePath, src: freshSrc },
+      );
+
+      await expect.poll(() => iframe.getAttribute("src")).toBe(freshSrc);
+      await expect
+        .poll(() => iframe.contentFrame().locator("body").textContent())
+        .toContain("embedded refresh v2");
+    } finally {
+      await page.close();
+      await ui.close();
+    }
+  });
+
+  it("AC3 — one save reloads exactly one of 50 cards through iframe load in under 100ms", async () => {
+    const components: ViewerFixtureComponent[] = Array.from({ length: 50 }, (_, index) => ({
+      group: "bench",
+      name: `Card${String(index).padStart(2, "0")}`,
+      viewport: "320x180",
+    }));
+    const bench = await createViewerFixture(components);
+    const vite = await startViteVehicle(bench.kitDir);
+    const page = await browser.newPage();
+    const targetPath = "components/bench/Card00/Card00.html";
+    const loads = new Map<string, number>();
+    let timingStarted = false;
+    let resolveTargetLoad: ((endedAt: number) => void) | undefined;
+    const targetLoad = new Promise<number>((resolveLoad) => {
+      resolveTargetLoad = resolveLoad;
+    });
+
+    try {
+      await gotoAndWaitForGrid(page, vite.url);
+      await expect.poll(() => page.locator("iframe").count()).toBe(50);
+
+      await page.exposeFunction("__genieRecordCardLoad", (path: string) => {
+        const count = (loads.get(path) ?? 0) + 1;
+        loads.set(path, count);
+        if (timingStarted && path === targetPath && count === 1) {
+          resolveTargetLoad?.(performance.now());
+        }
+      });
+      await page.locator("iframe[data-path]").evaluateAll((frames) => {
+        const browserGlobal = globalThis as unknown as {
+          __genieRecordCardLoad?: (path: string) => Promise<void>;
+        };
+        for (const frame of frames) {
+          const iframe = frame;
+          iframe.addEventListener("load", () => {
+            void browserGlobal.__genieRecordCardLoad?.(iframe.getAttribute("data-path") ?? "");
+          });
+          iframe.setAttribute("loading", "eager");
+          iframe.setAttribute("src", iframe.getAttribute("src") ?? "");
+        }
+      });
+      await expect.poll(() => loads.size).toBe(50);
+
+      let previousTotal = -1;
+      let stableSamples = 0;
+      for (let sample = 0; sample < 20 && stableSamples < 5; sample++) {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+        const total = [...loads.values()].reduce((sum, count) => sum + count, 0);
+        stableSamples = total === previousTotal ? stableSamples + 1 : 0;
+        previousTotal = total;
+      }
+      expect(stableSamples).toBeGreaterThanOrEqual(5);
+      loads.clear();
+
+      const servedTarget = await fetch(new URL(targetPath, vite.url)).then((response) =>
+        response.text(),
+      );
+      expect(servedTarget).not.toContain("/@vite/client");
+
+      timingStarted = true;
+      const startedAt = performance.now();
+      await writeFile(
+        join(bench.kitDir, targetPath),
+        '<!-- @genie group="bench" viewport="320x180" name="Card00" -->\n' +
+          "<!doctype html><body>Card00 revision 2</body>\n",
+        "utf8",
+      );
+      const endedAt = await Promise.race([
+        targetLoad,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("target iframe did not reload")), 5000),
+        ),
+      ]);
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
+
+      expect(endedAt - startedAt).toBeLessThan(100);
+      expect(loads.get(targetPath)).toBe(1);
+      expect(
+        [...loads.entries()]
+          .filter(([path]) => path !== targetPath)
+          .reduce((sum, [, count]) => sum + count, 0),
+      ).toBe(0);
+    } finally {
+      await page.close();
+      await vite.close();
+      await bench.cleanup();
+    }
+  }, 30_000);
+
   // ── The M4 gate: all three vehicles agree, card-for-card ───────────────────
   it("AC4 (G-5) — the three vehicles render byte-identical card identities", async () => {
     const fileVehicle = await buildFileVehicle(fixture);
@@ -193,12 +312,15 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
     try {
       await gotoAndWaitForGrid(page, fileVehicle.url);
       const fileIds = await readCardIdentities(page);
+      const filePaths = await readCardPaths(page);
 
       await gotoAndWaitForGrid(page, vite.url);
       const localhostIds = await readCardIdentities(page);
+      const localhostPaths = await readCardPaths(page);
 
       await gotoAndWaitForGrid(page, ui.url);
       const uiIds = await readCardIdentities(page);
+      const uiPaths = await readCardPaths(page);
 
       // All three equal each other AND the shared manifest — the G-5 assertion.
       expect(fileIds).toEqual(expected);
@@ -208,6 +330,10 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
       // `expected`) so a failure names which pair diverged.
       expect(localhostIds).toEqual(fileIds);
       expect(uiIds).toEqual(fileIds);
+      const expectedPaths = fixture.manifest.components.map((component) => component.path).sort();
+      expect(filePaths).toEqual(expectedPaths);
+      expect(localhostPaths).toEqual(expectedPaths);
+      expect(uiPaths).toEqual(expectedPaths);
     } finally {
       await page.close();
       await vite.close();
@@ -231,6 +357,13 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
 async function gotoAndWaitForGrid(page: Page, url: string): Promise<void> {
   await page.goto(url, { waitUntil: "load" });
   await page.waitForSelector(".ds-card", { state: "attached", timeout: 10_000 });
+}
+
+/** Read the stable kit-relative path used by HMR, never the transport URL. */
+async function readCardPaths(page: Page): Promise<string[]> {
+  return page
+    .locator("iframe[data-path]")
+    .evaluateAll((frames) => frames.map((frame) => frame.getAttribute("data-path") ?? "").sort());
 }
 
 /** Write a full-page screenshot into the report dir (AC7). */

@@ -174,6 +174,7 @@ export function noStoreHtmlPlugin(): Plugin {
               if (cacheControlSeen) {
                 setHeader("Cache-Control", "no-store");
               }
+
               return setHeader(name, value);
             }
 
@@ -190,6 +191,25 @@ export function noStoreHtmlPlugin(): Plugin {
           next();
         },
       );
+    },
+  };
+}
+
+const VITE_CLIENT_SCRIPT = /<script\b[^>]*\bsrc=(["'])\/@vite\/client\1[^>]*><\/script>\s*/gi;
+
+/** Remove Vite's injected full-reload client; genie owns card refreshes. */
+export function stripViteClientScript(html: string): string {
+  return html.replace(VITE_CLIENT_SCRIPT, "");
+}
+
+/** Run after Vite's built-in HTML transform so the injected client is present. */
+export function noViteClientPlugin(): Plugin {
+  return {
+    name: "genie-viewer:no-vite-client",
+    apply: "serve",
+    transformIndexHtml: {
+      order: "post",
+      handler: stripViteClientScript,
     },
   };
 }
@@ -225,6 +245,9 @@ export function createViewerConfig(options: ViewerConfigOptions): UserConfig {
       port: options.port ?? DEFAULT_VIEWER_PORT,
       // Port-fallback (EADDRINUSE → next port) is M4-08's CLI concern.
       strictPort: false,
+      // Disable Vite's built-in HMR transport. Vite 8 still injects its client
+      // script with this flag, so noViteClientPlugin removes that script below.
+      hmr: false,
     },
     build: {
       target: BUILD_TARGET,
@@ -232,9 +255,8 @@ export function createViewerConfig(options: ViewerConfigOptions): UserConfig {
     },
     // AC6 (M4-02) — never let the browser reuse a cached preview; M4-04 (DRO-266)
     // — the per-card HMR bridge (a WebSocket on `/__genie_hmr`, driven by Vite's
-    // own file watcher). Both are `apply: "serve"`, so `vite build` never sees
-    // them; order is irrelevant (no-store touches HTTP responses, HMR touches the
-    // `upgrade` handshake + watcher — disjoint surfaces).
-    plugins: [noStoreHtmlPlugin(), createHmrPlugin()],
+    // own file watcher). All are `apply: "serve"`, so `vite build` never sees
+    // them.
+    plugins: [noStoreHtmlPlugin(), noViteClientPlugin(), createHmrPlugin()],
   };
 }

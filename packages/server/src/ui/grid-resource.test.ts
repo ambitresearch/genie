@@ -72,9 +72,15 @@ function fakeAssetReader(index = FAKE_INDEX): AssetReader {
   };
 }
 
-const okCompiler = (m: Manifest): ManifestCompiler => async () => m;
+const okCompiler =
+  (m: Manifest): ManifestCompiler =>
+  async () =>
+    m;
 const nullPreviewReader: PreviewReader = async () => null;
-const bytesPreviewReader = (bytes: Buffer): PreviewReader => async () => bytes;
+const bytesPreviewReader =
+  (bytes: Buffer): PreviewReader =>
+  async () =>
+    bytes;
 
 // ─── resolveKitDir (path-traversal guard) ────────────────────────────────────
 
@@ -139,6 +145,7 @@ describe("rewriteCardPaths (AC4)", () => {
     expect(out.components[0]?.path).toBe(
       "https://previews.example.com/acme-abc123/components/actions/Button/preview.html",
     );
+    expect(out.components[0]?.sourcePath).toBe("components/actions/Button/preview.html");
   });
 
   it("honours a previews base URL that already has a trailing slash", async () => {
@@ -159,9 +166,8 @@ describe("rewriteCardPaths (AC4)", () => {
       previewsBaseUrl: undefined,
       readPreviewBytes: bytesPreviewReader(bytes),
     });
-    expect(out.components[0]?.path).toBe(
-      `data:text/html;base64,${bytes.toString("base64")}`,
-    );
+    expect(out.components[0]?.path).toBe(`data:text/html;base64,${bytes.toString("base64")}`);
+    expect(out.components[0]?.sourcePath).toBe("components/actions/Button/preview.html");
   });
 
   it("keeps the relative path when preview bytes cannot be read (graceful)", async () => {
@@ -172,6 +178,7 @@ describe("rewriteCardPaths (AC4)", () => {
       readPreviewBytes: nullPreviewReader,
     });
     expect(out.components[0]?.path).toBe("components/actions/Button/preview.html");
+    expect(out.components[0]?.sourcePath).toBe("components/actions/Button/preview.html");
   });
 
   it("degrades to the solo-dev data: URL when previewsBaseUrl is malformed (never throws)", async () => {
@@ -358,7 +365,7 @@ describe("buildGridDocument", () => {
     );
     // Still valid HTML with an inline manifest, just no viewer chrome.
     expect(html).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
-    expect(html.toLowerCase()).toContain("<main id=\"grid\">");
+    expect(html.toLowerCase()).toContain('<main id="grid">');
   });
 });
 

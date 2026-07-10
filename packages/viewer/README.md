@@ -5,22 +5,21 @@ Vite-backed live preview + UI-kit browser for genie. Watches a kit directory
 MCP tools produce, in a grid, with HMR — see the research report §3.4 and
 §7 step 5 linked from [`docs/github/`](../../docs/github).
 
-## Status: booting dev-server CLI (M4-08)
+## Status: live grid + per-card HMR (M4-04 / M4-08)
 
 This package ships the `genie-viewer` CLI — it boots the Vite **multi-page dev
 server** against a kit directory (every `components/**/*.html` preview is its own
 entry point), prints the preview URL, opens your browser, and stops cleanly on
-Ctrl-C. The grid renderer and HMR card-refresh that fill that page land next
-(M4-03 / M4-04).
+Ctrl-C. The grid renderer and per-card HMR refresh are wired end to end.
 
-| Milestone           | Adds                                                       |
-| ------------------- | ---------------------------------------------------------- |
-| M4-01               | package scaffold, CLI arg-parsing, usage/version           |
-| M4-02               | Vite multi-page config — one entry per component preview   |
-| M4-08 (this change) | dev-server boot: URL print, port fallback, open, Ctrl-C    |
-| M4-03               | iframe grid renderer                                       |
-| M4-04               | chokidar watch + HMR-driven card refresh via `postMessage` |
-| M4-05…M4-10         | UI-kit file browser, refine pane, polish                   |
+| Milestone           | Adds                                                     |
+| ------------------- | -------------------------------------------------------- |
+| M4-01               | package scaffold, CLI arg-parsing, usage/version         |
+| M4-02               | Vite multi-page config — one entry per component preview |
+| M4-08               | dev-server boot: URL print, port fallback, open, Ctrl-C  |
+| M4-03               | iframe grid renderer                                     |
+| M4-04 (this change) | WebSocket + trusted `postMessage` per-card HMR           |
+| M4-05…M4-10         | UI-kit file browser, refine pane, polish                 |
 
 See the issue backlog in [`docs/github/issues/`](../../docs/github/issues) for
 the full M4 breakdown.
@@ -105,6 +104,7 @@ Behaviour (the config's acceptance criteria):
 | Kit statics  | `tokens/`, `styles.css`, `_vendor/` served at their kit-root paths   |
 | HTML caching | `Cache-Control: no-store` on HTML responses (never a stale card)     |
 | Routing      | `appType: "mpa"` — a missing card 404s, no SPA index fallback        |
+| HMR          | one matching iframe reload; Vite's competing HTML client is removed  |
 
 The config lives in a pure `createViewerConfig({ root, port })` factory so it
 can be snapshot-tested without booting a server (`src/config.test.ts`); the

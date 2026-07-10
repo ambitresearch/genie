@@ -306,7 +306,9 @@
     iframe.setAttribute("sandbox", "allow-scripts");
     // AC4 — never eagerly load offscreen previews.
     iframe.setAttribute("loading", "lazy");
-    iframe.setAttribute("src", card.path || "");
+    var cardSrc = card.path || "";
+    var cardIdentity = card.sourcePath || cardSrc;
+    iframe.setAttribute("src", cardSrc);
     // M4-09 AC5 — the accessible name axe-core's `frame-title` rule checks
     // for. `accessibleName` guards the same empty-string trap as the card's
     // own aria-label above: `title=""` is indistinguishable from a missing
@@ -326,7 +328,11 @@
     // `card.changed` message's `path` against exactly this attribute. The
     // live `src` may later carry an `?__genie_hmr=N` cache-bust (see
     // reloadIframeEl); `data-path` stays the stable identity.
-    iframe.setAttribute("data-path", card.path || "");
+    iframe.setAttribute("data-path", cardIdentity);
+    // Embedded manifests replace `path` with an absolute/data transport URL.
+    // Keep that source separate from the kit-relative identity above so a host
+    // can target the card by sourcePath and replace its bytes safely.
+    iframe.setAttribute("data-src", cardSrc);
 
     // AC2 — size from the viewport when it is a real WxH; otherwise reserve
     // a sane default height and let CSS own the width (responsive column).
@@ -492,12 +498,12 @@
    * libraries are silently ignored). Accepts both wire shapes:
    *   - `{ event: "card.changed", path }`  → `{ kind: "card", path }`   (WS, AC2)
    *   - `{ event: "tokens.changed" }`       → `{ kind: "tokens" }`       (WS, AC5)
-   *   - `{ type: "refresh", path }`         → `{ kind: "card", path }`   (postMessage)
+   *   - `{ type: "refresh", path, src? }`   → `{ kind: "card", path, src? }` (postMessage)
    *   - `{ type: "refresh", id }`           → `{ kind: "card", path:id }` (postMessage; `id` is the card path)
    *   - `{ type: "refresh" }` (no target)   → `{ kind: "tokens" }`       (refresh-all)
    *
    * @param {unknown} raw
-   * @returns {{ kind: "card", path: string } | { kind: "tokens" } | null}
+   * @returns {{ kind: "card", path: string, src?: string } | { kind: "tokens" } | null}
    */
   function normalizeHmrMessage(raw) {
     var data = raw;
@@ -511,34 +517,49 @@
     if (!data || typeof data !== "object") return null;
 
     if (data.event === "card.changed") {
-      return typeof data.path === "string" && data.path ? { kind: "card", path: data.path } : null;
+      if (typeof data.path !== "string" || !data.path) return null;
+      return typeof data.src === "string" && data.src
+        ? { kind: "card", path: data.path, src: data.src }
+        : { kind: "card", path: data.path };
     }
     if (data.event === "tokens.changed") return { kind: "tokens" };
 
     if (data.type === "refresh") {
       var target = typeof data.path === "string" && data.path ? data.path : data.id;
-      if (typeof target === "string" && target) return { kind: "card", path: target };
+      if (typeof target === "string" && target) {
+        return typeof data.src === "string" && data.src
+          ? { kind: "card", path: target, src: data.src }
+          : { kind: "card", path: target };
+      }
       return { kind: "tokens" }; // a target-less refresh means "reload everything".
     }
     return null;
   }
 
   /**
-   * Reassign one iframe's `src` to its stable `data-path` plus a fresh
-   * cache-bust token — the cross-origin-safe per-card reload (see the section
-   * header). Returns `true` when it acted (the element had a `data-path`).
+   * Reassign one iframe's `src` to its stable `data-src` plus a fresh
+   * cache-bust token, or install `freshSrc` from the embedded host for a
+   * data-backed card. Returns `true` when a navigation was started.
    *
    * @param {HTMLIFrameElement} iframe
    * @param {number|string} token
+   * @param {string=} freshSrc
    * @returns {boolean}
    */
-  function reloadIframeEl(iframe, token) {
-    var path = iframe.getAttribute("data-path");
-    if (!path) return false;
-    // data-path is a clean kit-relative file path (never carries a query), so
-    // "?" is the correct separator; the "&" branch is defensive only.
-    var sep = path.indexOf("?") === -1 ? "?" : "&";
-    iframe.setAttribute("src", path + sep + HMR_CACHE_BUST_PARAM + "=" + token);
+  function reloadIframeEl(iframe, token, freshSrc) {
+    if (freshSrc) {
+      iframe.setAttribute("data-src", freshSrc);
+      iframe.setAttribute("src", freshSrc);
+      return true;
+    }
+
+    var src =
+      iframe.getAttribute("data-src") ||
+      iframe.getAttribute("src") ||
+      iframe.getAttribute("data-path");
+    if (!src || /^data:/i.test(src)) return false;
+    var sep = src.indexOf("?") === -1 ? "?" : "&";
+    iframe.setAttribute("src", src + sep + HMR_CACHE_BUST_PARAM + "=" + token);
     return true;
   }
 
@@ -550,14 +571,19 @@
    * @param {HTMLElement} grid
    * @param {string} path
    * @param {number|string} token
+   * @param {string=} freshSrc
    * @returns {number}
    */
-  function reloadCardByPath(grid, path, token) {
+  function reloadCardByPath(grid, path, token, freshSrc) {
     if (!grid || !path) return 0;
     var iframes = grid.querySelectorAll("iframe[data-path]");
     var n = 0;
     for (var i = 0; i < iframes.length; i++) {
-      if (iframes[i].getAttribute("data-path") === path && reloadIframeEl(iframes[i], token)) n++;
+      if (
+        iframes[i].getAttribute("data-path") === path &&
+        reloadIframeEl(iframes[i], token, freshSrc)
+      )
+        n++;
     }
     return n;
   }
@@ -596,7 +622,9 @@
     var cmd = normalizeHmrMessage(message);
     if (!cmd) return 0;
     var t = token === undefined ? ++hmrReloadToken : token;
-    return cmd.kind === "card" ? reloadCardByPath(grid, cmd.path, t) : reloadAllCards(grid, t);
+    return cmd.kind === "card"
+      ? reloadCardByPath(grid, cmd.path, t, cmd.src)
+      : reloadAllCards(grid, t);
   }
 
   /**
@@ -614,18 +642,22 @@
     var prevByPath = {};
     var pc = (prev && prev.components) || [];
     for (var i = 0; i < pc.length; i++) {
-      if (pc[i] && typeof pc[i].path === "string") prevByPath[pc[i].path] = pc[i].hash;
+      if (!pc[i]) continue;
+      var prevPath = pc[i].sourcePath || pc[i].path;
+      if (typeof prevPath === "string") prevByPath[prevPath] = pc[i].hash;
     }
     var changed = [];
     var nc = (next && next.components) || [];
     for (var j = 0; j < nc.length; j++) {
       var comp = nc[j];
-      if (!comp || typeof comp.path !== "string") continue;
+      if (!comp) continue;
+      var nextPath = comp.sourcePath || comp.path;
+      if (typeof nextPath !== "string") continue;
       if (
-        Object.prototype.hasOwnProperty.call(prevByPath, comp.path) &&
-        prevByPath[comp.path] !== comp.hash
+        Object.prototype.hasOwnProperty.call(prevByPath, nextPath) &&
+        prevByPath[nextPath] !== comp.hash
       ) {
-        changed.push(comp.path);
+        changed.push(nextPath);
       }
     }
     return changed;
@@ -678,6 +710,8 @@
    *   - `manifestUrl`    — poll target (default `MANIFEST_URL`)
    *   - `initialManifest`— baseline so the FIRST poll can already detect a change
    *   - `pollIntervalMs` — cadence (default `HMR_POLL_INTERVAL_MS`)
+   *   - `parentOrigin`   — optional trusted embedding-host origin; otherwise
+   *                        derived from `document.referrer` when available
    *
    * The `postMessage` bridge is ALWAYS active (harmless where unused). The WS +
    * polling only engage when {@link hmrSocketUrl} resolves (a real dev server);
@@ -731,14 +765,23 @@
     }
 
     // ── Transport 2: the postMessage bridge (embedded ui:// tier) ────────────
-    // Origin is intentionally NOT checked: the only action a message can cause
-    // is reloading an ALREADY-present, already-sandboxed card by its known
-    // `data-path` (or reloading all) — no new origin is introduced, no message
-    // content is written to the DOM, and each preview stays walled off by its
-    // own `allow-scripts`-only sandbox. The strict embedded CSP (DRO-269) is
-    // the outer gate on who can post here. (Revisit if messages ever carry
-    // markup or navigation targets.)
+    var parentOrigin = null;
+    var configuredParentOrigin = "parentOrigin" in opts ? opts.parentOrigin : doc.referrer;
+    var ParentURL = win && win.URL;
+    if (configuredParentOrigin && typeof ParentURL === "function") {
+      try {
+        var parsedParentOrigin = new ParentURL(configuredParentOrigin).origin;
+        if (parsedParentOrigin !== "null") parentOrigin = parsedParentOrigin;
+      } catch {
+        parentOrigin = null;
+      }
+    }
+
     function onMessage(event) {
+      // Sandboxed cards can call parent.postMessage despite lacking
+      // allow-same-origin. Only the embedding host may issue refresh commands.
+      if (!event || !win || event.source !== win.parent) return;
+      if (parentOrigin && event.origin !== parentOrigin) return;
       handle(event && "data" in event ? event.data : event);
     }
     if (win && typeof win.addEventListener === "function") {

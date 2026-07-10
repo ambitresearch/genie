@@ -836,6 +836,7 @@ describe("inlined manifest (embedded tier — no fetch under connect-src 'none')
     window.dispatchEvent(
       new window.MessageEvent("message", {
         data: { type: "refresh", path: "components/actions/Button/preview.html" },
+        source: window.parent,
       }),
     );
 

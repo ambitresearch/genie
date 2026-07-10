@@ -11,8 +11,8 @@
  * own `{type:"full-reload"}` broadcast for such a file: `updateModules` takes
  * its hard-coded "page reload" branch whenever `ctx.modules.length === 0`,
  * before a plugin's returned filter is even consulted. So per-card
- * suppression has to happen client-side (the multi-page HTML entries never
- * load `@vite/client` at all — see `viewer.js`'s own header), and the real
+ * suppression is explicit: createViewerConfig disables Vite HMR and its post
+ * HTML transform removes the still-injected `/@vite/client` script. The real
  * signal rides a SECOND, independent WebSocket on `/__genie_hmr`, exactly as
  * AC1 specifies.
  *
@@ -55,8 +55,8 @@
  *     matching `card.path` in `.genie/manifest.json` / the rendered grid's
  *     `data-path`, so `viewer.js` can match one against the other with a
  *     plain string comparison.
- *   - AC3 — a real-Vite, real-WebSocket benchmark (bottom of this file)
- *     measures save → broadcast latency on a genuine 50-card kit.
+ *   - AC3 — this suite proves the real watcher/WebSocket leg on a 50-card kit;
+ *     the E2E browser gate measures save → matching iframe `load`.
  */
 import { createServer as createHttpServer } from "node:http";
 import type { Server as HttpServer } from "node:http";
@@ -106,12 +106,12 @@ describe("classifyHmrPath", () => {
   });
 
   it("classifies a nested multi-group <Name>.html correctly (DRO-821)", () => {
-    expect(classifyHmrPath(ROOT, `${ROOT}/components/surfaces/PricingCard/PricingCard.html`)).toEqual(
-      {
-        kind: "card",
-        path: "components/surfaces/PricingCard/PricingCard.html",
-      },
-    );
+    expect(
+      classifyHmrPath(ROOT, `${ROOT}/components/surfaces/PricingCard/PricingCard.html`),
+    ).toEqual({
+      kind: "card",
+      path: "components/surfaces/PricingCard/PricingCard.html",
+    });
   });
 
   it("classifies a tokens/** change as 'tokens' (AC5)", () => {
@@ -493,30 +493,13 @@ describe("createHmrPlugin — upgrade routing (silent no-op on a foreign path)",
   });
 });
 
-// ── AC3 — sub-100 ms reload-latency benchmark on a real 50-card kit ────────
+// ── Real Vite watcher integration on a 50-card kit ─────────────────────────
 //
-// The issue's own AC3 wording ("measured: save → iframe `load` event") is a
-// BROWSER-side measurement — that end-to-end walk (real Chromium, real
-// iframe `load` listener) belongs to `test/a11y.test.ts`'s real-browser
-// harness, not this Node-only suite, and a real Chromium isn't guaranteed to
-// launch in every sandbox (see that file's `isChromiumAvailable` skip).
-//
-// What THIS benchmark measures instead — and what is actually load-bearing
-// for the "sub-100 ms" guarantee — is the part of the round trip this
-// package controls end-to-end without a browser: real Vite dev server, real
-// `fs.writeFile` onto disk, real chokidar/Vite `watcher` event, real
-// `ws.WebSocketServer` broadcast, real TCP `WebSocket` client receipt. The
-// remaining leg (iframe `src` reassignment → `load`) is pure browser
-// networking against an already-warm dev-server connection — orders of
-// magnitude below the ~100 ms budget on any real machine, and is the one
-// piece `hmr-client.test.ts`'s jsdom suite already exercises functionally
-// (`reloadCardByPath` et al.). Measuring THIS leg for real, on a 50-card kit,
-// is what actually validates AC3's "no full reload" guarantee holds up at
-// the scale AC3 names — a naive implementation that re-globbed the manifest
-// or re-walked all 50 preview.html files per save would show up here as
-// multi-hundred-ms latency; the real implementation (a single classified fs
-// event -> one WS broadcast) does not.
-describe("AC3 — sub-100ms save-to-broadcast latency (50-card kit)", () => {
+// AC3's actual save → iframe `load` timing now lives in the real-browser E2E
+// gate (`packages/e2e/test/m4-viewer.test.ts`). This Node-side test keeps the
+// lower-level contract useful without pretending WebSocket receipt proves the
+// browser timing requirement.
+describe("real Vite watcher integration (50-card kit)", () => {
   const CARD_COUNT = 50;
   let root: string | undefined;
   let server: ViteDevServer | undefined;
@@ -554,7 +537,7 @@ describe("AC3 — sub-100ms save-to-broadcast latency (50-card kit)", () => {
     return dir;
   }
 
-  it("broadcasts a card.changed message within 100ms of a single-card save", async () => {
+  it("broadcasts only the touched card path after a real file save", async () => {
     root = await scaffoldKit(CARD_COUNT);
 
     server = await createViteServer({
@@ -578,37 +561,18 @@ describe("AC3 — sub-100ms save-to-broadcast latency (50-card kit)", () => {
     const targetPath = "components/bench/Card25/preview.html"; // an arbitrary middle card
     const targetFile = join(root, targetPath);
 
-    // Five independent samples, sequential (each waits for its own broadcast
-    // before the next write) so one save's event can never be mistaken for
-    // another's.
-    const samples: number[] = [];
-    for (let i = 0; i < 5; i++) {
-      const messageP = new Promise<HmrMessage>((resolve) => {
-        ws!.once("message", (data) => resolve(JSON.parse(data.toString()) as HmrMessage));
-      });
-      const start = performance.now();
-      await writeFile(
-        targetFile,
-        `<!-- @genie group="bench" name="Card 25" -->\n<!doctype html><html><body>Card 25 rev${i}</body></html>\n`,
-      );
-      const message = await messageP;
-      samples.push(performance.now() - start);
+    const messageP = new Promise<HmrMessage>((resolve) => {
+      ws!.once("message", (data) => resolve(JSON.parse(data.toString()) as HmrMessage));
+    });
+    await writeFile(
+      targetFile,
+      '<!-- @genie group="bench" name="Card 25" -->\n' +
+        "<!doctype html><html><body>Card 25 revision 2</body></html>\n",
+    );
 
-      // AC2's identity contract, re-asserted under load: the 50-card
-      // broadcast still names ONLY the touched card, never the other 49.
-      expect(message).toEqual({ event: "card.changed", path: targetPath });
-
-      // Let this cycle fully settle before the next write so back-to-back
-      // saves in the same run can't coalesce into one debounce/watch cycle.
-      await new Promise((r) => setTimeout(r, 50));
-    }
-
-    const max = Math.max(...samples);
-    // AC3's literal budget. A generous multiple of what a healthy run
-    // actually measures (low single-digit ms — see this file's own header
-    // and the PR's manual verification) so this stays robust on a loaded CI
-    // runner while still catching a real regression (e.g. an accidental
-    // full-manifest re-walk per keystroke), which would blow well past 100ms.
-    expect(max).toBeLessThan(100);
+    await expect(messageP).resolves.toEqual({
+      event: "card.changed",
+      path: targetPath,
+    });
   }, 20_000);
 });

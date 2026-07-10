@@ -11,10 +11,10 @@
  * own `{type:"full-reload"}` broadcast for such a file: `updateModules` takes
  * its hard-coded "page reload" branch whenever `ctx.modules.length === 0`,
  * before a plugin's returned filter is even consulted. So per-card
- * suppression happens client-side (the multi-page HTML entries never load
- * `@vite/client` at all — see `viewer.js`'s own header), and the real signal
- * rides a SECOND, independent WebSocket on `/__genie_hmr`, exactly as AC1
- * specifies.
+ * suppression is explicit: the viewer disables Vite's HMR transport and a
+ * post HTML transform removes the still-injected `/@vite/client` script. The
+ * real signal rides a SECOND, independent WebSocket on `/__genie_hmr`,
+ * exactly as AC1 specifies.
  *
  * ── Why this reuses `server.watcher`, not a second chokidar instance ───────
  * The same spike confirmed Vite's OWN internal chokidar instance

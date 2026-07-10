@@ -79,7 +79,7 @@ function twoCardManifest(overrides?: {
  * render `twoCardManifest()` into the grid so the tests operate on REAL card
  * iframes carrying `data-path` (exactly what a booted page has).
  */
-function setup(): {
+function setup(manifest: Record<string, unknown> = twoCardManifest()): {
   hooks: Hooks;
   window: JSDOM["window"];
   document: Document;
@@ -101,7 +101,7 @@ function setup(): {
   const hooks = (window as any).__genieViewerTestHooks as Hooks;
   const document = window.document;
   const grid = document.getElementById("grid") as HTMLElement;
-  hooks.renderGrid(document, grid, twoCardManifest());
+  hooks.renderGrid(document, grid, manifest);
   return { hooks, window, document, grid };
 }
 
@@ -128,6 +128,19 @@ describe("card iframe carries a stable data-path (AC2)", () => {
     const f = iframeFor(grid, BUTTON_PATH);
     expect(f.getAttribute("src")).toBe(BUTTON_PATH);
     expect(f.getAttribute("data-path")).not.toContain("__genie_hmr");
+  });
+
+  it("keeps embedded transport src separate from the kit-relative HMR identity", () => {
+    const manifest = twoCardManifest();
+    const button = (manifest.components as Array<Record<string, unknown>>)[0]!;
+    button.sourcePath = BUTTON_PATH;
+    button.path = "data:text/html;base64,PGJ1dHRvbj5vbGQ8L2J1dHRvbj4=";
+
+    const { grid } = setup(manifest);
+    const iframe = iframeFor(grid, BUTTON_PATH);
+    expect(iframe.getAttribute("data-path")).toBe(BUTTON_PATH);
+    expect(iframe.getAttribute("data-src")).toBe(button.path);
+    expect(iframe.getAttribute("src")).toBe(button.path);
   });
 });
 
@@ -224,6 +237,30 @@ describe("reloadCardByPath (AC2)", () => {
     const buttonBefore = iframeFor(grid, BUTTON_PATH).getAttribute("src");
     expect(hooks.reloadCardByPath(grid, "components/does/Not/Exist/preview.html", 5)).toBe(0);
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(buttonBefore);
+  });
+
+  it("uses a fresh source supplied by the embedded host for a data-backed card", () => {
+    const manifest = twoCardManifest();
+    const button = (manifest.components as Array<Record<string, unknown>>)[0]!;
+    button.sourcePath = BUTTON_PATH;
+    button.path = "data:text/html;base64,b2xk";
+    const { hooks, grid } = setup(manifest);
+    const freshSrc = "data:text/html;base64,bmV3";
+
+    expect(hooks.reloadCardByPath(grid, BUTTON_PATH, 1, freshSrc)).toBe(1);
+    expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(freshSrc);
+    expect(iframeFor(grid, BUTTON_PATH).getAttribute("data-src")).toBe(freshSrc);
+  });
+
+  it("does not pretend to refresh a data-backed card without fresh bytes", () => {
+    const manifest = twoCardManifest();
+    const button = (manifest.components as Array<Record<string, unknown>>)[0]!;
+    button.sourcePath = BUTTON_PATH;
+    button.path = "data:text/html;base64,b2xk";
+    const { hooks, grid } = setup(manifest);
+
+    expect(hooks.reloadCardByPath(grid, BUTTON_PATH, 1)).toBe(0);
+    expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(button.path);
   });
 });
 
@@ -436,7 +473,10 @@ describe("initHmr — postMessage bridge (embedded ui:// tier)", () => {
     hooks.initHmr(document, { win: window, location: null });
 
     window.dispatchEvent(
-      new window.MessageEvent("message", { data: { type: "refresh", path: CARD_PATH } }),
+      new window.MessageEvent("message", {
+        data: { type: "refresh", path: CARD_PATH },
+        source: window.parent,
+      }),
     );
 
     expect(iframeFor(grid, CARD_PATH).getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
@@ -448,7 +488,10 @@ describe("initHmr — postMessage bridge (embedded ui:// tier)", () => {
     const { hooks, window, document, grid } = setup();
     hooks.initHmr(document, { win: window, location: null });
     window.dispatchEvent(
-      new window.MessageEvent("message", { data: { event: "card.changed", path: BUTTON_PATH } }),
+      new window.MessageEvent("message", {
+        data: { event: "card.changed", path: BUTTON_PATH },
+        source: window.parent,
+      }),
     );
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
   });
@@ -457,7 +500,10 @@ describe("initHmr — postMessage bridge (embedded ui:// tier)", () => {
     const { hooks, window, document, grid } = setup();
     hooks.initHmr(document, { win: window, location: null });
     window.dispatchEvent(
-      new window.MessageEvent("message", { data: { source: "react-devtools" } }),
+      new window.MessageEvent("message", {
+        data: { source: "react-devtools" },
+        source: window.parent,
+      }),
     );
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(BUTTON_PATH);
     expect(document.getElementById("hmr-count")!.getAttribute("data-count")).toBe("0");
@@ -468,9 +514,71 @@ describe("initHmr — postMessage bridge (embedded ui:// tier)", () => {
     const teardown = hooks.initHmr(document, { win: window, location: null });
     teardown();
     window.dispatchEvent(
-      new window.MessageEvent("message", { data: { type: "refresh", path: BUTTON_PATH } }),
+      new window.MessageEvent("message", {
+        data: { type: "refresh", path: BUTTON_PATH },
+        source: window.parent,
+      }),
     );
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(BUTTON_PATH);
+  });
+
+  it("rejects refresh messages posted by a sandboxed child card", () => {
+    const { hooks, window, document, grid } = setup();
+    const child = document.createElement("iframe");
+    document.body.appendChild(child);
+    hooks.initHmr(document, { win: window, location: null });
+
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        data: { type: "refresh", path: BUTTON_PATH },
+        source: child.contentWindow,
+      }),
+    );
+
+    expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(BUTTON_PATH);
+  });
+
+  it("rejects a parent message whose origin differs from the configured host origin", () => {
+    const { hooks, window, document, grid } = setup();
+    hooks.initHmr(document, {
+      win: window,
+      location: null,
+      parentOrigin: "https://host.example",
+    });
+
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        data: { type: "refresh", path: BUTTON_PATH },
+        source: window.parent,
+        origin: "https://evil.example",
+      }),
+    );
+
+    expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(BUTTON_PATH);
+  });
+
+  it("accepts a fresh embedded source from the configured parent origin", () => {
+    const manifest = twoCardManifest();
+    const button = (manifest.components as Array<Record<string, unknown>>)[0]!;
+    button.sourcePath = BUTTON_PATH;
+    button.path = "data:text/html;base64,b2xk";
+    const { hooks, window, document, grid } = setup(manifest);
+    const freshSrc = "data:text/html;base64,bmV3";
+    hooks.initHmr(document, {
+      win: window,
+      location: null,
+      parentOrigin: "https://host.example",
+    });
+
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        data: { type: "refresh", path: BUTTON_PATH, src: freshSrc },
+        source: window.parent,
+        origin: "https://host.example",
+      }),
+    );
+
+    expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(freshSrc);
   });
 });
 
