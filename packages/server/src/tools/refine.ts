@@ -755,8 +755,9 @@ export function registerRefineTool(server: McpServer, deps: RefineDeps): void {
         "COMPONENT_SCHEMA (retried once on a validation failure), and — when a region is given — " +
         "attaches a rendered crop of it as a visual reference. Reach for this to adjust a " +
         "component already written to the kit (typically after conjure → write_files → preview); " +
-        "like conjure, pass a concrete provider model id rather than the `design-default` alias, " +
-        "and persist the returned files again via plan + write_files before previewing.",
+        "`design-default` is the valid gateway routing alias. Persist the returned files via " +
+        "plan, mapping each {path, content, mimeType} to write_files " +
+        "{path, data: content, mimeType}, before previewing.",
       inputSchema: refineInputShape,
       outputSchema: refineOutputShape,
     },

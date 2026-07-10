@@ -29,13 +29,14 @@
  * turned into AC6's `file://<kitDir>/index.html` fallback; `_meta` is still
  * emitted. A `ViewerRegistry` caches one running viewer per kit dir (AC5).
  */
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { ensureManifest } from "../manifest/index.js";
+import { ensureManifest, type Manifest } from "../manifest/index.js";
 
 import { KIT_ID_PATTERN } from "./get_kit.js";
 
@@ -163,13 +164,22 @@ export class InvalidKitIdError extends Error {
   }
 }
 
+/** A well-formed kitId that does not identify an existing kit directory. */
+export class KitNotFoundError extends Error {
+  readonly code = "KitNotFoundError";
+  constructor(readonly kitId: string) {
+    super(`Kit "${kitId}" does not exist. Call list_kits or create_kit first.`);
+    this.name = "KitNotFoundError";
+  }
+}
+
 /**
  * Resolve a `kitId` to its on-disk kit directory under `kitsRoot`, rejecting
  * any id that isn't a well-formed slug BEFORE the `join` — an unvalidated id
  * like `../../etc` would otherwise escape the kits root (RFC §10 T-13, the same
  * traversal class `write_files`/`read_file` guard). Only shape is checked here;
- * whether the dir actually exists is the booter's concern (a missing/uncompiled
- * kit surfaces as AC6's `file://` fallback, not a hard tool error).
+ * Existence is checked by {@link runPreview} before compilation so a missing
+ * slug cannot create a phantom kit through manifest persistence.
  */
 export function resolveKitDir(kitsRoot: string, kitId: string): string {
   if (!KIT_ID_PATTERN.test(kitId)) {
@@ -340,6 +350,8 @@ export interface PreviewDeps {
    * `process.env`. Defaults to `process.env` at registration time.
    */
   env?: NodeJS.ProcessEnv;
+  /** Manifest compiler seam; production uses the shared compile-and-persist helper. */
+  ensureManifest?: (kitDir: string) => Promise<Manifest>;
 }
 
 /** The three-field tool input (AC2). */
@@ -412,7 +424,10 @@ export function autoOpenDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boo
  * inline grid, so a tab is redundant) AND the operator has not opted out via
  * `GENIE_PREVIEW_NO_OPEN`. Extracted for direct unit testing of the branch.
  */
-export function shouldAutoOpen(uiSupported: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
+export function shouldAutoOpen(
+  uiSupported: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
   if (uiSupported) return false;
   return !autoOpenDisabledByEnv(env);
 }
@@ -435,20 +450,25 @@ export async function runPreview(
   // Path-safety BEFORE anything touches the filesystem or boots a server.
   const kitDir = resolveKitDir(deps.kitsRoot, args.kitId);
 
-  // Piece A — compile + persist `.genie/manifest.json` at request time so the
-  // Vite / file:// / ui:// vehicles all render real cards (and `list_components`
-  // sees them) without depending on a prior `ui://` resource read. A compile
-  // failure (e.g. a brand-new/empty kit) must NOT sink the preview: the grid's
-  // own empty state is a fine result, so we log and press on to the viewer.
+  let kitStat;
   try {
-    await ensureManifest(kitDir);
+    kitStat = await stat(kitDir);
   } catch (error) {
-    logStderr({
-      event: "preview.compile.failed",
-      kitId: args.kitId,
-      error: String(error),
-    });
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new KitNotFoundError(args.kitId);
+    }
+    throw error;
   }
+  if (!kitStat.isDirectory()) {
+    throw new KitNotFoundError(args.kitId);
+  }
+
+  // Piece A — compile + persist `.genie/manifest.json` at request time so the
+  // Vite / file:// / ui:// vehicles all render real cards (and list_components
+  // sees them) without depending on a prior resource read. An existing empty
+  // kit compiles to an empty manifest; genuine read/write failures propagate.
+  const compile = deps.ensureManifest ?? ensureManifest;
+  await compile(kitDir);
 
   const resourceUri = buildResourceUri({
     kitId: args.kitId,
@@ -532,6 +552,14 @@ const previewInputSchema = {
     ),
 } as const;
 
+const previewOutputSchema = {
+  kitId: z.string(),
+  componentName: z.string().optional(),
+  group: z.string().optional(),
+  viewerUrl: z.string().optional(),
+  fileUrl: z.string(),
+} as const;
+
 /** Options for {@link registerPreviewTool}. `booter` defaults to the lazy one. */
 export interface PreviewToolOptions {
   kitsRoot: string;
@@ -539,6 +567,8 @@ export interface PreviewToolOptions {
   booter?: ViewerBooter;
   /** Injectable env for the `GENIE_PREVIEW_NO_OPEN` opt-out; defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
+  /** Injectable manifest seam for tests. */
+  ensureManifest?: (kitDir: string) => Promise<Manifest>;
 }
 
 /**
@@ -564,7 +594,12 @@ function sniffClientName(meta: unknown): string | undefined {
  */
 export function registerPreviewTool(server: McpServer, options: PreviewToolOptions): void {
   const registry = new ViewerRegistry(options.booter ?? defaultViewerBooter);
-  const deps: PreviewDeps = { kitsRoot: options.kitsRoot, registry, env: options.env };
+  const deps: PreviewDeps = {
+    kitsRoot: options.kitsRoot,
+    registry,
+    env: options.env,
+    ensureManifest: options.ensureManifest,
+  };
 
   server.registerTool(
     PREVIEW_TOOL_NAME,
@@ -580,14 +615,10 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
         "browser tab itself (disable with GENIE_PREVIEW_NO_OPEN=1). Optionally focus one " +
         "component or group.",
       inputSchema: previewInputSchema,
-      // Registration-time app link (ext-apps spec §Resource Discovery): hosts
-      // discover a tool's UI from `tools/list` `_meta.ui.resourceUri` — the
-      // per-RESULT _meta alone is not discovery. The template URI is BARE by
-      // spec (per-call params reach the rendered app via `structuredContent`
-      // on the tool result, not the URI). Without this key, an MCP-Apps host
-      // (Claude Desktop) treats preview as a plain text tool and never renders
-      // the inline grid.
-      _meta: { ui: { resourceUri: GRID_RESOURCE_BASE } },
+      outputSchema: previewOutputSchema,
+      // Keep the app link on each result: its query-bearing URI carries the
+      // required kitId/filters and builds the exact manifest + CSP for that
+      // invocation. A bare registration-time URI would render an empty grid.
     },
     async (args: PreviewArgs, extra: { _meta?: unknown }) => {
       // Client identity: prefer the per-request `_meta.client.name` escape

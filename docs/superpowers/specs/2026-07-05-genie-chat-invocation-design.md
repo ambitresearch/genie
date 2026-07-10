@@ -7,7 +7,7 @@
 ## Problem
 
 genie ships a 19-tool MCP surface but **no guidance layer** teaching a host
-model *when* and *in what order* to call those verbs, and **no mechanism that
+model _when_ and _in what order_ to call those verbs, and **no mechanism that
 reliably makes the GUI actually appear** in response to a chat request like
 "show me my Button component" or "build me a CTA button and let me see it."
 
@@ -35,7 +35,7 @@ Three concrete gaps, found during manual testing (2026-07-05):
 
 **Agent Skills (`SKILL.md`) load only in Claude Code / Claude Desktop /
 claude.ai.** Cursor, Codex CLI, and Copilot have no equivalent skill-loading
-mechanism; the *only* guidance they ever see is the MCP tool `description`
+mechanism; the _only_ guidance they ever see is the MCP tool `description`
 strings, and the only thing that reliably produces a visible GUI on those
 harnesses is **genie opening the browser itself, server-side, on the user's own
 machine.** genie's own RFC §15.1 already rejected agentskills.io as an
@@ -46,13 +46,13 @@ abstraction here.
 independent capabilities, harnesses fall into a grid, and a given harness can
 need different pieces of this design:
 
-| Harness | `ui://`-capable? (inline grid, no auto-open) | Loads Agent Skills? | Gets guidance from |
-|---|---|---|---|
-| Claude Code / Desktop / claude.ai | yes | **yes** | Skill (C) + descriptions (D) |
-| Cursor | **yes** | no | inline grid; descriptions (D) |
-| VS Code (≥Jan 2026) | yes | no | inline grid; descriptions (D) |
-| ChatGPT | yes | no | inline grid; descriptions (D) |
-| Codex / Copilot / MCP Inspector | **no** | no | **server auto-open (B)** + descriptions (D) |
+| Harness                           | `ui://`-capable? (inline grid, no auto-open) | Loads Agent Skills? | Gets guidance from                          |
+| --------------------------------- | -------------------------------------------- | ------------------- | ------------------------------------------- |
+| Claude Code / Desktop / claude.ai | yes                                          | **yes**             | Skill (C) + descriptions (D)                |
+| Cursor                            | **yes**                                      | no                  | inline grid; descriptions (D)               |
+| VS Code (≥Jan 2026)               | yes                                          | no                  | inline grid; descriptions (D)               |
+| ChatGPT                           | yes                                          | no                  | inline grid; descriptions (D)               |
+| Codex / Copilot / MCP Inspector   | **no**                                       | no                  | **server auto-open (B)** + descriptions (D) |
 
 Corollary that drives priority: **reliability comes from the server (piece A/B);
 the Skill, tool-descriptions, and slash-command (C/D/E) are the ergonomic layer
@@ -68,7 +68,7 @@ In scope (approved 2026-07-05):
   verb workflow — Claude-family harnesses.
 - **D.** Hardened MCP tool `description` strings — every harness.
 - **E.** A Claude Code **slash-command** (`/genie:preview`) escape hatch.
-- **F.** Delivery via **both** a Claude Code marketplace plugin *and* documented
+- **F.** Delivery via **both** a Claude Code marketplace plugin _and_ documented
   manual artifact copy.
 
 Explicitly out of scope:
@@ -82,11 +82,11 @@ Explicitly out of scope:
 
 ## Approved decisions
 
-| Decision | Choice |
-|---|---|
-| `preview` auto-open default (non-ui:// hosts) | **Opt-out** — on by default; `GENIE_PREVIEW_NO_OPEN=1` disables. |
-| Skill + slash-command delivery | **Both** — marketplace plugin *and* manual artifact copy docs. |
-| Manifest compile location | **Shared `ensureManifest(kitDir)` helper**, called by both `preview` and `grid-resource`. |
+| Decision                                      | Choice                                                                                    |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `preview` auto-open default (non-ui:// hosts) | **Opt-out** — on by default; `GENIE_PREVIEW_NO_OPEN=1` disables.                          |
+| Skill + slash-command delivery                | **Both** — marketplace plugin _and_ manual artifact copy docs.                            |
+| Manifest compile location                     | **Shared `ensureManifest(kitDir)` helper**, called by both `preview` and `grid-resource`. |
 
 ---
 
@@ -145,7 +145,7 @@ workflow.
   paths; when to reach for each verb; the **plan-guard capability model**
   (`write_files`/`delete_files` need a `planId` whose globs cover the paths);
   the real-`model` requirement for `conjure`/`refine`; and that `preview` is
-  how you *show* the user a component.
+  how you _show_ the user a component.
 - **Trigger:** natural requests like "build/show/preview a component," "let me
   see my kit," "make a button and open it."
 - **Depends on:** the genie MCP server being registered in the harness.
@@ -160,14 +160,16 @@ workflow.
   Cursor/Codex/Copilot ever see.
 - Example shape: `preview`'s description states it compiles the manifest and
   opens/points to the live grid, and that it's the verb to call after
-  `write_files` when the user wants to *see* a component.
+  `write_files` when the user wants to _see_ a component.
 - Constraint: keep descriptions accurate to actual behavior post-A/B (no
   aspirational claims); do not break the verbatim Anthropic interop terms
   (CLAUDE.md hard rule 1).
 
 ## E. Claude Code slash-command (escape hatch)
 
-**Unit:** a `commands/genie-preview.md` (invoked `/genie:preview`).
+**Unit:** a plugin `commands/preview.md` (invoked `/genie:preview`). Manual
+copy installs the same source as `~/.claude/commands/genie-preview.md`, exposed
+without a plugin namespace as `/genie-preview`.
 
 - Lets a user **force-open** the viewer for a named/most-recent kit without
   depending on model inference.
@@ -175,9 +177,11 @@ workflow.
 
 ## F. Delivery — both channels
 
-1. **Claude Code marketplace plugin.** Bundles `SKILL.md` + the slash-command +
-   the MCP server registration so one install wires up everything. Modeled on
-   the existing `claude-plugins-official` plugin layout
+1. **Claude Code marketplace plugin.** Bundles `SKILL.md` + the namespaced
+   slash-command for a separately registered genie MCP server. Server runtime
+   packaging belongs to the npm / `.mcpb` M5 distribution work; claiming an
+   out-of-root local server path would make a marketplace install non-runnable.
+   Modeled on the existing `claude-plugins-official` plugin layout
    (`.claude-plugin/plugin.json`, `hooks/`, `commands/`, `skills/`).
 2. **Manual artifact copy.** Ship `SKILL.md` + command files inside the
    npm/`.mcpb` package with docs (`docs/harness/*.md`) instructing users to copy

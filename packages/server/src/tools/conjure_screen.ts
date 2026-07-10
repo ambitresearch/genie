@@ -597,8 +597,8 @@ export function registerConjureScreenTool(server: McpServer, deps: ConjureScreen
         "reachable binding; a kit-specific prompt with no resolvable kit stops with " +
         "ERR_PROJECT_KIT_REQUIRED rather than inventing one. Records the screen in the project " +
         "manifest and returns its files and token usage. Typically follows create_project + " +
-        "bind_kit; like conjure, pass a concrete provider model id rather than the " +
-        "`design-default` alias for production use.",
+        "bind_kit; `design-default` is the valid gateway routing alias and may be overridden " +
+        "with a concrete model id exposed by the configured endpoint.",
       inputSchema: {
         projectId: projectIdSchema,
         prompt: z.string().min(8).max(8192),

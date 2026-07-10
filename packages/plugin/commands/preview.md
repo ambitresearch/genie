@@ -3,7 +3,7 @@ description: "Open the genie live preview grid for a UI kit"
 argument-hint: "[kitId]"
 ---
 
-# /genie:preview
+# genie preview
 
 Force-open the genie viewer for a UI kit, without waiting on model inference.
 

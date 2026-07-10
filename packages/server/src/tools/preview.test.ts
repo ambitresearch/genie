@@ -26,6 +26,7 @@ import { createServer } from "../server.js";
 import {
   PREVIEW_TOOL_NAME,
   InvalidKitIdError,
+  KitNotFoundError,
   ViewerRegistry,
   autoOpenDisabledByEnv,
   buildResourceUri,
@@ -85,7 +86,9 @@ function deferredBooter(): {
 }
 
 async function makeKitsRoot(): Promise<string> {
-  return mkdtemp(join(tmpdir(), "genie-preview-kits-"));
+  const root = await mkdtemp(join(tmpdir(), "genie-preview-kits-"));
+  await mkdir(join(root, "acme-abc123"), { recursive: true });
+  return root;
 }
 
 /**
@@ -101,7 +104,7 @@ async function seedKitWithComponent(kitsRoot: string, kitId: string): Promise<vo
   await writeFile(
     join(compDir, "preview.html"),
     '<!-- @genie group="actions" viewport="480x240" name="Get Started" -->\n' +
-      "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\" /></head>" +
+      '<!doctype html><html lang="en"><head><meta charset="utf-8" /></head>' +
       "<body><button>Get Started</button></body></html>\n",
     "utf-8",
   );
@@ -400,6 +403,19 @@ describe("runPreview (AC3, AC6)", () => {
     expect(booter.calls).toHaveLength(0);
   });
 
+  it("rejects an unknown well-formed kitId without creating a phantom directory", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+    const missingDir = join(kitsRoot, "missing-kit");
+
+    await expect(runPreview({ kitsRoot, registry }, { kitId: "missing-kit" }, {})).rejects.toThrow(
+      KitNotFoundError,
+    );
+    await expect(readFile(join(missingDir, ".genie", "manifest.json"))).rejects.toThrow();
+    expect(booter.calls).toHaveLength(0);
+  });
+
   it("AC7: logs a preview.request line recording the client + ui:// support", async () => {
     const kitsRoot = await makeKitsRoot();
     const registry = new ViewerRegistry(okBooter());
@@ -468,22 +484,25 @@ describe("runPreview manifest compile (piece A)", () => {
     expect(result._meta.ui.resourceUri).toBe("ui://genie/grid?kitId=acme-abc123");
   });
 
-  it("logs preview.compile.failed but still previews when compile throws", async () => {
+  it("propagates genuine manifest compilation failures and does not boot", async () => {
     const kitsRoot = await makeKitsRoot();
-    // No kit dir at all → compileManifest's disk walk rejects; preview must
-    // press on to the (fake) viewer rather than surface the error.
-    const registry = new ViewerRegistry(okBooter("http://127.0.0.1:5173/"));
-    const lines = captureStderr();
+    const booter = okBooter("http://127.0.0.1:5173/");
+    const registry = new ViewerRegistry(booter);
 
-    const result = await runPreview({ kitsRoot, registry }, { kitId: "acme-abc123" }, {});
-
-    lines.restore();
-    // Whether compile fails depends on the platform's readdir-of-missing
-    // behavior; the invariant that matters is preview never throws and still
-    // reports a URL. (If a compile.failed line was logged, it names the kit.)
-    const failed = lines.parsed().find((l) => l.event === "preview.compile.failed");
-    if (failed) expect(failed.kitId).toBe("acme-abc123");
-    expect(result.content[0]?.text).toContain("http://127.0.0.1:5173/");
+    await expect(
+      runPreview(
+        {
+          kitsRoot,
+          registry,
+          ensureManifest: async () => {
+            throw new Error("EACCES: manifest write denied");
+          },
+        },
+        { kitId: "acme-abc123" },
+        {},
+      ),
+    ).rejects.toThrow("EACCES: manifest write denied");
+    expect(booter.calls).toHaveLength(0);
   });
 });
 
@@ -651,16 +670,28 @@ describe("mcp__genie__preview (wired)", () => {
     expect(result._meta?.ui?.resourceUri).toBe("ui://genie/grid?kitId=acme-abc123");
   });
 
-  it("declares _meta.ui.resourceUri on the tool itself (ext-apps §Resource Discovery)", async () => {
+  it("keeps the UI pointer off tools/list because each result needs a query-bearing URI", async () => {
     const kitsRoot = await makeKitsRoot();
     const client = await connectPreview(kitsRoot, okBooter());
     const { tools } = await client.listTools();
     const preview = tools.find((t) => t.name === PREVIEW_TOOL_NAME);
-    // Registration-time discovery: the template URI is BARE — per-call params
-    // reach the app via structuredContent, not the URI.
-    expect((preview?._meta as { ui?: { resourceUri?: string } })?.ui?.resourceUri).toBe(
-      "ui://genie/grid",
-    );
+    expect((preview?._meta as { ui?: { resourceUri?: string } } | undefined)?.ui).toBeUndefined();
+  });
+
+  it("advertises an outputSchema matching structuredContent", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const client = await connectPreview(kitsRoot, okBooter());
+    const { tools } = await client.listTools();
+    const preview = tools.find((t) => t.name === PREVIEW_TOOL_NAME);
+
+    expect(preview?.outputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        kitId: { type: "string" },
+        fileUrl: { type: "string" },
+      },
+      required: expect.arrayContaining(["kitId", "fileUrl"]),
+    });
   });
 
   it("returns structuredContent over the wire", async () => {
@@ -670,7 +701,12 @@ describe("mcp__genie__preview (wired)", () => {
     const result = (await client.callTool({
       name: PREVIEW_TOOL_NAME,
       arguments: { kitId: "acme-abc123" },
-    })) as { structuredContent?: { kitId?: string; viewerUrl?: string } };
+    })) as {
+      structuredContent?: {
+        kitId?: string;
+        viewerUrl?: string;
+      };
+    };
 
     expect(result.structuredContent?.kitId).toBe("acme-abc123");
     expect(result.structuredContent?.viewerUrl).toBe("http://127.0.0.1:5173/");

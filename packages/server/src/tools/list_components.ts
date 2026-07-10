@@ -19,8 +19,8 @@ export const LIST_COMPONENTS_DESCRIPTION =
   "[] when the kit has no components or the group filter matches nothing. Results are capped at 256 per " +
   "call; when more remain, an opaque cursor is returned in _meta.nextCursor — pass it back as `cursor` to " +
   "fetch the next page. Reads the compiled manifest, so results reflect components as of the last " +
-  "compile; calling mcp__genie__preview and letting a ui://-capable host render the inline grid " +
-  "triggers a recompile — call preview first if recent writes might not be reflected yet.";
+  "compile. Calling mcp__genie__preview recompiles before it returns, regardless of whether the " +
+  "host renders ui:// inline or opens a browser — call preview first after recent writes.";
 
 /** Zod shape for a single component entry — reused by `outputSchema`. */
 const componentEntryShape = {
@@ -64,9 +64,7 @@ export function encodeCursor(entry: ComponentEntry): string {
  */
 const CURSOR_PREVIEW_MAX = 16;
 function cursorPreview(cursor: string): string {
-  return cursor.length <= CURSOR_PREVIEW_MAX
-    ? cursor
-    : `${cursor.slice(0, CURSOR_PREVIEW_MAX)}…`;
+  return cursor.length <= CURSOR_PREVIEW_MAX ? cursor : `${cursor.slice(0, CURSOR_PREVIEW_MAX)}…`;
 }
 
 /** Decode + validate a keyset cursor. Throws on tampered / malformed input. */
@@ -114,16 +112,12 @@ export function paginateComponents(
 
   const page = components.slice(start, start + MAX_COMPONENTS);
   const hasMore = start + MAX_COMPONENTS < components.length;
-  const nextCursor =
-    hasMore && page.length > 0 ? encodeCursor(page[page.length - 1]!) : undefined;
+  const nextCursor = hasMore && page.length > 0 ? encodeCursor(page[page.length - 1]!) : undefined;
 
   return nextCursor === undefined ? { components: page } : { components: page, nextCursor };
 }
 
-export function registerListComponents(
-  server: McpServer,
-  store: KitStore,
-): void {
+export function registerListComponents(server: McpServer, store: KitStore): void {
   server.registerTool(
     LIST_COMPONENTS_TOOL_NAME,
     {
