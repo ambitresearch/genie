@@ -137,23 +137,16 @@ const lightRows = [
   row("focus on paper", "focus", "paper", light, AA_UI),
   row("accent (clay) on paper", "accent", "paper", light, null),
   row("accent-2 (deep clay, text-safe) on paper", "accent-2", "paper", light, AA_BODY),
+  row("accent-2 on paper-2", "accent-2", "paper-2", light, AA_BODY),
+  row("accent-2 on paper-3", "accent-2", "paper-3", light, AA_BODY),
   row("white on accent", "white", "accent", light, null),
   row("white on accent-2", "white", "accent-2", light, AA_BODY),
-  // DRO-748 fix: dedicated button-fill text token for Conjure/Refine/Apply/
-  // Approve — gated, this is the pairing those buttons actually use.
+  // DRO-748 fix: dedicated button-fill text token for Conjure/Refine/Apply —
+  // gated, this is the pairing those buttons actually use.
   row("on-accent on accent [button-fill text]", "on-accent", "accent", light, AA_BODY),
-  // Hover-state fill (button darkens to accent-2 on hover, §5 button ladder).
-  // Not gated at AA_BODY — hard ceiling of the fill itself (even pure black
-  // on accent-2 (light) only reaches 4.29:1), not a token-tuning gap. Clears
-  // AA_UI (filled control, not body prose); flagged in design.md §14 rather
-  // than silently assumed solved.
-  row(
-    "on-accent on accent-2 [button-fill text, HOVER state]",
-    "on-accent",
-    "accent-2",
-    light,
-    AA_UI,
-  ),
+  // Hover keeps the same clay fill and uses elevation/position for feedback,
+  // so the small button label retains the full 4.5:1 text threshold.
+  row("on-accent on accent [button-fill text, HOVER state]", "on-accent", "accent", light, AA_BODY),
 ];
 for (const r of lightRows)
   console.log(`${r.ratio.toFixed(2)}:1  ${r.verdict.padEnd(1)}  ${r.label}`);
@@ -169,7 +162,7 @@ const darkRows = [
   row("focus(dark, inherited — no override) on paper(dark)", "focus", "paper", dark, AA_UI),
   row("accent(dark, clay) on paper(dark)", "accent", "paper", dark, null),
   row("accent-2(dark, text-safe clay) on paper(dark)", "accent-2", "paper", dark, AA_BODY),
-  row("accent-2(dark) on paper-2(dark)", "accent-2", "paper-2", dark, null),
+  row("accent-2(dark) on paper-2(dark)", "accent-2", "paper-2", dark, AA_BODY),
   row("accent-2(dark) on paper-3(dark)", "accent-2", "paper-3", dark, null),
   row("white on accent(dark)", "white", "accent", dark, null),
   row("white on accent-2(dark)", "white", "accent-2", dark, null),
@@ -181,19 +174,16 @@ const darkRows = [
   row("ink(dark) on accent(dark) [not used — see on-accent below]", "ink", "accent", dark, null),
   // DRO-748 fix: --color-on-accent is scheme-invariant (no dark override —
   // same oklch(20% 0.004 60) in both schemes), so it inherits into `dark`
-  // unchanged here. Gated: this is the pairing Conjure/Refine/Apply/Approve
-  // buttons actually use in dark mode.
+  // unchanged here. Gated: this is the pairing Conjure/Refine/Apply buttons
+  // actually use in dark mode.
   row("on-accent on accent(dark) [button-fill text]", "on-accent", "accent", dark, AA_BODY),
-  // Hover-state fill, dark mode — see the light-mode hover row above for
-  // why this is gated at AA_UI, not AA_BODY (hard ceiling of the fill, not a
-  // token-tuning gap). Dark-mode hover has more headroom than light-mode
-  // hover since accent-2(dark) is lighter than accent-2(light).
+  // Hover retains the same fill in dark mode too; feedback comes from lift.
   row(
-    "on-accent on accent-2(dark) [button-fill text, HOVER state]",
+    "on-accent on accent(dark) [button-fill text, HOVER state]",
     "on-accent",
-    "accent-2",
+    "accent",
     dark,
-    AA_UI,
+    AA_BODY,
   ),
 ];
 for (const r of darkRows)
@@ -204,7 +194,8 @@ for (const r of darkRows)
 //    right here (previously verified by a separate throwaway script — see
 //    PR description; folding toHex() into the persisted verifier means that
 //    claim is checkable from this file alone, no separate script needed). ──
-console.log("\n=== computed hex (dark-mode fix tokens) ===");
+console.log("\n=== computed hex (contrast-fix tokens) ===");
+console.log(`--color-accent-2 (light): ${toHex(rgbFromOklchStr(light["accent-2"]))}`);
 for (const tok of ["ink-3", "accent-2", "paper"]) {
   console.log(`--color-${tok} (dark): ${toHex(rgbFromOklchStr(dark[tok]))}`);
 }

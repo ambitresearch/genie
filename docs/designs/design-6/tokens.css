@@ -68,11 +68,11 @@
 
   /* ─── Color · genie-clay (GENERATION MOMENTS ONLY — the identity contract) ── */
   --color-accent: oklch(66% 0.105 42); /* genie-clay  #c87c5e */
-  --color-accent-2: oklch(56% 0.115 38); /* deeper clay #ac5a40 */
+  --color-accent-2: oklch(50% 0.115 38); /* text-safe clay #99482f */
   --color-accent-tint: oklch(93% 0.03 46); /* clay wash   #fae2d8 */
   --color-accent-edge: oklch(82% 0.07 44); /* clay border #ecb6a0 */
   /* on-accent (DRO-748): dedicated button-FILL text token for Conjure/Refine/
-   * Apply/Approve — decoupled from --color-ink on purpose. --color-ink is a
+   * Apply — decoupled from --color-ink on purpose. --color-ink is a
    * body-text-on-paper token that must flip per-scheme (near-black on light
    * paper, near-white on dark paper); reusing it for button-fill text is what
    * broke dark mode (ink-dark on accent-dark = 2.00:1, white fares no better
@@ -86,7 +86,7 @@
   --color-struct: oklch(45% 0.12 265); /* ink-blue    #345197 */
   --color-struct-tint: oklch(93% 0.03 265); /* selected    #dee8fd */
   --color-focus: oklch(52% 0.14 265); /* focus ring  #4064b9 (≥3:1) */
-  --color-primary: var(--color-struct); /* alias — links / primary structural */
+  --color-primary: var(--color-ink); /* alias — structural Primary button */
 
   /* ─── Color · semantic states ────────────────────────────────────────────── */
   --color-success: oklch(58% 0.13 150);
@@ -157,19 +157,17 @@
   --color-hairline: oklch(32% 0.012 75);
   --color-hairline-2: oklch(40% 0.014 75);
   --color-accent: oklch(74% 0.1 46);
-  /* accent-2 dark override (DRO-743): with no override this token fell back to
-   * its light-mode value (56% 0.115 38) against dark paper — 3.78:1, failing
+  /* accent-2 dark override (DRO-743): with no override this token falls back to
+   * its light-mode value (50% 0.115 38) against dark paper — 2.93:1, failing
    * the clay-text rule's own 4.5:1 promise (design.md §14) once dark mode is
-   * active. 64% 0.11 42 is --color-accent's own light->dark nudge (+8% L,
-   * -0.005 C, +4 H) applied to accent-2, so the accent/accent-2 relationship
-   * stays consistent across both schemes; it clears 5.27:1 on dark paper (and
-   * 4.82:1 on paper-2 — better than light mode's own accent-2-on-paper-2). */
+   * active. The explicit 64% 0.11 42 override clears 5.27:1 on dark paper and
+   * 4.82:1 on paper-2. */
   --color-accent-2: oklch(64% 0.11 42); /* dark deeper clay #c47455 — 5.27:1 */
   --color-accent-tint: oklch(30% 0.06 46);
   --color-accent-edge: oklch(48% 0.1 46);
   --color-struct: oklch(68% 0.13 265);
   --color-struct-tint: oklch(30% 0.06 265);
-  --color-primary: var(--color-struct);
+  --color-primary: var(--color-ink);
   --color-code-bg: oklch(16% 0.01 75);
   --color-code-ink: oklch(88% 0.01 80);
   --color-code-com: oklch(54% 0.016 75);

@@ -119,8 +119,8 @@
   <text x="376" y="665" font-size="13" font-weight="600" fill="#171614">Quanta UI Kit</text>
   <text x="376" y="682" font-size="11" fill="#75716d">68 components</text>
   <text x="376" y="700" font-size="11" fill="#75716d">design-sync active</text>
-  <rect x="376" y="708" width="36" height="14" rx="7" fill="#fae2d8"/>
-  <text x="394" y="719" font-size="9" font-weight="600" fill="#c87c5e"
+  <rect x="376" y="708" width="36" height="14" rx="7" fill="#f3faf6"/>
+  <text x="394" y="719" font-size="9" font-weight="600" fill="#2a7a42"
         text-anchor="middle">synced</text>
 
   <!-- Kit card 2 -->

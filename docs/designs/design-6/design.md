@@ -46,7 +46,7 @@ This is an identity contract; violating it erases the sibling relationship with 
 
 /* Clay / gilt — GENERATION MOMENTS ONLY */
 --color-accent: oklch(66% 0.105 42); /* genie-clay  #c87c5e */
---color-accent-2: oklch(56% 0.115 38); /* deeper      #ac5a40 */
+--color-accent-2: oklch(50% 0.115 38); /* text-safe   #99482f */
 --color-accent-tint: oklch(93% 0.03 46); /* clay wash   #fae2d8 */
 --color-accent-edge: oklch(82% 0.07 44); /* clay border #ecb6a0 */
 --color-on-accent: oklch(20% 0.004 60); /* button-fill text #171614 (DRO-748) */
@@ -86,17 +86,17 @@ Spacing scale (px): 4 · 8 · 12 · 16 · 24 · 32 · 48 · 64 · 96
 ### Button hierarchy (locked)
 
 The button ladder is canonical. Clay is **never** a button-rank colour — it is the
-generation spark. The loudest *structural* action is **ink-filled**, so clay can never
+generation spark. The loudest _structural_ action is **ink-filled**, so clay can never
 ride in on a Save / Submit / Delete. This is what makes "clay only on generation"
 enforceable at the component level.
 
-| Rank | Treatment | Tokens | Use |
-| --- | --- | --- | --- |
-| **Primary** | ink-filled | `--color-ink` (`#171614`) fill, `--color-paper` (`#faf8f5`) text; hover/active = a warmer/deeper ink (never cold black, per §6); disabled = ink @ ~0.42 opacity | The loudest **structural** action — Save, Confirm |
-| **Secondary** | neutral outline | `--color-paper` fill + `--color-hairline-2` border + `--color-ink` text | Secondary structural action |
-| **Ghost** | text only | `--color-struct` (ink-blue) text, no fill | Low-emphasis / inline action |
-| **Delete / danger** | danger | `--color-danger` | Destructive action |
-| **Generate / Conjure / Apply** | clay — the **sole** clay button | `--color-accent` fill (the generation spark), `--color-on-accent` text (DRO-748) | Conjure, Refine, Apply only |
+| Rank                           | Treatment                       | Tokens                                                                                                                                                          | Use                                               |
+| ------------------------------ | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| **Primary**                    | ink-filled                      | `--color-ink` (`#171614`) fill, `--color-paper` (`#faf8f5`) text; hover/active = a warmer/deeper ink (never cold black, per §6); disabled = ink @ ~0.42 opacity | The loudest **structural** action — Save, Confirm |
+| **Secondary**                  | neutral outline                 | `--color-paper` fill + `--color-hairline-2` border + `--color-ink` text                                                                                         | Secondary structural action                       |
+| **Ghost**                      | text only                       | `--color-struct` (ink-blue) text, no fill                                                                                                                       | Low-emphasis / inline action                      |
+| **Delete / danger**            | danger                          | `--color-danger`                                                                                                                                                | Destructive action                                |
+| **Generate / Conjure / Apply** | clay — the **sole** clay button | `--color-accent` fill (the generation spark), `--color-on-accent` text (DRO-748)                                                                                | Conjure, Refine, Apply only                       |
 
 Clay is **never** the fill of a generic Primary / Save / Submit / Delete button.
 
@@ -141,7 +141,7 @@ Three-pane: ghosted harness chat (left, 280 px), rendered component stage (centr
   Approve / Request Changes buttons at top, staged-tweaks list with clay highlight, Apply
   button (clay fill), comment thread below.
 
-Clay appears: `@genie` marker, Refine prompt, Apply button, Approve badge.
+Clay appears: `@genie` marker, Refine prompt, Apply button, generation progress.
 Structure stays: panel borders, toolbar, chat rail, Request Changes button.
 
 ### 03 — Embedded tier (3 display modes)
@@ -204,12 +204,12 @@ Each surface declares an explicit primary → secondary → tertiary focus order
 lands in the same place every time. The top bar (`Generate · Browse · Review`) is the only
 persistent global nav; it stays ink/neutral (never clay).
 
-| Surface | Primary (first) | Secondary (second) | Tertiary (third) |
-| --- | --- | --- | --- |
-| **00 Front door** | The prompt box + Conjure (centre of gravity) | Blueprints table | Recent-kits row |
-| **01 UI-kit browser** | The selected component preview stage | Kit tree (240 px, left) | Selector/status meta + code snippet |
-| **02 Preview + refine** | The rendered component stage (centre) | Review & Refine panel (320 px, right) | Conversation rail (280 px, left) |
-| **03 Embedded** | The active `@genie` widget (per display mode) | The CSP constraint strip | Host-page chrome (ghosted, deferred) |
+| Surface                 | Primary (first)                               | Secondary (second)                    | Tertiary (third)                     |
+| ----------------------- | --------------------------------------------- | ------------------------------------- | ------------------------------------ |
+| **00 Front door**       | The prompt box + Conjure (centre of gravity)  | Blueprints table                      | Recent-kits row                      |
+| **01 UI-kit browser**   | The selected component preview stage          | Kit tree (240 px, left)               | Selector/status meta + code snippet  |
+| **02 Preview + refine** | The rendered component stage (centre)         | Review & Refine panel (320 px, right) | Conversation rail (280 px, left)     |
+| **03 Embedded**         | The active `@genie` widget (per display mode) | The CSP constraint strip              | Host-page chrome (ghosted, deferred) |
 
 **Trunk test:** cover the top nav and each surface is still self-identifying — the front
 door reads "generate," the browser reads "library workbench," review reads "approve a
@@ -223,16 +223,16 @@ in its Primary/Secondary/Tertiary row above — everything else is progressive d
 ## 12. Interaction states (what the user sees)
 
 Every interactive feature commits to all five states. **Empty states are features**, not
-blanks — they teach the next action. Descriptions are what the *user sees*, not backend.
+blanks — they teach the next action. Descriptions are what the _user sees_, not backend.
 
-| Feature | Loading | Empty | Error | Success | Partial |
-| --- | --- | --- | --- | --- | --- |
-| **Prompt box / Conjure** | Conjure → `✦ Conjuring…` clay button, clay glow (`--shadow-accent`), input locked | Placeholder prompt + greyed Conjure (disabled until ≥1 char) | Inline clay-edged notice under box: model/endpoint error + "Try again"; prompt text preserved | Routes to Review with `draft #1`; toast "Generated <Name>" | Streamed tokens fill a skeleton card in place; Conjure stays in generating state until validated |
-| **Kit tree (01)** | Hairline shimmer rows (no spinner) | "No kits yet — Conjure your first component" with a link to the front door | Row marked with neutral `⚠` + retry affordance; tree stays navigable | Selected node bolds, breadcrumb updates | Lazy groups show a count + a disclosure caret; un-expanded groups render their header only |
-| **Component preview stage (01/02)** | "PREVIEW · …" label with a thin shimmer in the stage | "(rendered empty)" thin-card treatment (matches `ref-genie-card` thin state) | Sandboxed-iframe render failure → neutral "Preview unavailable" card, code panel still shown | Component renders at declared viewport (`@2x`) | Variant tabs (Default/Hover/Focus/Disabled) load independently; unbuilt variants are greyed |
-| **Refine panel (02)** | Refine → clay generating state; diff stats show `…` until the diff returns | "No changes yet — describe a refinement or drag a slider" | Refine failed validation → diff rejected, panel shows the validator's reason in a neutral notice, prior draft intact (see §15 rejected-refine) | Checklist ticks green; "Apply to kit" enabled | Sliders re-parameterise instantly (no model call); only structural edits show the generating state |
-| **Approve / Request changes (02)** | Approve shows a brief clay confirm; Request changes is neutral throughout | Decision row disabled until a draft exists | Apply/commit failure → neutral error with the git/plan reason; draft stays open | Approve → "Applied to kit" + commit ref; surface returns to Browse | Approve enabled but "Apply to kit" gated on a green checklist (keyboard-nav item may stay manual `○`) |
-| **Embedded grid (03)** | Host-themed skeleton tiles (system fonts, no web-font flash) | "Generate a component" inline prompt (each mode has its own empty CTA) | CSP-blocked asset → silent host-deferred fallback; clay identity still holds | Cards render byte-identical to standalone (G-5) | Inline/PiP modes show a "Recent" stub list while the full grid is fetched |
+| Feature                             | Loading                                                                           | Empty                                                                        | Error                                                                                                                                          | Success                                                            | Partial                                                                                               |
+| ----------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| **Prompt box / Conjure**            | Conjure → `✦ Conjuring…` clay button, clay glow (`--shadow-accent`), input locked | Placeholder prompt + greyed Conjure (disabled until ≥1 char)                 | Inline clay-edged notice under box: model/endpoint error + "Try again"; prompt text preserved                                                  | Routes to Review with `draft #1`; toast "Generated <Name>"         | Streamed tokens fill a skeleton card in place; Conjure stays in generating state until validated      |
+| **Kit tree (01)**                   | Hairline shimmer rows (no spinner)                                                | "No kits yet — Conjure your first component" with a link to the front door   | Row marked with neutral `⚠` + retry affordance; tree stays navigable                                                                           | Selected node bolds, breadcrumb updates                            | Lazy groups show a count + a disclosure caret; un-expanded groups render their header only            |
+| **Component preview stage (01/02)** | "PREVIEW · …" label with a thin shimmer in the stage                              | "(rendered empty)" thin-card treatment (matches `ref-genie-card` thin state) | Sandboxed-iframe render failure → neutral "Preview unavailable" card, code panel still shown                                                   | Component renders at declared viewport (`@2x`)                     | Variant tabs (Default/Hover/Focus/Disabled) load independently; unbuilt variants are greyed           |
+| **Refine panel (02)**               | Refine → clay generating state; diff stats show `…` until the diff returns        | "No changes yet — describe a refinement or drag a slider"                    | Refine failed validation → diff rejected, panel shows the validator's reason in a neutral notice, prior draft intact (see §15 rejected-refine) | Checklist ticks green; "Apply to kit" enabled                      | Sliders re-parameterise instantly (no model call); only structural edits show the generating state    |
+| **Approve / Request changes (02)**  | Approve is ink-filled Primary; Request changes is neutral throughout              | Decision row disabled until a draft exists                                   | Apply/commit failure → neutral error with the git/plan reason; draft stays open                                                                | Approve → "Applied to kit" + commit ref; surface returns to Browse | Approve enabled but "Apply to kit" gated on a green checklist (keyboard-nav item may stay manual `○`) |
+| **Embedded grid (03)**              | Host-themed skeleton tiles (system fonts, no web-font flash)                      | "Generate a component" inline prompt (each mode has its own empty CTA)       | CSP-blocked asset → silent host-deferred fallback; clay identity still holds                                                                   | Cards render byte-identical to standalone (G-5)                    | Inline/PiP modes show a "Recent" stub list while the full grid is fetched                             |
 
 ---
 
@@ -240,13 +240,13 @@ blanks — they teach the next action. Descriptions are what the *user sees*, no
 
 Genie lives **inside a resizable harness pane** (Claude Code / Cursor / VS Code side
 panels), so narrow widths are the common case, not an edge case. Layout responds to the
-*pane* width, not the device. Breakpoints are content-driven, named by what collapses.
+_pane_ width, not the device. Breakpoints are content-driven, named by what collapses.
 
-| Width band | 01 Browser | 02 Preview + refine | 00 Front door |
-| --- | --- | --- | --- |
-| **≥ 1100 px (full)** | Tree 240 + detail | Chat 280 · stage · refine 320 (three-pane) | Centred prompt, 2-col supporting tables |
-| **720–1099 px (tablet/half-pane)** | Tree collapses to a 44 px rail of group icons; click expands an overlay tree | Conversation rail collapses to a toggle; stage + refine remain | Prompt full-width; blueprints + recent-kits stack to one column |
-| **< 720 px (narrow pane)** | Single column: tree becomes a top breadcrumb-dropdown; detail fills width | Single column with a **segmented switch** (`Preview ⇄ Review`) — never three cramped columns; the refine panel becomes a bottom sheet | Prompt + Conjure only above the fold; everything else scrolls below |
+| Width band                         | 01 Browser                                                                   | 02 Preview + refine                                                                                                                   | 00 Front door                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **≥ 1100 px (full)**               | Tree 240 + detail                                                            | Chat 280 · stage · refine 320 (three-pane)                                                                                            | Centred prompt, 2-col supporting tables                             |
+| **720–1099 px (tablet/half-pane)** | Tree collapses to a 44 px rail of group icons; click expands an overlay tree | Conversation rail collapses to a toggle; stage + refine remain                                                                        | Prompt full-width; blueprints + recent-kits stack to one column     |
+| **< 720 px (narrow pane)**         | Single column: tree becomes a top breadcrumb-dropdown; detail fills width    | Single column with a **segmented switch** (`Preview ⇄ Review`) — never three cramped columns; the refine panel becomes a bottom sheet | Prompt + Conjure only above the fold; everything else scrolls below |
 
 **Rules:** panels **reflow, they do not merely shrink** — a 320 px refine panel never
 squeezes below ~280 px; it docks to a bottom sheet instead. The clay accent and the
@@ -263,26 +263,28 @@ Commitments are testable. Contrast values below are measured against `--color-pa
 
 **Contrast ledger (measured):**
 
-| Pair | Ratio | Verdict / usage rule |
-| --- | --- | --- |
-| `--color-ink` on paper | 17.1:1 | ✓ primary text |
-| `--color-ink-2` on paper | 9.9:1 | ✓ secondary text |
-| `--color-ink-3` on paper | 4.6:1 | ✓ on **base paper only** |
-| `--color-ink-3` on paper-2 / paper-3 | 4.25:1 / 3.9:1 | ✗ as body — use `--color-ink-2` for text on raised/sunken surfaces; `ink-3` there is for non-text hairline labels only |
-| `--color-struct` on paper | 7.2:1 | ✓ links |
-| `--color-focus` on paper | 5.3:1 | ✓ focus ring (≥ 3:1) |
-| `--color-accent` (clay) on paper | **3.05:1** | ✗ for normal text — see clay-text rule below |
-| `--color-accent-2` (deep clay) on paper | 4.6:1 | ✓ — the **text-safe clay**; use for clay-coloured labels/`@genie` marker at body size |
-| white on `--color-accent` | 3.2:1 | large/bold UI only if ever used — **not** the Conjure/Refine/Apply/Approve button token; see `--color-on-accent` below (DRO-748) |
-| white on `--color-accent-2` | 4.9:1 | ✓ button text |
-| `--color-on-accent` on `--color-accent` | **5.6:1** | ✓ — the **Conjure/Refine/Apply/Approve button-fill text token** (DRO-748); a fixed near-black, kept as its own token (not an alias of `--color-ink`) specifically so it does not flip to near-white in dark mode |
+| Pair                                    | Ratio           | Verdict / usage rule                                                                                                                                                                                     |
+| --------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--color-ink` on paper                  | 17.1:1          | ✓ primary text                                                                                                                                                                                           |
+| `--color-ink-2` on paper                | 9.9:1           | ✓ secondary text                                                                                                                                                                                         |
+| `--color-ink-3` on paper                | 4.6:1           | ✓ on **base paper only**                                                                                                                                                                                 |
+| `--color-ink-3` on paper-2 / paper-3    | 4.25:1 / 3.9:1  | ✗ as body — use `--color-ink-2` for text on raised/sunken surfaces; `ink-3` there is for non-text hairline labels only                                                                                   |
+| `--color-struct` on paper               | 7.2:1           | ✓ links                                                                                                                                                                                                  |
+| `--color-focus` on paper                | 5.3:1           | ✓ focus ring (≥ 3:1)                                                                                                                                                                                     |
+| `--color-accent` (clay) on paper        | **3.05:1**      | ✗ for normal text — see clay-text rule below                                                                                                                                                             |
+| `--color-accent-2` (deep clay) on paper | 5.96:1          | ✓ — the **text-safe clay**; use for clay-coloured labels/`@genie` marker at body size                                                                                                                    |
+| `--color-accent-2` on paper-2 / paper-3 | 5.54:1 / 5.06:1 | ✓ — stays AA-safe across every light paper elevation used by marker/badge text                                                                                                                           |
+| white on `--color-accent`               | 3.2:1           | ✗ for normal text — **not** the Conjure/Refine/Apply button token; see `--color-on-accent` below (DRO-748)                                                                                               |
+| white on `--color-accent-2`             | 6.32:1          | ✓ contrast, but generic buttons remain ink-filled by the identity rule                                                                                                                                   |
+| `--color-on-accent` on `--color-accent` | **5.6:1**       | ✓ — the **Conjure/Refine/Apply button-fill text token** (DRO-748); a fixed near-black, kept as its own token (not an alias of `--color-ink`) specifically so it does not flip to near-white in dark mode |
 
-**Clay-text rule (a11y refinement of the identity rule):** clay still appears *only* on
+**Clay-text rule (a11y refinement of the identity rule):** clay still appears _only_ on
 generate/refine moments — but where clay carries **text** at body size (the `@genie`
-marker, refine labels), it renders in `--color-accent-2` (`#ac5a40`, 4.6:1), not
+marker, refine labels), it renders in `--color-accent-2` (`#99482f`, 5.96:1 on base
+paper and ≥5.06:1 across raised/sunken light papers), not
 `--color-accent` (`#c87c5e`, 3.05:1). `--color-accent` remains the fill/large-control hue.
-This changes no token and no identity — only which existing clay token small clay *text*
-points at.
+The deeper light-mode `--color-accent-2` value is still the same clay role and hue; it now
+meets the text threshold on every canonical light paper surface.
 
 **Dark-mode contrast ledger (measured, `data-scheme="dark"`):** the light-mode ledger
 above does not automatically hold once dark mode is active — two tokens had no dark
@@ -291,19 +293,19 @@ very differently in OKLCH space. **DRO-743** found and fixed both gaps at the to
 source (`tokens.css`); ratios below are measured against dark `--color-paper`
 (`oklch(19% 0.006 60)`, `#161311`) unless noted.
 
-| Pair | Ratio | Verdict / usage rule |
-| --- | --- | --- |
-| `--color-ink` (dark) on paper | 15.5:1 | ✓ primary text |
-| `--color-ink-2` (dark) on paper | 8.6:1 | ✓ secondary text |
-| `--color-ink-3` (dark) on paper | **4.67:1** | ✓ on **base paper only** — was `oklch(55% 0.008 65)` (unchanged from light, 3.80:1, ✗); fixed to `oklch(60% 0.008 65)` (`#847f7b`) |
-| `--color-ink-3` (dark) on paper-2 / paper-3 | 4.28:1 / 3.82:1 | ✗ as body — same restriction as light mode: use `--color-ink-2` for text on raised/sunken dark surfaces; `ink-3` there is for non-text hairline labels only |
-| `--color-struct` (dark) on paper | 6.3:1 | ✓ links |
-| `--color-accent` (dark clay) on paper | 7.76:1 | large/UI fill only — same clay-text rule applies in dark mode |
-| `--color-accent-2` (dark deep clay) on paper | **5.27:1** | ✓ — the dark **text-safe clay**; was undefined and fell back to the light-mode value (3.78:1, ✗); fixed by adding a dark override `oklch(64% 0.11 42)` (`#c47455`) — `--color-accent`'s own light→dark nudge (+8% L, −0.005 C, +4 H) applied to `accent-2`, so the two tokens keep the same relationship in both schemes |
-| `--color-accent-2` (dark) on paper-2 / paper-3 | 4.82:1 / 4.30:1 | ✓ / ✗ — paper-2 clears AA (better margin than light mode's own 4.29:1); paper-3 doesn't, so the clay-text rule on dark sunken surfaces still needs `ink-2`-equivalent caution — no current surface puts `@genie`/refine-label text on paper-3 |
-| white on `--color-accent` (dark) | 2.38:1 | ✗ — fails even the 3:1 large-text bar; not used — see `--color-on-accent` below |
-| white on `--color-accent-2` (dark) | 3.51:1 | large/bold UI only in dark mode (clears 3:1, not 4.5:1) |
-| `--color-on-accent` on `--color-accent` (dark) | **7.61:1** | ✓ — the **Conjure/Refine/Apply/Approve button-fill text token** (DRO-748); same fixed value as light mode (`oklch(20% 0.004 60)`, `#171614`) — clears AA body-text (4.5:1) with more headroom than in light mode, since `--color-accent` (dark, 74% L) is lighter than `--color-accent` (light, 66% L) |
+| Pair                                           | Ratio           | Verdict / usage rule                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--color-ink` (dark) on paper                  | 15.5:1          | ✓ primary text                                                                                                                                                                                                                                                                                 |
+| `--color-ink-2` (dark) on paper                | 8.6:1           | ✓ secondary text                                                                                                                                                                                                                                                                               |
+| `--color-ink-3` (dark) on paper                | **4.67:1**      | ✓ on **base paper only** — was `oklch(55% 0.008 65)` (unchanged from light, 3.80:1, ✗); fixed to `oklch(60% 0.008 65)` (`#847f7b`)                                                                                                                                                             |
+| `--color-ink-3` (dark) on paper-2 / paper-3    | 4.28:1 / 3.82:1 | ✗ as body — same restriction as light mode: use `--color-ink-2` for text on raised/sunken dark surfaces; `ink-3` there is for non-text hairline labels only                                                                                                                                    |
+| `--color-struct` (dark) on paper               | 6.3:1           | ✓ links                                                                                                                                                                                                                                                                                        |
+| `--color-accent` (dark clay) on paper          | 7.76:1          | large/UI fill only — same clay-text rule applies in dark mode                                                                                                                                                                                                                                  |
+| `--color-accent-2` (dark deep clay) on paper   | **5.27:1**      | ✓ — the dark **text-safe clay**; without its dark override the light token would be only 2.93:1 on dark paper; `oklch(64% 0.11 42)` (`#c47455`) restores AA                                                                                                                                    |
+| `--color-accent-2` (dark) on paper-2 / paper-3 | 4.82:1 / 4.30:1 | ✓ / ✗ — paper-2 clears AA; paper-3 doesn't, so dark sunken surfaces still use `--color-ink-2` for text — no current surface puts `@genie`/refine-label text on dark paper-3                                                                                                                    |
+| white on `--color-accent` (dark)               | 2.38:1          | ✗ — fails even the 3:1 large-text bar; not used — see `--color-on-accent` below                                                                                                                                                                                                                |
+| white on `--color-accent-2` (dark)             | 3.51:1          | large/bold UI only in dark mode (clears 3:1, not 4.5:1)                                                                                                                                                                                                                                        |
+| `--color-on-accent` on `--color-accent` (dark) | **7.61:1**      | ✓ — the **Conjure/Refine/Apply button-fill text token** (DRO-748); same fixed value as light mode (`oklch(20% 0.004 60)`, `#171614`) — clears AA body-text (4.5:1) with more headroom than in light mode, since `--color-accent` (dark, 74% L) is lighter than `--color-accent` (light, 66% L) |
 
 **Fix — dedicated `--color-on-accent` button-fill text token (DRO-748):** verifying the
 ledger above (as part of DRO-743) surfaced a third, distinct dark-mode AA gap — the
@@ -317,21 +319,14 @@ even the 3:1 UI bar). The fix is a **new, scheme-invariant token**, `--color-on-
 inherit `--color-ink`'s dark-mode flip to near-white): it clears **5.6:1 on `--color-accent`
 (light)** and **7.6:1 on `--color-accent` (dark)** — both comfortably past the 4.5:1
 body-text bar, at any weight/size, in both schemes. **Usage rule:** `--color-on-accent` is
-the text colour for all clay-**fill** buttons (Conjure, Refine, Apply, Approve) in both
+the text colour for all clay-**fill** buttons (Conjure, Refine, Apply) in both
 light and dark mode; `--color-accent-2` remains the token for clay **text on paper**
 (the `@genie` marker, refine labels — the clay-text rule above is unchanged).
 
-**Note — hover-state fill is a separate, narrower headroom question, not reopened by
-this fix:** the button's *hover* fill darkens to `--color-accent-2` (§5 button ladder;
-`--clay-dk` in the prototype). `--color-on-accent` on `--color-accent-2` is **3.70:1
-(light-mode hover) / 5.16:1 (dark-mode hover)** — light-mode hover clears the 3:1
-UI-component bar (it's a filled control, not body prose) but not 4.5:1; this is a hard
-ceiling of the hover fill itself, not a token-tuning gap — even pure black on
-`--color-accent-2` (light) only reaches 4.29:1, since the fill is already fairly dark.
-Scoped out of DRO-748 (AC1 targets the resting `--color-accent` fill the Conjure/Refine/
-Apply/Approve buttons render in by default) and flagged here rather than silently
-assumed solved, consistent with how this section documents known headroom limits
-elsewhere (e.g. `accent-2` on paper-3 above).
+**Hover rule:** generation buttons retain `--color-accent` and signal hover with lift/shadow,
+not a darker fill. Button-label text remains subject to WCAG 1.4.3's 4.5:1 requirement in
+every interaction state; the 3:1 UI-component threshold applies to non-text boundaries, not
+13px labels. `--color-accent-2` remains reserved for text-safe clay on paper.
 
 **Verification:** `docs/designs/design-6/contrast-check.mjs` re-derives every row above
 (and the light-mode table) directly from `tokens.css` — OKLCH → OKLab → linear sRGB →
@@ -361,33 +356,15 @@ motion.
 Tracked so they are not silently deferred into implementation. Each names what breaks if
 it ships undecided.
 
-| # | Decision needed | If deferred, what happens |
-| --- | --- | --- |
-| U-1 | **What the grid shows while conjuring** — skeleton card in place vs. modal vs. separate "drafts" lane | Conjure feels like a dead click; users re-submit and double-spend a model call |
-| U-2 | **Narrow-pane nav pattern** — breadcrumb-dropdown vs. bottom-sheet vs. segmented switch (§13 proposes per-surface) | Each surface invents its own collapse, harness side-panel use (the primary vehicle) feels broken |
-| U-3 | **How a rejected refine is surfaced** — inline notice + intact prior draft (proposed) vs. diff-with-errors vs. blocking modal | Failed validation silently discards work or applies a broken diff; the "freeze the rest" promise (D-I) looks untrue |
-| U-4 | **Multi-kit ambiguity UI** (D-F resolution ladder: explicit→default→sole→ask) — what the "stop and ask" picker looks like on each surface | Genie either guesses a kit (betrays adherence) or hard-stops with no recovery affordance |
-| U-5 | **Sync-state badge semantics** — is the clay "synced"/"design-sync active" pill a generate-moment (clay) or structural status (neutral)? | **DECIDED (iteration 2):** structural **status**, not a generate moment → **neutral**. The pill recolours clay→the success-green status semantic already used for "✓ validated" (`--color-success`), reading as status rather than an identity hue. Pixel re-render is owner-gated (see note). |
-| U-6 | **"Primary = clay" vs. structural confirmations** — `ref-primitives` shows a clay Primary ("Save kit"); product surfaces keep non-generation confirmations neutral | **DECIDED (iteration 2):** Primary is **ink-filled**; clay is the spark only (see §5 *Button hierarchy*). `ref-primitives.svg` must be re-rendered (see note); product surfaces 00–03 are already compliant. |
-| U-7 | **Diff stats / checklist source of truth** — are `+14/−6` and the checklist live validator output or static labels? | Review panel shows stale numbers; "Apply to kit" gating on the checklist becomes cosmetic |
-| U-8 | **Embedded empty-state per display mode** — inline vs. fullscreen vs. pip each need a distinct first-run CTA | The three modes share one CTA that fits none; pip especially has no room for the front-door prompt |
+**Resolved in iteration 2 / DRO-748 cleanup:** structural Primary is ink-filled and synced
+status pills use success-green. Product surfaces, `ref-primitives.svg`, and the prototype now
+match; Generate/Conjure/Refine/Apply remain the clay spark.
 
-**Reference-sheet re-render (owner-gated, separate task).** Resolving U-5/U-6 changes
-the *spec* (§2, §5, §9 above); the matching **pixel** edit to the decorative
-reference/status mocks is a small, low-risk, owner-gated follow-up, consistent with the
-project's established "mock re-render is a separate task" workflow. **Nothing about the
-locked palette/identity changes** — these are existing-token recolours, no new colour.
-This is the **only** known accent-rule defect, and it is **isolated to the
-reference/status decoration**; the product surfaces (00–03) are already compliant
-(non-generation actions stay neutral; "Request changes" is neutral).
-
-- **U-6 re-render:** in `ref-primitives.svg`, recolour the Primary 8-state demo
-  (lines 30–48) and the "Primary" variant (line 56) **clay → ink** (`#171614` fill,
-  `#faf8f5` text; disabled = ink @ 0.42; keep the existing blue focus ring;
-  error/success states unchanged). The dedicated "✦ Generate / ✦ Conjuring" spark
-  (lines 68–70) and all `@genie` / Conjure / generating elements **stay clay**.
-- **U-5 re-render:** in `00-front-door.svg` and `01-ui-kit-browser.svg`, recolour the
-  "synced" / "@genie synced" status pill **clay → success-green** — the same green status
-  semantic as the existing "✓ validated" badge (`--color-success`; the validated badge
-  renders this family as `#2a7a42` text on a neutral chip). All `@genie` / Conjure /
-  generating elements **stay clay**.
+| #   | Decision needed                                                                                                                           | If deferred, what happens                                                                                           |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| U-1 | **What the grid shows while conjuring** — skeleton card in place vs. modal vs. separate "drafts" lane                                     | Conjure feels like a dead click; users re-submit and double-spend a model call                                      |
+| U-2 | **Narrow-pane nav pattern** — breadcrumb-dropdown vs. bottom-sheet vs. segmented switch (§13 proposes per-surface)                        | Each surface invents its own collapse, harness side-panel use (the primary vehicle) feels broken                    |
+| U-3 | **How a rejected refine is surfaced** — inline notice + intact prior draft (proposed) vs. diff-with-errors vs. blocking modal             | Failed validation silently discards work or applies a broken diff; the "freeze the rest" promise (D-I) looks untrue |
+| U-4 | **Multi-kit ambiguity UI** (D-F resolution ladder: explicit→default→sole→ask) — what the "stop and ask" picker looks like on each surface | Genie either guesses a kit (betrays adherence) or hard-stops with no recovery affordance                            |
+| U-7 | **Diff stats / checklist source of truth** — are `+14/−6` and the checklist live validator output or static labels?                       | Review panel shows stale numbers; "Apply to kit" gating on the checklist becomes cosmetic                           |
+| U-8 | **Embedded empty-state per display mode** — inline vs. fullscreen vs. pip each need a distinct first-run CTA                              | The three modes share one CTA that fits none; pip especially has no room for the front-door prompt                  |

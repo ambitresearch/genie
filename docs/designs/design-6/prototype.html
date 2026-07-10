@@ -26,11 +26,11 @@
         --hair-2: #c7c3bd;
         /* Clay (accent — generation moments only) */
         --clay: #c87c5e;
-        --clay-dk: #ac5a40;
+        --clay-text: #99482f;
         --clay-t: #fae2d8;
         --clay-e: #ecb6a0;
-        /* on-accent (DRO-748): button-fill text for Conjure/Refine/Apply/
-         * Approve — a fixed near-black, NOT an alias of --ink (--ink flips to
+        /* on-accent (DRO-748): button-fill text for Conjure/Refine/Apply —
+         * a fixed near-black, NOT an alias of --ink (--ink flips to
          * near-white in dark mode, which would repeat the bug this token
          * fixes — see tokens.css / design.md §14). This prototype has no dark
          * variant yet, so this is the same as --ink today, but kept distinct
@@ -175,11 +175,11 @@
         font-family: var(--font-mono);
         font-size: 11px;
         font-weight: 700;
-        color: var(--clay); /* CLAY — generation identity, NEVER deferred */
+        color: var(--clay-text); /* CLAY — generation identity, AA-safe on paper */
       }
 
       /* ── Buttons ──────────────────────────────────────────────────────── */
-      /* Clay buttons — ONLY on Conjure / Refine / Apply / Approve */
+      /* Clay buttons — ONLY on Conjure / Refine / Apply */
       /* DRO-748: text is --on-clay, not #fff (was 3.2:1 at best, fails outright in dark mode) */
       .btn-clay {
         background: var(--clay);
@@ -191,32 +191,39 @@
         font-size: 13px;
         font-weight: 600;
         cursor: pointer;
-        transition: background 0.15s;
+        transition:
+          box-shadow 0.15s,
+          transform 0.15s;
         white-space: nowrap;
       }
       .btn-clay:hover {
-        background: var(--clay-dk);
+        background: var(--clay);
+        box-shadow: var(--shadow-md);
+        transform: translateY(-1px);
       }
       .btn-clay:focus-visible {
         outline: 2px solid var(--struct);
         outline-offset: 2px;
       }
-      /* Clay outline — secondary generation action */
-      .btn-clay-outline {
-        background: transparent;
-        color: var(--clay);
-        border: 1.5px solid var(--clay);
+      /* Structural primary — confirmation / generic CTA, never clay */
+      .btn-primary {
+        background: var(--ink);
+        color: var(--paper);
+        border: none;
         border-radius: var(--r-sm);
-        padding: 7px 18px;
+        padding: 8px 18px;
         font-family: inherit;
         font-size: 13px;
-        font-weight: 500;
+        font-weight: 600;
         cursor: pointer;
-        transition: background 0.12s;
         white-space: nowrap;
       }
-      .btn-clay-outline:hover {
-        background: var(--clay-t);
+      .btn-primary:hover {
+        background: var(--ink-2);
+      }
+      .btn-primary:focus-visible {
+        outline: 2px solid var(--struct);
+        outline-offset: 2px;
       }
       /* Neutral button */
       .btn-neutral {
@@ -388,12 +395,17 @@
       }
       .badge-clay {
         background: var(--clay-t);
-        color: var(--clay);
+        color: var(--clay-text);
       }
       .badge-neutral {
         background: var(--paper-2);
-        color: var(--ink-3);
+        color: var(--ink-2);
         border: 1px solid var(--hair);
+      }
+      .badge-success {
+        background: #f3faf6;
+        color: #2a7a42;
+        border: 1px solid #a7dab7;
       }
 
       /* ──────────────────────────────────────────────────────────────────
@@ -541,8 +553,8 @@
         text-transform: uppercase;
       }
       .preview-button-demo {
-        background: var(--clay);
-        color: #fff;
+        background: var(--ink);
+        color: var(--paper);
         border: none;
         border-radius: var(--r-sm);
         padding: 10px 24px;
@@ -718,7 +730,7 @@
         left: 0;
         right: 0;
         height: 4px;
-        background: var(--clay);
+        background: var(--ink);
         border-radius: var(--r-md) var(--r-md) 0 0;
       }
       .plan-badge {
@@ -726,7 +738,7 @@
         font-size: 9px;
         font-weight: 700;
         letter-spacing: 0.1em;
-        color: var(--clay);
+        color: var(--struct);
         text-transform: uppercase;
         margin-bottom: 8px;
         display: block;
@@ -1073,7 +1085,7 @@
           <div class="kit-card">
             <div class="kit-card-title">Quanta UI Kit</div>
             <div class="kit-card-sub">68 components · design-sync active</div>
-            <span class="badge badge-clay">synced</span>
+            <span class="badge badge-success">synced</span>
           </div>
           <div class="kit-card">
             <div class="kit-card-title">Nova System</div>
@@ -1152,13 +1164,8 @@
               Button · Primary
             </div>
             <div class="detail-meta">
-              <span
-                class="badge badge-neutral"
-                style="background: #f3faf6; color: #2a7a42; border-color: #a7dab7"
-              >
-                ✓ validated
-              </span>
-              <span class="badge badge-clay">@genie synced</span>
+              <span class="badge badge-success"> ✓ validated </span>
+              <span class="badge badge-success"> @genie synced </span>
             </div>
           </div>
           <!-- CLAY — Refine is a generation moment -->
@@ -1264,7 +1271,7 @@
         <div class="preview-content">
           <div style="width: 100%; max-width: 700px">
             <!-- diff annotation -->
-            <div class="diff-annotation">↑ Pro card height +40px · CTA: outline → clay fill</div>
+            <div class="diff-annotation">↑ Pro card height +40px · CTA: outline → ink Primary</div>
             <div class="pricing-grid" role="list" aria-label="Pricing tiers">
               <!-- Free -->
               <div class="pricing-card" role="listitem">
@@ -1281,7 +1288,7 @@
                   <button class="btn-neutral" style="width: 100%">Get started</button>
                 </div>
               </div>
-              <!-- Pro (featured) — clay CTA is the generation accent -->
+              <!-- Pro (featured) -->
               <div
                 class="pricing-card featured"
                 role="listitem"
@@ -1298,8 +1305,8 @@
                 <div class="plan-feature">Priority build queue</div>
                 <div class="plan-feature muted">✗ Enterprise SSO</div>
                 <div class="plan-cta">
-                  <!-- CLAY — applied to kit is a generation moment -->
-                  <button class="btn-clay" style="width: 100%">Start Pro trial</button>
+                  <!-- INK — generic CTA is structural Primary -->
+                  <button class="btn-primary" style="width: 100%">Start Pro trial</button>
                 </div>
               </div>
               <!-- Enterprise -->
@@ -1337,7 +1344,7 @@
               <span style="font-size: 12px; font-weight: 600; color: var(--ink)"
                 >Inline Widget</span
               >
-              <span class="badge badge-clay" style="margin-left: auto">.genie-embedded</span>
+              <span class="badge badge-neutral" style="margin-left: auto">.genie-embedded</span>
             </div>
             <div class="embedded-body">
               <div style="font-size: 12px; color: var(--ink-2)">Generate a component:</div>
@@ -1388,7 +1395,7 @@
           <div class="label refine-section-label">Changes in Draft #2</div>
           <div class="change-list">
             <div class="change-item">Pro card height: 520 → 560px</div>
-            <div class="change-item">CTA row: outline → clay fill</div>
+            <div class="change-item">CTA row: outline → ink Primary</div>
             <div class="change-item muted">Free, Enterprise: unchanged</div>
           </div>
         </div>
@@ -1427,13 +1434,13 @@
         <div class="refine-section">
           <div class="label refine-section-label">Decision</div>
           <div class="decision-row">
-            <!-- CLAY — Approve is the final generation commit -->
-            <button class="btn-clay">Approve</button>
+            <!-- INK — Approve is a structural confirmation -->
+            <button class="btn-primary">Approve</button>
             <button class="btn-neutral">Request changes</button>
           </div>
           <div style="margin-top: 8px">
-            <!-- CLAY outline — Apply to kit is a generation moment -->
-            <button class="btn-clay-outline" style="width: 100%">Apply to kit →</button>
+            <!-- CLAY — Apply to kit is a generation moment -->
+            <button class="btn-clay" style="width: 100%">Apply to kit →</button>
           </div>
         </div>
       </div>

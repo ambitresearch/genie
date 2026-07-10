@@ -20,10 +20,10 @@
   <text x="900" y="22"
         font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
         font-size="10" fill="#75716d">STANDALONE: full brand fonts · external connect allowed</text>
-  <rect x="1340" y="8" width="88" height="20" rx="4" fill="#fae2d8"/>
+  <rect x="1340" y="8" width="88" height="20" rx="4" fill="#f3f0ea"/>
   <text x="1384" y="22"
         font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
-        font-size="9" font-weight="700" fill="#c87c5e" text-anchor="middle">CLAY NEVER DEFERS</text>
+        font-size="9" font-weight="700" fill="#423f3d" text-anchor="middle">CLAY NEVER DEFERS</text>
 
   <!-- ── Top bar ──────────────────────────────────────────────────── -->
   <rect y="36" width="1440" height="56" fill="#faf8f5"/>
@@ -90,10 +90,10 @@
   <!-- @genie marker — CLAY -->
   <text x="68" y="498"
         font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
-        font-size="10" font-weight="600" fill="#c87c5e">@genie</text>
+        font-size="10" font-weight="600" fill="#99482f">@genie</text>
   <text x="116" y="498" font-size="12" font-weight="600" fill="#171614">Inline Widget</text>
-  <rect x="340" y="484" width="72" height="18" rx="9" fill="#fae2d8"/>
-  <text x="376" y="497" font-size="9" font-weight="600" fill="#c87c5e"
+  <rect x="340" y="484" width="72" height="18" rx="9" fill="#f3f0ea"/>
+  <text x="376" y="497" font-size="9" font-weight="600" fill="#423f3d"
         text-anchor="middle">.genie-embedded</text>
   <line x1="48" y1="516" x2="428" y2="516" stroke="#dad7d2" stroke-width="0.5"/>
   <!-- card content -->
@@ -113,9 +113,9 @@
   <text x="68" y="644" font-size="10" fill="#75716d"
         font-family="'JetBrains Mono', ui-monospace, Menlo, monospace">// system fonts · default-src 'none'</text>
   <!-- status row -->
-  <rect x="68" y="656" width="74" height="16" rx="8" fill="#fae2d8"/>
-  <text x="105" y="668" font-size="9" font-weight="600" fill="#c87c5e"
-        text-anchor="middle">clay persists</text>
+  <rect x="68" y="656" width="74" height="16" rx="8" fill="#f3f0ea"/>
+  <text x="105" y="668" font-size="9" font-weight="600" fill="#423f3d"
+        text-anchor="middle">identity kept</text>
 
   <!-- ══════════════════════════════════════════════════════════════════
        COLUMN 2: FULLSCREEN MODE (480..960)
@@ -132,7 +132,7 @@
   <!-- @genie marker — CLAY -->
   <text x="566" y="256"
         font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
-        font-size="9" font-weight="600" fill="#c87c5e">@genie</text>
+        font-size="9" font-weight="600" fill="#99482f">@genie</text>
   <text x="610" y="256" font-size="11" fill="#75716d">Fullscreen</text>
   <!-- close indicator -->
   <text x="924" y="256" font-size="14" fill="#75716d" text-anchor="end">✕</text>
@@ -210,7 +210,7 @@
   <!-- @genie marker — CLAY -->
   <text x="1174" y="682"
         font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
-        font-size="9" font-weight="600" fill="#c87c5e">@genie</text>
+        font-size="9" font-weight="600" fill="#99482f">@genie</text>
   <text x="1217" y="682" font-size="11" font-weight="600" fill="#171614">PiP</text>
   <!-- PiP close handle -->
   <line x1="1358" y1="674" x2="1370" y2="686" stroke="#dad7d2" stroke-width="1.5"/>
@@ -232,10 +232,9 @@
   <text x="1174" y="828" font-size="10" fill="#75716d">Recent</text>
   <text x="1174" y="846" font-size="11" fill="#423f3d">PricingCard draft #2</text>
   <text x="1174" y="862" font-size="11" fill="#423f3d">Button · @genie synced</text>
-  <!-- Apply button — CLAY outline -->
-  <rect x="1174" y="876" width="192" height="26" rx="5"
-        fill="transparent" stroke="#c87c5e" stroke-width="1.5"/>
-  <text x="1270" y="893" font-size="11" font-weight="500" fill="#c87c5e"
+  <!-- Apply button — CLAY fill (text: on-accent token, DRO-748) -->
+  <rect x="1174" y="876" width="192" height="26" rx="5" fill="#c87c5e"/>
+  <text x="1270" y="893" font-size="11" font-weight="600" fill="#171614"
         text-anchor="middle">Apply to kit →</text>
   <!-- system-fonts annotation -->
   <text x="1174" y="924" font-size="9" fill="#75716d"

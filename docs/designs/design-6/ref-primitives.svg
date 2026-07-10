@@ -3,9 +3,7 @@
      Reference — PRIMITIVES. Buttons (8 states), inputs, badges, the model selector, code chips.
      Warm Instrument: bone paper · hairline structure · clay accent on generation only. -->
   <defs>
-    <linearGradient id="lampP" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c87c5e"/><stop offset="1" stop-color="#ac5a40"/></linearGradient>
-    <linearGradient id="clayP" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9916e"/><stop offset="0.5" stop-color="#c87c5e"/><stop offset="1" stop-color="#b8674e"/></linearGradient>
-    <linearGradient id="clayHoverP" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c47455"/><stop offset="1" stop-color="#a6533d"/></linearGradient>
+    <linearGradient id="lampP" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c87c5e"/><stop offset="1" stop-color="#99482f"/></linearGradient>
     <filter id="softP" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="6" flood-color="#171614" flood-opacity="0.08"/></filter>
     <filter id="clayGlowP" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="2" stdDeviation="9" flood-color="#c87c5e" flood-opacity="0.40"/></filter>
   </defs>
@@ -27,19 +25,19 @@
     <text font-family="Inter, sans-serif" font-size="12" font-weight="600" letter-spacing="0.06em" fill="#75716d">BUTTON · PRIMARY — EIGHT STATES</text>
     <g transform="translate(0,28)" font-family="JetBrains Mono, monospace" font-size="11">
       <text x="0" y="28" fill="#75716d">default</text>
-      <g transform="translate(110,8)"><rect width="132" height="40" rx="5" fill="url(#clayP)"/><line x1="12" y1="1.5" x2="120" y2="1.5" stroke="#f0c3ac" stroke-width="1.2"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#171614">Save kit</text></g>
+      <g transform="translate(110,8)"><rect width="132" height="40" rx="5" fill="#171614"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#faf8f5">Save kit</text></g>
       <text x="310" y="28" fill="#75716d">hover</text>
-      <g transform="translate(420,8)"><rect width="132" height="40" rx="5" fill="url(#clayHoverP)"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#171614">Save kit</text></g>
+      <g transform="translate(420,8)"><rect width="132" height="40" rx="5" fill="#423f3d"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#faf8f5">Save kit</text></g>
       <text x="630" y="28" fill="#75716d">focus</text>
-      <g transform="translate(740,8)"><rect x="-3" y="-3" width="138" height="46" rx="8" fill="none" stroke="#4064b9" stroke-width="2"/><rect width="132" height="40" rx="5" fill="url(#clayP)"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#171614">Save kit</text></g>
+      <g transform="translate(740,8)"><rect x="-3" y="-3" width="138" height="46" rx="8" fill="none" stroke="#4064b9" stroke-width="2"/><rect width="132" height="40" rx="5" fill="#171614"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#faf8f5">Save kit</text></g>
     </g>
     <g transform="translate(0,92)" font-family="JetBrains Mono, monospace" font-size="11">
       <text x="0" y="28" fill="#75716d">active</text>
-      <g transform="translate(110,9)"><rect width="132" height="40" rx="5" fill="url(#clayHoverP)"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#171614">Save kit</text></g>
+      <g transform="translate(110,9)"><rect width="132" height="40" rx="5" fill="#423f3d"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#faf8f5">Save kit</text></g>
       <text x="310" y="28" fill="#75716d">disabled</text>
-      <g transform="translate(420,8)" opacity="0.42"><rect width="132" height="40" rx="5" fill="#c87c5e"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#171614">Save kit</text></g>
+      <g transform="translate(420,8)" opacity="0.42"><rect width="132" height="40" rx="5" fill="#171614"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#faf8f5">Save kit</text></g>
       <text x="630" y="28" fill="#75716d">loading</text>
-      <g transform="translate(740,8)"><rect width="132" height="40" rx="5" fill="url(#clayP)"/><circle cx="34" cy="20" r="7" fill="none" stroke="#171614" stroke-width="2" stroke-opacity="0.3"/><path d="M34 13 a7 7 0 0 1 7 7" fill="none" stroke="#171614" stroke-width="2" stroke-linecap="round"/><text x="78" y="25" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#171614">Working…</text></g>
+      <g transform="translate(740,8)"><rect width="132" height="40" rx="5" fill="#171614"/><circle cx="34" cy="20" r="7" fill="none" stroke="#faf8f5" stroke-width="2" stroke-opacity="0.3"/><path d="M34 13 a7 7 0 0 1 7 7" fill="none" stroke="#faf8f5" stroke-width="2" stroke-linecap="round"/><text x="78" y="25" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#faf8f5">Working…</text></g>
     </g>
     <g transform="translate(0,156)" font-family="JetBrains Mono, monospace" font-size="11">
       <text x="0" y="28" fill="#75716d">error</text>
@@ -53,11 +51,11 @@
   <g transform="translate(64,400)">
     <text font-family="Inter, sans-serif" font-size="12" font-weight="600" letter-spacing="0.06em" fill="#75716d">VARIANTS</text>
     <g transform="translate(0,26)">
-      <g filter="url(#softP)"><rect width="132" height="40" rx="5" fill="url(#clayP)"/><line x1="12" y1="1.5" x2="120" y2="1.5" stroke="#f0c3ac"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#171614">Primary</text></g>
+      <g filter="url(#softP)"><rect width="132" height="40" rx="5" fill="#171614"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="#faf8f5">Primary</text></g>
       <g transform="translate(152,0)"><rect width="132" height="40" rx="5" fill="#faf8f5" stroke="#c7c3bd"/><line x1="12" y1="1" x2="120" y2="1" stroke="#ffffff"/><text x="66" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#171614">Secondary</text></g>
       <g transform="translate(304,0)"><rect width="112" height="40" rx="5" fill="none"/><text x="56" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#345197">Ghost</text></g>
       <g transform="translate(436,0)"><rect width="112" height="40" rx="5" fill="#c5372f"/><text x="56" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#faf8f5">Delete</text></g>
-      <text x="572" y="25" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">clay · neutral · ghost · danger — clay only on generation</text>
+      <text x="572" y="25" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">ink · neutral · ghost · danger — clay only on generation</text>
     </g>
   </g>
 
@@ -65,9 +63,9 @@
   <g transform="translate(64,510)">
     <text font-family="Inter, sans-serif" font-size="12" font-weight="600" letter-spacing="0.06em" fill="#75716d">THE GENERATE ACTION — THE SPARK (clay, used once per flow)</text>
     <g transform="translate(0,26)">
-      <g filter="url(#clayGlowP)"><rect width="168" height="48" rx="8" fill="url(#clayP)"/><line x1="14" y1="1.5" x2="154" y2="1.5" stroke="#f0c3ac" stroke-width="1.2"/><text x="22" y="30" font-family="Inter, sans-serif" font-size="16" font-weight="700" fill="#171614">✦ Generate</text></g>
+      <g filter="url(#clayGlowP)"><rect width="168" height="48" rx="8" fill="#c87c5e"/><text x="22" y="30" font-family="Inter, sans-serif" font-size="16" font-weight="700" fill="#171614">✦ Generate</text></g>
       <text x="192" y="30" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">default</text>
-      <g transform="translate(420,0)"><rect x="-4" y="-4" width="184" height="56" rx="12" fill="#c87c5e" opacity="0.16"/><rect width="176" height="48" rx="8" fill="#fbd5c3" stroke="#c87c5e" stroke-width="2"/><text x="22" y="30" font-family="Inter, sans-serif" font-size="16" font-weight="700" fill="#ac5a40">✦ Conjuring…</text></g>
+      <g transform="translate(420,0)"><rect x="-4" y="-4" width="184" height="56" rx="12" fill="#c87c5e" opacity="0.16"/><rect width="176" height="48" rx="8" fill="#fbd5c3" stroke="#c87c5e" stroke-width="2"/><text x="22" y="30" font-family="Inter, sans-serif" font-size="16" font-weight="700" fill="#99482f">✦ Conjuring…</text></g>
       <text x="616" y="30" font-family="JetBrains Mono, monospace" font-size="11" fill="#75716d">generating</text>
     </g>
   </g>
@@ -79,7 +77,7 @@
       <text x="0" y="26" fill="#75716d">default</text>
       <g transform="translate(90,8)"><rect width="300" height="40" rx="5" fill="#faf8f5" stroke="#c7c3bd"/><line x1="10" y1="1" x2="290" y2="1" stroke="#ffffff"/><text x="14" y="25" font-family="Inter, sans-serif" font-size="14" fill="#75716d">Component name…</text></g>
       <text x="430" y="26" fill="#75716d">focus</text>
-      <g transform="translate(520,8)"><rect x="-3" y="-3" width="306" height="46" rx="8" fill="none" stroke="#4064b9" stroke-width="2"/><rect width="300" height="40" rx="5" fill="#faf8f5" stroke="#345197"/><text x="14" y="25" font-family="Inter, sans-serif" font-size="14" fill="#171614">Button / Primary<tspan fill="#c87c5e">|</tspan></text></g>
+      <g transform="translate(520,8)"><rect x="-3" y="-3" width="306" height="46" rx="8" fill="none" stroke="#4064b9" stroke-width="2"/><rect width="300" height="40" rx="5" fill="#faf8f5" stroke="#345197"/><text x="14" y="25" font-family="Inter, sans-serif" font-size="14" fill="#171614">Button / Primary<tspan fill="#345197">|</tspan></text></g>
     </g>
     <g transform="translate(0,82)" font-family="JetBrains Mono, monospace" font-size="11">
       <text x="0" y="26" fill="#75716d">error</text>
@@ -91,7 +89,7 @@
       <g transform="translate(0,36)"><rect width="568" height="96" rx="8" fill="#fae2d8" stroke="#c87c5e"/><line x1="12" y1="1" x2="556" y2="1" stroke="#fcebe2"/>
         <text x="16" y="28" font-family="Inter, sans-serif" font-size="14" fill="#423f3d">a pricing card with three tiers and a highlighted</text>
         <text x="16" y="50" font-family="Inter, sans-serif" font-size="14" fill="#423f3d">middle plan…</text>
-        <g transform="translate(440,58)" filter="url(#clayGlowP)"><rect width="116" height="30" rx="5" fill="url(#clayP)"/><text x="14" y="20" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="#171614">Conjure ✦</text></g>
+        <g transform="translate(440,58)" filter="url(#clayGlowP)"><rect width="116" height="30" rx="5" fill="#c87c5e"/><text x="14" y="20" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="#171614">Conjure ✦</text></g>
       </g>
     </g>
   </g>
@@ -105,7 +103,7 @@
       <g transform="translate(190,0)"><rect width="64" height="26" rx="13" fill="#dee8fd"/><text x="14" y="18" fill="#345197">forms</text></g>
       <g transform="translate(266,0)"><rect width="92" height="26" rx="13" fill="#dee8fd"/><text x="14" y="18" fill="#345197">feedback</text></g>
       <g transform="translate(400,0)"><rect width="98" height="26" rx="13" fill="#d4f1d8"/><text x="12" y="18" fill="#2a7a42">✓ validated</text></g>
-      <g transform="translate(512,0)"><rect width="106" height="26" rx="13" fill="#fae2d8"/><text x="12" y="18" fill="#ac5a40">✦ generating</text></g>
+      <g transform="translate(512,0)"><rect width="106" height="26" rx="13" fill="#fae2d8"/><text x="12" y="18" fill="#99482f">✦ generating</text></g>
       <g transform="translate(632,0)"><rect width="150" height="26" rx="13" fill="#ffdcd4"/><text x="12" y="18" fill="#c5372f">⚠ missing @genie</text></g>
       <g transform="translate(796,0)"><rect width="56" height="26" rx="13" fill="#f3f0ea" stroke="#c7c3bd"/><text x="14" y="18" fill="#423f3d">thin</text></g>
     </g>

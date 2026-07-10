@@ -51,7 +51,7 @@
   <!-- @genie marker — CLAY — generation identity on synced item -->
   <text x="24" y="240"
         font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
-        font-size="10" font-weight="600" fill="#c87c5e">@genie</text>
+        font-size="10" font-weight="600" fill="#99482f">@genie</text>
   <text x="78" y="240" font-size="13" font-weight="600" fill="#171614">Button</text>
   <text x="24" y="265" font-size="13" fill="#75716d">Icon</text>
   <text x="24" y="285" font-size="13" fill="#75716d">Input</text>
@@ -94,14 +94,14 @@
   <!-- @genie marker — CLAY -->
   <text x="264" y="139"
         font-family="'JetBrains Mono', ui-monospace, Menlo, monospace"
-        font-size="12" font-weight="600" fill="#c87c5e">@genie</text>
+        font-size="12" font-weight="600" fill="#99482f">@genie</text>
   <text x="320" y="139" font-size="22" font-weight="600" fill="#171614">Button · Primary</text>
   <!-- status badges -->
   <rect x="264" y="150" width="74" height="18" rx="9" fill="#f3f0ea" stroke="#dad7d2" stroke-width="1"/>
   <text x="301" y="163" font-size="10" font-weight="600" fill="#2a7a42"
         text-anchor="middle">✓ validated</text>
-  <rect x="346" y="150" width="72" height="18" rx="9" fill="#fae2d8"/>
-  <text x="382" y="163" font-size="10" font-weight="600" fill="#c87c5e"
+  <rect x="346" y="150" width="72" height="18" rx="9" fill="#f3faf6"/>
+  <text x="382" y="163" font-size="10" font-weight="600" fill="#2a7a42"
         text-anchor="middle">@genie synced</text>
   <line x1="240" y1="184" x2="1440" y2="184" stroke="#dad7d2" stroke-width="1"/>
 
@@ -119,8 +119,8 @@
   <!-- preview stage -->
   <rect x="240" y="224" width="1200" height="360" fill="#f3f0ea"/>
   <!-- centered component preview -->
-  <rect x="780" y="360" width="120" height="40" rx="5" fill="#c87c5e"/>
-  <text x="840" y="385" font-size="14" font-weight="600" fill="#ffffff"
+  <rect x="780" y="360" width="120" height="40" rx="5" fill="#171614"/>
+  <text x="840" y="385" font-size="14" font-weight="600" fill="#faf8f5"
         text-anchor="middle">Button</text>
 
   <!-- light stage label -->
