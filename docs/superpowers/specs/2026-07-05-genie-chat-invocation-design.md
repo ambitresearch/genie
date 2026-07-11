@@ -126,8 +126,9 @@ on the legacy `clientSupportsUi(ctx.clientName)` sniff.
 - **Local stdio client without UI support:** boot headlessly, construct the
   filter-bearing viewer URL, then call `ViewerRegistry.open(target)`.
   `ViewerRegistry` caches one viewer per kit dir while tracking browser-open
-  state separately, so an inline caller can boot first and the first later
-  tools-only caller still opens that cached viewer exactly once.
+  state per target, so an inline caller can boot first and a later tools-only
+  caller opens the cached viewer. Repeated requests for the same filtered URL
+  dedupe; a changed component/group target opens again.
 - **HTTP deployment:** never call `ViewerRegistry.open`; a remote caller must
   not launch a browser on the server machine.
 - **Override:** `GENIE_PREVIEW_NO_OPEN=1` suppresses the separate registry open
@@ -138,8 +139,9 @@ on the legacy `clientSupportsUi(ctx.clientName)` sniff.
 On the local path, `runPreview` calls `ViewerRegistry.ensure(..., false)` to boot
 or reuse a viewer headlessly. The harness-aware decision controls a later
 `ViewerRegistry.open(filteredUrl)` call, which preserves
-`componentName`/`group` filters and keeps boot caching separate from one-shot
-browser opening. Remote paths do not invoke the viewer registry.
+`componentName`/`group` filters and keeps boot caching separate from
+target-deduplicated browser opening. Remote paths do not invoke the viewer
+registry.
 
 ## C. Portable bundled Agent Skill
 

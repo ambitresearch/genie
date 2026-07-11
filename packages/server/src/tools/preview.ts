@@ -243,6 +243,17 @@ export interface BootedViewer {
 /** Boots a viewer for a kit dir, or rejects if it cannot (→ AC6 fallback). */
 export type ViewerBooter = (req: BootRequest) => Promise<BootedViewer>;
 
+interface BrowserOpenState {
+  /** `null` means the viewer's unfiltered base URL. */
+  target: string | null;
+  promise: Promise<void>;
+}
+
+interface ViewerRegistryEntry {
+  viewer: Promise<BootedViewer>;
+  browserOpen?: BrowserOpenState;
+}
+
 /**
  * Caches one running viewer per kit directory so repeated `preview` calls reuse
  * it instead of booting a fresh Vite each time (AC5). Keyed on the resolved kit
@@ -251,12 +262,31 @@ export type ViewerBooter = (req: BootRequest) => Promise<BootedViewer>;
  * later call retries rather than replaying the dead promise forever.
  */
 export class ViewerRegistry {
-  private readonly viewers = new Map<
-    string,
-    { viewer: Promise<BootedViewer>; browserOpen?: Promise<void> }
-  >();
+  private readonly viewers = new Map<string, ViewerRegistryEntry>();
 
   constructor(private readonly booter: ViewerBooter) {}
+
+  private queueBrowserOpen(
+    entry: ViewerRegistryEntry,
+    kitDir: string,
+    target: string | null,
+  ): Promise<void> {
+    const previous = entry.browserOpen?.promise ?? Promise.resolve();
+    const promise = Promise.all([entry.viewer, previous]).then(async ([viewer]) => {
+      try {
+        await viewer.open(target ?? undefined);
+      } catch (error) {
+        logStderr({
+          event: "preview.browser.open-failed",
+          kitDir,
+          ...(target !== null ? { target } : {}),
+          error: String(error),
+        });
+      }
+    });
+    entry.browserOpen = { target, promise };
+    return promise;
+  }
 
   /**
    * Return the viewer for `kitDir`, booting it on first request. Subsequent
@@ -265,27 +295,19 @@ export class ViewerRegistry {
    * Booting and browser opening are tracked separately. Direct callers can use
    * `open:true` for the base URL, while {@link runPreview}'s local path boots or
    * reuses headlessly and calls {@link ViewerRegistry.open} after constructing
-   * its filtered target. Concurrent/repeated open requests share one promise,
-   * so at most one browser tab is requested.
+   * its filtered target. Repeated requests for the same target share one
+   * promise; a changed filter target is opened again so the requested component
+   * is not hidden behind an older tab.
    */
   ensure(kitDir: string, port = DEFAULT_VIEWER_PORT, open = false): Promise<BootedViewer> {
     const existing = this.viewers.get(kitDir);
     if (existing !== undefined) {
-      if (open && existing.browserOpen === undefined) {
-        existing.browserOpen = existing.viewer.then(async (viewer) => {
-          try {
-            await viewer.open();
-          } catch (error) {
-            logStderr({
-              event: "preview.browser.open-failed",
-              kitDir,
-              error: String(error),
-            });
-          }
-        });
-      }
       if (open) {
-        return Promise.all([existing.viewer, existing.browserOpen]).then(([viewer]) => viewer);
+        const browserOpen =
+          existing.browserOpen?.target === null
+            ? existing.browserOpen.promise
+            : this.queueBrowserOpen(existing, kitDir, null);
+        return Promise.all([existing.viewer, browserOpen]).then(([viewer]) => viewer);
       }
       return existing.viewer;
     }
@@ -296,10 +318,11 @@ export class ViewerRegistry {
       this.viewers.delete(kitDir);
       throw error;
     });
-    this.viewers.set(kitDir, {
-      viewer: booting,
-      ...(open ? { browserOpen: Promise.resolve() } : {}),
-    });
+    const entry: ViewerRegistryEntry = { viewer: booting };
+    if (open) {
+      entry.browserOpen = { target: null, promise: booting.then(() => undefined) };
+    }
+    this.viewers.set(kitDir, entry);
     return booting;
   }
 
@@ -308,21 +331,11 @@ export class ViewerRegistry {
     if (entry === undefined) {
       throw new Error(`Viewer for "${kitDir}" must be booted before it can be opened.`);
     }
-    if (entry.browserOpen === undefined) {
-      entry.browserOpen = entry.viewer.then(async (viewer) => {
-        try {
-          await viewer.open(target);
-        } catch (error) {
-          logStderr({
-            event: "preview.browser.open-failed",
-            kitDir,
-            target,
-            error: String(error),
-          });
-        }
-      });
-    }
-    await entry.browserOpen;
+    const browserOpen =
+      entry.browserOpen?.target === target
+        ? entry.browserOpen.promise
+        : this.queueBrowserOpen(entry, kitDir, target);
+    await browserOpen;
   }
 
   /** Tear down every booted viewer (best-effort). For clean shutdown/tests. */
@@ -333,7 +346,7 @@ export class ViewerRegistry {
       entries.map(async ({ viewer: viewerPromise, browserOpen }) => {
         const viewer = await viewerPromise;
         try {
-          await browserOpen;
+          await browserOpen?.promise;
         } finally {
           await viewer.close();
         }

@@ -47,6 +47,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
@@ -513,22 +514,30 @@ const defaultCompile: ManifestCompiler = async (kitDir) => {
 };
 
 /**
- * Default asset reader: locate `@genie/viewer`'s `static/` dir by RESOLVING its
- * `package.json` (a resolution, not an import — so this file carries no
- * build-time edge to the viewer package, mirroring `preview.ts`'s optional-peer
- * pattern) and read the named file. Results are cached per process. A failure
- * (viewer package unresolvable) rejects — the handler turns that into a minimal
- * self-describing shell so a `resources/read` never hard-fails.
+ * Default asset reader: prefer the viewer assets copied beside the compiled
+ * server module by `copy-viewer-assets.mjs`. This guarantees the published
+ * server's tool-result shell remains executable even when `@genie/viewer` is
+ * not installed at runtime. Source/tsx development falls back to resolving the
+ * workspace viewer package without creating a build-time import edge. Results
+ * are cached per process.
  */
 function makeDefaultAssetReader(): AssetReader {
   const cache = new Map<ViewerAssetName, string>();
   const require = createRequire(import.meta.url);
+  const bundledStaticDir = resolve(dirname(fileURLToPath(import.meta.url)), "viewer-static");
   return async (name) => {
     const cached = cache.get(name);
     if (cached !== undefined) return cached;
-    const pkgJson = require.resolve("@genie/viewer/package.json");
-    const staticDir = resolve(dirname(pkgJson), "static");
-    const text = await readFile(join(staticDir, name), "utf8");
+    let text: string;
+    try {
+      text = await readFile(join(bundledStaticDir, name), "utf8");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+      const pkgJson = require.resolve("@genie/viewer/package.json");
+      const staticDir = resolve(dirname(pkgJson), "static");
+      text = await readFile(join(staticDir, name), "utf8");
+    }
     cache.set(name, text);
     return text;
   };
@@ -565,10 +574,11 @@ function isInside(parent: string, child: string): boolean {
   return rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel);
 }
 
-/** A minimal, dependency-free shell used only when the viewer assets can't be
- * read — keeps `resources/read` answering with valid HTML rather than erroring.
- * Carries the SAME enforced CSP meta as the full shell: an asset-read failure
- * must not silently downgrade the security posture (M4-07 AC1). */
+/** A last-resort, dependency-free shell used only when both the packaged assets
+ * and source-workspace fallback are unreadable (or a test injects a failing
+ * reader). Normal built deployments always carry executable assets beside this
+ * module. The emergency shell keeps `resources/read` valid and carries the SAME
+ * enforced CSP meta: corruption must not downgrade security (M4-07 AC1). */
 function fallbackShell(manifest: Manifest, cspMeta: GridCspMeta): string {
   const json = escapeJsonForScript(JSON.stringify(manifest));
   return (

@@ -349,6 +349,26 @@ describe("ViewerRegistry (AC5)", () => {
     expect(open).toHaveBeenCalledTimes(1);
   });
 
+  it("dedupes the same browser target but reopens when preview filters change", async () => {
+    const open = vi.fn(async () => {});
+    const registry = new ViewerRegistry(async () => ({
+      url: "http://127.0.0.1:5173/",
+      port: 5173,
+      open,
+      close: async () => {},
+    }));
+
+    await registry.ensure("/kits/k1", DEFAULT_VIEWER_PORT, false);
+    await registry.open("/kits/k1", "http://127.0.0.1:5173/?componentName=Button");
+    await registry.open("/kits/k1", "http://127.0.0.1:5173/?componentName=Button");
+    await registry.open("/kits/k1", "http://127.0.0.1:5173/?componentName=Card");
+
+    expect(open.mock.calls.map(([target]) => target)).toEqual([
+      "http://127.0.0.1:5173/?componentName=Button",
+      "http://127.0.0.1:5173/?componentName=Card",
+    ]);
+  });
+
   it("keeps a cached viewer usable and closes it when its browser opener rejects", async () => {
     const close = vi.fn(async () => {});
     const booter: ViewerBooter = async () => ({
@@ -970,7 +990,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     expect(booter.calls[0]?.open).toBe(false);
   });
 
-  it("only opens once across repeated previews (registry reuse)", async () => {
+  it("only opens once across repeated previews for the same target", async () => {
     const kitsRoot = await makeKitsRoot();
     const booter = okBooter();
     const registry = new ViewerRegistry(booter);
@@ -987,10 +1007,27 @@ describe("runPreview auto-open wiring (piece B)", () => {
       { clientName: "codex", transportKind: "stdio" },
     );
 
-    // Second call reuses both the cached viewer and the one-shot browser open.
+    // Second call reuses both the cached viewer and the same-target browser open.
     expect(booter.calls).toHaveLength(1);
     expect(booter.calls[0]?.open).toBe(false);
     expect(booter.openedUrls).toEqual(["http://127.0.0.1:5173/"]);
+  });
+
+  it("reopens the cached viewer when a later preview requests different filters", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+    const deps = { kitsRoot, registry, env: {} };
+    const ctx = { clientName: "codex", transportKind: "stdio" as const };
+
+    await runPreview(deps, { kitId: "acme-abc123", componentName: "Button" }, ctx);
+    await runPreview(deps, { kitId: "acme-abc123", componentName: "Card" }, ctx);
+
+    expect(booter.calls).toHaveLength(1);
+    expect(booter.openedUrls).toEqual([
+      "http://127.0.0.1:5173/?componentName=Button",
+      "http://127.0.0.1:5173/?componentName=Card",
+    ]);
   });
 
   it("logs autoOpen in the preview.request line", async () => {

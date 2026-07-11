@@ -1034,6 +1034,22 @@
     var manifestRefreshPending = false;
     var torn = false;
 
+    function applyFetchedManifest(next) {
+      if (!next) return;
+      if (!lastManifest || manifestStructureChanged(lastManifest, next)) {
+        renderManifestUpdate(doc, grid, next);
+        bumpReloadCounter(doc, 1);
+      } else {
+        var changed = diffManifestHashes(lastManifest, next);
+        var total = 0;
+        for (var i = 0; i < changed.length; i++) {
+          total += reloadCardByPath(grid, changed[i], ++hmrReloadToken);
+        }
+        if (total > 0) bumpReloadCounter(doc, total);
+      }
+      lastManifest = next;
+    }
+
     function finishManifestFetch() {
       pollInFlight = false;
       if (manifestRefreshPending && !torn) {
@@ -1055,9 +1071,7 @@
         })
         .then(function (next) {
           if (torn || !next) return;
-          renderManifestUpdate(doc, grid, next);
-          lastManifest = next;
-          bumpReloadCounter(doc, 1);
+          applyFetchedManifest(next);
         })
         .catch(function () {
           // Keep the current grid; a later manifest event/poll can retry.
@@ -1110,20 +1124,7 @@
         })
         .then(function (next) {
           if (torn || !next) return;
-          if (lastManifest) {
-            if (manifestStructureChanged(lastManifest, next)) {
-              renderManifestUpdate(doc, grid, next);
-              bumpReloadCounter(doc, 1);
-            } else {
-              var changed = diffManifestHashes(lastManifest, next);
-              var total = 0;
-              for (var i = 0; i < changed.length; i++) {
-                total += reloadCardByPath(grid, changed[i], ++hmrReloadToken);
-              }
-              if (total > 0) bumpReloadCounter(doc, total);
-            }
-          }
-          lastManifest = next;
+          applyFetchedManifest(next);
         })
         .catch(function () {
           // A transient fetch failure must not kill the poll loop — try again

@@ -428,7 +428,7 @@
   .ds-viewer-embed {
     display: block;
     width: 100%;
-    min-height: 72vh;
+    min-height: 640px;
     border: 0;
   }
 

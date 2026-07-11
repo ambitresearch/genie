@@ -762,6 +762,63 @@ describe("initHmr — WebSocket transport (AC2/AC5)", () => {
     expect(grid.querySelector(`iframe[data-path="${CARD_PATH}"]`)).toBeNull();
   });
 
+  it("a content-only manifest event reloads only the hash-changed card", async () => {
+    const { hooks, window, document, grid } = setup();
+    FakeWebSocket.instances = [];
+    const buttonBefore = iframeFor(grid, BUTTON_PATH);
+    const cardBefore = iframeFor(grid, CARD_PATH);
+    const fetchImpl = async () =>
+      ({
+        ok: true,
+        json: async () => twoCardManifest({ buttonHash: "sha256-button-v2" }),
+      }) as Response;
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: FakeWebSocket,
+      fetchImpl,
+      initialManifest: twoCardManifest(),
+    });
+
+    FakeWebSocket.instances[0]!.onmessage!({
+      data: JSON.stringify({ event: "manifest.changed" }),
+    });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(iframeFor(grid, BUTTON_PATH)).toBe(buttonBefore);
+    expect(buttonBefore.getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
+    expect(iframeFor(grid, CARD_PATH)).toBe(cardBefore);
+    expect(cardBefore.getAttribute("src")).toBe(CARD_PATH);
+    expect(document.getElementById("hmr-count")!.getAttribute("data-count")).toBe("1");
+  });
+
+  it("a generatedAt-only manifest event preserves every iframe", async () => {
+    const { hooks, window, document, grid } = setup();
+    FakeWebSocket.instances = [];
+    const buttonBefore = iframeFor(grid, BUTTON_PATH);
+    const cardBefore = iframeFor(grid, CARD_PATH);
+    const next = twoCardManifest() as { generatedAt: string };
+    next.generatedAt = "2026-07-02T00:00:00.000Z";
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: FakeWebSocket,
+      fetchImpl: async () => ({ ok: true, json: async () => next }) as Response,
+      initialManifest: twoCardManifest(),
+    });
+
+    FakeWebSocket.instances[0]!.onmessage!({
+      data: JSON.stringify({ event: "manifest.changed" }),
+    });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(iframeFor(grid, BUTTON_PATH)).toBe(buttonBefore);
+    expect(iframeFor(grid, CARD_PATH)).toBe(cardBefore);
+    expect(document.getElementById("hmr-count")!.getAttribute("data-count")).toBe("0");
+  });
+
   it("queues one manifest refresh while the previous fetch is in flight", async () => {
     const { hooks, window, document, grid } = setup();
     FakeWebSocket.instances = [];
