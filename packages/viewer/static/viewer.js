@@ -440,7 +440,28 @@
     };
   }
 
+  var detachedShellHeaders = new WeakMap();
+
+  function restoreShellHeader(doc) {
+    var entry = detachedShellHeaders.get(doc);
+    if (!entry || !doc.body) return;
+    if (entry.nextSibling && entry.nextSibling.parentNode === doc.body) {
+      doc.body.insertBefore(entry.header, entry.nextSibling);
+    } else {
+      doc.body.appendChild(entry.header);
+    }
+    detachedShellHeaders.delete(doc);
+  }
+
+  function detachShellHeader(doc) {
+    var header = doc.querySelector("body > header");
+    if (!header) return;
+    detachedShellHeaders.set(doc, { header: header, nextSibling: header.nextSibling });
+    header.remove();
+  }
+
   function renderToolResult(doc, grid, result) {
+    restoreShellHeader(doc);
     var structured = result && result.structuredContent;
     if (!structured) return false;
     if (typeof structured.embeddedError === "string" && structured.embeddedError) {
@@ -492,6 +513,7 @@
     iframe.setAttribute("src", parsed.toString());
     iframe.setAttribute("title", "genie component preview");
     iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    detachShellHeader(doc);
     grid.replaceChildren(iframe);
     return true;
   }

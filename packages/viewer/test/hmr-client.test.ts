@@ -525,6 +525,7 @@ describe("initMcpApp — standard tool result delivery", () => {
 
     const frame = grid.querySelector("iframe.ds-viewer-embed");
     expect(frame?.getAttribute("src")).toBe("http://127.0.0.1:5173/");
+    expect(document.querySelector("body > header")).toBeNull();
     expect(host.parentPostMessage).toHaveBeenCalledWith(
       {
         jsonrpc: "2.0",
@@ -559,6 +560,7 @@ describe("initMcpApp — standard tool result delivery", () => {
     });
 
     expect(grid.querySelector("iframe.ds-viewer-embed")).toBeNull();
+    expect(document.querySelector("body > header")).not.toBeNull();
     expect(iframeFor(grid, BUTTON_PATH)).toBeDefined();
     expect(iframeFor(grid, CARD_PATH)).toBeDefined();
   });
@@ -578,6 +580,47 @@ describe("initMcpApp — standard tool result delivery", () => {
     expect(grid.querySelector("iframe.ds-viewer-embed")?.getAttribute("src")).toBe(
       "http://127.0.0.1:5173/",
     );
+  });
+
+  it("restores the shell header when leaving a local framed viewer", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const localResult = {
+      structuredContent: {
+        transportKind: "stdio",
+        locality: "local",
+        viewerUrl: "http://127.0.0.1:5173/",
+      },
+    };
+    const embeddedManifest = twoCardManifest();
+    for (const component of embeddedManifest.components as Array<Record<string, unknown>>) {
+      component.sourcePath = component.path;
+      component.path = `https://previews.example.com/${String(component.path)}`;
+    }
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(document.querySelector("body > header")).toBeNull();
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: {
+          transportKind: "http",
+          locality: "remote",
+          embeddedManifest,
+        },
+      }),
+    ).toBe(true);
+    expect(document.querySelector("body > header")).not.toBeNull();
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(document.querySelector("body > header")).toBeNull();
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: { embeddedError: "preview unavailable" },
+      }),
+    ).toBe(false);
+    expect(document.querySelector("body > header")).not.toBeNull();
+    expect(grid.querySelector(".ds-error")?.textContent).toContain("preview unavailable");
   });
 
   it("shows an explicit error instead of rendering dynamically delivered data cards under stale CSP", () => {
