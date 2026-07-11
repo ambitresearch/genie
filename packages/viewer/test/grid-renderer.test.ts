@@ -481,6 +481,20 @@ describe("createCard", () => {
 
 // ── renderGrid (AC2/AC6) ────────────────────────────────────────────────────
 
+describe("filterManifestBySearch", () => {
+  it("applies group and componentName from the viewer URL", () => {
+    const { hooks } = loadHooks();
+    const filtered = hooks.filterManifestBySearch(
+      twoGroupManifest(),
+      "?group=actions&componentName=Primary+buttons",
+    );
+
+    expect(filtered.groups).toEqual(["actions"]);
+    expect(filtered.components).toHaveLength(1);
+    expect(filtered.components[0].name).toBe("Primary buttons");
+  });
+});
+
 describe("renderGrid", () => {
   it("AC2 — renders one section per group with the cards under it", () => {
     const { hooks, document } = loadHooks();

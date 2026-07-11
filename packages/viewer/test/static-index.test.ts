@@ -127,6 +127,12 @@ describe("static/viewer.css (AC7)", () => {
     expect(css.replace(/\s+/g, " ")).toMatch(/display:\s*grid/);
   });
 
+  it("uses a fixed minimum for the nested viewer instead of viewport-relative height", () => {
+    const rule = /\.ds-viewer-embed\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(rule).toMatch(/min-height:\s*\d+px/);
+    expect(rule).not.toMatch(/\b(?:vh|dvh|svh|lvh)\b/);
+  });
+
   it("identity rule — the clay accent is CONSUMED only on the wordmark spark", () => {
     // The genie identity contract (tokens.css): the clay/gilt accent marks
     // generate/refine moments ONLY; structural chrome stays ink/neutral. This

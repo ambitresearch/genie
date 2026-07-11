@@ -1,0 +1,8 @@
+{
+  "name": "genie",
+  "version": "0.0.0",
+  "description": "Claude guidance for a separately registered genie MCP server: an Agent Skill plus the /genie:preview command.",
+  "author": {
+    "name": "Roshan Gautam"
+  }
+}

@@ -227,7 +227,9 @@ export function registerValidate(
         "side). WITHOUT `counts`: runs the full-scan facet — @genie marker check " +
         "+ thin-render check + variants-identical perceptual-hash check across " +
         "the kit — and returns { markerMissing, thin, variantsIdentical, total, " +
-        "bad }, persisting the derived counters via the same path.",
+        "bad }, persisting the derived counters via the same path. Reach for this as an " +
+        "advisory quality audit after conjure/refine + write_files — its findings are " +
+        "counts, not blocking errors.",
       inputSchema,
     },
     async ({

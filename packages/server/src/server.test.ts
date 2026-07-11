@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer, SERVER_INFO } from "./server.js";
+import { MCP_APP_MIME, UI_EXTENSION_ID } from "./tools/preview.js";
 
 describe("createServer", () => {
   it("builds a server with the genie identity", () => {
@@ -38,6 +39,21 @@ describe("createServer", () => {
     expect(names).toContain("mcp__genie__conjure");
     expect(names).toContain("mcp__genie__refine");
 
+    await client.close();
+  });
+
+  it("advertises the negotiated MCP Apps extension in initialize", async () => {
+    const server = createServer();
+    const client = new Client(
+      { name: "ui-host", version: "0" },
+      { capabilities: { extensions: { [UI_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME] } } } },
+    );
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+
+    expect(client.getServerCapabilities()?.extensions?.[UI_EXTENSION_ID]).toEqual({
+      mimeTypes: [MCP_APP_MIME],
+    });
     await client.close();
   });
 

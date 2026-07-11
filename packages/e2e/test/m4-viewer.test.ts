@@ -49,13 +49,14 @@
  * less machine stays green; CI's dedicated `viewer-e2e` job sets
  * `GENIE_REQUIRE_VIEWER_E2E=1` so a broken install there fails loudly instead.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { Browser, Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { compileManifest } from "../../server/src/manifest/index.js";
 import {
   buildFileVehicle,
   buildUiGridDocument,
@@ -322,6 +323,31 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
       await page.close();
       await vite.close();
       await bench.cleanup();
+    }
+  }, 30_000);
+
+  it("preview manifest recompilation removes a deleted card from an already-open grid", async () => {
+    const structural = await createViewerFixture([
+      { group: "actions", name: "Button", viewport: "320x180" },
+      { group: "surfaces", name: "Card", viewport: "320x180" },
+    ]);
+    const vite = await startViteVehicle(structural.kitDir);
+    const page = await browser.newPage();
+    const deletedPath = "components/surfaces/Card/Card.html";
+
+    try {
+      await gotoAndWaitForGrid(page, vite.url);
+      await expect.poll(() => page.locator("iframe").count()).toBe(2);
+
+      await rm(join(structural.kitDir, deletedPath));
+      await compileManifest(structural.kitDir);
+
+      await expect.poll(() => page.locator("iframe").count(), { timeout: 5_000 }).toBe(1);
+      expect(await page.locator(`iframe[data-path="${deletedPath}"]`).count()).toBe(0);
+    } finally {
+      await page.close();
+      await vite.close();
+      await structural.cleanup();
     }
   }, 30_000);
 

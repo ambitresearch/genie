@@ -161,6 +161,8 @@ export interface ViewerHandle {
   requestedPort: number;
   /** True when {@link port} differs from {@link requestedPort} (AC2 fallback). */
   fellBack: boolean;
+  /** Best-effort browser open for an already-running viewer. */
+  open: (target?: string) => Promise<void>;
   /** Tears down the watcher + http server (AC5). Idempotent-safe to await. */
   close: () => Promise<void>;
 }
@@ -220,17 +222,21 @@ export async function bootViewer(
   // AC1 — the canonical, copy-pasteable preview line.
   io.stdout(`\n  Preview: http://${DEFAULT_HOST}:${port}\n\n`);
 
-  if (options.open) {
+  const openPreview = async (target = url): Promise<void> => {
     try {
-      await deps.openBrowser(url); // AC3
+      await deps.openBrowser(target); // AC3
     } catch (err) {
       // AC3 is best-effort: a headless / no-browser box must still keep
       // serving. Report and carry on rather than tearing the server down.
       io.stderr(
         `genie-viewer: could not open a browser automatically (${errorMessage(err)}).\n` +
-          `  Open ${url} yourself.\n`,
+          `  Open ${target} yourself.\n`,
       );
     }
+  };
+
+  if (options.open) {
+    await openPreview();
   }
 
   return {
@@ -238,6 +244,7 @@ export async function bootViewer(
     port,
     requestedPort,
     fellBack,
+    open: openPreview,
     close: () => server.close(),
   };
 }

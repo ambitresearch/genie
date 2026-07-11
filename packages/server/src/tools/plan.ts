@@ -67,7 +67,9 @@ export function registerPlan(server: McpServer): void {
       description:
         "Lock write/delete patterns and localDir for a kit. Returns a planId " +
         "that must be presented to write_files/delete_files. " +
-        "Plans expire after 1h of inactivity.",
+        "Plans expire after 1h of inactivity. Reach for this after conjure/refine returns " +
+        "files you want to persist — plan first, then write_files (or delete_files) with " +
+        "the returned planId.",
       inputSchema,
       outputSchema,
     },

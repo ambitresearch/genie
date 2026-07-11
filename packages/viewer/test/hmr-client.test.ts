@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { JSDOM } from "jsdom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = resolve(HERE, "../static");
@@ -91,7 +91,7 @@ function setup(manifest: Record<string, unknown> = twoCardManifest()): {
       '<details class="hmr-meter"><summary>HMR <span id="hmr-count" data-count="0">0</span></summary></details>' +
       "</header>" +
       '<main id="grid"></main></body></html>',
-    { runScripts: "outside-only" },
+    { runScripts: "outside-only", url: "http://127.0.0.1:5173/" },
   );
   const { window } = dom;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -165,6 +165,13 @@ describe("normalizeHmrMessage", () => {
   it("maps tokens.changed to a tokens command", () => {
     const { hooks } = setup();
     expect(hooks.normalizeHmrMessage({ event: "tokens.changed" })).toEqual({ kind: "tokens" });
+  });
+
+  it("maps manifest.changed to a structural refresh command", () => {
+    const { hooks } = setup();
+    expect(hooks.normalizeHmrMessage({ event: "manifest.changed" })).toEqual({
+      kind: "manifest",
+    });
   });
 
   it("maps the postMessage {type:'refresh', path} sketch shape to a card command", () => {
@@ -310,6 +317,29 @@ describe("diffManifestHashes (AC4)", () => {
     expect(hooks.diffManifestHashes(prev, next)).toEqual([BUTTON_PATH]);
   });
 
+  describe("manifestStructureChanged", () => {
+    it("detects rendered group, name, and viewport metadata changes at a stable path", () => {
+      const { hooks } = setup();
+      const prev = twoCardManifest();
+
+      for (const field of ["group", "name", "viewport"]) {
+        const next = twoCardManifest();
+        (next.components as Array<Record<string, unknown>>)[0]![field] = `changed-${field}`;
+        expect(hooks.manifestStructureChanged(prev, next)).toBe(true);
+      }
+    });
+
+    it("keeps hash-only changes on the lightweight iframe reload path", () => {
+      const { hooks } = setup();
+      expect(
+        hooks.manifestStructureChanged(
+          twoCardManifest(),
+          twoCardManifest({ buttonHash: "sha256-button-v2" }),
+        ),
+      ).toBe(false);
+    });
+  });
+
   it("returns [] when nothing changed", () => {
     const { hooks } = setup();
     expect(hooks.diffManifestHashes(twoCardManifest(), twoCardManifest())).toEqual([]);
@@ -323,7 +353,7 @@ describe("diffManifestHashes (AC4)", () => {
     );
   });
 
-  it("ignores brand-new components (structural change → next boot, not a hot swap)", () => {
+  it("leaves brand-new components to the structural-change detector", () => {
     const { hooks } = setup();
     const prev = twoCardManifest();
     const next = twoCardManifest();
@@ -421,6 +451,338 @@ class FakeWebSocket {
   }
 }
 
+function fakeMcpAppWindow(): {
+  win: Record<string, unknown>;
+  parentPostMessage: ReturnType<typeof vi.fn>;
+  emit: (data: unknown) => void;
+} {
+  const listeners = new Set<(event: { source: unknown; data: unknown }) => void>();
+  const parent = { postMessage: vi.fn() };
+  const win = {
+    parent,
+    addEventListener: (
+      type: string,
+      listener: (event: { source: unknown; data: unknown }) => void,
+    ) => {
+      if (type === "message") listeners.add(listener);
+    },
+    removeEventListener: (
+      type: string,
+      listener: (event: { source: unknown; data: unknown }) => void,
+    ) => {
+      if (type === "message") listeners.delete(listener);
+    },
+  };
+  return {
+    win,
+    parentPostMessage: parent.postMessage,
+    emit: (data) => {
+      for (const listener of listeners) listener({ source: parent, data });
+    },
+  };
+}
+
+describe("initMcpApp — standard tool result delivery", () => {
+  it("initializes with the host and renders the viewer URL from structuredContent", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const host = fakeMcpAppWindow();
+
+    hooks.initMcpApp(document, { win: host.win });
+    const initialize = host.parentPostMessage.mock.calls[0]?.[0] as {
+      id: number;
+      method: string;
+      params: Record<string, unknown>;
+    };
+    expect(initialize.method).toBe("ui/initialize");
+    expect(initialize.params).toHaveProperty("appInfo");
+    expect(initialize.params).not.toHaveProperty("clientInfo");
+
+    host.emit({ jsonrpc: "2.0", id: initialize.id, result: { protocolVersion: "2026-01-26" } });
+    expect(host.parentPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "ui/notifications/initialized" }),
+      "*",
+    );
+    Object.defineProperty(document.documentElement, "scrollWidth", {
+      value: 640,
+      configurable: true,
+    });
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      value: 720,
+      configurable: true,
+    });
+
+    host.emit({
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-result",
+      params: {
+        structuredContent: {
+          transportKind: "stdio",
+          locality: "local",
+          viewerUrl: "http://127.0.0.1:5173/",
+        },
+      },
+    });
+
+    const frame = grid.querySelector("iframe.ds-viewer-embed");
+    expect(frame?.getAttribute("src")).toBe("http://127.0.0.1:5173/");
+    expect(document.querySelector("body > header")).toBeNull();
+    expect(host.parentPostMessage).toHaveBeenCalledWith(
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/size-changed",
+        params: { width: 640, height: 720 },
+      },
+      "*",
+    );
+  });
+
+  it("renders the embedded manifest for HTTP instead of framing a server-local loopback URL", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const host = fakeMcpAppWindow();
+    hooks.initMcpApp(document, { win: host.win });
+
+    const embeddedManifest = twoCardManifest();
+    for (const component of embeddedManifest.components as Array<Record<string, unknown>>) {
+      component.sourcePath = component.path;
+      component.path = `https://previews.example.com/${String(component.path)}`;
+    }
+    host.emit({
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-result",
+      params: {
+        structuredContent: {
+          transportKind: "http",
+          locality: "remote",
+          viewerUrl: "http://127.0.0.1:5173/",
+          embeddedManifest,
+        },
+      },
+    });
+
+    expect(grid.querySelector("iframe.ds-viewer-embed")).toBeNull();
+    expect(document.querySelector("body > header")).not.toBeNull();
+    expect(iframeFor(grid, BUTTON_PATH)).toBeDefined();
+    expect(iframeFor(grid, CARD_PATH)).toBeDefined();
+  });
+
+  it("frames a reachable viewer for explicitly local loopback HTTP", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: {
+          transportKind: "http",
+          locality: "local",
+          viewerUrl: "http://127.0.0.1:5173/",
+        },
+      }),
+    ).toBe(true);
+    expect(grid.querySelector("iframe.ds-viewer-embed")?.getAttribute("src")).toBe(
+      "http://127.0.0.1:5173/",
+    );
+  });
+
+  it("restores the shell header when leaving a local framed viewer", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const localResult = {
+      structuredContent: {
+        transportKind: "stdio",
+        locality: "local",
+        viewerUrl: "http://127.0.0.1:5173/",
+      },
+    };
+    const embeddedManifest = twoCardManifest();
+    for (const component of embeddedManifest.components as Array<Record<string, unknown>>) {
+      component.sourcePath = component.path;
+      component.path = `https://previews.example.com/${String(component.path)}`;
+    }
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(document.querySelector("body > header")).toBeNull();
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: {
+          transportKind: "http",
+          locality: "remote",
+          embeddedManifest,
+        },
+      }),
+    ).toBe(true);
+    expect(document.querySelector("body > header")).not.toBeNull();
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(document.querySelector("body > header")).toBeNull();
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: { embeddedError: "preview unavailable" },
+      }),
+    ).toBe(false);
+    expect(document.querySelector("body > header")).not.toBeNull();
+    expect(grid.querySelector(".ds-error")?.textContent).toContain("preview unavailable");
+  });
+
+  it("clears a stale successful preview for standard errors and malformed results", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const localResult = {
+      structuredContent: {
+        transportKind: "stdio",
+        locality: "local",
+        viewerUrl: "http://127.0.0.1:5173/",
+      },
+    };
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(grid.querySelector("iframe.ds-viewer-embed")).not.toBeNull();
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        isError: true,
+        content: [{ type: "text", text: "Kit not found" }],
+      }),
+    ).toBe(false);
+    expect(grid.querySelector("iframe")).toBeNull();
+    expect(grid.querySelector(".ds-error")?.textContent).toBe("Kit not found");
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: { locality: "local", viewerUrl: "ftp://example.com/preview" },
+      }),
+    ).toBe(false);
+    expect(grid.querySelector("iframe")).toBeNull();
+    expect(grid.querySelector(".ds-error")?.textContent).toContain("Preview unavailable");
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: {
+          locality: "remote",
+          embeddedManifest: { components: {} },
+        },
+      }),
+    ).toBe(false);
+    expect(grid.querySelector("iframe")).toBeNull();
+    expect(grid.querySelector(".ds-error")?.textContent).toContain("GENIE_PREVIEWS_BASE_URL");
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(hooks.renderToolResult(document, grid, null)).toBe(false);
+    expect(grid.querySelector("iframe")).toBeNull();
+    expect(grid.querySelector(".ds-error")?.textContent).toContain("Preview unavailable");
+  });
+
+  it("shows an explicit error instead of rendering dynamically delivered data cards under stale CSP", () => {
+    const manifest = twoCardManifest();
+    (manifest.components as Array<Record<string, unknown>>)[0]!.path =
+      "data:text/html;base64,PGJ1dHRvbj5TYXZlPC9idXR0b24+";
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: { transportKind: "http", embeddedManifest: manifest },
+      }),
+    ).toBe(false);
+    expect(grid.querySelector(".ds-error")?.textContent).toContain("GENIE_PREVIEWS_BASE_URL");
+    expect(grid.querySelector("iframe[data-path]")).toBeNull();
+  });
+
+  it("acknowledges host ping requests with an empty JSON-RPC result", () => {
+    const { hooks, document } = setup({ version: 1, groups: [], components: [] });
+    const host = fakeMcpAppWindow();
+    hooks.initMcpApp(document, { win: host.win });
+
+    host.emit({ jsonrpc: "2.0", id: 41, method: "ping" });
+
+    expect(host.parentPostMessage).toHaveBeenCalledWith(
+      { jsonrpc: "2.0", id: 41, result: {} },
+      "*",
+    );
+  });
+
+  it("observes both the document root and body for size changes", () => {
+    const { hooks, document } = setup({ version: 1, groups: [], components: [] });
+    const host = fakeMcpAppWindow();
+    const observed: Element[] = [];
+    host.win.ResizeObserver = class {
+      observe(element: Element) {
+        observed.push(element);
+      }
+      disconnect() {}
+    };
+    hooks.initMcpApp(document, { win: host.win });
+    const initialize = host.parentPostMessage.mock.calls[0]?.[0] as { id: number };
+
+    host.emit({ jsonrpc: "2.0", id: initialize.id, result: { protocolVersion: "2026-01-26" } });
+
+    expect(observed).toEqual([document.documentElement, document.body]);
+  });
+
+  it("acknowledges ui/resource-teardown and stops processing host messages", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const host = fakeMcpAppWindow();
+    hooks.initMcpApp(document, { win: host.win });
+
+    host.emit({ jsonrpc: "2.0", id: 99, method: "ui/resource-teardown", params: {} });
+
+    expect(host.parentPostMessage).toHaveBeenCalledWith(
+      { jsonrpc: "2.0", id: 99, result: {} },
+      "*",
+    );
+    host.emit({
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-result",
+      params: {
+        structuredContent: {
+          transportKind: "stdio",
+          locality: "local",
+          viewerUrl: "http://127.0.0.1:5173/",
+        },
+      },
+    });
+    expect(grid.querySelector("iframe.ds-viewer-embed")).toBeNull();
+  });
+
+  it("boot composes MCP App teardown with the embedded HMR bridge", async () => {
+    const { hooks, window, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const manifestNode = document.createElement("script");
+    manifestNode.id = "manifest";
+    manifestNode.type = "application/json";
+    manifestNode.textContent = JSON.stringify(twoCardManifest());
+    document.head.appendChild(manifestNode);
+    const shellMarker = document.createElement("meta");
+    shellMarker.name = "genie-tool-result-shell";
+    document.head.appendChild(shellMarker);
+    const parent = { postMessage: vi.fn() };
+    Object.defineProperty(window, "parent", { value: parent, configurable: true });
+
+    await hooks.boot(document, vi.fn());
+    const initialize = parent.postMessage.mock.calls[0]?.[0] as { id: number };
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        source: parent as unknown as Window,
+        data: { jsonrpc: "2.0", id: initialize.id, result: { protocolVersion: "2026-01-26" } },
+      }),
+    );
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        source: parent as unknown as Window,
+        data: { jsonrpc: "2.0", id: 99, method: "ui/resource-teardown", params: {} },
+      }),
+    );
+    const before = iframeFor(grid, BUTTON_PATH).getAttribute("src");
+
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        source: parent as unknown as Window,
+        data: { type: "refresh", path: BUTTON_PATH },
+      }),
+    );
+
+    expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(before);
+  });
+});
+
 describe("initHmr — WebSocket transport (AC2/AC5)", () => {
   it("connects to /__genie_hmr and reloads the matching card on a card.changed frame", () => {
     const { hooks, window, document, grid } = setup();
@@ -462,6 +824,123 @@ describe("initHmr — WebSocket transport (AC2/AC5)", () => {
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
     expect(iframeFor(grid, CARD_PATH).getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
     expect(document.getElementById("hmr-count")!.getAttribute("data-count")).toBe("2");
+  });
+
+  it("a manifest.changed frame refetches and removes deleted cards from the open grid", async () => {
+    const { hooks, window, document, grid } = setup();
+    FakeWebSocket.instances = [];
+    const next = twoCardManifest();
+    (next.components as unknown[]).splice(1, 1);
+    const fetchImpl = async () => ({ ok: true, json: async () => next }) as Response;
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: FakeWebSocket,
+      fetchImpl,
+      initialManifest: twoCardManifest(),
+    });
+
+    FakeWebSocket.instances[0]!.onmessage!({
+      data: JSON.stringify({ event: "manifest.changed" }),
+    });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(iframeFor(grid, BUTTON_PATH)).toBeDefined();
+    expect(grid.querySelector(`iframe[data-path="${CARD_PATH}"]`)).toBeNull();
+  });
+
+  it("a content-only manifest event reloads only the hash-changed card", async () => {
+    const { hooks, window, document, grid } = setup();
+    FakeWebSocket.instances = [];
+    const buttonBefore = iframeFor(grid, BUTTON_PATH);
+    const cardBefore = iframeFor(grid, CARD_PATH);
+    const fetchImpl = async () =>
+      ({
+        ok: true,
+        json: async () => twoCardManifest({ buttonHash: "sha256-button-v2" }),
+      }) as Response;
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: FakeWebSocket,
+      fetchImpl,
+      initialManifest: twoCardManifest(),
+    });
+
+    FakeWebSocket.instances[0]!.onmessage!({
+      data: JSON.stringify({ event: "manifest.changed" }),
+    });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(iframeFor(grid, BUTTON_PATH)).toBe(buttonBefore);
+    expect(buttonBefore.getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
+    expect(iframeFor(grid, CARD_PATH)).toBe(cardBefore);
+    expect(cardBefore.getAttribute("src")).toBe(CARD_PATH);
+    expect(document.getElementById("hmr-count")!.getAttribute("data-count")).toBe("1");
+  });
+
+  it("a generatedAt-only manifest event preserves every iframe", async () => {
+    const { hooks, window, document, grid } = setup();
+    FakeWebSocket.instances = [];
+    const buttonBefore = iframeFor(grid, BUTTON_PATH);
+    const cardBefore = iframeFor(grid, CARD_PATH);
+    const next = twoCardManifest() as { generatedAt: string };
+    next.generatedAt = "2026-07-02T00:00:00.000Z";
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: FakeWebSocket,
+      fetchImpl: async () => ({ ok: true, json: async () => next }) as Response,
+      initialManifest: twoCardManifest(),
+    });
+
+    FakeWebSocket.instances[0]!.onmessage!({
+      data: JSON.stringify({ event: "manifest.changed" }),
+    });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(iframeFor(grid, BUTTON_PATH)).toBe(buttonBefore);
+    expect(iframeFor(grid, CARD_PATH)).toBe(cardBefore);
+    expect(document.getElementById("hmr-count")!.getAttribute("data-count")).toBe("0");
+  });
+
+  it("queues one manifest refresh while the previous fetch is in flight", async () => {
+    const { hooks, window, document, grid } = setup();
+    FakeWebSocket.instances = [];
+    const first = twoCardManifest();
+    (first.components as unknown[]).splice(1, 1);
+    const second = twoCardManifest();
+    let resolveFirst!: (response: Response) => void;
+    const firstFetch = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetchImpl = vi
+      .fn()
+      .mockReturnValueOnce(firstFetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => second } as Response);
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: FakeWebSocket,
+      fetchImpl,
+      initialManifest: twoCardManifest(),
+    });
+
+    const refresh = { data: JSON.stringify({ event: "manifest.changed" }) };
+    FakeWebSocket.instances[0]!.onmessage!(refresh);
+    FakeWebSocket.instances[0]!.onmessage!(refresh);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    resolveFirst({ ok: true, json: async () => first } as Response);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(iframeFor(grid, CARD_PATH)).toBeDefined();
   });
 });
 
@@ -641,6 +1120,90 @@ describe("initHmr — polling fallback (AC4)", () => {
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
     expect(iframeFor(grid, CARD_PATH).getAttribute("src")).toBe(CARD_PATH); // unchanged hash
     expect(document.getElementById("hmr-count")!.getAttribute("data-count")).toBe("1");
+  });
+
+  it("drains a manifest refresh queued behind an active polling fetch", async () => {
+    const { hooks, window, document, grid } = setup();
+    const timers = fakeTimers();
+    const first = twoCardManifest();
+    (first.components as unknown[]).splice(1, 1);
+    const second = twoCardManifest();
+    let resolveFirst!: (response: Response) => void;
+    const firstFetch = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetchImpl = vi
+      .fn()
+      .mockReturnValueOnce(firstFetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => second } as Response);
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: undefined,
+      fetchImpl,
+      setIntervalImpl: timers.setIntervalImpl,
+      clearIntervalImpl: timers.clearIntervalImpl,
+      initialManifest: twoCardManifest(),
+    });
+
+    timers.fireAll();
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        data: { event: "manifest.changed" },
+        source: window.parent,
+      }),
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    resolveFirst({ ok: true, json: async () => first } as Response);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(iframeFor(grid, CARD_PATH)).toBeDefined();
+  });
+
+  it("skips an overlapping poll tick while a message fetch is active", async () => {
+    const { hooks, window, document, grid } = setup();
+    const timers = fakeTimers();
+    const first = twoCardManifest();
+    (first.components as unknown[]).splice(1, 1);
+    const second = twoCardManifest();
+    let resolveFirst!: (response: Response) => void;
+    const firstFetch = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetchImpl = vi
+      .fn()
+      .mockReturnValueOnce(firstFetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => second } as Response);
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: undefined,
+      fetchImpl,
+      setIntervalImpl: timers.setIntervalImpl,
+      clearIntervalImpl: timers.clearIntervalImpl,
+      initialManifest: twoCardManifest(),
+    });
+
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        data: { event: "manifest.changed" },
+        source: window.parent,
+      }),
+    );
+    timers.fireAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    resolveFirst({ ok: true, json: async () => first } as Response);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(grid.querySelector(`iframe[data-path="${CARD_PATH}"]`)).toBeNull();
   });
 
   it("polls from the start when a dev server is present but WebSocket is unavailable", () => {

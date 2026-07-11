@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { ProjectStore, ProjectStoreError } from "./create_project.js";
+import { CREATE_PROJECT_DESCRIPTION, ProjectStore, ProjectStoreError } from "./create_project.js";
 import { LocalFsKitStore } from "../store/local.js";
 import { KIT_TYPE } from "../store/interface.js";
 import type { KitStore } from "../store/interface.js";
@@ -22,6 +22,15 @@ async function readProjectManifest(
   const raw = await readFile(join(root, projectId, ".genie", "project.json"), "utf8");
   return JSON.parse(raw) as Record<string, unknown>;
 }
+
+describe("create_project guidance", () => {
+  it("distinguishes new-project creation from existing-project discovery", () => {
+    expect(CREATE_PROJECT_DESCRIPTION).toContain("only when starting a new project");
+    expect(CREATE_PROJECT_DESCRIPTION).toContain("call list_projects first");
+    expect(CREATE_PROJECT_DESCRIPTION).toContain("project's id as projectId");
+    expect(CREATE_PROJECT_DESCRIPTION).not.toContain("first in project-based workflows");
+  });
+});
 
 describe("ProjectStore", () => {
   it("listProjects returns [] when no projects exist", async () => {

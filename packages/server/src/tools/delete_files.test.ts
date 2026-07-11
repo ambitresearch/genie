@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../server.js";
 import {
+  DELETE_FILES_DESCRIPTION,
   DELETE_FILES_TOOL_NAME,
   DeleteFilesError,
   deleteFiles,
@@ -80,6 +81,13 @@ describe("sortPathsLongestFirst", () => {
   });
 });
 
+describe("delete_files guidance", () => {
+  it("requires preview after deletion so compiled manifests are refreshed", () => {
+    expect(DELETE_FILES_DESCRIPTION).toContain("call mcp__genie__preview");
+    expect(DELETE_FILES_DESCRIPTION).toContain("recompile");
+  });
+});
+
 // ────────────────────────────────────────────────────────────
 // deleteFiles — core behaviour (AC3–AC6)
 // ────────────────────────────────────────────────────────────
@@ -145,9 +153,9 @@ describe("deleteFiles", () => {
     await seed(harness.kitDir, "a.txt");
     const planId = await seedPlan([]);
 
-    await expect(
-      deleteFiles(harness.store, { planId, paths: ["a.txt"] }),
-    ).rejects.toBeInstanceOf(DeleteFilesError);
+    await expect(deleteFiles(harness.store, { planId, paths: ["a.txt"] })).rejects.toBeInstanceOf(
+      DeleteFilesError,
+    );
     expect(existsSync(join(harness.kitDir, "a.txt"))).toBe(true);
   });
 
@@ -210,9 +218,9 @@ describe("deleteFiles", () => {
     await seed(harness.kitDir, "a.txt");
     const planId = await seedPlan(["**/*"]);
 
-    await expect(
-      deleteFiles(harness.store, { planId, paths: ["./a.txt"] }),
-    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+    await expect(deleteFiles(harness.store, { planId, paths: ["./a.txt"] })).rejects.toMatchObject({
+      code: "PathOutsidePlanError",
+    });
 
     expect(existsSync(join(harness.kitDir, "a.txt"))).toBe(true);
   });

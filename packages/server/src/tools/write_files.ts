@@ -46,6 +46,7 @@ import {
 } from "../plans/index.js";
 import type { KitStore, WriteOp } from "../store/interface.js";
 import { RollbackIncompleteError, WriteFailedError } from "../store/interface.js";
+import { isValidBase64Content } from "../store/kit-files.js";
 
 export const WRITE_FILES_TOOL_NAME = "mcp__genie__write_files";
 
@@ -281,7 +282,8 @@ export function registerWriteFilesTool(server: McpServer, kitStore: KitStore): v
         "glob in the plan's writes. Reads content from localPath (resolved against the " +
         "plan's localDir, the local SOURCE base) so file contents never enter model " +
         "context, or from inline data for in-memory content. Atomic per call — if any " +
-        "file fails, nothing is written.",
+        "file fails, nothing is written. Requires a planId from mcp__genie__plan covering " +
+        "every path being written; call preview afterwards to show the result.",
       inputSchema: writeFilesInputSchema,
       outputSchema: writeFilesOutputSchema,
     },
@@ -500,7 +502,7 @@ export async function writeFiles(
     if (!hasLocalPath && !hasData) {
       throw new InvalidFileInputError(file.path, "missing");
     }
-    if (hasData && file.encoding === "base64" && !isValidBase64(file.data as string)) {
+    if (hasData && file.encoding === "base64" && !isValidBase64Content(file.data as string)) {
       throw new InvalidEncodingError(file.path);
     }
   }
@@ -571,11 +573,6 @@ function byteLengthOf(data: string, encoding: "utf-8" | "base64"): number {
     return Math.floor((data.length * 3) / 4) - padding;
   }
   return Buffer.byteLength(data, "utf-8");
-}
-
-function isValidBase64(data: string): boolean {
-  if (data.length === 0) return true;
-  return /^[A-Za-z0-9+/]*={0,2}$/.test(data) && data.length % 4 === 0;
 }
 
 async function sizeOf(localPath: string, publicPath: string): Promise<number> {

@@ -15,3 +15,4 @@ export {
   type ManifestCard,
   type ManifestSkip,
 } from "./compiler.js";
+export { ensureManifest } from "./ensure.js";

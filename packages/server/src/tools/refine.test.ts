@@ -353,9 +353,28 @@ describe("AC5 — returns { diff, files }", () => {
   it("returns the full updated files as the source of truth", async () => {
     const res = await refine(deps(), args());
     expect(res.files).toHaveLength(3);
+    expect(res.files.every((file) => file.encoding === "utf-8")).toBe(true);
     expect(res.files.find((f) => f.path.endsWith("Button.tsx"))?.content).toContain("radius: 12px");
     expect(res.componentName).toBe("Button");
     expect(res.group).toBe("actions");
+  });
+
+  it("uses the canonical text MIME classification for generated files", async () => {
+    const component = refinedComponent({
+      files: [
+        ...refinedComponent().files,
+        {
+          path: "components/actions/Button/theme.toml",
+          content: 'accent = "clay"',
+          mimeType: "application/toml",
+        },
+      ],
+    });
+    const chat = stubChat([completionOf(JSON.stringify(component))]);
+
+    const res = await refine(deps({ chat }), args());
+
+    expect(res.files.find((file) => file.path.endsWith("theme.toml"))?.encoding).toBe("utf-8");
   });
 
   it("returns a unified diff that shows the change (4px → 12px) and only changed files", async () => {
@@ -419,16 +438,16 @@ describe("AC5 — returns { diff, files }", () => {
     expect(carried).toBeDefined();
     expect(carried?.content).toBe(files.find((f) => f.path.endsWith("icon.png"))!.content);
     expect(carried?.mimeType).toBe("image/png");
+    expect(carried?.encoding).toBe("base64");
 
     // And it is NOT misreported as deleted (or anything) in the diff.
     expect(res.diff).not.toContain("icon.png");
   });
 
-  it("does not carry a binary forward (or duplicate it) when the model returns that path (PR #128 review)", async () => {
-    // The original component has a binary icon.png. This time the model's reply
-    // DOES include an icon.png entry (e.g. it was instructed to swap the icon).
-    // The `returnedPaths` guard must let the model's entry win — exactly one
-    // icon.png in the result, and it's the model's content, not the original's.
+  it("preserves an unseen original binary even when the model fabricates that path", async () => {
+    // The original component has a binary icon.png, but the model sees only a
+    // placeholder. A fabricated replacement must not overwrite bytes it never
+    // observed; v1 has no explicit binary replacement protocol.
     const originalPng =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
     const files: LoadedFile[] = [
@@ -442,7 +461,7 @@ describe("AC5 — returns { diff, files }", () => {
     ];
     const kitStore = stubKitStore(files);
     // The model returns the standard component PLUS a new icon.png (its own bytes).
-    const modelPng = "REPLACED_ICON_BYTES_BASE64==";
+    const modelPng = "UkVQTEFDRURfSUNPTg==";
     const withIcon = refinedComponent({
       files: [
         ...refinedComponent().files,
@@ -456,12 +475,78 @@ describe("AC5 — returns { diff, files }", () => {
     const chat = stubChat([completionOf(JSON.stringify(withIcon))]);
     const res = await refine(deps({ chat, kitStore }), args());
 
-    // Exactly one icon.png — no duplicate from the carry-forward step.
+    // Exactly one icon.png, and the trusted original wins.
     const icons = res.files.filter((f) => f.path.endsWith("icon.png"));
     expect(icons).toHaveLength(1);
-    // The model's entry wins; the original was NOT re-added over it.
-    expect(icons[0]!.content).toBe(modelPng);
-    expect(icons[0]!.content).not.toBe(originalPng);
+    expect(icons[0]!.content).toBe(originalPng);
+    expect(icons[0]!.content).not.toBe(modelPng);
+    expect(icons[0]!.encoding).toBe("base64");
+  });
+
+  it("accepts an echoed binary placeholder for an original path and preserves trusted bytes", async () => {
+    const originalPng =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+    const kitStore = stubKitStore([
+      ...currentFiles(),
+      {
+        path: "components/actions/Button/icon.png",
+        content: originalPng,
+        encoding: "base64",
+        mimeType: "image/png",
+      },
+    ]);
+    const echoed = refinedComponent({
+      files: [
+        ...refinedComponent().files,
+        {
+          path: "components/actions/Button/icon.png",
+          content: "[binary file, base64 — omitted]",
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const chat = stubChat([completionOf(JSON.stringify(echoed))]);
+
+    const result = await refine(deps({ chat, kitStore }), args());
+
+    expect(chat.calls).toHaveLength(1);
+    expect(result.files.find((file) => file.path.endsWith("icon.png"))?.content).toBe(originalPng);
+  });
+
+  it("retries when a model-returned binary file is not valid base64", async () => {
+    const invalid = refinedComponent({
+      files: [
+        ...refinedComponent().files,
+        {
+          path: "components/actions/Button/icon.png",
+          content: "not base64!",
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const valid = refinedComponent({
+      files: [
+        ...refinedComponent().files,
+        {
+          path: "components/actions/Button/icon.png",
+          content: "aGVsbG8=",
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const chat = stubChat([
+      completionOf(JSON.stringify(invalid)),
+      completionOf(JSON.stringify(valid)),
+    ]);
+
+    const res = await refine(deps({ chat }), args());
+
+    expect(chat.calls).toHaveLength(2);
+    expect(chat.calls[1]?.messages.at(-1)?.content).toContain("valid base64");
+    expect(res.files.find((file) => file.path.endsWith("icon.png"))).toMatchObject({
+      content: "aGVsbG8=",
+      encoding: "base64",
+    });
   });
 });
 
@@ -677,10 +762,15 @@ describe("tool boundary", () => {
     await Promise.all([server.connect(a), client.connect(b)]);
     try {
       const res = (await client.callTool({ name: REFINE_TOOL_NAME, arguments: args() })) as {
-        structuredContent?: { componentName: string; diff: string };
+        structuredContent?: {
+          componentName: string;
+          diff: string;
+          files: { encoding: string }[];
+        };
       };
       expect(res.structuredContent?.componentName).toBe("Button");
       expect(typeof res.structuredContent?.diff).toBe("string");
+      expect(res.structuredContent?.files.every((file) => file.encoding === "utf-8")).toBe(true);
     } finally {
       await client.close();
       await server.close();

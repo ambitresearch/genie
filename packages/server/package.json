@@ -15,7 +15,7 @@
   "scripts": {
     "dev": "tsx watch src/cli.ts",
     "start": "node dist/cli.js",
-    "build": "tsc -p tsconfig.json && node scripts/emit-component-schema.mjs && node scripts/copy-prompts.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/emit-component-schema.mjs && node scripts/copy-prompts.mjs && node scripts/copy-viewer-assets.mjs && node scripts/verify-packaged-viewer.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

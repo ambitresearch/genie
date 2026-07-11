@@ -1,22 +1,19 @@
 /**
  * MCP tool: preview (M4-05 / DRO-267).
  *
- * Returns a human-readable summary — the live viewer URL plus a `file://`
- * fallback — as `content`, and points capable hosts at the inline grid via
- * `_meta.ui.resourceUri: "ui://genie/grid?…"`. Hosts that render `ui://`
- * today (currently Claude, VS Code ≥Jan 2026, ChatGPT, Cursor, and the
- * Goose/Postman/MCPJam trio — see `UI_HOST_MARKERS`) show the inline grid;
- * everyone else falls back to the printed URLs (RFC §8.3, progressive
- * enhancement).
+ * Returns a human-readable summary — the live viewer URL plus a local-only
+ * `file://` fallback — as `content`. The tool advertises the static
+ * `ui://genie/grid` app shell in tools/list for standards-compliant discovery;
+ * the host then delivers this call's input/result to that shell. The result
+ * also retains its query-bearing resource URI for legacy/result-level hosts.
  *
  * ── Contract (RFC §6.2.3 / §8.3; this issue's AC1–AC7) ───────────────────────
  *   input : { kitId, componentName?, group? }                          (AC2)
  *   output: { content: [{ type:"text", text }],
  *             _meta: { ui: { resourceUri: "ui://genie/grid?…" } } }     (AC3/AC4)
- * The `ui://genie/grid` RESOURCE itself is registered by M4-06 — this tool only
- * emits the URI string that references it. `_meta.ui.resourceUri` is emitted
- * UNCONDITIONALLY (a host that can't read it just renders the text); AC7's
- * client sniff is observability only, it never gates the payload.
+ * The `ui://genie/grid` RESOURCE itself is registered by M4-06. The static
+ * tools/list association and query-bearing result URI are emitted
+ * unconditionally; a host without MCP Apps support simply renders the text.
  *
  * ── Viewer boot seam (AC5/AC6) ───────────────────────────────────────────────
  * Booting the Vite dev server is behind an injectable `ViewerBooter` so the
@@ -26,14 +23,27 @@
  * (so `tsc` never hard-resolves it) and degrades gracefully when it is absent —
  * exactly the OPTIONAL-peer-dependency pattern `refine` uses for Playwright.
  * A failed boot (Vite missing, port unbindable, kit dir invalid) is caught and
- * turned into AC6's `file://<kitDir>/index.html` fallback; `_meta` is still
- * emitted. A `ViewerRegistry` caches one running viewer per kit dir (AC5).
+ * turned into AC6's local `file://<kitDir>/index.html` fallback; MCP Apps can
+ * instead receive a CSP-safe embedded manifest when a previews origin is
+ * configured. `_meta` is still emitted. A `ViewerRegistry` caches one running
+ * viewer per kit dir (AC5).
  */
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+
+import { ensureManifest, type Manifest } from "../manifest/index.js";
+import { getServerTransportKind, type TransportKind } from "../transport.js";
+import {
+  filterManifest,
+  normalizePreviewsBaseUrl,
+  rewriteCardPaths,
+  type EmbeddedManifest,
+  type PreviewReader,
+} from "../ui/grid-resource.js";
 
 import { KIT_ID_PATTERN } from "./get_kit.js";
 
@@ -57,16 +67,15 @@ export const DEFAULT_VIEWER_PORT = 5173;
  * today (RFC §8.3 / research report §3.4): Claude, VS Code, ChatGPT, Cursor,
  * plus the Goose / Postman / MCPJam trio. Matched case-insensitively as a
  * SUBSTRING because harnesses report varied client names ("Claude Code",
- * "claude-ai", "Visual Studio Code", "openai-chatgpt", …). This list drives an
- * observability LOG only (AC7) — it never gates `_meta.ui.resourceUri`, which
- * is always emitted so a host we don't recognize can still opt to render it.
+ * "claude-ai", "Visual Studio Code", "openai-chatgpt", …). It is consulted only
+ * when the client exposes no extensions bag, affecting legacy browser fallback
+ * and logging; it never gates `_meta.ui.resourceUri`, which is always emitted.
  */
 const UI_HOST_MARKERS = [
   "claude",
   "vscode",
   "visual studio code",
   "chatgpt",
-  "openai",
   "cursor",
   "goose",
   "postman",
@@ -81,6 +90,48 @@ export function clientSupportsUi(clientName: string | undefined): boolean {
   if (clientName === undefined) return false;
   const lower = clientName.toLowerCase();
   return UI_HOST_MARKERS.some((marker) => lower.includes(marker));
+}
+
+/**
+ * The MCP Apps extension identifier (ext-apps spec 2026-01-26, "Client<>Server
+ * Capability Negotiation"): a host that renders `ui://` app resources
+ * advertises `capabilities.extensions["io.modelcontextprotocol/ui"]` in its
+ * `initialize` request, with `mimeTypes` naming the profiles it can render.
+ */
+export const UI_EXTENSION_ID = "io.modelcontextprotocol/ui";
+
+/** The MCP-Apps HTML profile the grid resource serves (spec §Resource Discovery). */
+export const MCP_APP_MIME = "text/html;profile=mcp-app";
+
+/**
+ * Authoritative `ui://` capability check: true when the client's `initialize`
+ * capabilities carry the MCP Apps extension with a `mimeTypes` array that
+ * includes {@link MCP_APP_MIME}. This is the spec-defined negotiation and takes
+ * precedence over the {@link clientSupportsUi} name sniff, which remains only
+ * as a fallback for hosts that render `ui://` without yet advertising the
+ * extension. `caps` is typed `unknown` because the SDK's `ClientCapabilities`
+ * models `extensions` as a passthrough bag — every level is checked defensively.
+ */
+export function hasUiExtensionCapability(caps: unknown): boolean {
+  return getUiExtensionCapability(caps) === true;
+}
+
+/**
+ * Resolve MCP Apps negotiation without collapsing "not advertised" and
+ * "explicitly not supported." A missing `extensions` mechanism returns
+ * `undefined` so legacy name sniffing may apply. Once an extensions bag is
+ * present, only the required app MIME is positive; every other shape is a
+ * negotiated negative.
+ */
+export function getUiExtensionCapability(caps: unknown): boolean | undefined {
+  if (typeof caps !== "object" || caps === null) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(caps, "extensions")) return undefined;
+  const extensions = (caps as { extensions?: unknown }).extensions;
+  if (typeof extensions !== "object" || extensions === null) return false;
+  const ext = (extensions as Record<string, unknown>)[UI_EXTENSION_ID];
+  if (typeof ext !== "object" || ext === null) return false;
+  const mimeTypes = (ext as { mimeTypes?: unknown }).mimeTypes;
+  return Array.isArray(mimeTypes) && mimeTypes.includes(MCP_APP_MIME);
 }
 
 // ─── Structured stderr log (never stdout — it IS the stdio JSON-RPC stream) ───
@@ -131,13 +182,22 @@ export class InvalidKitIdError extends Error {
   }
 }
 
+/** A well-formed kitId that does not identify an existing kit directory. */
+export class KitNotFoundError extends Error {
+  readonly code = "KitNotFoundError";
+  constructor(readonly kitId: string) {
+    super(`Kit "${kitId}" does not exist. Call list_kits or create_kit first.`);
+    this.name = "KitNotFoundError";
+  }
+}
+
 /**
  * Resolve a `kitId` to its on-disk kit directory under `kitsRoot`, rejecting
  * any id that isn't a well-formed slug BEFORE the `join` — an unvalidated id
  * like `../../etc` would otherwise escape the kits root (RFC §10 T-13, the same
  * traversal class `write_files`/`read_file` guard). Only shape is checked here;
- * whether the dir actually exists is the booter's concern (a missing/uncompiled
- * kit surfaces as AC6's `file://` fallback, not a hard tool error).
+ * Existence is checked by {@link runPreview} before compilation so a missing
+ * slug cannot create a phantom kit through manifest persistence.
  */
 export function resolveKitDir(kitsRoot: string, kitId: string): string {
   if (!KIT_ID_PATTERN.test(kitId)) {
@@ -154,6 +214,17 @@ export interface BootRequest {
   kitDir: string;
   /** Requested dev-server port; the booter may fall back to the next free one. */
   port?: number;
+  /**
+   * Whether the booter should open its unfiltered base URL on first boot.
+   * On its local path, {@link runPreview} boots or reuses with `false`, adds the
+   * requested component and group filters, then calls
+   * {@link ViewerRegistry.open} with that exact target when harness policy
+   * allows browser fallback. This option remains available to direct
+   * registry/booter callers that explicitly want the base URL opened during
+   * boot.
+   * Undefined is treated as `false` (a booter that never opens is always safe).
+   */
+  open?: boolean;
 }
 
 /** A running viewer the registry hands back to the tool. */
@@ -162,12 +233,25 @@ export interface BootedViewer {
   url: string;
   /** The port the viewer actually bound. */
   port: number;
+  /** Best-effort browser open for this already-running viewer. */
+  open: (target?: string) => Promise<void>;
   /** Tear the viewer down (used by {@link ViewerRegistry.closeAll}). */
   close: () => Promise<void>;
 }
 
 /** Boots a viewer for a kit dir, or rejects if it cannot (→ AC6 fallback). */
 export type ViewerBooter = (req: BootRequest) => Promise<BootedViewer>;
+
+interface BrowserOpenState {
+  /** `null` means the viewer's unfiltered base URL. */
+  target: string | null;
+  promise: Promise<void>;
+}
+
+interface ViewerRegistryEntry {
+  viewer: Promise<BootedViewer>;
+  browserOpen?: BrowserOpenState;
+}
 
 /**
  * Caches one running viewer per kit directory so repeated `preview` calls reuse
@@ -177,36 +261,94 @@ export type ViewerBooter = (req: BootRequest) => Promise<BootedViewer>;
  * later call retries rather than replaying the dead promise forever.
  */
 export class ViewerRegistry {
-  private readonly viewers = new Map<string, Promise<BootedViewer>>();
+  private readonly viewers = new Map<string, ViewerRegistryEntry>();
 
   constructor(private readonly booter: ViewerBooter) {}
+
+  private queueBrowserOpen(
+    entry: ViewerRegistryEntry,
+    kitDir: string,
+    target: string | null,
+  ): Promise<void> {
+    const previous = entry.browserOpen?.promise ?? Promise.resolve();
+    const promise = Promise.all([entry.viewer, previous]).then(async ([viewer]) => {
+      try {
+        await viewer.open(target ?? undefined);
+      } catch (error) {
+        logStderr({
+          event: "preview.browser.open-failed",
+          kitDir,
+          ...(target !== null ? { target } : {}),
+          error: String(error),
+        });
+      }
+    });
+    entry.browserOpen = { target, promise };
+    return promise;
+  }
 
   /**
    * Return the viewer for `kitDir`, booting it on first request. Subsequent
    * calls for the same dir return the cached (in-flight or resolved) promise.
+   *
+   * Booting and browser opening are tracked separately. Direct callers can use
+   * `open:true` for the base URL, while {@link runPreview}'s local path boots or
+   * reuses headlessly and calls {@link ViewerRegistry.open} after constructing
+   * its filtered target. Repeated requests for the same target share one
+   * promise; a changed filter target is opened again so the requested component
+   * is not hidden behind an older tab.
    */
-  ensure(kitDir: string, port = DEFAULT_VIEWER_PORT): Promise<BootedViewer> {
+  ensure(kitDir: string, port = DEFAULT_VIEWER_PORT, open = false): Promise<BootedViewer> {
     const existing = this.viewers.get(kitDir);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      if (open) {
+        const browserOpen =
+          existing.browserOpen?.target === null
+            ? existing.browserOpen.promise
+            : this.queueBrowserOpen(existing, kitDir, null);
+        return Promise.all([existing.viewer, browserOpen]).then(([viewer]) => viewer);
+      }
+      return existing.viewer;
+    }
 
-    const booting = this.booter({ kitDir, port }).catch((error: unknown) => {
+    const booting = this.booter({ kitDir, port, open }).catch((error: unknown) => {
       // Evict the failed boot so the next call retries with a fresh attempt
       // rather than being handed this same rejected promise (AC5 durability).
       this.viewers.delete(kitDir);
       throw error;
     });
-    this.viewers.set(kitDir, booting);
+    const entry: ViewerRegistryEntry = { viewer: booting };
+    if (open) {
+      entry.browserOpen = { target: null, promise: booting.then(() => undefined) };
+    }
+    this.viewers.set(kitDir, entry);
     return booting;
+  }
+
+  async open(kitDir: string, target: string): Promise<void> {
+    const entry = this.viewers.get(kitDir);
+    if (entry === undefined) {
+      throw new Error(`Viewer for "${kitDir}" must be booted before it can be opened.`);
+    }
+    const browserOpen =
+      entry.browserOpen?.target === target
+        ? entry.browserOpen.promise
+        : this.queueBrowserOpen(entry, kitDir, target);
+    await browserOpen;
   }
 
   /** Tear down every booted viewer (best-effort). For clean shutdown/tests. */
   async closeAll(): Promise<void> {
-    const handles = Array.from(this.viewers.values());
+    const entries = Array.from(this.viewers.values());
     this.viewers.clear();
     await Promise.allSettled(
-      handles.map(async (p) => {
-        const viewer = await p;
-        await viewer.close();
+      entries.map(async ({ viewer: viewerPromise, browserOpen }) => {
+        const viewer = await viewerPromise;
+        try {
+          await browserOpen?.promise;
+        } finally {
+          await viewer.close();
+        }
       }),
     );
   }
@@ -230,6 +372,7 @@ interface ViewerCliIo {
 interface ViewerHandleLike {
   url: string;
   port: number;
+  open?: (target?: string) => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -242,12 +385,17 @@ interface ViewerModuleLike {
 
 /**
  * The default `ViewerBooter`. Lazily loads `@genie/viewer` and boots its Vite
- * dev server against the kit dir with `open:false` (a headless server must
- * never try to pop a browser) and ALL of the viewer's own stdout routed to
- * STDERR — on the stdio transport the tool's stdout is the JSON-RPC stream, so
- * the viewer's `Preview:` banner would corrupt framing if left on stdout.
+ * dev server against the kit dir and honors {@link BootRequest.open} for direct
+ * callers. On its local path, {@link runPreview} deliberately passes `false`,
+ * constructs the filter-bearing viewer URL, and invokes
+ * {@link ViewerRegistry.open} separately so browser fallback never opens the
+ * unfiltered base URL. Absent → `false` (never opens), preserving the safe
+ * headless default.
+ * ALL of the viewer's own stdout is routed to STDERR — on the stdio transport
+ * the tool's stdout is the JSON-RPC stream, so the viewer's `Preview:` banner
+ * would corrupt framing if left on stdout.
  */
-export const defaultViewerBooter: ViewerBooter = async ({ kitDir, port }) => {
+export const defaultViewerBooter: ViewerBooter = async ({ kitDir, port, open }) => {
   // Non-literal specifier: keeps `tsc` from resolving the optional dep at build.
   const specifier = "@genie/viewer";
   let mod: ViewerModuleLike;
@@ -268,10 +416,25 @@ export const defaultViewerBooter: ViewerBooter = async ({ kitDir, port }) => {
     stderr: (chunk) => process.stderr.write(chunk),
   };
   const handle = await mod.bootViewer(
-    { root: kitDir, port: port ?? DEFAULT_VIEWER_PORT, open: false },
+    { root: kitDir, port: port ?? DEFAULT_VIEWER_PORT, open: open ?? false },
     io,
   );
-  return { url: handle.url, port: handle.port, close: () => handle.close() };
+  return {
+    url: handle.url,
+    port: handle.port,
+    open: async (target) => {
+      if (handle.open === undefined) {
+        logStderr({
+          event: "preview.browser.open-unavailable",
+          reason: "viewer-handle-does-not-support-open",
+          url: handle.url,
+        });
+        return;
+      }
+      await handle.open(target);
+    },
+    close: () => handle.close(),
+  };
 };
 
 // ─── Core: runPreview ────────────────────────────────────────────────────────
@@ -280,6 +443,18 @@ export const defaultViewerBooter: ViewerBooter = async ({ kitDir, port }) => {
 export interface PreviewDeps {
   kitsRoot: string;
   registry: ViewerRegistry;
+  /**
+   * Process env consulted for the `GENIE_PREVIEW_NO_OPEN` opt-out (piece B).
+   * Injectable so tests can drive the auto-open branch without mutating the real
+   * `process.env`. Defaults to `process.env` at registration time.
+   */
+  env?: NodeJS.ProcessEnv;
+  /** Manifest compiler seam; production uses the shared compile-and-persist helper. */
+  ensureManifest?: (kitDir: string) => Promise<Manifest>;
+  /** Preview reader used to build the self-contained app result. */
+  readPreviewBytes?: PreviewReader;
+  /** Optional separate-origin previews host for embedded manifest card URLs. */
+  previewsBaseUrl?: string;
 }
 
 /** The three-field tool input (AC2). */
@@ -292,7 +467,19 @@ export interface PreviewArgs {
 /** Per-request context sniffed off the wire (AC7). */
 export interface PreviewContext {
   clientName?: string;
+  /**
+   * Tri-state MCP Apps negotiation from `initialize`: true/false are
+   * authoritative, while undefined means the client exposed no extensions
+   * mechanism and allows the legacy {@link clientSupportsUi} name fallback.
+   */
+  uiCapable?: boolean;
+  /** Active server transport; HTTP suppresses server-machine browser opening. */
+  transportKind?: TransportKind;
+  /** Whether the viewer URL is reachable by the MCP client host. */
+  locality?: PreviewLocality;
 }
+
+export type PreviewLocality = "local" | "remote";
 
 /**
  * The tool's return shape (AC3): text URLs + the ui:// resource pointer.
@@ -306,16 +493,71 @@ export interface PreviewContext {
  */
 export interface PreviewResult {
   content: { type: "text"; text: string }[];
+  /**
+   * Spec-shaped view payload (ext-apps §"Tool Result"): the host forwards the
+   * whole tool result to the rendered app via `ui/notifications/tool-result`,
+   * and `structuredContent` is the part meant for UI rendering (never added to
+   * model context). Carries what the grid app needs to know WHICH kit/filters
+   * this call was about — the registration-time template URI is bare, so this
+   * is the app's only per-call signal.
+   */
+  structuredContent: {
+    kitId: string;
+    componentName?: string;
+    group?: string;
+    /** The live Vite viewer URL when it booted; absent on local file/inline fallbacks. */
+    viewerUrl?: string;
+    /** Local-only fallback; omitted from remote results to avoid leaking server paths. */
+    fileUrl?: string;
+    transportKind?: TransportKind;
+    locality: PreviewLocality;
+    embeddedManifest?: EmbeddedManifest;
+    embeddedError?: string;
+  };
   _meta: { ui: { resourceUri: string }; "openai/outputTemplate": string };
 }
 
 /**
+ * True when the operator has opted OUT of preview's server-side browser
+ * auto-open by setting `GENIE_PREVIEW_NO_OPEN` to a truthy value (design
+ * 2026-07-05, piece B — auto-open is opt-OUT, on by default for non-`ui://`
+ * hosts). Any non-empty value other than `0`/`false` (case-insensitive) counts
+ * as set, so `GENIE_PREVIEW_NO_OPEN=1`, `=true`, `=yes` all disable it.
+ */
+export function autoOpenDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.GENIE_PREVIEW_NO_OPEN;
+  if (raw === undefined) return false;
+  const v = raw.trim().toLowerCase();
+  return v !== "" && v !== "0" && v !== "false";
+}
+
+/**
+ * Decide whether {@link runPreview} should ask the booter to open a browser:
+ * open only when the host is NOT `ui://`-capable (a ui:// host renders the
+ * inline grid, so a tab is redundant) AND the operator has not opted out via
+ * `GENIE_PREVIEW_NO_OPEN`. Extracted for direct unit testing of the branch.
+ */
+export function shouldAutoOpen(
+  uiSupported: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+  transportKind?: TransportKind,
+): boolean {
+  if (uiSupported) return false;
+  if (transportKind !== "stdio") return false;
+  return !autoOpenDisabledByEnv(env);
+}
+
+/**
  * Core `preview` logic (exported for direct unit testing without the MCP
- * transport). Resolves the kit dir, tries to boot/reuse the viewer, and builds
- * the text summary — the live URL when the viewer is up (AC5), else a
+ * transport). Compiles + persists the kit's manifest (piece A) so all three
+ * vehicles render real cards, resolves the kit dir, tries to boot/reuse the
+ * viewer — opening a browser server-side for non-`ui://` hosts (piece B) — and
+ * builds the text summary: the live URL when the viewer is up (AC5), else a
  * `file://` fallback (AC6). `_meta.ui.resourceUri` is emitted either way
  * (AC3/AC4), and one `preview.request` line is logged recording the client and
- * its `ui://` support (AC7).
+ * its `ui://` support (AC7). Remote results never expose server-local file
+ * paths; a failed local viewer can deliver a CSP-safe manifest to an MCP App
+ * when a previews origin is configured.
  */
 export async function runPreview(
   deps: PreviewDeps,
@@ -325,46 +567,166 @@ export async function runPreview(
   // Path-safety BEFORE anything touches the filesystem or boots a server.
   const kitDir = resolveKitDir(deps.kitsRoot, args.kitId);
 
+  let kitStat;
+  try {
+    kitStat = await stat(kitDir);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      throw new KitNotFoundError(args.kitId);
+    }
+    throw error;
+  }
+  if (!kitStat.isDirectory()) {
+    throw new KitNotFoundError(args.kitId);
+  }
+
+  // Piece A — compile + persist `.genie/manifest.json` at request time so the
+  // Vite / file:// / ui:// vehicles all render real cards (and list_components
+  // sees them) without depending on a prior resource read. An existing empty
+  // kit compiles to an empty manifest; genuine read/write failures propagate.
+  const compile = deps.ensureManifest ?? ensureManifest;
+  const manifest = await compile(kitDir);
+  const filteredManifest = filterManifest(manifest, {
+    componentName: args.componentName,
+    group: args.group,
+  });
+  const env = deps.env ?? process.env;
+  const locality = ctx.locality ?? (ctx.transportKind === "stdio" ? "local" : "remote");
+  const previewsBaseUrl = deps.previewsBaseUrl ?? env.GENIE_PREVIEWS_BASE_URL;
+  const normalizedPreviewsBaseUrl = normalizePreviewsBaseUrl(previewsBaseUrl);
+  const canDeliverEmbeddedManifest =
+    normalizedPreviewsBaseUrl !== undefined || filteredManifest.components.length === 0;
+  // Authoritative first: the MCP Apps extension capability from the initialize
+  // handshake. The name sniff remains only for hosts that render ui:// without
+  // advertising the extension yet (older Claude/VS Code/Cursor builds).
+  const uiSupported = ctx.uiCapable ?? clientSupportsUi(ctx.clientName);
+  const readPreviewBytes: PreviewReader =
+    deps.readPreviewBytes ??
+    (async (root, path) => {
+      try {
+        return await readFile(join(root, path));
+      } catch {
+        return null;
+      }
+    });
+  let embeddedManifest: EmbeddedManifest | undefined;
+  let embeddedError: string | undefined;
+  if (locality === "remote") {
+    if (!uiSupported) {
+      embeddedError =
+        "Client does not support MCP Apps; remote-locality previews have no server-side browser fallback.";
+    } else if (canDeliverEmbeddedManifest) {
+      embeddedManifest = await rewriteCardPaths(filteredManifest, {
+        kitId: args.kitId,
+        kitDir,
+        previewsBaseUrl: normalizedPreviewsBaseUrl?.toString(),
+        readPreviewBytes,
+      });
+    } else {
+      embeddedError =
+        previewsBaseUrl !== undefined && previewsBaseUrl !== ""
+          ? "Invalid GENIE_PREVIEWS_BASE_URL; remote embedded previews require an absolute http(s) origin."
+          : "Remote embedded previews require GENIE_PREVIEWS_BASE_URL; " +
+            "the query-bearing resource remains available to result-level hosts.";
+    }
+  }
+
   const resourceUri = buildResourceUri({
     kitId: args.kitId,
     componentName: args.componentName,
     group: args.group,
   });
 
-  const uiSupported = clientSupportsUi(ctx.clientName);
+  const autoOpen = locality === "local" && shouldAutoOpen(uiSupported, deps.env, ctx.transportKind);
   // AC7 — one structured line per request; the sniffed client + its ui:// support.
   logStderr({
     event: "preview.request",
     kitId: args.kitId,
     client: ctx.clientName ?? null,
+    uiCapable: ctx.uiCapable ?? null,
     uiSupported,
+    autoOpen,
+    transport: ctx.transportKind ?? null,
     ...(args.group !== undefined ? { group: args.group } : {}),
     ...(args.componentName !== undefined ? { componentName: args.componentName } : {}),
   });
 
-  const fileUrl = pathToFileURL(join(kitDir, "index.html")).href;
-
   let text: string;
-  try {
-    const viewer = await deps.registry.ensure(kitDir, DEFAULT_VIEWER_PORT); // AC5
-    text = `Preview running at ${viewer.url}\n` + `Or open the kit directly: ${fileUrl}`;
-  } catch (error) {
-    // AC6 — the viewer could not boot (Vite/@genie/viewer absent, port
-    // unbindable, …). Degrade to the file:// vehicle; still emit _meta so a
-    // ui:// host can render the inline grid regardless.
-    logStderr({
-      event: "preview.fallback",
-      kitId: args.kitId,
-      reason: "viewer-boot-failed",
-      error: String(error),
-    });
+  let viewerUrl: string | undefined;
+  let fileUrl: string | undefined;
+  if (locality === "remote") {
     text =
-      `Preview viewer could not start; open the kit directly: ${fileUrl}\n` +
-      "(Start the genie viewer manually, or a ui://-capable host can render the inline grid.)";
+      embeddedManifest !== undefined
+        ? "Preview ready in the inline MCP App."
+        : `Remote preview unavailable: ${embeddedError ?? "no declared previews origin"}`;
+  } else {
+    fileUrl = pathToFileURL(join(kitDir, "index.html")).href;
+    try {
+      const viewer = await deps.registry.ensure(kitDir, DEFAULT_VIEWER_PORT, false); // AC5 + piece B
+      const url = new URL(viewer.url);
+      if (args.componentName !== undefined)
+        url.searchParams.set("componentName", args.componentName);
+      if (args.group !== undefined) url.searchParams.set("group", args.group);
+      viewerUrl = url.toString();
+      if (autoOpen) await deps.registry.open(kitDir, viewerUrl);
+      text = `Preview running at ${viewerUrl}\n` + `Or open the kit directly: ${fileUrl}`;
+    } catch (error) {
+      // AC6 — the local viewer could not boot (Vite/@genie/viewer absent,
+      // port unbindable, …). Degrade to the file:// vehicle and tell the app
+      // shell explicitly rather than leaving its empty initial state visible.
+      logStderr({
+        event: "preview.fallback",
+        kitId: args.kitId,
+        reason: "viewer-boot-failed",
+        error: String(error),
+      });
+      // The preloaded tool-result shell cannot safely accept dynamically
+      // delivered data: cards: they inherit its already-fixed CSP hashes. A
+      // declared previews origin produces http(s) card URLs that remain safe to
+      // deliver after initialization. An empty manifest is safe either way.
+      if (uiSupported && canDeliverEmbeddedManifest) {
+        try {
+          embeddedManifest = await rewriteCardPaths(filteredManifest, {
+            kitId: args.kitId,
+            kitDir,
+            previewsBaseUrl: normalizedPreviewsBaseUrl?.toString(),
+            readPreviewBytes,
+          });
+        } catch (fallbackError) {
+          logStderr({
+            event: "preview.fallback",
+            kitId: args.kitId,
+            reason: "embedded-manifest-failed",
+            error: String(fallbackError),
+          });
+        }
+      }
+      if (embeddedManifest !== undefined) {
+        text = `Preview ready in the inline MCP App.\nOr open the kit directly: ${fileUrl}`;
+      } else {
+        embeddedError =
+          "The local preview viewer could not start; use the returned file URL or start it manually.";
+        text =
+          `Preview viewer could not start; open the kit directly: ${fileUrl}\n` +
+          "(Start the genie viewer manually, or configure GENIE_PREVIEWS_BASE_URL for a CSP-safe inline fallback.)";
+      }
+    }
   }
 
   return {
     content: [{ type: "text", text }],
+    structuredContent: {
+      kitId: args.kitId,
+      ...(args.componentName !== undefined ? { componentName: args.componentName } : {}),
+      ...(args.group !== undefined ? { group: args.group } : {}),
+      ...(viewerUrl !== undefined ? { viewerUrl } : {}),
+      ...(fileUrl !== undefined ? { fileUrl } : {}),
+      ...(ctx.transportKind !== undefined ? { transportKind: ctx.transportKind } : {}),
+      locality,
+      ...(embeddedManifest !== undefined ? { embeddedManifest } : {}),
+      ...(embeddedError !== undefined ? { embeddedError } : {}),
+    },
     // Same resourceUri under both the MCP-Apps key (`ui.resourceUri`) and the
     // ChatGPT Apps SDK key (`openai/outputTemplate`, AC6) — cross-vendor link.
     _meta: { ui: { resourceUri }, "openai/outputTemplate": resourceUri },
@@ -392,11 +754,57 @@ const previewInputSchema = {
     ),
 } as const;
 
+const previewOutputSchema = {
+  kitId: z.string(),
+  componentName: z.string().optional(),
+  group: z.string().optional(),
+  viewerUrl: z.string().optional(),
+  fileUrl: z.string().optional(),
+  transportKind: z.enum(["stdio", "http"]).optional(),
+  locality: z.enum(["local", "remote"]),
+  embeddedManifest: z
+    .object({
+      version: z.number(),
+      name: z.string(),
+      generatedAt: z.string(),
+      groups: z.array(z.string()),
+      components: z.array(
+        z
+          .object({
+            name: z.string(),
+            group: z.string(),
+            path: z.string(),
+            sourcePath: z.string(),
+            viewport: z.string(),
+            hash: z.string(),
+            lastModified: z.string(),
+            subtitle: z.string().optional(),
+            tags: z.array(z.string()).optional(),
+          })
+          .strict(),
+      ),
+    })
+    .optional(),
+  embeddedError: z.string().optional(),
+} as const;
+
 /** Options for {@link registerPreviewTool}. `booter` defaults to the lazy one. */
 export interface PreviewToolOptions {
   kitsRoot: string;
   /** Injectable for tests; production uses {@link defaultViewerBooter}. */
   booter?: ViewerBooter;
+  /** Injectable env for the `GENIE_PREVIEW_NO_OPEN` opt-out; defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
+  /** Injectable manifest seam for tests. */
+  ensureManifest?: (kitDir: string) => Promise<Manifest>;
+  /** Injectable preview-byte seam for self-contained app results. */
+  readPreviewBytes?: PreviewReader;
+  /** Optional separate-origin previews host used in embedded manifests. */
+  previewsBaseUrl?: string;
+  /** Explicit transport override for embedded servers and tests. */
+  transportKind?: TransportKind;
+  /** Explicit deployment locality for embedded servers and tests. */
+  locality?: PreviewLocality;
 }
 
 /**
@@ -416,31 +824,67 @@ function sniffClientName(meta: unknown): string | undefined {
 /**
  * Register `mcp__genie__preview`. One {@link ViewerRegistry} is created per
  * registration and shared across every call so viewers are reused (AC5). The
- * handler reads the client name off `extra._meta` (AC7) and delegates to
- * {@link runPreview}.
+ * handler resolves the client's identity (per-request `_meta` escape hatch,
+ * else the initialize handshake) and its MCP Apps capability, then delegates
+ * to {@link runPreview}.
  */
-export function registerPreviewTool(server: McpServer, options: PreviewToolOptions): void {
+export function registerPreviewTool(server: McpServer, options: PreviewToolOptions): ViewerRegistry {
   const registry = new ViewerRegistry(options.booter ?? defaultViewerBooter);
-  const deps: PreviewDeps = { kitsRoot: options.kitsRoot, registry };
+  const deps: PreviewDeps = {
+    kitsRoot: options.kitsRoot,
+    registry,
+    env: options.env,
+    ensureManifest: options.ensureManifest,
+    readPreviewBytes: options.readPreviewBytes,
+    previewsBaseUrl: options.previewsBaseUrl,
+  };
 
   server.registerTool(
     PREVIEW_TOOL_NAME,
     {
       title: "Preview kit",
       description:
-        "Preview a UI kit as a live card grid. Returns the viewer URL (booting the " +
-        "Vite viewer on demand and reusing it across calls) plus a file:// fallback, " +
-        "and points ui://-capable hosts (Claude, VS Code, ChatGPT, Cursor) at the " +
-        "inline grid via _meta.ui.resourceUri. Optionally focus one component or group.",
+        "Preview a UI kit as a live card grid — call this to SHOW the user a component " +
+        "(typically right after write_files persists one). Compiles + persists the kit " +
+        "manifest so the grid always reflects what's on disk, then returns the viewer URL " +
+        "(booting the Vite viewer on demand and reusing it across calls) plus a local-only " +
+        "file:// fallback. MCP Apps-capable hosts get the inline grid via _meta.ui.resourceUri. " +
+        "Local stdio clients that do not negotiate UI support get a server-opened browser " +
+        "tab (disable with GENIE_PREVIEW_NO_OPEN=1); HTTP deployments never auto-open on " +
+        "the server machine. Optionally focus one component or group.",
       inputSchema: previewInputSchema,
+      outputSchema: previewOutputSchema,
+      // Standards-compliant discovery happens in tools/list through this static
+      // app shell. The host sends tool input/result to the shell, which renders
+      // the invocation's viewer URL. Keep the query-bearing result URI below for
+      // legacy/result-level hosts and the self-contained embedded resource path.
+      _meta: {
+        ui: { resourceUri: GRID_RESOURCE_BASE },
+        "openai/outputTemplate": GRID_RESOURCE_BASE,
+      },
     },
     async (args: PreviewArgs, extra: { _meta?: unknown }) => {
-      const clientName = sniffClientName(extra._meta);
-      const result = await runPreview(deps, args, { clientName });
+      // Client identity: prefer the per-request `_meta.client.name` escape
+      // hatch (tests, exotic proxies), else the `initialize` handshake's
+      // clientInfo — what real hosts actually send (the per-request key was
+      // the original AC7 sniff's blind spot: no production host populates it).
+      const clientName = sniffClientName(extra._meta) ?? server.server.getClientVersion()?.name;
+      // Authoritative MCP Apps capability from the same handshake.
+      const uiCapable = getUiExtensionCapability(server.server.getClientCapabilities());
+      const transportKind = options.transportKind ?? getServerTransportKind(server);
+      const locality = options.locality ?? (transportKind === "stdio" ? "local" : "remote");
+      const result = await runPreview(deps, args, {
+        clientName,
+        uiCapable,
+        transportKind,
+        locality,
+      });
       return {
         content: result.content,
+        structuredContent: result.structuredContent,
         _meta: result._meta,
       };
     },
   );
+  return registry;
 }

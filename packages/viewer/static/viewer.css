@@ -425,6 +425,13 @@
     border-radius: var(--radius-lg);
   }
 
+  .ds-viewer-embed {
+    display: block;
+    width: 100%;
+    min-height: 640px;
+    border: 0;
+  }
+
   .ds-error {
     color: var(--color-ink);
   }

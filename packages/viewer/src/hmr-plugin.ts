@@ -79,9 +79,11 @@
  *   - AC5 — a `tokens/**` or root `styles.css` change instead broadcasts
  *     `{ event: "tokens.changed" }` (no single `path` — it means "every
  *     card", see `viewer.js`'s handling of this event).
- *   - Anything outside those two glob groups (e.g. a `.tsx`/`.vue` source,
- *     `.genie/manifest.json` itself, or an unrelated root file) is NOT
- *     forwarded.
+ *   - A `.genie/manifest.json` change broadcasts `{ event:
+ *     "manifest.changed" }`, prompting a structural grid re-render after
+ *     preview adds or removes components.
+ *   - Anything outside those groups (e.g. a `.tsx`/`.vue` source or an
+ *     unrelated root file) is NOT forwarded.
  *   - `path` is always kit-root-relative POSIX (forward slashes on every OS),
  *     matching `card.path` in `.genie/manifest.json` / the rendered grid's
  *     `data-path`, so `viewer.js` can match one against the other with a
@@ -96,10 +98,16 @@ import type { Plugin, ViteDevServer } from "vite";
 export const GENIE_HMR_PATH = "/__genie_hmr";
 
 /** The two broadcastable HMR events (AC1 + AC5). */
-export type HmrMessage = { event: "card.changed"; path: string } | { event: "tokens.changed" };
+export type HmrMessage =
+  | { event: "card.changed"; path: string }
+  | { event: "tokens.changed" }
+  | { event: "manifest.changed" };
 
 /** Result of classifying a single changed path against the AC1/AC5 groups. */
-export type HmrClassification = { kind: "card"; path: string } | { kind: "tokens" };
+export type HmrClassification =
+  | { kind: "card"; path: string }
+  | { kind: "tokens" }
+  | { kind: "manifest" };
 
 /**
  * Duck-typed subset of chokidar's `FSWatcher` this module actually needs:
@@ -140,10 +148,10 @@ const CARD_GLOB_RE = /(?:^|\/)components\/.+\.html$/;
 
 /**
  * Classifies an absolute (or already-relative) changed path against the two
- * groups AC1/AC5 name, relative to `root`. Returns `undefined` for anything
- * outside both groups — including `.genie/manifest.json` (the COMPILED
- * artefact, not a source the developer edits) and a nested, non-root
- * `styles.css` (only the kit-root import-closure entry counts for AC5).
+ * groups AC1/AC5 name, relative to `root`. The compiled manifest is included
+ * because preview rewrites it after structural changes and an open grid must
+ * add/remove cards. Returns `undefined` for anything outside these groups,
+ * including a nested, non-root `styles.css`.
  *
  * `path` in a `"card"` result is always kit-root-relative POSIX (forward
  * slashes on every OS, backslashes normalised), matching `card.path` in
@@ -169,6 +177,7 @@ export function classifyHmrPath(root: string, changedPath: string): HmrClassific
 
   if (rel === "styles.css") return { kind: "tokens" };
   if (rel === "tokens" || rel.startsWith("tokens/")) return { kind: "tokens" };
+  if (rel === ".genie/manifest.json") return { kind: "manifest" };
   if (CARD_GLOB_RE.test(rel)) return { kind: "card", path: rel };
 
   return undefined;
@@ -191,8 +200,10 @@ export function wireWatcher(
     if (!classified) return;
     if (classified.kind === "card") {
       broadcast({ event: "card.changed", path: classified.path });
-    } else {
+    } else if (classified.kind === "tokens") {
       broadcast({ event: "tokens.changed" });
+    } else {
+      broadcast({ event: "manifest.changed" });
     }
   }
 

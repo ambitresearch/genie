@@ -91,7 +91,8 @@ export function registerCreateKit(server: McpServer, store: KitStore): void {
       title: "Create Kit",
       description:
         "Create a new UI kit — returns the kitId that plan and other verbs " +
-        "lock against. The kit name is the human-readable display name.",
+        "lock against. The kit name is the human-readable display name. Reach for this " +
+        "first when starting fresh, before conjure/plan/write_files target the new kitId.",
       inputSchema,
     },
     async ({ name }: { name: string }) => {

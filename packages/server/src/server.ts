@@ -17,11 +17,17 @@ import { registerListComponents } from "./tools/list_components.js";
 import { registerPlan } from "./tools/plan.js";
 import { registerDeleteFilesTool } from "./tools/delete_files.js";
 import { registerWriteFilesTool } from "./tools/write_files.js";
-import { registerPreviewTool } from "./tools/preview.js";
+import {
+  MCP_APP_MIME,
+  UI_EXTENSION_ID,
+  registerPreviewTool,
+  type PreviewLocality,
+} from "./tools/preview.js";
 import { registerGridResource } from "./ui/grid-resource.js";
 import { LocalFsKitStore } from "./store/local.js";
 import type { KitStore } from "./store/interface.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
+import { registerServerDisposer, type TransportKind } from "./transport.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -44,6 +50,15 @@ export const SERVER_INFO = {
  * registration — see transport.ts.
  */
 export interface CreateServerOptions {
+  /**
+   * Transport used by an embedder that connects the returned server directly.
+   * Pass `"http"` for Streamable HTTP so preview never opens a browser on the
+   * server machine. {@link startTransport} records its own resolved kind when
+   * the built-in transport launcher is used.
+   */
+  transportKind?: TransportKind;
+  /** Whether the viewer URL is reachable from the host running the MCP client. */
+  previewLocality?: PreviewLocality;
   projectsRoot?: string;
   kitsRoot?: string;
   reportsDir?: string;
@@ -94,6 +109,11 @@ export interface CreateServerOptions {
 
 export function createServer(options: CreateServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO, {
+    capabilities: {
+      extensions: {
+        [UI_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME] },
+      },
+    },
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +
@@ -102,7 +122,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "refine (LLM component iteration — diff + updated files against existing kit source), " +
       "plan creation (the capability-grant " +
       "boundary for write/delete verbs), write_files, delete_files, and preview (returns the " +
-      "viewer URL + a file:// fallback plus a ui://genie/grid resource pointer in " +
+      "viewer URL + a local-only file:// fallback plus a ui://genie/grid resource pointer in " +
       "_meta.ui.resourceUri). write_files and " +
       "delete_files share one plan-boundary validation middleware — every call is checked " +
       "for planId presence/existence/expiry and per-path glob membership before the tool " +
@@ -256,14 +276,19 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // so the two verbs enforce plan authorization through one identical seam.
   registerDeleteFilesTool(server, kitStore);
 
-  // preview (M4-05 / DRO-267): returns the viewer URL + a file:// fallback as
-  // text, and points ui://-capable hosts at the inline `ui://genie/grid`
+  // preview (M4-05 / DRO-267): returns local viewer/file URLs only to local
+  // clients, and points ui://-capable hosts at the inline `ui://genie/grid`
   // resource (registered by M4-06) via `_meta.ui.resourceUri`. Boots the Vite
   // viewer on demand and reuses it across calls (its own ViewerRegistry),
-  // falling back to `file://<kitDir>/index.html` when the viewer can't boot.
+  // falling back to a local file URL or CSP-safe embedded manifest when needed.
   // Bound to the same `kitsRoot` the kit verbs resolve against so a `kitId`
   // maps to the same on-disk kit dir the viewer serves.
-  registerPreviewTool(server, { kitsRoot });
+  const previewRegistry = registerPreviewTool(server, {
+    kitsRoot,
+    transportKind: options.transportKind,
+    locality: options.previewLocality,
+  });
+  registerServerDisposer(server, () => previewRegistry.closeAll());
 
   // ui://genie/grid (M4-06 / DRO-268): the embedded MCP-Apps resource the
   // `preview` tool's `_meta.ui.resourceUri` points at. A ui://-capable host

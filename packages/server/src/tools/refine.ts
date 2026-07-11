@@ -83,6 +83,11 @@ import {
 // `conjure.ts`; DRO-253 / DRO-618: `refine` shares the exact same gap
 // conjure had — `withRetry` existed but no production call site applied it).
 import { withRetry } from "../llm/retry.js";
+import {
+  normalizeGeneratedFiles,
+  validateGeneratedBinaryContent,
+  type GeneratedFileWithEncoding,
+} from "../llm/generated-files.js";
 import { KIT_ID_PATTERN } from "./get_kit.js";
 
 export const REFINE_TOOL_NAME = "mcp__genie__refine";
@@ -148,10 +153,12 @@ export interface RefineResult extends Record<string, unknown> {
   group: string;
   /** Unified diff (git-style) from the original file set to the updated one. */
   diff: string;
-  files: ValidatedComponent["files"];
+  files: RefinedFile[];
   manifestEntry: ValidatedComponent["manifestEntry"];
   usage: UsageInfo;
 }
+
+export type RefinedFile = GeneratedFileWithEncoding;
 
 // ── Store port (AC3) ──────────────────────────────────────────────────────────
 
@@ -597,6 +604,9 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
     parsed.kitId,
     parsed.componentName,
   );
+  const originalBinaryPaths = new Set(
+    originalFiles.filter((file) => !isTextFile(file)).map((file) => file.path),
+  );
 
   // AC4/AC7 — if a region was given, try to render a crop of it for vision input.
   let cropDataUrl: string | null = null;
@@ -624,6 +634,8 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
   const { outcome, usage, attempts } = await runComponentGeneration({
     chat,
     model: parsed.model,
+    validateGeneratedComponent: (component) =>
+      validateGeneratedBinaryContent(component, originalBinaryPaths),
     buildMessages: (retry) =>
       buildMessages(systemPrompt.text, parsed, group, originalFiles, cropDataUrl, retry),
   });
@@ -659,10 +671,9 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
   // directory would be silently DROPPED from the returned set and the diff would
   // misreport it as deleted (diffed against /dev/null) — a refine round-trip
   // would lose it (Copilot review, PR #127). So carry every original binary file
-  // the model did not return forward into the result. Because such a file is then
-  // byte-identical on both sides, `buildUnifiedDiff`'s `before === after` check
-  // omits it from the diff automatically — it is preserved, not spuriously shown
-  // as changed.
+  // forward into the result, even if the model fabricates the same path. Because
+  // that file is byte-identical on both sides, `buildUnifiedDiff`'s
+  // `before === after` check omits it automatically.
   //
   // Deliberate consequence (Copilot review, PR #128): because omission of a
   // binary can't be distinguished from "the model never saw it", this carry-
@@ -676,14 +687,22 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
   // refine-driven binary deletion, it would take an explicit keep/delete marker
   // protocol (the model returns the path with a sentinel the tool resolves to the
   // original bytes, and true omission then means delete) — out of scope here.
-  // The guard below (`!returnedPaths.has`) means a model that DOES return a
-  // binary path wins: its entry is kept as-is and the original is not re-added,
-  // so no path is ever duplicated.
-  const returnedPaths = new Set(component.files.map((f) => f.path));
-  const carriedBinaries: ValidatedComponent["files"] = originalFiles
-    .filter((f) => !isTextFile(f) && !returnedPaths.has(f.path))
-    .map((f) => ({ path: f.path, content: f.content, mimeType: f.mimeType }));
-  const files: ValidatedComponent["files"] = [...component.files, ...carriedBinaries];
+  // A model-supplied entry for an ORIGINAL binary path cannot be trusted: the
+  // prompt exposed only a placeholder, never those bytes. Preserve the original
+  // until a future explicit binary replacement/delete protocol exists. New
+  // binary paths are still allowed when their returned content validates.
+  const returnedFiles = normalizeGeneratedFiles(component.files).filter(
+    (file) => !originalBinaryPaths.has(file.path),
+  );
+  const carriedBinaries: RefinedFile[] = originalFiles
+    .filter((f) => !isTextFile(f))
+    .map((f) => ({
+      path: f.path,
+      content: f.content,
+      mimeType: f.mimeType,
+      encoding: "base64",
+    }));
+  const files: RefinedFile[] = [...returnedFiles, ...carriedBinaries];
 
   // AC5 — unified diff (informational) from originals → updated, by path. Built
   // from the merged `files` so carried-forward binaries (identical on both sides)
@@ -723,7 +742,14 @@ const refineOutputShape = {
   group: z.string(),
   diff: z.string(),
   files: z.array(
-    z.object({ path: z.string(), content: z.string(), mimeType: z.string() }).strict(),
+    z
+      .object({
+        path: z.string(),
+        content: z.string(),
+        mimeType: z.string(),
+        encoding: z.enum(["utf-8", "base64"]),
+      })
+      .strict(),
   ),
   manifestEntry: z
     .object({
@@ -753,7 +779,11 @@ export function registerRefineTool(server: McpServer, deps: RefineDeps): void {
         "updated files (the files are the source of truth; the diff is informational). Loads the " +
         "component's current source from the kit, validates the model's reply against " +
         "COMPONENT_SCHEMA (retried once on a validation failure), and — when a region is given — " +
-        "attaches a rendered crop of it as a visual reference.",
+        "attaches a rendered crop of it as a visual reference. Reach for this to adjust a " +
+        "component already written to the kit (typically after conjure → write_files → preview); " +
+        "`design-default` is the valid gateway routing alias. Persist the returned files via " +
+        "plan, mapping each {path, content, mimeType, encoding} to write_files " +
+        "{path, data: content, mimeType, encoding}, before previewing.",
       inputSchema: refineInputShape,
       outputSchema: refineOutputShape,
     },

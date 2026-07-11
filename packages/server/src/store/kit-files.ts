@@ -80,6 +80,12 @@ export function isTextMime(mime: string): boolean {
   return TEXT_APPLICATION_MIMES.has(base);
 }
 
+/** Strict base64 validation shared by tool-boundary and generated-file checks. */
+export function isValidBase64Content(data: string): boolean {
+  if (data.length === 0) return true;
+  return /^[A-Za-z0-9+/]*={0,2}$/.test(data) && data.length % 4 === 0;
+}
+
 /**
  * Classify raw file bytes into the `{ content, encoding, mimeType }` shape
  * `KitStore.readFile` returns. Text files (by MIME) are decoded to utf-8;

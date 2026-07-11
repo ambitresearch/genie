@@ -130,8 +130,10 @@ describe("classifyHmrPath", () => {
     expect(classifyHmrPath(ROOT, `${ROOT}/components/actions/Button/styles.css`)).toBeUndefined();
   });
 
-  it("does NOT classify .genie/manifest.json itself (the compiled artefact, not a source)", () => {
-    expect(classifyHmrPath(ROOT, `${ROOT}/.genie/manifest.json`)).toBeUndefined();
+  it("classifies .genie/manifest.json for a structural grid refresh", () => {
+    expect(classifyHmrPath(ROOT, `${ROOT}/.genie/manifest.json`)).toEqual({
+      kind: "manifest",
+    });
   });
 
   it("does NOT classify an unrelated root file", () => {
@@ -229,12 +231,21 @@ describe("wireWatcher (AC1/AC5) — event forwarding", () => {
     expect(sent).toEqual([{ event: "tokens.changed" }]);
   });
 
-  it("does not broadcast anything for an unrelated file change", () => {
+  it("broadcasts { event: 'manifest.changed' } after preview recompiles the manifest", () => {
     const watcher = new EventEmitter();
     const sent: HmrMessage[] = [];
     wireWatcher(ROOT, watcher, (msg) => sent.push(msg));
 
     watcher.emit("change", `${ROOT}/.genie/manifest.json`);
+
+    expect(sent).toEqual([{ event: "manifest.changed" }]);
+  });
+
+  it("does not broadcast anything for an unrelated file change", () => {
+    const watcher = new EventEmitter();
+    const sent: HmrMessage[] = [];
+    wireWatcher(ROOT, watcher, (msg) => sent.push(msg));
+
     watcher.emit("change", `${ROOT}/README.md`);
 
     expect(sent).toEqual([]);

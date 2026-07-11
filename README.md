@@ -92,9 +92,12 @@ stdout — the stdio transport IS the protocol stream).
 | ------------------------------ | -------------------------------------------------------------------- |
 | `--transport stdio`            | Local harness (Claude Desktop, Claude Code) — the default when piped |
 | `--transport http --port 3000` | Remote / multi-client; `POST /mcp`, `GET /health`                    |
+| `--preview-locality local`     | Explicit override: return server-local viewer URLs                   |
 
 Auto-detects: a TTY on stdin → HTTP, piped JSON-RPC → stdio. Override with
-`--transport` or `MCP_TRANSPORT`.
+`--transport` or `MCP_TRANSPORT`. Preview locality defaults to `local` for
+stdio and `remote` for HTTP; override it with `--preview-locality` or
+`GENIE_PREVIEW_LOCALITY` only when the MCP client can reach server-local URLs.
 
 ## Repository layout
 

@@ -597,13 +597,18 @@ export class ProjectStore {
   }
 }
 
+export const CREATE_PROJECT_DESCRIPTION =
+  "Create a new blank workspace, create a reusable blueprint project, or instantiate a new " +
+  "workspace from a blueprint. Use this only when starting a new project; for an existing " +
+  "project call list_projects first and pass the selected project's id as projectId to " +
+  "bind_kit or conjure_screen.";
+
 export function registerCreateProjectTool(server: McpServer, store: ProjectStore): void {
   server.registerTool(
     CREATE_PROJECT_TOOL_NAME,
     {
       title: "Create project",
-      description:
-        "Create a blank workspace, create a reusable blueprint project, or instantiate a workspace from a blueprint.",
+      description: CREATE_PROJECT_DESCRIPTION,
       inputSchema: {
         name: z.string().min(1).max(128),
         kind: projectKindSchema,
@@ -637,6 +642,7 @@ export function registerCreateProjectTool(server: McpServer, store: ProjectStore
             ],
           };
         }
+
         throw error;
       }
     },
