@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 const preview = vi.hoisted(() => ({
   UI_EXTENSION_ID: "io.modelcontextprotocol/ui",
   MCP_APP_MIME: "text/html;profile=mcp-app",
-  registerPreviewTool: vi.fn(),
+  closeAll: vi.fn(),
+  registerPreviewTool: vi.fn(() => ({ closeAll: preview.closeAll })),
 }));
 
 vi.mock("./tools/preview.js", () => preview);
@@ -18,5 +19,6 @@ describe("createServer preview transport policy", () => {
       expect.anything(),
       expect.objectContaining({ transportKind: "http", locality: "local" }),
     );
+    expect(preview.closeAll).not.toHaveBeenCalled();
   });
 });

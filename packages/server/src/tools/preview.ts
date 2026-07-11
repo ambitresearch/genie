@@ -828,7 +828,7 @@ function sniffClientName(meta: unknown): string | undefined {
  * else the initialize handshake) and its MCP Apps capability, then delegates
  * to {@link runPreview}.
  */
-export function registerPreviewTool(server: McpServer, options: PreviewToolOptions): void {
+export function registerPreviewTool(server: McpServer, options: PreviewToolOptions): ViewerRegistry {
   const registry = new ViewerRegistry(options.booter ?? defaultViewerBooter);
   const deps: PreviewDeps = {
     kitsRoot: options.kitsRoot,
@@ -886,4 +886,5 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
       };
     },
   );
+  return registry;
 }

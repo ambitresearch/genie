@@ -623,6 +623,55 @@ describe("initMcpApp — standard tool result delivery", () => {
     expect(grid.querySelector(".ds-error")?.textContent).toContain("preview unavailable");
   });
 
+  it("clears a stale successful preview for standard errors and malformed results", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const localResult = {
+      structuredContent: {
+        transportKind: "stdio",
+        locality: "local",
+        viewerUrl: "http://127.0.0.1:5173/",
+      },
+    };
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(grid.querySelector("iframe.ds-viewer-embed")).not.toBeNull();
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        isError: true,
+        content: [{ type: "text", text: "Kit not found" }],
+      }),
+    ).toBe(false);
+    expect(grid.querySelector("iframe")).toBeNull();
+    expect(grid.querySelector(".ds-error")?.textContent).toBe("Kit not found");
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: { locality: "local", viewerUrl: "ftp://example.com/preview" },
+      }),
+    ).toBe(false);
+    expect(grid.querySelector("iframe")).toBeNull();
+    expect(grid.querySelector(".ds-error")?.textContent).toContain("Preview unavailable");
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: {
+          locality: "remote",
+          embeddedManifest: { components: {} },
+        },
+      }),
+    ).toBe(false);
+    expect(grid.querySelector("iframe")).toBeNull();
+    expect(grid.querySelector(".ds-error")?.textContent).toContain("GENIE_PREVIEWS_BASE_URL");
+
+    expect(hooks.renderToolResult(document, grid, localResult)).toBe(true);
+    expect(hooks.renderToolResult(document, grid, null)).toBe(false);
+    expect(grid.querySelector("iframe")).toBeNull();
+    expect(grid.querySelector(".ds-error")?.textContent).toContain("Preview unavailable");
+  });
+
   it("shows an explicit error instead of rendering dynamically delivered data cards under stale CSP", () => {
     const manifest = twoCardManifest();
     (manifest.components as Array<Record<string, unknown>>)[0]!.path =

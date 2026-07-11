@@ -460,10 +460,28 @@
     header.remove();
   }
 
+  function renderToolResultError(doc, grid, detail) {
+    grid.replaceChildren();
+    var box = doc.createElement("div");
+    box.className = "ds-error";
+    box.textContent = detail;
+    grid.appendChild(box);
+  }
+
   function renderToolResult(doc, grid, result) {
     restoreShellHeader(doc);
     var structured = result && result.structuredContent;
-    if (!structured) return false;
+    if ((result && result.isError) || !structured) {
+      var messages = [];
+      var content = result && Array.isArray(result.content) ? result.content : [];
+      for (var i = 0; i < content.length; i++) {
+        if (content[i] && content[i].type === "text" && typeof content[i].text === "string") {
+          messages.push(content[i].text);
+        }
+      }
+      renderToolResultError(doc, grid, messages.join("\n") || "Preview unavailable");
+      return false;
+    }
     if (typeof structured.embeddedError === "string" && structured.embeddedError) {
       renderError(doc, grid, structured.embeddedError);
       return false;
@@ -494,19 +512,28 @@
           grid,
           "preview viewer unavailable; configure GENIE_PREVIEWS_BASE_URL for embedded cards",
         );
+        return false;
       }
+      renderToolResultError(doc, grid, "Preview unavailable");
       return false;
     }
 
     var URLCtor = doc.defaultView && doc.defaultView.URL;
-    if (typeof URLCtor !== "function") return false;
+    if (typeof URLCtor !== "function") {
+      renderToolResultError(doc, grid, "Preview unavailable");
+      return false;
+    }
     var parsed;
     try {
       parsed = new URLCtor(rawUrl);
     } catch {
+      renderToolResultError(doc, grid, "Preview unavailable");
       return false;
     }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      renderToolResultError(doc, grid, "Preview unavailable");
+      return false;
+    }
 
     var iframe = doc.createElement("iframe");
     iframe.className = "ds-viewer-embed";
@@ -519,7 +546,10 @@
   }
 
   function canRenderEmbeddedManifest(manifest) {
-    var components = (manifest && manifest.components) || [];
+    if (!manifest || typeof manifest !== "object" || !Array.isArray(manifest.components)) {
+      return false;
+    }
+    var components = manifest.components;
     return components.every(function (component) {
       if (!component || typeof component.path !== "string") return false;
       try {

@@ -1,8 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer as createHttpServer } from "node:http";
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type RequestListener,
+  type ServerResponse,
+} from "node:http";
 import { isIP } from "node:net";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 export type TransportKind = "stdio" | "http";
 
@@ -35,6 +42,24 @@ export function formatHttpEndpoint(host: string, port: number): string {
 }
 
 const serverTransportKinds = new WeakMap<McpServer, TransportKind>();
+const serverDisposers = new WeakMap<McpServer, Set<() => void | Promise<void>>>();
+
+/** Register session-scoped resources that must close with their MCP server. */
+export function registerServerDisposer(
+  server: McpServer,
+  disposer: () => void | Promise<void>,
+): void {
+  const disposers = serverDisposers.get(server) ?? new Set();
+  disposers.add(disposer);
+  serverDisposers.set(server, disposers);
+}
+
+async function disposeServer(server: McpServer): Promise<void> {
+  const disposers = serverDisposers.get(server);
+  if (disposers === undefined) return;
+  serverDisposers.delete(server);
+  await Promise.allSettled([...disposers].map((dispose) => dispose()));
+}
 
 /** Return the transport selected for a started server, if startup has begun. */
 export function getServerTransportKind(server: McpServer): TransportKind | undefined {
@@ -83,39 +108,225 @@ async function startStdio(server: McpServer): Promise<void> {
   // No stdout logging on stdio — it would corrupt the JSON-RPC stream.
 }
 
-/** Connect the server over Streamable HTTP (for remote / multi-client use). */
-async function startHttp(server: McpServer, port: number, host: string): Promise<void> {
-  const transport = new StreamableHTTPServerTransport({
-    // Stateless: a fresh transport per request keeps M0 simple. Session
-    // management (and auth) arrive with M5.
-    sessionIdGenerator: undefined,
-  });
-  await server.connect(transport);
+interface HttpSession {
+  server: McpServer;
+  transport: StreamableHTTPServerTransport;
+  activeRequests: number;
+  disposed: boolean;
+  idleTimer?: ReturnType<typeof setTimeout>;
+}
 
-  const http = createHttpServer((req, res) => {
-    if (req.method === "POST" && req.url === "/mcp") {
+interface SessionLease {
+  session: HttpSession;
+  sessionId?: string;
+  released: boolean;
+}
+
+const DEFAULT_HTTP_SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
+export interface StreamableHttpHandlerOptions {
+  sessionIdleTimeoutMs?: number;
+}
+
+function sessionIdFrom(req: IncomingMessage): string | undefined {
+  const value = req.headers["mcp-session-id"];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function writeProtocolError(res: ServerResponse, status: number, message: string): void {
+  if (res.headersSent) return;
+  res.writeHead(status, { "content-type": "application/json" });
+  res.end(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      error: { code: -32000, message },
+      id: null,
+    }),
+  );
+}
+
+/**
+ * Create the stateful Streamable HTTP request handler. Each initialized client
+ * receives its own MCP server + transport, keyed by Mcp-Session-Id, so
+ * initialize-scoped capabilities never leak between clients.
+ */
+export function createStreamableHttpRequestHandler(
+  serverFactory: () => McpServer,
+  options: StreamableHttpHandlerOptions = {},
+): RequestListener {
+  const sessions = new Map<string, HttpSession>();
+  const sessionIdleTimeoutMs = options.sessionIdleTimeoutMs ?? DEFAULT_HTTP_SESSION_IDLE_TIMEOUT_MS;
+  if (!Number.isFinite(sessionIdleTimeoutMs) || sessionIdleTimeoutMs <= 0) {
+    throw new Error("sessionIdleTimeoutMs must be a positive finite number.");
+  }
+
+  const refreshIdleTimer = (sessionId: string, session: HttpSession): void => {
+    if (session.idleTimer !== undefined) clearTimeout(session.idleTimer);
+    session.idleTimer = setTimeout(() => {
+      if (sessions.get(sessionId) !== session) return;
+      if (session.activeRequests > 0) return;
+      session.idleTimer = undefined;
+      sessions.delete(sessionId);
+      void session.transport.close().finally(() => disposeServer(session.server));
+    }, sessionIdleTimeoutMs);
+    session.idleTimer.unref?.();
+  };
+
+  const disposeSession = (session: HttpSession): void => {
+    if (session.disposed) return;
+    session.disposed = true;
+    if (session.idleTimer !== undefined) {
+      clearTimeout(session.idleTimer);
+      session.idleTimer = undefined;
+    }
+    void disposeServer(session.server);
+  };
+
+  const acquireSession = (session: HttpSession, sessionId?: string): SessionLease => {
+    if (session.idleTimer !== undefined) {
+      clearTimeout(session.idleTimer);
+      session.idleTimer = undefined;
+    }
+    session.activeRequests += 1;
+    return { session, sessionId, released: false };
+  };
+
+  const releaseSession = (lease: SessionLease): void => {
+    if (lease.released) return;
+    lease.released = true;
+    lease.session.activeRequests -= 1;
+    const activeId = lease.sessionId ?? lease.session.transport.sessionId;
+    if (
+      activeId !== undefined &&
+      lease.session.activeRequests === 0 &&
+      sessions.get(activeId) === lease.session
+    ) {
+      refreshIdleTimer(activeId, lease.session);
+    }
+  };
+
+  const handleMcp = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    body?: unknown,
+    acquiredLease?: SessionLease,
+  ): Promise<void> => {
+    const sessionId = sessionIdFrom(req);
+    let session = acquiredLease?.session ?? sessions.get(sessionId ?? "");
+
+    if (session === undefined) {
+      if (sessionId !== undefined) {
+        writeProtocolError(res, 404, "Unknown MCP session");
+        return;
+      }
+      if (!isInitializeRequest(body)) {
+        writeProtocolError(res, 400, "Missing MCP session ID");
+        return;
+      }
+
+      const sessionServer = serverFactory();
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (initializedId) => {
+          const initializedSession = session as HttpSession;
+          sessions.set(initializedId, initializedSession);
+        },
+      });
+      session = { server: sessionServer, transport, activeRequests: 0, disposed: false };
+      transport.onclose = () => {
+        const closedId = transport.sessionId;
+        if (closedId !== undefined) sessions.delete(closedId);
+        disposeSession(session as HttpSession);
+      };
+      serverTransportKinds.set(sessionServer, "http");
+      await sessionServer.connect(transport);
+    }
+
+    const lease = acquiredLease ?? acquireSession(session, sessionId);
+    try {
+      await session.transport.handleRequest(req, res, body);
+    } finally {
+      releaseSession(lease);
+    }
+  };
+
+  return (req, res) => {
+    const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (req.method === "POST" && pathname === "/mcp") {
+      const sessionId = sessionIdFrom(req);
+      let lease: SessionLease | undefined;
+      if (sessionId !== undefined) {
+        const session = sessions.get(sessionId);
+        if (session === undefined) {
+          writeProtocolError(res, 404, "Unknown MCP session");
+          return;
+        }
+        lease = acquireSession(session, sessionId);
+      }
+      let handedOff = false;
+      const releaseBufferedRequest = (): void => {
+        if (!handedOff && lease !== undefined) releaseSession(lease);
+      };
       const chunks: Buffer[] = [];
       req.on("data", (c) => chunks.push(c as Buffer));
+      req.once("aborted", releaseBufferedRequest);
+      req.once("error", releaseBufferedRequest);
       req.on("end", () => {
+        if (req.aborted) {
+          releaseBufferedRequest();
+          return;
+        }
         let body: unknown;
         try {
           body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         } catch {
+          releaseBufferedRequest();
           res.writeHead(400, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "invalid JSON" }));
           return;
         }
-        void transport.handleRequest(req, res, body);
+        handedOff = true;
+        void handleMcp(req, res, body, lease).catch((error: unknown) => {
+          writeProtocolError(
+            res,
+            500,
+            error instanceof Error ? error.message : "Internal server error",
+          );
+        });
       });
       return;
     }
-    if (req.method === "GET" && req.url === "/health") {
+    if ((req.method === "GET" || req.method === "DELETE") && pathname === "/mcp") {
+      void handleMcp(req, res).catch((error: unknown) => {
+        writeProtocolError(
+          res,
+          500,
+          error instanceof Error ? error.message : "Internal server error",
+        );
+      });
+      return;
+    }
+    if (req.method === "GET" && pathname === "/health") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ status: "ok", server: "genie" }));
       return;
     }
     res.writeHead(404).end();
-  });
+  };
+}
+
+/** Connect the server over Streamable HTTP (for remote / multi-client use). */
+async function startHttp(
+  port: number,
+  host: string,
+  serverFactory?: () => McpServer,
+): Promise<void> {
+  if (serverFactory === undefined) {
+    throw new Error(
+      "HTTP transport requires an explicit serverFactory for per-client session isolation.",
+    );
+  }
+  const http = createHttpServer(createStreamableHttpRequestHandler(serverFactory));
 
   await new Promise<void>((resolve) => http.listen(port, host, resolve));
   process.stderr.write(`genie MCP server listening on ${formatHttpEndpoint(host, port)}\n`);
@@ -125,6 +336,8 @@ export interface StartOptions {
   kind?: string;
   port?: number;
   host?: string;
+  /** Required for HTTP; must include every caller-added registration per session. */
+  serverFactory?: () => McpServer;
 }
 
 /** Start the server on the resolved transport. Returns the kind actually used. */
@@ -136,7 +349,11 @@ export async function startTransport(
   serverTransportKinds.set(server, kind);
   try {
     if (kind === "http") {
-      await startHttp(server, opts.port ?? 3000, normalizeListenHost(opts.host ?? "127.0.0.1"));
+      await startHttp(
+        opts.port ?? 3000,
+        normalizeListenHost(opts.host ?? "127.0.0.1"),
+        opts.serverFactory,
+      );
     } else {
       await startStdio(server);
     }

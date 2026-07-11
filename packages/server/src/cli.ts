@@ -85,11 +85,13 @@ async function main(): Promise<void> {
   const transportKind = resolveTransport(args.transport);
   const host = args.host ?? "127.0.0.1";
   const previewLocality = resolvePreviewLocality(transportKind, args.previewLocality);
-  const server = createServer({ transportKind, previewLocality });
+  const createConfiguredServer = () => createServer({ transportKind, previewLocality });
+  const server = createConfiguredServer();
   await startTransport(server, {
     kind: transportKind,
     port: args.port,
     host,
+    ...(transportKind === "http" ? { serverFactory: createConfiguredServer } : {}),
   });
 }
 
