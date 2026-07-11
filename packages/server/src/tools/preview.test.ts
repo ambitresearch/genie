@@ -520,6 +520,8 @@ describe("runPreview (AC3, AC6)", () => {
     expect(booter.calls).toHaveLength(0);
     expect(result.structuredContent.embeddedManifest).toBeUndefined();
     expect(result.structuredContent.embeddedError).toContain("does not support MCP Apps");
+    expect(result.structuredContent.embeddedError).toContain("remote-locality");
+    expect(result.structuredContent.embeddedError).not.toContain("HTTP");
     expect(result.content[0]?.text).toContain("Remote preview unavailable");
   });
 
@@ -1075,6 +1077,23 @@ describe("runPreview auto-open wiring (piece B)", () => {
     lines.restore();
     const req = lines.parsed().find((l) => l.event === "preview.request");
     expect(req?.autoOpen).toBe(true);
+  });
+
+  it("logs autoOpen=false when stdio is explicitly configured for remote locality", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const lines = captureStderr();
+
+    await runPreview(
+      { kitsRoot, registry: new ViewerRegistry(booter), env: {} },
+      { kitId: "acme-abc123" },
+      { clientName: "codex", transportKind: "stdio", locality: "remote" },
+    );
+
+    lines.restore();
+    const req = lines.parsed().find((l) => l.event === "preview.request");
+    expect(req?.autoOpen).toBe(false);
+    expect(booter.calls).toHaveLength(0);
   });
 });
 

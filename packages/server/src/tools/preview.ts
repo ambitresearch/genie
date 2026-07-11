@@ -615,7 +615,7 @@ export async function runPreview(
   if (locality === "remote") {
     if (!uiSupported) {
       embeddedError =
-        "Client does not support MCP Apps; remote HTTP previews have no browser fallback.";
+        "Client does not support MCP Apps; remote-locality previews have no server-side browser fallback.";
     } else if (canDeliverEmbeddedManifest) {
       embeddedManifest = await rewriteCardPaths(filteredManifest, {
         kitId: args.kitId,
@@ -638,7 +638,7 @@ export async function runPreview(
     group: args.group,
   });
 
-  const autoOpen = shouldAutoOpen(uiSupported, deps.env, ctx.transportKind);
+  const autoOpen = locality === "local" && shouldAutoOpen(uiSupported, deps.env, ctx.transportKind);
   // AC7 — one structured line per request; the sniffed client + its ui:// support.
   logStderr({
     event: "preview.request",
