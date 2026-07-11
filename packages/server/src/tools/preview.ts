@@ -583,6 +583,8 @@ export async function runPreview(
   const locality = ctx.locality ?? (ctx.transportKind === "stdio" ? "local" : "remote");
   const previewsBaseUrl = deps.previewsBaseUrl ?? env.GENIE_PREVIEWS_BASE_URL;
   const normalizedPreviewsBaseUrl = normalizePreviewsBaseUrl(previewsBaseUrl);
+  const canDeliverEmbeddedManifest =
+    normalizedPreviewsBaseUrl !== undefined || filteredManifest.components.length === 0;
   // Authoritative first: the MCP Apps extension capability from the initialize
   // handshake. The name sniff remains only for hosts that render ui:// without
   // advertising the extension yet (older Claude/VS Code/Cursor builds).
@@ -599,11 +601,11 @@ export async function runPreview(
   let embeddedManifest: EmbeddedManifest | undefined;
   let embeddedError: string | undefined;
   if (locality === "remote") {
-    if (normalizedPreviewsBaseUrl !== undefined) {
+    if (canDeliverEmbeddedManifest) {
       embeddedManifest = await rewriteCardPaths(filteredManifest, {
         kitId: args.kitId,
         kitDir,
-        previewsBaseUrl: normalizedPreviewsBaseUrl.toString(),
+        previewsBaseUrl: normalizedPreviewsBaseUrl?.toString(),
         readPreviewBytes,
       });
     } else {
@@ -668,10 +670,7 @@ export async function runPreview(
       // delivered data: cards: they inherit its already-fixed CSP hashes. A
       // declared previews origin produces http(s) card URLs that remain safe to
       // deliver after initialization. An empty manifest is safe either way.
-      if (
-        uiSupported &&
-        (normalizedPreviewsBaseUrl !== undefined || filteredManifest.components.length === 0)
-      ) {
+      if (uiSupported && canDeliverEmbeddedManifest) {
         try {
           embeddedManifest = await rewriteCardPaths(filteredManifest, {
             kitId: args.kitId,

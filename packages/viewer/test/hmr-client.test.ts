@@ -700,6 +700,42 @@ describe("initHmr — WebSocket transport (AC2/AC5)", () => {
     expect(iframeFor(grid, BUTTON_PATH)).toBeDefined();
     expect(grid.querySelector(`iframe[data-path="${CARD_PATH}"]`)).toBeNull();
   });
+
+  it("queues one manifest refresh while the previous fetch is in flight", async () => {
+    const { hooks, window, document, grid } = setup();
+    FakeWebSocket.instances = [];
+    const first = twoCardManifest();
+    (first.components as unknown[]).splice(1, 1);
+    const second = twoCardManifest();
+    let resolveFirst!: (response: Response) => void;
+    const firstFetch = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetchImpl = vi
+      .fn()
+      .mockReturnValueOnce(firstFetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => second } as Response);
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: FakeWebSocket,
+      fetchImpl,
+      initialManifest: twoCardManifest(),
+    });
+
+    const refresh = { data: JSON.stringify({ event: "manifest.changed" }) };
+    FakeWebSocket.instances[0]!.onmessage!(refresh);
+    FakeWebSocket.instances[0]!.onmessage!(refresh);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    resolveFirst({ ok: true, json: async () => first } as Response);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(iframeFor(grid, CARD_PATH)).toBeDefined();
+  });
 });
 
 describe("initHmr — postMessage bridge (embedded ui:// tier)", () => {
@@ -878,6 +914,90 @@ describe("initHmr — polling fallback (AC4)", () => {
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
     expect(iframeFor(grid, CARD_PATH).getAttribute("src")).toBe(CARD_PATH); // unchanged hash
     expect(document.getElementById("hmr-count")!.getAttribute("data-count")).toBe("1");
+  });
+
+  it("drains a manifest refresh queued behind an active polling fetch", async () => {
+    const { hooks, window, document, grid } = setup();
+    const timers = fakeTimers();
+    const first = twoCardManifest();
+    (first.components as unknown[]).splice(1, 1);
+    const second = twoCardManifest();
+    let resolveFirst!: (response: Response) => void;
+    const firstFetch = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetchImpl = vi
+      .fn()
+      .mockReturnValueOnce(firstFetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => second } as Response);
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: undefined,
+      fetchImpl,
+      setIntervalImpl: timers.setIntervalImpl,
+      clearIntervalImpl: timers.clearIntervalImpl,
+      initialManifest: twoCardManifest(),
+    });
+
+    timers.fireAll();
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        data: { event: "manifest.changed" },
+        source: window.parent,
+      }),
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    resolveFirst({ ok: true, json: async () => first } as Response);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(iframeFor(grid, CARD_PATH)).toBeDefined();
+  });
+
+  it("drains a polling refresh queued behind an active message fetch", async () => {
+    const { hooks, window, document, grid } = setup();
+    const timers = fakeTimers();
+    const first = twoCardManifest();
+    (first.components as unknown[]).splice(1, 1);
+    const second = twoCardManifest();
+    let resolveFirst!: (response: Response) => void;
+    const firstFetch = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetchImpl = vi
+      .fn()
+      .mockReturnValueOnce(firstFetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => second } as Response);
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: undefined,
+      fetchImpl,
+      setIntervalImpl: timers.setIntervalImpl,
+      clearIntervalImpl: timers.clearIntervalImpl,
+      initialManifest: twoCardManifest(),
+    });
+
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        data: { event: "manifest.changed" },
+        source: window.parent,
+      }),
+    );
+    timers.fireAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    resolveFirst({ ok: true, json: async () => first } as Response);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(iframeFor(grid, CARD_PATH)).toBeDefined();
   });
 
   it("polls from the start when a dev server is present but WebSocket is unavailable", () => {

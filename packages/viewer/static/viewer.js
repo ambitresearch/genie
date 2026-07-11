@@ -1008,10 +1008,23 @@
     var pollTimer = null;
     var lastManifest = opts.initialManifest || null;
     var pollInFlight = false;
+    var manifestRefreshPending = false;
     var torn = false;
 
+    function finishManifestFetch() {
+      pollInFlight = false;
+      if (manifestRefreshPending && !torn) {
+        manifestRefreshPending = false;
+        fetchManifestUpdate();
+      }
+    }
+
     function fetchManifestUpdate() {
-      if (torn || pollInFlight || !fetchImpl) return;
+      if (torn || !fetchImpl) return;
+      if (pollInFlight) {
+        manifestRefreshPending = true;
+        return;
+      }
       pollInFlight = true;
       fetchImpl(manifestUrl)
         .then(function (res) {
@@ -1026,9 +1039,7 @@
         .catch(function () {
           // Keep the current grid; a later manifest event/poll can retry.
         })
-        .then(function () {
-          pollInFlight = false;
-        });
+        .then(finishManifestFetch);
     }
 
     /** Apply any inbound message (WS or postMessage) and bump the counter. */
@@ -1068,7 +1079,11 @@
 
     // ── AC4: polling fallback ────────────────────────────────────────────────
     function poll() {
-      if (torn || pollInFlight || !fetchImpl) return;
+      if (torn || !fetchImpl) return;
+      if (pollInFlight) {
+        manifestRefreshPending = true;
+        return;
+      }
       pollInFlight = true;
       fetchImpl(manifestUrl)
         .then(function (res) {
@@ -1095,9 +1110,7 @@
           // A transient fetch failure must not kill the poll loop — try again
           // next tick.
         })
-        .then(function () {
-          pollInFlight = false;
-        });
+        .then(finishManifestFetch);
     }
 
     function startPolling() {

@@ -515,6 +515,30 @@ describe("runPreview (AC3, AC6)", () => {
     expect(result.structuredContent.embeddedError).toContain("GENIE_PREVIEWS_BASE_URL");
   });
 
+  it("embeds a remote zero-component result without requiring a previews origin", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const readPreviewBytes = vi.fn(async () => Buffer.from("<button>Save</button>"));
+    const booter = okBooter();
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(booter),
+        env: {},
+        readPreviewBytes,
+      },
+      { kitId: "acme-abc123", group: "no-matches" },
+      { clientName: "remote-host", transportKind: "http", locality: "remote" },
+    );
+
+    expect(readPreviewBytes).not.toHaveBeenCalled();
+    expect(booter.calls).toHaveLength(0);
+    expect(result.structuredContent.embeddedManifest?.components).toEqual([]);
+    expect(result.structuredContent.embeddedError).toBeUndefined();
+    expect(result.content[0]?.text).toContain("inline MCP App");
+  });
+
   it("defaults an unspecified transport/locality to remote without exposing local paths", async () => {
     const kitsRoot = await makeKitsRoot();
     const booter = okBooter();
