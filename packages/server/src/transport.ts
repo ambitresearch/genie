@@ -28,6 +28,12 @@ export function normalizeListenHost(host: string): string {
   return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
 }
 
+export function formatHttpEndpoint(host: string, port: number): string {
+  const normalized = normalizeListenHost(host);
+  const urlHost = isIP(normalized) === 6 ? `[${normalized}]` : normalized;
+  return `http://${urlHost}:${port}/mcp`;
+}
+
 const serverTransportKinds = new WeakMap<McpServer, TransportKind>();
 
 /** Return the transport selected for a started server, if startup has begun. */
@@ -93,7 +99,7 @@ async function startHttp(server: McpServer, port: number, host: string): Promise
   });
 
   await new Promise<void>((resolve) => http.listen(port, host, resolve));
-  process.stderr.write(`genie MCP server listening on http://${host}:${port}/mcp\n`);
+  process.stderr.write(`genie MCP server listening on ${formatHttpEndpoint(host, port)}\n`);
 }
 
 export interface StartOptions {

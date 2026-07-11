@@ -39,7 +39,8 @@ This is the canonical sequence. Do all four unless the user asks for less.
    (plans expire after 1h).
 3. **`write_files`** — commit the conjured files to the kit. Pass the `planId`
    from step 2 and map each generated file from
-   `{ path, content, mimeType }` to `{ path, data: content, mimeType }`.
+   `{ path, content, mimeType, encoding }` to
+   `{ path, data: content, mimeType, encoding }`.
    Every path must be covered by the plan's `writes` globs.
 4. **`preview`** — compile the kit manifest and **show the user the component**.
    This is how a component becomes _visible_: MCP Apps-capable hosts get an

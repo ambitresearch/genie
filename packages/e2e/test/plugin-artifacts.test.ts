@@ -34,6 +34,9 @@ describe("Claude plugin artifacts", () => {
     expect(skill).toContain("`refine` is pure with respect to kit files");
     expect(skill).toContain("encoding: file.encoding");
     expect(skill.match(/encoding: file\.encoding/g)).toHaveLength(2);
+    expect(skill).toMatch(
+      /`\{ path, content, mimeType, encoding \}` to\s+`\{ path, data: content, mimeType, encoding \}`/,
+    );
     expect(skill).toMatch(/After\s+`delete_files`, call `preview`/);
     expect(skill).toContain("without negotiated UI support");
     expect(skill).not.toContain("**other host** (Codex, Copilot");
@@ -69,5 +72,10 @@ describe("Claude plugin artifacts", () => {
     expect(design).not.toContain("Cursor, Codex CLI, and Copilot have no equivalent");
     expect(design).toContain("source checkout");
     expect(design).not.toContain("Ship `SKILL.md` + command files inside the npm/`.mcpb` package");
+    expect(overview).toContain("local stdio");
+    expect(overview).toContain("Loopback HTTP returns a");
+    expect(overview).toMatch(/remote HTTP/i);
+    expect(cursor).toContain("Only local Cursor / VS Code");
+    expect(cursor).toContain("ChatGPT receives the inline app");
   });
 });

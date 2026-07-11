@@ -234,7 +234,7 @@ export interface BootedViewer {
   /** The port the viewer actually bound. */
   port: number;
   /** Best-effort browser open for this already-running viewer. */
-  open: () => Promise<void>;
+  open: (target?: string) => Promise<void>;
   /** Tear the viewer down (used by {@link ViewerRegistry.closeAll}). */
   close: () => Promise<void>;
 }
@@ -301,6 +301,28 @@ export class ViewerRegistry {
     return booting;
   }
 
+  async open(kitDir: string, target: string): Promise<void> {
+    const entry = this.viewers.get(kitDir);
+    if (entry === undefined) {
+      throw new Error(`Viewer for "${kitDir}" must be booted before it can be opened.`);
+    }
+    if (entry.browserOpen === undefined) {
+      entry.browserOpen = entry.viewer.then(async (viewer) => {
+        try {
+          await viewer.open(target);
+        } catch (error) {
+          logStderr({
+            event: "preview.browser.open-failed",
+            kitDir,
+            target,
+            error: String(error),
+          });
+        }
+      });
+    }
+    await entry.browserOpen;
+  }
+
   /** Tear down every booted viewer (best-effort). For clean shutdown/tests. */
   async closeAll(): Promise<void> {
     const entries = Array.from(this.viewers.values());
@@ -336,7 +358,7 @@ interface ViewerCliIo {
 interface ViewerHandleLike {
   url: string;
   port: number;
-  open?: () => Promise<void>;
+  open?: (target?: string) => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -387,7 +409,7 @@ export const defaultViewerBooter: ViewerBooter = async ({ kitDir, port, open }) 
   return {
     url: handle.url,
     port: handle.port,
-    open: async () => {
+    open: async (target) => {
       if (handle.open === undefined) {
         logStderr({
           event: "preview.browser.open-unavailable",
@@ -396,7 +418,7 @@ export const defaultViewerBooter: ViewerBooter = async ({ kitDir, port, open }) 
         });
         return;
       }
-      await handle.open();
+      await handle.open(target);
     },
     close: () => handle.close(),
   };
@@ -620,12 +642,13 @@ export async function runPreview(
         : `Remote preview unavailable: ${embeddedError ?? "no declared previews origin"}`;
   } else {
     try {
-      const viewer = await deps.registry.ensure(kitDir, DEFAULT_VIEWER_PORT, autoOpen); // AC5 + piece B
+      const viewer = await deps.registry.ensure(kitDir, DEFAULT_VIEWER_PORT, false); // AC5 + piece B
       const url = new URL(viewer.url);
       if (args.componentName !== undefined)
         url.searchParams.set("componentName", args.componentName);
       if (args.group !== undefined) url.searchParams.set("group", args.group);
       viewerUrl = url.toString();
+      if (autoOpen) await deps.registry.open(kitDir, viewerUrl);
       text = `Preview running at ${viewerUrl}\n` + `Or open the kit directly: ${fileUrl}`;
     } catch (error) {
       // AC6 — the local viewer could not boot (Vite/@genie/viewer absent,

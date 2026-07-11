@@ -50,18 +50,24 @@ import {
 // ─── Fakes ───────────────────────────────────────────────────────────────────
 
 /** A booter that always succeeds, returning a canned URL and counting calls. */
-function okBooter(url = "http://127.0.0.1:5173/"): ViewerBooter & { calls: BootRequest[] } {
+function okBooter(
+  url = "http://127.0.0.1:5173/",
+): ViewerBooter & { calls: BootRequest[]; openedUrls: string[] } {
   const calls: BootRequest[] = [];
+  const openedUrls: string[] = [];
   const fn = (req: BootRequest): Promise<BootedViewer> => {
     calls.push(req);
     return Promise.resolve({
       url,
       port: 5173,
-      open: () => Promise.resolve(),
+      open: (target = url) => {
+        openedUrls.push(target);
+        return Promise.resolve();
+      },
       close: () => Promise.resolve(),
     });
   };
-  return Object.assign(fn, { calls });
+  return Object.assign(fn, { calls, openedUrls });
 }
 
 /** A booter that always fails (simulates EADDRINUSE / Vite unavailable). */
@@ -604,7 +610,8 @@ describe("runPreview (AC3, AC6)", () => {
     expect(req?.uiCapable).toBe(false);
     expect(req?.uiSupported).toBe(false);
     expect(req?.autoOpen).toBe(true);
-    expect(booter.calls[0]?.open).toBe(true);
+    expect(booter.calls[0]?.open).toBe(false);
+    expect(booter.openedUrls).toEqual(["http://127.0.0.1:5173/"]);
   });
 
   it("rejects a malformed kitId before booting anything", async () => {
@@ -803,7 +810,24 @@ describe("runPreview auto-open wiring (piece B)", () => {
     );
 
     expect(booter.calls).toHaveLength(1);
-    expect(booter.calls[0]?.open).toBe(true);
+    expect(booter.calls[0]?.open).toBe(false);
+    expect(booter.openedUrls).toEqual(["http://127.0.0.1:5173/"]);
+  });
+
+  it("opens the filtered viewer URL for a local tools-only host", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const registry = new ViewerRegistry(booter);
+
+    await runPreview(
+      { kitsRoot, registry, env: {} },
+      { kitId: "acme-abc123", componentName: "Button", group: "actions" },
+      { clientName: "codex", transportKind: "stdio", locality: "local" },
+    );
+
+    expect(booter.openedUrls).toEqual([
+      "http://127.0.0.1:5173/?componentName=Button&group=actions",
+    ]);
   });
 
   it("passes open:false to the booter for a ui://-capable host", async () => {
@@ -865,10 +889,10 @@ describe("runPreview auto-open wiring (piece B)", () => {
       { clientName: "codex", transportKind: "stdio" },
     );
 
-    // Second call reuses the cached viewer → booter (and thus the browser open)
-    // fires exactly once.
+    // Second call reuses both the cached viewer and the one-shot browser open.
     expect(booter.calls).toHaveLength(1);
-    expect(booter.calls[0]?.open).toBe(true);
+    expect(booter.calls[0]?.open).toBe(false);
+    expect(booter.openedUrls).toEqual(["http://127.0.0.1:5173/"]);
   });
 
   it("logs autoOpen in the preview.request line", async () => {
@@ -1110,7 +1134,8 @@ describe("mcp__genie__preview (wired)", () => {
     expect(req?.uiCapable).toBe(false);
     expect(req?.uiSupported).toBe(false);
     expect(req?.autoOpen).toBe(true);
-    expect(booter.calls[0]?.open).toBe(true);
+    expect(booter.calls[0]?.open).toBe(false);
+    expect(booter.openedUrls).toEqual(["http://127.0.0.1:5173/"]);
   });
 
   it("does not start a viewer when registered for remote HTTP transport", async () => {

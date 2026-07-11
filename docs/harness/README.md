@@ -16,14 +16,14 @@ capabilities:
 
 These are orthogonal, so harnesses fall into a grid:
 
-| Harness                           | Renders `ui://` inline? | Loads Agent Skills? | What it relies on                                                                   |
-| --------------------------------- | :---------------------: | :-----------------: | ----------------------------------------------------------------------------------- |
-| Claude Code / Desktop / claude.ai |           yes           |       **yes**       | Skill + `/genie:preview` + tool descriptions                                        |
-| Cursor                            |         **yes**         |       **yes**       | Skill + inline grid + tool descriptions                                             |
-| VS Code Copilot (≥ Jan 2026)      |  capability-dependent   |       **yes**       | Skill + inline grid when MCP Apps is negotiated + descriptions                      |
-| ChatGPT remote connector          |           yes           |         no          | inline grid + tool descriptions                                                     |
-| Codex CLI                         |         **no**          |       **yes**       | Skill + **server-opened browser tab** + descriptions                                |
-| GitHub Copilot (host-dependent)   |  capability-dependent   |       **yes**       | Skill + inline grid when negotiated; otherwise server-opened browser + descriptions |
+| Harness                           | Renders `ui://` inline? | Loads Agent Skills? | What it relies on                                                          |
+| --------------------------------- | :---------------------: | :-----------------: | -------------------------------------------------------------------------- |
+| Claude Code / Desktop / claude.ai |           yes           |       **yes**       | Skill + `/genie:preview` + tool descriptions                               |
+| Cursor                            |         **yes**         |       **yes**       | Skill + inline grid + tool descriptions                                    |
+| VS Code Copilot (≥ Jan 2026)      |  capability-dependent   |       **yes**       | Skill + inline grid when MCP Apps is negotiated + descriptions             |
+| ChatGPT remote connector          |           yes           |         no          | inline grid + tool descriptions                                            |
+| Codex CLI                         |         **no**          |       **yes**       | Skill + **server-opened browser tab** + descriptions                       |
+| GitHub Copilot (host-dependent)   |  capability-dependent   |       **yes**       | Skill + inline grid when negotiated; local fallback browser + descriptions |
 
 **Takeaways:**
 
@@ -33,9 +33,12 @@ These are orthogonal, so harnesses fall into a grid:
   the path in each harness guide; descriptions remain a fallback.
 - On **ChatGPT's remote connector**, tool descriptions carry the workflow and
   `preview` renders inline.
-- On **Codex / tools-only Copilot hosts**, the **genie server opens a browser
-  tab itself** when you call `preview`. VS Code Copilot builds that negotiate
-  MCP Apps render inline instead. Disable fallback auto-open with
+- On **local stdio Codex / tools-only Copilot hosts**, the **genie server opens
+  a browser tab itself** when you call `preview`. Loopback HTTP returns a
+  reachable viewer URL but does not auto-open it. VS Code Copilot builds that
+  negotiate MCP Apps render inline instead. Remote HTTP hosts require the inline
+  MCP App plus `GENIE_PREVIEWS_BASE_URL`; they never open a browser on the
+  server machine. Disable local stdio auto-open with
   `GENIE_PREVIEW_NO_OPEN=1`.
 
 ## Guidance delivery channels

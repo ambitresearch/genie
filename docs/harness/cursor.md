@@ -60,4 +60,6 @@ the Cursor stdio snippet into ChatGPT.
 
 Just ask in chat — "generate a Card component and show me." The Skill (or the
 tool-description fallback) runs the four-verb chain, and the inline grid appears
-when `preview` is called. Relay the viewer URL it returns as a backup way in.
+when `preview` is called. Only local Cursor / VS Code connections receive a
+viewer URL that can be relayed as a backup. ChatGPT receives the inline app from
+the remote connector and does not receive a local viewer URL.

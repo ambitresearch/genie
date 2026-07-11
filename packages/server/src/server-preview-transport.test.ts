@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 const preview = vi.hoisted(() => ({
+  UI_EXTENSION_ID: "io.modelcontextprotocol/ui",
+  MCP_APP_MIME: "text/html;profile=mcp-app",
   registerPreviewTool: vi.fn(),
 }));
 

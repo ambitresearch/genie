@@ -17,7 +17,12 @@ import { registerListComponents } from "./tools/list_components.js";
 import { registerPlan } from "./tools/plan.js";
 import { registerDeleteFilesTool } from "./tools/delete_files.js";
 import { registerWriteFilesTool } from "./tools/write_files.js";
-import { registerPreviewTool, type PreviewLocality } from "./tools/preview.js";
+import {
+  MCP_APP_MIME,
+  UI_EXTENSION_ID,
+  registerPreviewTool,
+  type PreviewLocality,
+} from "./tools/preview.js";
 import { registerGridResource } from "./ui/grid-resource.js";
 import { LocalFsKitStore } from "./store/local.js";
 import type { KitStore } from "./store/interface.js";
@@ -104,6 +109,11 @@ export interface CreateServerOptions {
 
 export function createServer(options: CreateServerOptions = {}): McpServer {
   const server = new McpServer(SERVER_INFO, {
+    capabilities: {
+      extensions: {
+        [UI_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME] },
+      },
+    },
     instructions:
       "genie generates UI components against your own UI kit, inside your coding " +
       "harness. (Scaffold build — the registered tools are ping, kit listing, kit component " +

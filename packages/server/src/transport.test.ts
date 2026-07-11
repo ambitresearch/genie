@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   getServerTransportKind,
+  formatHttpEndpoint,
   isLoopbackHost,
   normalizeListenHost,
   resolveTransport,
@@ -34,6 +35,17 @@ describe("resolveTransport", () => {
     describe("normalizeListenHost", () => {
       it("unwraps bracketed IPv6 literals for node:http listen", () => {
         expect(normalizeListenHost("[::1]")).toBe("::1");
+      });
+
+      describe("formatHttpEndpoint", () => {
+        it("brackets IPv6 literals in user-facing URLs", () => {
+          expect(formatHttpEndpoint("::1", 3000)).toBe("http://[::1]:3000/mcp");
+        });
+
+        it("leaves IPv4 and hostnames unbracketed", () => {
+          expect(formatHttpEndpoint("127.0.0.1", 3000)).toBe("http://127.0.0.1:3000/mcp");
+          expect(formatHttpEndpoint("localhost", 3000)).toBe("http://localhost:3000/mcp");
+        });
       });
 
       it("leaves ordinary hostnames and IPv4 literals unchanged", () => {

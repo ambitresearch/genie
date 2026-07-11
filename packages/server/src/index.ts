@@ -3,6 +3,7 @@ export {
   startTransport,
   isLoopbackHost,
   normalizeListenHost,
+  formatHttpEndpoint,
   resolveTransport,
   type TransportKind,
   type StartOptions,
