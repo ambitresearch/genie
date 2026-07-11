@@ -872,7 +872,7 @@ describe("shouldAutoOpen (piece B decision)", () => {
 });
 
 describe("runPreview auto-open wiring (piece B)", () => {
-  it("passes open:true to the booter for a non-ui:// host (default)", async () => {
+  it("boots headlessly then opens the cached viewer for a non-ui:// host", async () => {
     const kitsRoot = await makeKitsRoot();
     const booter = okBooter();
     const registry = new ViewerRegistry(booter);

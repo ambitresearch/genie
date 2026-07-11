@@ -121,24 +121,25 @@ manifest) returns populated results without needing a prior `ui://` read.
 MCP Apps capability and then, only when extension negotiation is unavailable,
 on the legacy `clientSupportsUi(ctx.clientName)` sniff.
 
-- **MCP Apps-capable host:** keep `open: false`. The inline
-  `ui://genie/grid` grid renders in-panel; a browser tab would be redundant.
-- **Local stdio client without UI support:** request `open: true` so **the
-  server** opens the system browser at the Vite URL. `ViewerRegistry` caches one
-  viewer per kit dir while tracking browser-open state separately, so an inline
-  caller can boot first and the first later tools-only caller still opens that
-  cached viewer exactly once.
-- **HTTP deployment:** force `open: false`; a remote caller must never launch a
-  browser on the server machine.
-- **Override:** `GENIE_PREVIEW_NO_OPEN=1` forces `open: false` everywhere
-  (opt-out; default is on for non-ui hosts).
-- **Degradation:** the viewer CLI already catches "could not open a browser
-  automatically" (`viewer/src/cli.ts:230`) and prints the URL — so headless
-  boxes lose nothing.
+- **MCP Apps-capable host:** boot headlessly and do not request a browser open.
+  The inline `ui://genie/grid` grid renders in-panel.
+- **Local stdio client without UI support:** boot headlessly, construct the
+  filter-bearing viewer URL, then call `ViewerRegistry.open(target)`.
+  `ViewerRegistry` caches one viewer per kit dir while tracking browser-open
+  state separately, so an inline caller can boot first and the first later
+  tools-only caller still opens that cached viewer exactly once.
+- **HTTP deployment:** never call `ViewerRegistry.open`; a remote caller must
+  not launch a browser on the server machine.
+- **Override:** `GENIE_PREVIEW_NO_OPEN=1` suppresses the separate registry open
+  everywhere (opt-out; default is on for local non-ui stdio hosts).
+- **Degradation:** `ViewerRegistry.open` catches browser-open failures and keeps
+  the returned viewer URL available, so headless boxes lose nothing.
 
-The default booter's hardcoded `open: false` becomes a computed value threaded
-from `runPreview` through `BootRequest`. `defaultViewerBooter` passes it into
-`bootViewer({ open })`.
+On the local path, `runPreview` calls `ViewerRegistry.ensure(..., false)` to boot
+or reuse a viewer headlessly. The harness-aware decision controls a later
+`ViewerRegistry.open(filteredUrl)` call, which preserves
+`componentName`/`group` filters and keeps boot caching separate from one-shot
+browser opening. Remote paths do not invoke the viewer registry.
 
 ## C. Portable bundled Agent Skill
 

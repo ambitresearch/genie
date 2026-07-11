@@ -216,14 +216,13 @@ export interface BootRequest {
   /** Requested dev-server port; the booter may fall back to the next free one. */
   port?: number;
   /**
-   * Whether the booter should open the system browser at the preview URL on
-   * FIRST boot (design 2026-07-05, piece B). Set by {@link runPreview} from the
-   * harness capability sniff: `false` for a `ui://`-capable host (the inline
-   * grid renders in-panel, so a browser tab would be redundant) and `true` for
-   * a local client without UI support so the SERVER pops the browser rather
-   * than hoping the calling model shells `open <url>`. HTTP deployments never
-   * auto-open on the server machine. The registry only boots once per kit dir,
-   * so this open happens at most once.
+   * Whether the booter should open its unfiltered base URL on first boot.
+   * On its local path, {@link runPreview} boots or reuses with `false`, adds the
+   * requested component and group filters, then calls
+   * {@link ViewerRegistry.open} with that exact target when harness policy
+   * allows browser fallback. This option remains available to direct
+   * registry/booter callers that explicitly want the base URL opened during
+   * boot.
    * Undefined is treated as `false` (a booter that never opens is always safe).
    */
   open?: boolean;
@@ -263,10 +262,11 @@ export class ViewerRegistry {
    * Return the viewer for `kitDir`, booting it on first request. Subsequent
    * calls for the same dir return the cached (in-flight or resolved) promise.
    *
-   * Booting and browser opening are tracked separately. If an inline-capable
-   * caller boots first with `open:false`, the first later `open:true` call opens
-   * that cached viewer without booting another server. Concurrent/repeated open
-   * requests share one promise, so at most one browser tab is requested.
+   * Booting and browser opening are tracked separately. Direct callers can use
+   * `open:true` for the base URL, while {@link runPreview}'s local path boots or
+   * reuses headlessly and calls {@link ViewerRegistry.open} after constructing
+   * its filtered target. Concurrent/repeated open requests share one promise,
+   * so at most one browser tab is requested.
    */
   ensure(kitDir: string, port = DEFAULT_VIEWER_PORT, open = false): Promise<BootedViewer> {
     const existing = this.viewers.get(kitDir);
@@ -373,16 +373,15 @@ interface ViewerModuleLike {
 
 /**
  * The default `ViewerBooter`. Lazily loads `@genie/viewer` and boots its Vite
- * dev server against the kit dir. `open` is threaded from the {@link BootRequest}
- * ({@link runPreview}'s harness-aware decision, piece B): a `ui://`-capable host
- * passes `false` (inline grid renders in-panel), a non-`ui://` host passes `true`
- * so the viewer opens the system browser itself. Absent → `false` (never opens),
- * preserving the prior always-headless default for any caller that omits it.
+ * dev server against the kit dir and honors {@link BootRequest.open} for direct
+ * callers. On its local path, {@link runPreview} deliberately passes `false`,
+ * constructs the filter-bearing viewer URL, and invokes
+ * {@link ViewerRegistry.open} separately so browser fallback never opens the
+ * unfiltered base URL. Absent → `false` (never opens), preserving the safe
+ * headless default.
  * ALL of the viewer's own stdout is routed to STDERR — on the stdio transport
  * the tool's stdout is the JSON-RPC stream, so the viewer's `Preview:` banner
- * would corrupt framing if left on stdout. The viewer CLI already swallows a
- * failed browser-open (headless box) and just prints the URL, so `open:true` is
- * safe even where no browser exists.
+ * would corrupt framing if left on stdout.
  */
 export const defaultViewerBooter: ViewerBooter = async ({ kitDir, port, open }) => {
   // Non-literal specifier: keeps `tsc` from resolving the optional dep at build.
