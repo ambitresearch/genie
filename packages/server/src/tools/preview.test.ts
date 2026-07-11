@@ -175,12 +175,18 @@ describe("clientSupportsUi (AC7)", () => {
     expect(clientSupportsUi(name)).toBe(true);
   });
 
-  it.each(["codex", "cline", "continue", "some-random-cli", ""])(
-    "treats %s as a non-ui:// host",
-    (name) => {
-      expect(clientSupportsUi(name)).toBe(false);
-    },
-  );
+  it.each([
+    "codex",
+    "cline",
+    "continue",
+    "openai",
+    "openai-node",
+    "OpenAI SDK",
+    "some-random-cli",
+    "",
+  ])("treats %s as a non-ui:// host", (name) => {
+    expect(clientSupportsUi(name)).toBe(false);
+  });
 
   it("returns false when the client name is unknown/undefined", () => {
     expect(clientSupportsUi(undefined)).toBe(false);

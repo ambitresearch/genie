@@ -67,16 +67,15 @@ export const DEFAULT_VIEWER_PORT = 5173;
  * today (RFC §8.3 / research report §3.4): Claude, VS Code, ChatGPT, Cursor,
  * plus the Goose / Postman / MCPJam trio. Matched case-insensitively as a
  * SUBSTRING because harnesses report varied client names ("Claude Code",
- * "claude-ai", "Visual Studio Code", "openai-chatgpt", …). This list drives an
- * observability LOG only (AC7) — it never gates `_meta.ui.resourceUri`, which
- * is always emitted so a host we don't recognize can still opt to render it.
+ * "claude-ai", "Visual Studio Code", "openai-chatgpt", …). It is consulted only
+ * when the client exposes no extensions bag, affecting legacy browser fallback
+ * and logging; it never gates `_meta.ui.resourceUri`, which is always emitted.
  */
 const UI_HOST_MARKERS = [
   "claude",
   "vscode",
   "visual studio code",
   "chatgpt",
-  "openai",
   "cursor",
   "goose",
   "postman",
