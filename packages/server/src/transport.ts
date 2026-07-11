@@ -184,6 +184,16 @@ function writeProtocolError(res: ServerResponse, status: number, message: string
   );
 }
 
+function reportHttpFailure(res: ServerResponse, error: unknown): void {
+  process.stderr.write(
+    JSON.stringify({
+      event: "transport.http.error",
+      error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    }) + "\n",
+  );
+  writeProtocolError(res, 500, "Internal server error");
+}
+
 /**
  * Create the stateful Streamable HTTP request handler. Each initialized client
  * receives its own MCP server + transport, keyed by Mcp-Session-Id, so
@@ -338,22 +348,14 @@ export function createStreamableHttpRequestHandler(
         }
         handedOff = true;
         void handleMcp(req, res, body, lease).catch((error: unknown) => {
-          writeProtocolError(
-            res,
-            500,
-            error instanceof Error ? error.message : "Internal server error",
-          );
+          reportHttpFailure(res, error);
         });
       });
       return;
     }
     if ((req.method === "GET" || req.method === "DELETE") && pathname === "/mcp") {
       void handleMcp(req, res).catch((error: unknown) => {
-        writeProtocolError(
-          res,
-          500,
-          error instanceof Error ? error.message : "Internal server error",
-        );
+        reportHttpFailure(res, error);
       });
       return;
     }

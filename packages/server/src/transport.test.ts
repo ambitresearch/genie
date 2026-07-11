@@ -397,10 +397,13 @@ describe("createStreamableHttpRequestHandler", () => {
 
   it("disposes a session server when connection fails before initialization", async () => {
     const dispose = vi.fn(async () => {});
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const makeServer = (): McpServer => {
       const server = new McpServer({ name: "failed-init-test", version: "0" });
       registerServerDisposer(server, dispose);
-      vi.spyOn(server, "connect").mockRejectedValue(new Error("connect failed"));
+      vi.spyOn(server, "connect").mockRejectedValue(
+        new Error("connect failed at /private/operator/config"),
+      );
       return server;
     };
     const http = createNodeHttpServer(createStreamableHttpRequestHandler(makeServer));
@@ -427,8 +430,13 @@ describe("createStreamableHttpRequestHandler", () => {
       });
 
       expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { message: "Internal server error" },
+      });
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("/private/operator/config"));
       await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
     } finally {
+      stderr.mockRestore();
       await new Promise<void>((resolve, reject) =>
         http.close((error) => (error ? reject(error) : resolve())),
       );
