@@ -1,6 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { getServerTransportKind, resolveTransport, startTransport } from "./transport.js";
+import {
+  getServerTransportKind,
+  isLoopbackHost,
+  normalizeListenHost,
+  resolveTransport,
+  startTransport,
+} from "./transport.js";
 
 describe("resolveTransport", () => {
   const savedEnv = process.env.MCP_TRANSPORT;
@@ -10,6 +16,38 @@ describe("resolveTransport", () => {
     if (savedEnv === undefined) delete process.env.MCP_TRANSPORT;
     else process.env.MCP_TRANSPORT = savedEnv;
     if (savedTty) Object.defineProperty(process.stdin, "isTTY", savedTty);
+  });
+
+  describe("isLoopbackHost", () => {
+    it.each([
+      "127.0.0.1",
+      "127.42.0.9",
+      "localhost",
+      "preview.localhost",
+      "::1",
+      "[::1]",
+      "0:0:0:0:0:0:0:1",
+    ])("recognizes local host %s", (host) => {
+      expect(isLoopbackHost(host)).toBe(true);
+    });
+
+    describe("normalizeListenHost", () => {
+      it("unwraps bracketed IPv6 literals for node:http listen", () => {
+        expect(normalizeListenHost("[::1]")).toBe("::1");
+      });
+
+      it("leaves ordinary hostnames and IPv4 literals unchanged", () => {
+        expect(normalizeListenHost("localhost")).toBe("localhost");
+        expect(normalizeListenHost("127.0.0.1")).toBe("127.0.0.1");
+      });
+    });
+
+    it.each(["0.0.0.0", "::", "192.168.1.10", "mcp.example.com"])(
+      "treats externally reachable host %s as remote",
+      (host) => {
+        expect(isLoopbackHost(host)).toBe(false);
+      },
+    );
   });
 
   it("honors an explicit stdio argument", () => {

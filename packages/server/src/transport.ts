@@ -1,9 +1,32 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer as createHttpServer } from "node:http";
+import { isIP } from "node:net";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 export type TransportKind = "stdio" | "http";
+
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  if (normalized === "localhost" || normalized.endsWith(".localhost")) return true;
+
+  const unwrapped =
+    normalized.startsWith("[") && normalized.endsWith("]") ? normalized.slice(1, -1) : normalized;
+  const ipVersion = isIP(unwrapped);
+  if (ipVersion === 4) return unwrapped.split(".")[0] === "127";
+  if (ipVersion !== 6) return false;
+
+  try {
+    return new URL(`http://[${unwrapped}]/`).hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
+export function normalizeListenHost(host: string): string {
+  const trimmed = host.trim();
+  return trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+}
 
 const serverTransportKinds = new WeakMap<McpServer, TransportKind>();
 
@@ -88,7 +111,7 @@ export async function startTransport(
   serverTransportKinds.set(server, kind);
   try {
     if (kind === "http") {
-      await startHttp(server, opts.port ?? 3000, opts.host ?? "127.0.0.1");
+      await startHttp(server, opts.port ?? 3000, normalizeListenHost(opts.host ?? "127.0.0.1"));
     } else {
       await startStdio(server);
     }

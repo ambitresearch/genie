@@ -444,11 +444,10 @@ describe("AC5 — returns { diff, files }", () => {
     expect(res.diff).not.toContain("icon.png");
   });
 
-  it("does not carry a binary forward (or duplicate it) when the model returns that path (PR #128 review)", async () => {
-    // The original component has a binary icon.png. This time the model's reply
-    // DOES include an icon.png entry (e.g. it was instructed to swap the icon).
-    // The `returnedPaths` guard must let the model's entry win — exactly one
-    // icon.png in the result, and it's the model's content, not the original's.
+  it("preserves an unseen original binary even when the model fabricates that path", async () => {
+    // The original component has a binary icon.png, but the model sees only a
+    // placeholder. A fabricated replacement must not overwrite bytes it never
+    // observed; v1 has no explicit binary replacement protocol.
     const originalPng =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
     const files: LoadedFile[] = [
@@ -476,13 +475,42 @@ describe("AC5 — returns { diff, files }", () => {
     const chat = stubChat([completionOf(JSON.stringify(withIcon))]);
     const res = await refine(deps({ chat, kitStore }), args());
 
-    // Exactly one icon.png — no duplicate from the carry-forward step.
+    // Exactly one icon.png, and the trusted original wins.
     const icons = res.files.filter((f) => f.path.endsWith("icon.png"));
     expect(icons).toHaveLength(1);
-    // The model's entry wins; the original was NOT re-added over it.
-    expect(icons[0]!.content).toBe(modelPng);
-    expect(icons[0]!.content).not.toBe(originalPng);
+    expect(icons[0]!.content).toBe(originalPng);
+    expect(icons[0]!.content).not.toBe(modelPng);
     expect(icons[0]!.encoding).toBe("base64");
+  });
+
+  it("accepts an echoed binary placeholder for an original path and preserves trusted bytes", async () => {
+    const originalPng =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+    const kitStore = stubKitStore([
+      ...currentFiles(),
+      {
+        path: "components/actions/Button/icon.png",
+        content: originalPng,
+        encoding: "base64",
+        mimeType: "image/png",
+      },
+    ]);
+    const echoed = refinedComponent({
+      files: [
+        ...refinedComponent().files,
+        {
+          path: "components/actions/Button/icon.png",
+          content: "[binary file, base64 — omitted]",
+          mimeType: "image/png",
+        },
+      ],
+    });
+    const chat = stubChat([completionOf(JSON.stringify(echoed))]);
+
+    const result = await refine(deps({ chat, kitStore }), args());
+
+    expect(chat.calls).toHaveLength(1);
+    expect(result.files.find((file) => file.path.endsWith("icon.png"))?.content).toBe(originalPng);
   });
 
   it("retries when a model-returned binary file is not valid base64", async () => {

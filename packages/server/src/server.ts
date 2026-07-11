@@ -17,7 +17,7 @@ import { registerListComponents } from "./tools/list_components.js";
 import { registerPlan } from "./tools/plan.js";
 import { registerDeleteFilesTool } from "./tools/delete_files.js";
 import { registerWriteFilesTool } from "./tools/write_files.js";
-import { registerPreviewTool } from "./tools/preview.js";
+import { registerPreviewTool, type PreviewLocality } from "./tools/preview.js";
 import { registerGridResource } from "./ui/grid-resource.js";
 import { LocalFsKitStore } from "./store/local.js";
 import type { KitStore } from "./store/interface.js";
@@ -52,6 +52,8 @@ export interface CreateServerOptions {
    * the built-in transport launcher is used.
    */
   transportKind?: TransportKind;
+  /** Whether the viewer URL is reachable from the host running the MCP client. */
+  previewLocality?: PreviewLocality;
   projectsRoot?: string;
   kitsRoot?: string;
   reportsDir?: string;
@@ -271,7 +273,11 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // falling back to `file://<kitDir>/index.html` when the viewer can't boot.
   // Bound to the same `kitsRoot` the kit verbs resolve against so a `kitId`
   // maps to the same on-disk kit dir the viewer serves.
-  registerPreviewTool(server, { kitsRoot, transportKind: options.transportKind });
+  registerPreviewTool(server, {
+    kitsRoot,
+    transportKind: options.transportKind,
+    locality: options.previewLocality,
+  });
 
   // ui://genie/grid (M4-06 / DRO-268): the embedded MCP-Apps resource the
   // `preview` tool's `_meta.ui.resourceUri` points at. A ui://-capable host

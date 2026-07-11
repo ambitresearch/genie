@@ -33,6 +33,7 @@ describe("Claude plugin artifacts", () => {
     expect(skill).toContain("refineResult.files.map");
     expect(skill).toContain("`refine` is pure with respect to kit files");
     expect(skill).toContain("encoding: file.encoding");
+    expect(skill.match(/encoding: file\.encoding/g)).toHaveLength(2);
     expect(skill).toMatch(/After\s+`delete_files`, call `preview`/);
     expect(skill).toContain("without negotiated UI support");
     expect(skill).not.toContain("**other host** (Codex, Copilot");

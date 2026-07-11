@@ -453,8 +453,45 @@ describe("AC9 — returns { componentName, files, manifestEntry }, writes nothin
     expect(res.componentName).toBe("Button");
     expect(res.group).toBe("actions");
     expect(res.files).toHaveLength(2);
+    expect(res.files.every((file) => file.encoding === "utf-8")).toBe(true);
     expect(res.manifestEntry.viewport).toEqual({ width: 320, height: 140 });
     expect(res.usage).toEqual({ promptTokens: 100, completionTokens: 200, totalTokens: 300 });
+  });
+
+  it("retries invalid model binary content and returns normalized encoding", async () => {
+    const invalid = goodComponent({
+      files: [
+        ...goodComponent().files,
+        {
+          path: "components/actions/Button/icon.png",
+          content: "not base64!",
+          mimeType: "text/plain",
+        },
+      ],
+    });
+    const valid = goodComponent({
+      files: [
+        ...goodComponent().files,
+        {
+          path: "components/actions/Button/icon.png",
+          content: "aGVsbG8=",
+          mimeType: "text/plain",
+        },
+      ],
+    });
+    const chat = stubChat([
+      completionOf(JSON.stringify(invalid)),
+      completionOf(JSON.stringify(valid)),
+    ]);
+
+    const res = await conjure({ chat }, args());
+
+    expect(chat.calls).toHaveLength(2);
+    expect(res.files.find((file) => file.path.endsWith("icon.png"))).toMatchObject({
+      content: "aGVsbG8=",
+      encoding: "base64",
+      mimeType: "image/png",
+    });
   });
 
   it("sums usage across the retry attempt", async () => {
@@ -535,9 +572,10 @@ describe("tool boundary", () => {
     await Promise.all([server.connect(a), client.connect(b)]);
     try {
       const res = (await client.callTool({ name: CONJURE_TOOL_NAME, arguments: args() })) as {
-        structuredContent?: { componentName: string };
+        structuredContent?: { componentName: string; files: { encoding: string }[] };
       };
       expect(res.structuredContent?.componentName).toBe("Button");
+      expect(res.structuredContent?.files.every((file) => file.encoding === "utf-8")).toBe(true);
     } finally {
       await client.close();
       await server.close();

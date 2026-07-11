@@ -30,7 +30,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { JSDOM } from "jsdom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = resolve(HERE, "../static");
@@ -317,6 +317,29 @@ describe("diffManifestHashes (AC4)", () => {
     expect(hooks.diffManifestHashes(prev, next)).toEqual([BUTTON_PATH]);
   });
 
+  describe("manifestStructureChanged", () => {
+    it("detects rendered group, name, and viewport metadata changes at a stable path", () => {
+      const { hooks } = setup();
+      const prev = twoCardManifest();
+
+      for (const field of ["group", "name", "viewport"]) {
+        const next = twoCardManifest();
+        (next.components as Array<Record<string, unknown>>)[0]![field] = `changed-${field}`;
+        expect(hooks.manifestStructureChanged(prev, next)).toBe(true);
+      }
+    });
+
+    it("keeps hash-only changes on the lightweight iframe reload path", () => {
+      const { hooks } = setup();
+      expect(
+        hooks.manifestStructureChanged(
+          twoCardManifest(),
+          twoCardManifest({ buttonHash: "sha256-button-v2" }),
+        ),
+      ).toBe(false);
+    });
+  });
+
   it("returns [] when nothing changed", () => {
     const { hooks } = setup();
     expect(hooks.diffManifestHashes(twoCardManifest(), twoCardManifest())).toEqual([]);
@@ -330,7 +353,7 @@ describe("diffManifestHashes (AC4)", () => {
     );
   });
 
-  it("ignores brand-new components (structural change → next boot, not a hot swap)", () => {
+  it("leaves brand-new components to the structural-change detector", () => {
     const { hooks } = setup();
     const prev = twoCardManifest();
     const next = twoCardManifest();
@@ -427,6 +450,176 @@ class FakeWebSocket {
     this.closed = true;
   }
 }
+
+function fakeMcpAppWindow(): {
+  win: Record<string, unknown>;
+  parentPostMessage: ReturnType<typeof vi.fn>;
+  emit: (data: unknown) => void;
+} {
+  const listeners = new Set<(event: { source: unknown; data: unknown }) => void>();
+  const parent = { postMessage: vi.fn() };
+  const win = {
+    parent,
+    addEventListener: (
+      type: string,
+      listener: (event: { source: unknown; data: unknown }) => void,
+    ) => {
+      if (type === "message") listeners.add(listener);
+    },
+    removeEventListener: (
+      type: string,
+      listener: (event: { source: unknown; data: unknown }) => void,
+    ) => {
+      if (type === "message") listeners.delete(listener);
+    },
+  };
+  return {
+    win,
+    parentPostMessage: parent.postMessage,
+    emit: (data) => {
+      for (const listener of listeners) listener({ source: parent, data });
+    },
+  };
+}
+
+describe("initMcpApp — standard tool result delivery", () => {
+  it("initializes with the host and renders the viewer URL from structuredContent", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const host = fakeMcpAppWindow();
+
+    hooks.initMcpApp(document, { win: host.win });
+    const initialize = host.parentPostMessage.mock.calls[0]?.[0] as {
+      id: number;
+      method: string;
+      params: Record<string, unknown>;
+    };
+    expect(initialize.method).toBe("ui/initialize");
+    expect(initialize.params).toHaveProperty("appInfo");
+    expect(initialize.params).not.toHaveProperty("clientInfo");
+
+    host.emit({ jsonrpc: "2.0", id: initialize.id, result: { protocolVersion: "2026-01-26" } });
+    expect(host.parentPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "ui/notifications/initialized" }),
+      "*",
+    );
+    Object.defineProperty(document.documentElement, "scrollWidth", {
+      value: 640,
+      configurable: true,
+    });
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      value: 720,
+      configurable: true,
+    });
+
+    host.emit({
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-result",
+      params: {
+        structuredContent: {
+          transportKind: "stdio",
+          locality: "local",
+          viewerUrl: "http://127.0.0.1:5173/",
+        },
+      },
+    });
+
+    const frame = grid.querySelector("iframe.ds-viewer-embed");
+    expect(frame?.getAttribute("src")).toBe("http://127.0.0.1:5173/");
+    expect(host.parentPostMessage).toHaveBeenCalledWith(
+      {
+        jsonrpc: "2.0",
+        method: "ui/notifications/size-changed",
+        params: { width: 640, height: 720 },
+      },
+      "*",
+    );
+  });
+
+  it("renders the embedded manifest for HTTP instead of framing a server-local loopback URL", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const host = fakeMcpAppWindow();
+    hooks.initMcpApp(document, { win: host.win });
+
+    const embeddedManifest = twoCardManifest();
+    for (const component of embeddedManifest.components as Array<Record<string, unknown>>) {
+      component.sourcePath = component.path;
+      component.path = `https://previews.example.com/${String(component.path)}`;
+    }
+    host.emit({
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-result",
+      params: {
+        structuredContent: {
+          transportKind: "http",
+          locality: "remote",
+          viewerUrl: "http://127.0.0.1:5173/",
+          embeddedManifest,
+        },
+      },
+    });
+
+    expect(grid.querySelector("iframe.ds-viewer-embed")).toBeNull();
+    expect(iframeFor(grid, BUTTON_PATH)).toBeDefined();
+    expect(iframeFor(grid, CARD_PATH)).toBeDefined();
+  });
+
+  it("frames a reachable viewer for explicitly local loopback HTTP", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: {
+          transportKind: "http",
+          locality: "local",
+          viewerUrl: "http://127.0.0.1:5173/",
+        },
+      }),
+    ).toBe(true);
+    expect(grid.querySelector("iframe.ds-viewer-embed")?.getAttribute("src")).toBe(
+      "http://127.0.0.1:5173/",
+    );
+  });
+
+  it("shows an explicit error instead of rendering dynamically delivered data cards under stale CSP", () => {
+    const manifest = twoCardManifest();
+    (manifest.components as Array<Record<string, unknown>>)[0]!.path =
+      "data:text/html;base64,PGJ1dHRvbj5TYXZlPC9idXR0b24+";
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: { transportKind: "http", embeddedManifest: manifest },
+      }),
+    ).toBe(false);
+    expect(grid.querySelector(".ds-error")?.textContent).toContain("GENIE_PREVIEWS_BASE_URL");
+    expect(grid.querySelector("iframe[data-path]")).toBeNull();
+  });
+
+  it("acknowledges ui/resource-teardown and stops processing host messages", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const host = fakeMcpAppWindow();
+    hooks.initMcpApp(document, { win: host.win });
+
+    host.emit({ jsonrpc: "2.0", id: 99, method: "ui/resource-teardown", params: {} });
+
+    expect(host.parentPostMessage).toHaveBeenCalledWith(
+      { jsonrpc: "2.0", id: 99, result: {} },
+      "*",
+    );
+    host.emit({
+      jsonrpc: "2.0",
+      method: "ui/notifications/tool-result",
+      params: {
+        structuredContent: {
+          transportKind: "stdio",
+          locality: "local",
+          viewerUrl: "http://127.0.0.1:5173/",
+        },
+      },
+    });
+    expect(grid.querySelector("iframe.ds-viewer-embed")).toBeNull();
+  });
+});
 
 describe("initHmr — WebSocket transport (AC2/AC5)", () => {
   it("connects to /__genie_hmr and reloads the matching card on a card.changed frame", () => {

@@ -2,21 +2,18 @@
  * MCP tool: preview (M4-05 / DRO-267).
  *
  * Returns a human-readable summary — the live viewer URL plus a `file://`
- * fallback — as `content`, and points capable hosts at the inline grid via
- * `_meta.ui.resourceUri: "ui://genie/grid?…"`. Hosts that render `ui://`
- * today (currently Claude, VS Code ≥Jan 2026, ChatGPT, Cursor, and the
- * Goose/Postman/MCPJam trio — see `UI_HOST_MARKERS`) show the inline grid;
- * everyone else falls back to the printed URLs (RFC §8.3, progressive
- * enhancement).
+ * fallback — as `content`. The tool advertises the static
+ * `ui://genie/grid` app shell in tools/list for standards-compliant discovery;
+ * the host then delivers this call's input/result to that shell. The result
+ * also retains its query-bearing resource URI for legacy/result-level hosts.
  *
  * ── Contract (RFC §6.2.3 / §8.3; this issue's AC1–AC7) ───────────────────────
  *   input : { kitId, componentName?, group? }                          (AC2)
  *   output: { content: [{ type:"text", text }],
  *             _meta: { ui: { resourceUri: "ui://genie/grid?…" } } }     (AC3/AC4)
- * The `ui://genie/grid` RESOURCE itself is registered by M4-06 — this tool only
- * emits the URI string that references it. `_meta.ui.resourceUri` is emitted
- * UNCONDITIONALLY (a host that can't read it just renders the text); AC7's
- * client sniff is observability only, it never gates the payload.
+ * The `ui://genie/grid` RESOURCE itself is registered by M4-06. The static
+ * tools/list association and query-bearing result URI are emitted
+ * unconditionally; a host without MCP Apps support simply renders the text.
  *
  * ── Viewer boot seam (AC5/AC6) ───────────────────────────────────────────────
  * Booting the Vite dev server is behind an injectable `ViewerBooter` so the
@@ -29,7 +26,7 @@
  * turned into AC6's `file://<kitDir>/index.html` fallback; `_meta` is still
  * emitted. A `ViewerRegistry` caches one running viewer per kit dir (AC5).
  */
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -38,6 +35,13 @@ import { z } from "zod";
 
 import { ensureManifest, type Manifest } from "../manifest/index.js";
 import { getServerTransportKind, type TransportKind } from "../transport.js";
+import {
+  filterManifest,
+  normalizePreviewsBaseUrl,
+  rewriteCardPaths,
+  type EmbeddedManifest,
+  type PreviewReader,
+} from "../ui/grid-resource.js";
 
 import { KIT_ID_PATTERN } from "./get_kit.js";
 
@@ -412,6 +416,10 @@ export interface PreviewDeps {
   env?: NodeJS.ProcessEnv;
   /** Manifest compiler seam; production uses the shared compile-and-persist helper. */
   ensureManifest?: (kitDir: string) => Promise<Manifest>;
+  /** Preview reader used to build the self-contained app result. */
+  readPreviewBytes?: PreviewReader;
+  /** Optional separate-origin previews host for embedded manifest card URLs. */
+  previewsBaseUrl?: string;
 }
 
 /** The three-field tool input (AC2). */
@@ -432,7 +440,11 @@ export interface PreviewContext {
   uiCapable?: boolean;
   /** Active server transport; HTTP suppresses server-machine browser opening. */
   transportKind?: TransportKind;
+  /** Whether the viewer URL is reachable by the MCP client host. */
+  locality?: PreviewLocality;
 }
+
+export type PreviewLocality = "local" | "remote";
 
 /**
  * The tool's return shape (AC3): text URLs + the ui:// resource pointer.
@@ -461,6 +473,10 @@ export interface PreviewResult {
     /** The live Vite viewer URL when it booted; absent on the file:// fallback. */
     viewerUrl?: string;
     fileUrl: string;
+    transportKind?: TransportKind;
+    locality: PreviewLocality;
+    embeddedManifest?: EmbeddedManifest;
+    embeddedError?: string;
   };
   _meta: { ui: { resourceUri: string }; "openai/outputTemplate": string };
 }
@@ -532,7 +548,42 @@ export async function runPreview(
   // sees them) without depending on a prior resource read. An existing empty
   // kit compiles to an empty manifest; genuine read/write failures propagate.
   const compile = deps.ensureManifest ?? ensureManifest;
-  await compile(kitDir);
+  const manifest = await compile(kitDir);
+  const filteredManifest = filterManifest(manifest, {
+    componentName: args.componentName,
+    group: args.group,
+  });
+  const env = deps.env ?? process.env;
+  const locality = ctx.locality ?? (ctx.transportKind === "http" ? "remote" : "local");
+  const previewsBaseUrl = deps.previewsBaseUrl ?? env.GENIE_PREVIEWS_BASE_URL;
+  const normalizedPreviewsBaseUrl = normalizePreviewsBaseUrl(previewsBaseUrl);
+  let embeddedManifest: EmbeddedManifest | undefined;
+  let embeddedError: string | undefined;
+  if (locality === "remote") {
+    if (normalizedPreviewsBaseUrl !== undefined) {
+      const readPreviewBytes: PreviewReader =
+        deps.readPreviewBytes ??
+        (async (root, path) => {
+          try {
+            return await readFile(join(root, path));
+          } catch {
+            return null;
+          }
+        });
+      embeddedManifest = await rewriteCardPaths(filteredManifest, {
+        kitId: args.kitId,
+        kitDir,
+        previewsBaseUrl: normalizedPreviewsBaseUrl.toString(),
+        readPreviewBytes,
+      });
+    } else {
+      embeddedError =
+        previewsBaseUrl !== undefined && previewsBaseUrl !== ""
+          ? "Invalid GENIE_PREVIEWS_BASE_URL; remote embedded previews require an absolute http(s) origin."
+          : "Remote embedded previews require GENIE_PREVIEWS_BASE_URL; " +
+            "the query-bearing resource remains available to result-level hosts.";
+    }
+  }
 
   const resourceUri = buildResourceUri({
     kitId: args.kitId,
@@ -562,23 +613,36 @@ export async function runPreview(
 
   let text: string;
   let viewerUrl: string | undefined;
-  try {
-    const viewer = await deps.registry.ensure(kitDir, DEFAULT_VIEWER_PORT, autoOpen); // AC5 + piece B
-    viewerUrl = viewer.url;
-    text = `Preview running at ${viewer.url}\n` + `Or open the kit directly: ${fileUrl}`;
-  } catch (error) {
-    // AC6 — the viewer could not boot (Vite/@genie/viewer absent, port
-    // unbindable, …). Degrade to the file:// vehicle; still emit _meta so a
-    // ui:// host can render the inline grid regardless.
-    logStderr({
-      event: "preview.fallback",
-      kitId: args.kitId,
-      reason: "viewer-boot-failed",
-      error: String(error),
-    });
+  if (locality === "remote") {
     text =
-      `Preview viewer could not start; open the kit directly: ${fileUrl}\n` +
-      "(Start the genie viewer manually, or a ui://-capable host can render the inline grid.)";
+      embeddedManifest !== undefined
+        ? "Preview ready in the inline MCP App."
+        : `Remote preview unavailable: ${embeddedError ?? "no declared previews origin"}`;
+  } else {
+    try {
+      const viewer = await deps.registry.ensure(kitDir, DEFAULT_VIEWER_PORT, autoOpen); // AC5 + piece B
+      const url = new URL(viewer.url);
+      if (args.componentName !== undefined)
+        url.searchParams.set("componentName", args.componentName);
+      if (args.group !== undefined) url.searchParams.set("group", args.group);
+      viewerUrl = url.toString();
+      text = `Preview running at ${viewerUrl}\n` + `Or open the kit directly: ${fileUrl}`;
+    } catch (error) {
+      // AC6 — the local viewer could not boot (Vite/@genie/viewer absent,
+      // port unbindable, …). Degrade to the file:// vehicle and tell the app
+      // shell explicitly rather than leaving its empty initial state visible.
+      logStderr({
+        event: "preview.fallback",
+        kitId: args.kitId,
+        reason: "viewer-boot-failed",
+        error: String(error),
+      });
+      embeddedError =
+        "The local preview viewer could not start; use the returned file URL or start it manually.";
+      text =
+        `Preview viewer could not start; open the kit directly: ${fileUrl}\n` +
+        "(Start the genie viewer manually, or a ui://-capable host can render the inline grid.)";
+    }
   }
 
   return {
@@ -589,6 +653,10 @@ export async function runPreview(
       ...(args.group !== undefined ? { group: args.group } : {}),
       ...(viewerUrl !== undefined ? { viewerUrl } : {}),
       fileUrl,
+      ...(ctx.transportKind !== undefined ? { transportKind: ctx.transportKind } : {}),
+      locality,
+      ...(embeddedManifest !== undefined ? { embeddedManifest } : {}),
+      ...(embeddedError !== undefined ? { embeddedError } : {}),
     },
     // Same resourceUri under both the MCP-Apps key (`ui.resourceUri`) and the
     // ChatGPT Apps SDK key (`openai/outputTemplate`, AC6) — cross-vendor link.
@@ -623,6 +691,32 @@ const previewOutputSchema = {
   group: z.string().optional(),
   viewerUrl: z.string().optional(),
   fileUrl: z.string(),
+  transportKind: z.enum(["stdio", "http"]).optional(),
+  locality: z.enum(["local", "remote"]),
+  embeddedManifest: z
+    .object({
+      version: z.number(),
+      name: z.string(),
+      generatedAt: z.string(),
+      groups: z.array(z.string()),
+      components: z.array(
+        z
+          .object({
+            name: z.string(),
+            group: z.string(),
+            path: z.string(),
+            sourcePath: z.string(),
+            viewport: z.string(),
+            hash: z.string(),
+            lastModified: z.string(),
+            subtitle: z.string().optional(),
+            tags: z.array(z.string()).optional(),
+          })
+          .strict(),
+      ),
+    })
+    .optional(),
+  embeddedError: z.string().optional(),
 } as const;
 
 /** Options for {@link registerPreviewTool}. `booter` defaults to the lazy one. */
@@ -634,8 +728,14 @@ export interface PreviewToolOptions {
   env?: NodeJS.ProcessEnv;
   /** Injectable manifest seam for tests. */
   ensureManifest?: (kitDir: string) => Promise<Manifest>;
+  /** Injectable preview-byte seam for self-contained app results. */
+  readPreviewBytes?: PreviewReader;
+  /** Optional separate-origin previews host used in embedded manifests. */
+  previewsBaseUrl?: string;
   /** Explicit transport override for embedded servers and tests. */
   transportKind?: TransportKind;
+  /** Explicit deployment locality for embedded servers and tests. */
+  locality?: PreviewLocality;
 }
 
 /**
@@ -666,6 +766,8 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
     registry,
     env: options.env,
     ensureManifest: options.ensureManifest,
+    readPreviewBytes: options.readPreviewBytes,
+    previewsBaseUrl: options.previewsBaseUrl,
   };
 
   server.registerTool(
@@ -683,9 +785,14 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
         "the server machine. Optionally focus one component or group.",
       inputSchema: previewInputSchema,
       outputSchema: previewOutputSchema,
-      // Keep the app link on each result: its query-bearing URI carries the
-      // required kitId/filters and builds the exact manifest + CSP for that
-      // invocation. A bare registration-time URI would render an empty grid.
+      // Standards-compliant discovery happens in tools/list through this static
+      // app shell. The host sends tool input/result to the shell, which renders
+      // the invocation's viewer URL. Keep the query-bearing result URI below for
+      // legacy/result-level hosts and the self-contained embedded resource path.
+      _meta: {
+        ui: { resourceUri: GRID_RESOURCE_BASE },
+        "openai/outputTemplate": GRID_RESOURCE_BASE,
+      },
     },
     async (args: PreviewArgs, extra: { _meta?: unknown }) => {
       // Client identity: prefer the per-request `_meta.client.name` escape
@@ -696,10 +803,12 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
       // Authoritative MCP Apps capability from the same handshake.
       const uiCapable = getUiExtensionCapability(server.server.getClientCapabilities());
       const transportKind = options.transportKind ?? getServerTransportKind(server);
+      const locality = options.locality ?? (transportKind === "stdio" ? "local" : "remote");
       const result = await runPreview(deps, args, {
         clientName,
         uiCapable,
         transportKind,
+        locality,
       });
       return {
         content: result.content,

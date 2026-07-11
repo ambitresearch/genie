@@ -78,6 +78,11 @@ import {
 // call site actually applied the wrapper — every future generation verb
 // would have silently needed to remember to wrap it manually).
 import { withRetry } from "../llm/retry.js";
+import {
+  normalizeGeneratedFiles,
+  validateGeneratedBinaryContent,
+  type GeneratedFileWithEncoding,
+} from "../llm/generated-files.js";
 // Framework adapter seam (M2-08 · DRO-255). `conjure` picks the adapter from its
 // `framework` input (AC4) and reads the adapter's `promptDirective` — the one
 // framework-specific bit generation carries. `interface.js` has no heavy imports
@@ -224,7 +229,7 @@ export type ConjureArgs = z.infer<typeof conjureArgsSchema>;
 export interface ConjureResult extends Record<string, unknown> {
   componentName: string;
   group: string;
-  files: ValidatedComponent["files"];
+  files: GeneratedFileWithEncoding[];
   manifestEntry: ValidatedComponent["manifestEntry"];
   usage: UsageInfo;
 }
@@ -435,6 +440,7 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
   const { outcome, usage, attempts } = await runComponentGeneration({
     chat,
     model: parsed.model,
+    validateGeneratedComponent: validateGeneratedBinaryContent,
     buildMessages: (retry) =>
       buildMessages(systemPrompt.text, parsed, frameworkDirective, referenceHtml, retry),
   });
@@ -480,7 +486,7 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
   return {
     componentName: component.componentName,
     group: component.group,
-    files: component.files,
+    files: normalizeGeneratedFiles(component.files),
     manifestEntry: component.manifestEntry,
     usage,
   };
@@ -492,7 +498,14 @@ const conjureOutputShape = {
   componentName: z.string(),
   group: z.string(),
   files: z.array(
-    z.object({ path: z.string(), content: z.string(), mimeType: z.string() }).strict(),
+    z
+      .object({
+        path: z.string(),
+        content: z.string(),
+        mimeType: z.string(),
+        encoding: z.enum(["utf-8", "base64"]),
+      })
+      .strict(),
   ),
   manifestEntry: z
     .object({
@@ -521,8 +534,9 @@ export function registerConjureTool(server: McpServer, deps: ConjureDeps = {}): 
         "{ componentName, group, files, manifestEntry } — validated against the schema (retried " +
         "once on a validation failure). Pure generation: it does NOT write the files; committing " +
         "them to a kit is the caller's separate, plan-gated step: plan the returned paths, map " +
-        "each {path, content, mimeType} to write_files {path, data: content, mimeType}, then " +
-        "preview to show the result. `design-default` is the valid gateway routing alias; " +
+        "each {path, content, mimeType, encoding} to write_files " +
+        "{path, data: content, mimeType, encoding}, then preview to show the result. " +
+        "`design-default` is the valid gateway routing alias; " +
         "override it only with a concrete model id exposed by the configured endpoint.",
       // Reuse the exact same field map the runtime parser uses (incl. the
       // SSRF-guarded refUrl) — no second, drift-prone copy (Copilot review).

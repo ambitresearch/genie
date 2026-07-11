@@ -3,9 +3,9 @@
  *
  * Registers the embedded preview surface a `ui://`-capable harness (Claude,
  * VS Code ≥Jan 2026, ChatGPT, Cursor, …) renders inside its own sandboxed
- * iframe. The `preview` tool (M4-05 / DRO-267) only emits the *pointer*
- * (`_meta.ui.resourceUri: "ui://genie/grid?kitId=…"`); THIS module answers the
- * subsequent `resources/read` for that URI.
+ * iframe. The `preview` tool (M4-05 / DRO-267) advertises the bare URI as its
+ * standards-compliant app shell and retains a query-bearing result URI for
+ * legacy hosts. THIS module answers both resource forms.
  *
  * ── Contract (this issue's AC1–AC6; RFC §6.5) ────────────────────────────────
  *   AC1  register `ui://genie/grid`, MIME `text/html;profile=mcp-app`.
@@ -65,6 +65,8 @@ export const GRID_RESOURCE_MIME = "text/html;profile=mcp-app";
 
 /** The DOM id `viewer.js` reads the inlined manifest from (must match it). */
 export const MANIFEST_ELEMENT_ID = "manifest";
+export const TOOL_RESULT_SHELL_META = "genie-tool-result-shell";
+export const LOCAL_VIEWER_FRAME_DOMAINS = ["http://127.0.0.1:*", "http://localhost:*"] as const;
 
 /** Legacy sibling asset URIs retained for older experimental hosts. */
 export const VIEWER_JS_URI = "ui://genie/viewer.js";
@@ -406,13 +408,18 @@ export interface GridCspMeta {
 export function buildCspMeta(
   previewsBaseUrl: string | undefined,
   inlineHashes: InlineCspHashes = { scriptHashes: [], styleHashes: [] },
+  includeLocalViewer = false,
 ): GridCspMeta {
   // Validate via the shared normaliser so a malformed GENIE_PREVIEWS_BASE_URL
   // NEVER throws here — an invalid value degrades to the solo-dev `data:` frame
   // origin exactly as `rewriteCardPaths` does, keeping the two in lockstep and
   // never crashing `registerGridResource`/server startup (reviewer flag).
   const base = normalizePreviewsBaseUrl(previewsBaseUrl);
-  const frameDomains = base !== undefined ? [base.origin] : ["data:"];
+  const cardFrameDomains = base !== undefined ? [base.origin] : ["data:"];
+  const frameDomains = [
+    ...cardFrameDomains,
+    ...(includeLocalViewer ? LOCAL_VIEWER_FRAME_DOMAINS : []),
+  ];
   const resourceDomains: string[] = [];
   const frameSrc = frameDomains.join(" ");
   const scriptHashes = validCspHashes(inlineHashes.scriptHashes);
@@ -486,8 +493,15 @@ export function injectCspMeta(html: string, meta: GridCspMeta): string {
 }
 
 /** Canonical MCP Apps resource metadata (stable 2026-01-26 shape). */
-export function gridResourceMeta(previewsBaseUrl: string | undefined): Record<string, unknown> {
-  const { connectDomains, resourceDomains, frameDomains } = buildCspMeta(previewsBaseUrl);
+export function gridResourceMeta(
+  previewsBaseUrl: string | undefined,
+  includeLocalViewer = false,
+): Record<string, unknown> {
+  const { connectDomains, resourceDomains, frameDomains } = buildCspMeta(
+    previewsBaseUrl,
+    undefined,
+    includeLocalViewer,
+  );
   return { ui: { csp: { connectDomains, resourceDomains, frameDomains } } };
 }
 
@@ -637,14 +651,31 @@ export async function buildGridDocument(
       deps.readAsset("viewer.css"),
     ]);
   } catch {
-    return fallbackShell(manifest, buildCspMeta(deps.previewsBaseUrl, currentHashes()));
+    const fallback = fallbackShell(
+      manifest,
+      buildCspMeta(deps.previewsBaseUrl, currentHashes(), params.kitId === undefined),
+    );
+    return params.kitId === undefined ? markToolResultShell(fallback) : fallback;
   }
 
   const inlinedAssets = inlineViewerAssets(indexHtml, viewerJs, viewerCss);
   for (const hash of inlinedAssets.hashes.scriptHashes) scriptHashes.add(hash);
   for (const hash of inlinedAssets.hashes.styleHashes) styleHashes.add(hash);
-  const cspMeta = buildCspMeta(deps.previewsBaseUrl, currentHashes());
-  return injectCspMeta(inlineManifest(inlinedAssets.html, manifest), cspMeta);
+  const cspMeta = buildCspMeta(deps.previewsBaseUrl, currentHashes(), params.kitId === undefined);
+  const document = inlineManifest(inlinedAssets.html, manifest);
+  return injectCspMeta(
+    params.kitId === undefined ? markToolResultShell(document) : document,
+    cspMeta,
+  );
+}
+
+function markToolResultShell(html: string): string {
+  const marker = `<meta name="${TOOL_RESULT_SHELL_META}" content="true">`;
+  const headOpen = html.indexOf("<head>");
+  if (headOpen === -1) return marker + html;
+  return (
+    html.slice(0, headOpen + "<head>".length) + marker + html.slice(headOpen + "<head>".length)
+  );
 }
 
 /** An empty-but-valid manifest (viewer renders its empty state). */
@@ -681,32 +712,44 @@ export function registerGridResource(server: McpServer, options: GridResourceOpt
     previewsBaseUrl: options.previewsBaseUrl ?? process.env.GENIE_PREVIEWS_BASE_URL,
   };
 
-  const meta = gridResourceMeta(deps.previewsBaseUrl);
-  const gridConfig = {
+  const queryMeta = gridResourceMeta(deps.previewsBaseUrl);
+  const shellMeta = gridResourceMeta(deps.previewsBaseUrl, true);
+  const baseGridConfig = {
     title: "genie preview grid",
     description:
       "Embedded MCP-Apps preview of a genie UI kit — a card grid rendered inside " +
       "the host's sandboxed iframe. Referenced by the `preview` tool's " +
       "_meta.ui.resourceUri.",
     mimeType: GRID_RESOURCE_MIME,
-    _meta: meta,
   };
 
   const readGrid = async (uri: URL): Promise<ReadResourceResult> => {
-    const html = await buildGridDocument(deps, paramsFromUri(uri));
+    const params = paramsFromUri(uri);
+    const meta = params.kitId === undefined ? shellMeta : queryMeta;
+    const html = await buildGridDocument(deps, params);
     return {
       contents: [{ uri: uri.toString(), mimeType: GRID_RESOURCE_MIME, text: html, _meta: meta }],
     };
   };
 
   // Bare URI (exact match) — e.g. a host that reads `ui://genie/grid` directly.
-  server.registerResource("genie-grid", GRID_RESOURCE_URI, gridConfig, (uri) => readGrid(uri));
+  server.registerResource(
+    "genie-grid",
+    GRID_RESOURCE_URI,
+    { ...baseGridConfig, _meta: shellMeta },
+    (uri) => readGrid(uri),
+  );
 
   // Query-bearing URIs (`?kitId=…[&componentName=…][&group=…]`) via a catch-all
   // template. `list: undefined` — the bare static above is what `resources/list`
   // advertises; the template is a routing device, not a discoverable resource.
   const template = new ResourceTemplate(`${GRID_RESOURCE_URI}{+rest}`, { list: undefined });
-  server.registerResource("genie-grid-query", template, gridConfig, (uri) => readGrid(uri));
+  server.registerResource(
+    "genie-grid-query",
+    template,
+    { ...baseGridConfig, _meta: queryMeta },
+    (uri) => readGrid(uri),
+  );
 
   // Compatibility for older experimental hosts. The standard MCP Apps payload
   // is self-contained and does not reference these sibling resources.

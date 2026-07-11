@@ -83,7 +83,11 @@ import {
 // `conjure.ts`; DRO-253 / DRO-618: `refine` shares the exact same gap
 // conjure had — `withRetry` existed but no production call site applied it).
 import { withRetry } from "../llm/retry.js";
-import { isTextMime, isValidBase64Content } from "../store/kit-files.js";
+import {
+  normalizeGeneratedFiles,
+  validateGeneratedBinaryContent,
+  type GeneratedFileWithEncoding,
+} from "../llm/generated-files.js";
 import { KIT_ID_PATTERN } from "./get_kit.js";
 
 export const REFINE_TOOL_NAME = "mcp__genie__refine";
@@ -154,10 +158,7 @@ export interface RefineResult extends Record<string, unknown> {
   usage: UsageInfo;
 }
 
-export type RefinedFile = ValidatedComponent["files"][number] & {
-  /** Encoding required when forwarding `content` to write_files as inline data. */
-  encoding: "utf-8" | "base64";
-};
+export type RefinedFile = GeneratedFileWithEncoding;
 
 // ── Store port (AC3) ──────────────────────────────────────────────────────────
 
@@ -469,24 +470,6 @@ function isTextFile(file: LoadedFile): boolean {
   return file.encoding !== "base64";
 }
 
-function encodingForGeneratedFile(
-  file: ValidatedComponent["files"][number],
-): RefinedFile["encoding"] {
-  return isTextMime(file.mimeType) ? "utf-8" : "base64";
-}
-
-function validateRefineGeneratedFiles(component: ValidatedComponent): string | undefined {
-  for (const [index, file] of component.files.entries()) {
-    if (!isTextMime(file.mimeType) && !isValidBase64Content(file.content)) {
-      return (
-        `- /files/${index}/content must be valid base64 for binary MIME type ` +
-        `"${file.mimeType}" (${file.path}).`
-      );
-    }
-  }
-  return undefined;
-}
-
 /** Build the natural-language user instruction block (everything except the
  * optional vision crop image, attached separately). */
 function buildUserText(
@@ -621,6 +604,9 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
     parsed.kitId,
     parsed.componentName,
   );
+  const originalBinaryPaths = new Set(
+    originalFiles.filter((file) => !isTextFile(file)).map((file) => file.path),
+  );
 
   // AC4/AC7 — if a region was given, try to render a crop of it for vision input.
   let cropDataUrl: string | null = null;
@@ -648,7 +634,8 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
   const { outcome, usage, attempts } = await runComponentGeneration({
     chat,
     model: parsed.model,
-    validateGeneratedComponent: validateRefineGeneratedFiles,
+    validateGeneratedComponent: (component) =>
+      validateGeneratedBinaryContent(component, originalBinaryPaths),
     buildMessages: (retry) =>
       buildMessages(systemPrompt.text, parsed, group, originalFiles, cropDataUrl, retry),
   });
@@ -684,10 +671,9 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
   // directory would be silently DROPPED from the returned set and the diff would
   // misreport it as deleted (diffed against /dev/null) — a refine round-trip
   // would lose it (Copilot review, PR #127). So carry every original binary file
-  // the model did not return forward into the result. Because such a file is then
-  // byte-identical on both sides, `buildUnifiedDiff`'s `before === after` check
-  // omits it from the diff automatically — it is preserved, not spuriously shown
-  // as changed.
+  // forward into the result, even if the model fabricates the same path. Because
+  // that file is byte-identical on both sides, `buildUnifiedDiff`'s
+  // `before === after` check omits it automatically.
   //
   // Deliberate consequence (Copilot review, PR #128): because omission of a
   // binary can't be distinguished from "the model never saw it", this carry-
@@ -701,16 +687,15 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
   // refine-driven binary deletion, it would take an explicit keep/delete marker
   // protocol (the model returns the path with a sentinel the tool resolves to the
   // original bytes, and true omission then means delete) — out of scope here.
-  // The guard below (`!returnedPaths.has`) means a model that DOES return a
-  // binary path wins: its entry is kept as-is and the original is not re-added,
-  // so no path is ever duplicated.
-  const returnedFiles: RefinedFile[] = component.files.map((file) => ({
-    ...file,
-    encoding: encodingForGeneratedFile(file),
-  }));
-  const returnedPaths = new Set(returnedFiles.map((f) => f.path));
+  // A model-supplied entry for an ORIGINAL binary path cannot be trusted: the
+  // prompt exposed only a placeholder, never those bytes. Preserve the original
+  // until a future explicit binary replacement/delete protocol exists. New
+  // binary paths are still allowed when their returned content validates.
+  const returnedFiles = normalizeGeneratedFiles(component.files).filter(
+    (file) => !originalBinaryPaths.has(file.path),
+  );
   const carriedBinaries: RefinedFile[] = originalFiles
-    .filter((f) => !isTextFile(f) && !returnedPaths.has(f.path))
+    .filter((f) => !isTextFile(f))
     .map((f) => ({
       path: f.path,
       content: f.content,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createServer, SERVER_INFO } from "./server.js";
-import { resolveTransport, startTransport } from "./transport.js";
+import { isLoopbackHost, resolveTransport, startTransport } from "./transport.js";
 
 /** Minimal flag parser — no dependency needed for M0's tiny surface. */
 function parseArgs(argv: string[]): {
@@ -72,11 +72,13 @@ async function main(): Promise<void> {
   }
 
   const transportKind = resolveTransport(args.transport);
-  const server = createServer({ transportKind });
+  const host = args.host ?? "127.0.0.1";
+  const previewLocality = transportKind === "stdio" || isLoopbackHost(host) ? "local" : "remote";
+  const server = createServer({ transportKind, previewLocality });
   await startTransport(server, {
     kind: transportKind,
     port: args.port,
-    host: args.host,
+    host,
   });
 }
 

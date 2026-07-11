@@ -27,6 +27,7 @@ import type { Manifest } from "../manifest/index.js";
 import {
   PREVIEW_TOOL_NAME,
   DEFAULT_VIEWER_PORT,
+  GRID_RESOURCE_BASE,
   InvalidKitIdError,
   KitNotFoundError,
   ViewerRegistry,
@@ -371,7 +372,11 @@ describe("runPreview (AC3, AC6)", () => {
     const kitsRoot = await makeKitsRoot();
     const registry = new ViewerRegistry(okBooter("http://127.0.0.1:5173/"));
 
-    const result = await runPreview({ kitsRoot, registry }, { kitId: "acme-abc123" }, {});
+    const result = await runPreview(
+      { kitsRoot, registry },
+      { kitId: "acme-abc123" },
+      { transportKind: "stdio" },
+    );
 
     expect(result.content).toHaveLength(1);
     expect(result.content[0]?.type).toBe("text");
@@ -406,7 +411,7 @@ describe("runPreview (AC3, AC6)", () => {
     const result = await runPreview(
       { kitsRoot, registry },
       { kitId: "acme-abc123", componentName: "Button", group: "actions" },
-      {},
+      { transportKind: "stdio", locality: "local" },
     );
 
     expect(result._meta.ui.resourceUri).toBe(
@@ -421,25 +426,141 @@ describe("runPreview (AC3, AC6)", () => {
     const result = await runPreview(
       { kitsRoot, registry },
       { kitId: "acme-abc123", componentName: "Button", group: "actions" },
-      {},
+      { transportKind: "stdio", locality: "local" },
     );
 
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       kitId: "acme-abc123",
       componentName: "Button",
       group: "actions",
-      viewerUrl: "http://127.0.0.1:5173/",
+      viewerUrl: "http://127.0.0.1:5173/?componentName=Button&group=actions",
       fileUrl: pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href,
     });
+  });
+
+  it("returns a filtered embedded manifest without starting a remote viewer", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const booter = okBooter("http://127.0.0.1:5173/");
+    const registry = new ViewerRegistry(booter);
+
+    const result = await runPreview(
+      { kitsRoot, registry, env: {}, previewsBaseUrl: "https://previews.example.com" },
+      { kitId: "acme-abc123", group: "actions" },
+      { clientName: "remote-host", transportKind: "http" },
+    );
+
+    expect(result.structuredContent.transportKind).toBe("http");
+    expect(result.structuredContent.viewerUrl).toBeUndefined();
+    expect(booter.calls).toHaveLength(0);
+    expect(result.structuredContent.embeddedManifest.groups).toEqual(["actions"]);
+    expect(result.structuredContent.embeddedManifest.components).toHaveLength(1);
+    expect(result.structuredContent.embeddedManifest.components[0]?.path).toMatch(
+      /^https:\/\/previews\.example\.com\//,
+    );
+  });
+
+  it("does not serialize embedded card bytes for local stdio previews", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const readPreviewBytes = vi.fn(async () => Buffer.from("<button>Save</button>"));
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(okBooter()),
+        env: {},
+        readPreviewBytes,
+      },
+      { kitId: "acme-abc123" },
+      { clientName: "codex", transportKind: "stdio" },
+    );
+
+    expect(readPreviewBytes).not.toHaveBeenCalled();
+    expect(result.structuredContent.embeddedManifest).toBeUndefined();
+  });
+
+  it("returns an explicit embedded error for HTTP without a previews origin", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const readPreviewBytes = vi.fn(async () => Buffer.from("<button>Save</button>"));
+
+    const booter = okBooter();
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(booter),
+        env: {},
+        readPreviewBytes,
+      },
+      { kitId: "acme-abc123" },
+      { clientName: "remote-host", transportKind: "http", locality: "remote" },
+    );
+
+    expect(readPreviewBytes).not.toHaveBeenCalled();
+    expect(booter.calls).toHaveLength(0);
+    expect(result.structuredContent.embeddedManifest).toBeUndefined();
+    expect(result.structuredContent.embeddedError).toContain("GENIE_PREVIEWS_BASE_URL");
+  });
+
+  it("uses the live viewer for loopback HTTP without serializing cards", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const readPreviewBytes = vi.fn(async () => Buffer.from("<button>Save</button>"));
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(okBooter()),
+        env: {},
+        readPreviewBytes,
+      },
+      { kitId: "acme-abc123" },
+      { clientName: "local-http", transportKind: "http", locality: "local" },
+    );
+
+    expect(readPreviewBytes).not.toHaveBeenCalled();
+    expect(result.structuredContent.locality).toBe("local");
+    expect(result.structuredContent.viewerUrl).toBe("http://127.0.0.1:5173/");
+    expect(result.structuredContent.embeddedError).toBeUndefined();
+  });
+
+  it("rejects a malformed previews origin without serializing card bytes", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const readPreviewBytes = vi.fn(async () => Buffer.from("<button>Save</button>"));
+
+    const booter = okBooter();
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(booter),
+        env: {},
+        previewsBaseUrl: "not-a-url",
+        readPreviewBytes,
+      },
+      { kitId: "acme-abc123" },
+      { clientName: "remote-host", transportKind: "http", locality: "remote" },
+    );
+
+    expect(readPreviewBytes).not.toHaveBeenCalled();
+    expect(booter.calls).toHaveLength(0);
+    expect(result.structuredContent.embeddedManifest).toBeUndefined();
+    expect(result.structuredContent.embeddedError).toMatch(/invalid/i);
   });
 
   it("omits viewerUrl from structuredContent on the file:// fallback", async () => {
     const kitsRoot = await makeKitsRoot();
     const registry = new ViewerRegistry(failBooter("EADDRINUSE"));
 
-    const result = await runPreview({ kitsRoot, registry }, { kitId: "acme-abc123" }, {});
+    const result = await runPreview(
+      { kitsRoot, registry },
+      { kitId: "acme-abc123" },
+      { transportKind: "stdio" },
+    );
 
     expect(result.structuredContent.viewerUrl).toBeUndefined();
+    expect(result.structuredContent.embeddedError).toContain("viewer could not start");
     expect(result.structuredContent.kitId).toBe("acme-abc123");
     expect(result.structuredContent.fileUrl).toBe(
       pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href,
@@ -721,7 +842,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: {} },
       { kitId: "acme-abc123" },
-      { clientName: "codex", transportKind: "http" },
+      { clientName: "codex", transportKind: "http", locality: "local" },
     );
 
     expect(booter.calls[0]?.open).toBe(false);
@@ -823,12 +944,14 @@ describe("mcp__genie__preview (wired)", () => {
     expect(result._meta?.ui?.resourceUri).toBe("ui://genie/grid?kitId=acme-abc123");
   });
 
-  it("keeps the UI pointer off tools/list because each result needs a query-bearing URI", async () => {
+  it("advertises the static MCP App resource through tools/list discovery", async () => {
     const kitsRoot = await makeKitsRoot();
     const client = await connectPreview(kitsRoot, okBooter());
     const { tools } = await client.listTools();
     const preview = tools.find((t) => t.name === PREVIEW_TOOL_NAME);
-    expect((preview?._meta as { ui?: { resourceUri?: string } } | undefined)?.ui).toBeUndefined();
+    expect((preview?._meta as { ui?: { resourceUri?: string } } | undefined)?.ui?.resourceUri).toBe(
+      GRID_RESOURCE_BASE,
+    );
   });
 
   it("describes browser fallback by negotiated capability rather than client brand", async () => {
@@ -873,6 +996,52 @@ describe("mcp__genie__preview (wired)", () => {
 
     expect(result.structuredContent?.kitId).toBe("acme-abc123");
     expect(result.structuredContent?.viewerUrl).toBe("http://127.0.0.1:5173/");
+  });
+
+  it("accepts optional subtitle and tags in embedded manifest cards over the wire", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const server = new McpServer({ name: "genie-test", version: "0" });
+    registerPreviewTool(server, {
+      kitsRoot,
+      booter: okBooter(),
+      transportKind: "http",
+      previewsBaseUrl: "https://previews.example.com",
+      ensureManifest: async () => ({
+        version: 1,
+        name: "Acme",
+        generatedAt: "2026-07-10T00:00:00.000Z",
+        groups: ["actions"],
+        components: [
+          {
+            name: "Button",
+            group: "actions",
+            path: "components/actions/Button/Button.html",
+            viewport: "320x180",
+            hash: "sha256-test",
+            lastModified: "2026-07-10T00:00:00.000Z",
+            subtitle: "Primary action",
+            tags: ["cta", "interactive"],
+          },
+        ],
+      }),
+      readPreviewBytes: async () => Buffer.from("<button>Save</button>"),
+    });
+    const client = new Client({ name: "test", version: "0" });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+    openClient = client;
+
+    const result = await client.callTool({
+      name: PREVIEW_TOOL_NAME,
+      arguments: { kitId: "acme-abc123" },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      embeddedManifest: {
+        components: [{ subtitle: "Primary action", tags: ["cta", "interactive"] }],
+      },
+    });
   });
 
   it("falls back to the initialize handshake's clientInfo name when no per-request _meta is sent", async () => {
@@ -944,7 +1113,7 @@ describe("mcp__genie__preview (wired)", () => {
     expect(booter.calls[0]?.open).toBe(true);
   });
 
-  it("never auto-opens a browser when registered for HTTP transport", async () => {
+  it("does not start a viewer when registered for remote HTTP transport", async () => {
     const kitsRoot = await makeKitsRoot();
     const server = new McpServer({ name: "genie-test", version: "0" });
     const booter = okBooter();
@@ -956,7 +1125,7 @@ describe("mcp__genie__preview (wired)", () => {
 
     await client.callTool({ name: PREVIEW_TOOL_NAME, arguments: { kitId: "acme-abc123" } });
 
-    expect(booter.calls[0]?.open).toBe(false);
+    expect(booter.calls).toHaveLength(0);
   });
 
   it("AC7: sniffs params._meta.client.name off the request", async () => {

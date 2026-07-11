@@ -22,7 +22,9 @@ import type { Manifest, ManifestCard } from "../manifest/index.js";
 import {
   GRID_RESOURCE_URI,
   GRID_RESOURCE_MIME,
+  LOCAL_VIEWER_FRAME_DOMAINS,
   MANIFEST_ELEMENT_ID,
+  TOOL_RESULT_SHELL_META,
   VIEWER_JS_URI,
   VIEWER_CSS_URI,
   buildCspMeta,
@@ -597,7 +599,7 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
         csp: {
           connectDomains: [],
           resourceDomains: [],
-          frameDomains: ["https://previews.example.com"],
+          frameDomains: ["https://previews.example.com", ...LOCAL_VIEWER_FRAME_DOMAINS],
         },
       },
     });
@@ -608,12 +610,13 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
     const res = await client.readResource({ uri: GRID_RESOURCE_URI });
     expect(res.contents[0]?.mimeType).toBe(GRID_RESOURCE_MIME);
     expect(String(res.contents[0]?.text)).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
+    expect(String(res.contents[0]?.text)).toContain(`name="${TOOL_RESULT_SHELL_META}"`);
     expect(res.contents[0]?._meta).toEqual({
       ui: {
         csp: {
           connectDomains: [],
           resourceDomains: [],
-          frameDomains: ["https://previews.example.com"],
+          frameDomains: ["https://previews.example.com", ...LOCAL_VIEWER_FRAME_DOMAINS],
         },
       },
     });

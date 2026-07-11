@@ -64,6 +64,7 @@ write_files {
   files: conjureResult.files.map(file => ({
     path: file.path,
     data: file.content,
+    encoding: file.encoding,
     mimeType: file.mimeType
   }))
 }

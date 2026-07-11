@@ -103,6 +103,9 @@
    * `viewer.js` stays byte-identical across all three vehicles (RFC G-5).
    */
   var MANIFEST_ELEMENT_ID = "manifest";
+  var TOOL_RESULT_SHELL_META = "genie-tool-result-shell";
+  var MCP_APP_PROTOCOL_VERSION = "2026-01-26";
+  var mcpAppRequestId = 0;
 
   /**
    * Fallback card height (px) for a named/unparseable viewport (e.g. "desktop").
@@ -406,6 +409,209 @@
     }
   }
 
+  function filterManifestBySearch(manifest, search) {
+    var Params =
+      typeof window !== "undefined" && typeof window.URLSearchParams === "function"
+        ? window.URLSearchParams
+        : null;
+    if (!Params) return manifest;
+    var params = new Params(search || "");
+    var componentName = params.get("componentName");
+    var group = params.get("group");
+    if (!componentName && !group) return manifest;
+
+    var components = ((manifest && manifest.components) || []).filter(function (component) {
+      return (
+        (!componentName || component.name === componentName) &&
+        (!group || component.group === group)
+      );
+    });
+    var survivingGroups = new Set(
+      components.map(function (component) {
+        return component.group;
+      }),
+    );
+    return {
+      ...manifest,
+      groups: ((manifest && manifest.groups) || []).filter(function (groupName) {
+        return survivingGroups.has(groupName);
+      }),
+      components: components,
+    };
+  }
+
+  function renderToolResult(doc, grid, result) {
+    var structured = result && result.structuredContent;
+    if (!structured) return false;
+    if (typeof structured.embeddedError === "string" && structured.embeddedError) {
+      renderError(doc, grid, structured.embeddedError);
+      return false;
+    }
+
+    if (structured.locality !== "local" && structured.embeddedManifest) {
+      if (canRenderEmbeddedManifest(structured.embeddedManifest)) {
+        renderGrid(doc, grid, structured.embeddedManifest);
+        return true;
+      }
+      renderError(
+        doc,
+        grid,
+        "remote previews require GENIE_PREVIEWS_BASE_URL so cards run on a declared origin",
+      );
+      return false;
+    }
+
+    var rawUrl = structured && structured.viewerUrl;
+    if (structured.locality !== "local" || typeof rawUrl !== "string") {
+      if (structured.embeddedManifest) {
+        if (canRenderEmbeddedManifest(structured.embeddedManifest)) {
+          renderGrid(doc, grid, structured.embeddedManifest);
+          return true;
+        }
+        renderError(
+          doc,
+          grid,
+          "preview viewer unavailable; configure GENIE_PREVIEWS_BASE_URL for embedded cards",
+        );
+      }
+      return false;
+    }
+
+    var URLCtor = doc.defaultView && doc.defaultView.URL;
+    if (typeof URLCtor !== "function") return false;
+    var parsed;
+    try {
+      parsed = new URLCtor(rawUrl);
+    } catch {
+      return false;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+
+    var iframe = doc.createElement("iframe");
+    iframe.className = "ds-viewer-embed";
+    iframe.setAttribute("src", parsed.toString());
+    iframe.setAttribute("title", "genie component preview");
+    iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    grid.replaceChildren(iframe);
+    return true;
+  }
+
+  function canRenderEmbeddedManifest(manifest) {
+    var components = (manifest && manifest.components) || [];
+    return components.every(function (component) {
+      if (!component || typeof component.path !== "string") return false;
+      try {
+        var URLCtor =
+          typeof window !== "undefined" && typeof window.URL === "function" ? window.URL : null;
+        if (!URLCtor) return false;
+        var parsed = new URLCtor(component.path);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  function initMcpApp(doc, options) {
+    var opts = options || {};
+    var win = "win" in opts ? opts.win : typeof window !== "undefined" ? window : undefined;
+    if (
+      !win ||
+      !win.parent ||
+      win.parent === win ||
+      typeof win.addEventListener !== "function" ||
+      typeof win.parent.postMessage !== "function"
+    ) {
+      return function () {};
+    }
+
+    var host = win.parent;
+    var initializeId = ++mcpAppRequestId;
+    var resizeObserver = null;
+    var lastWidth = -1;
+    var lastHeight = -1;
+    var tornDown = false;
+    function post(message) {
+      host.postMessage(message, "*");
+    }
+    function notifySize() {
+      var root = doc.documentElement;
+      var body = doc.body;
+      var width = Math.ceil(Math.max(root?.scrollWidth || 0, body?.scrollWidth || 0));
+      var height = Math.ceil(Math.max(root?.scrollHeight || 0, body?.scrollHeight || 0));
+      if (width <= 0 || height <= 0 || (width === lastWidth && height === lastHeight)) return;
+      lastWidth = width;
+      lastHeight = height;
+      post({
+        jsonrpc: "2.0",
+        method: "ui/notifications/size-changed",
+        params: { width: width, height: height },
+      });
+    }
+    function observeSize() {
+      var ResizeObserverCtor = win.ResizeObserver;
+      if (typeof ResizeObserverCtor !== "function" || !doc.documentElement) return;
+      resizeObserver = new ResizeObserverCtor(notifySize);
+      resizeObserver.observe(doc.documentElement);
+    }
+    function teardown() {
+      if (tornDown) return;
+      tornDown = true;
+      if (typeof win.removeEventListener === "function") {
+        win.removeEventListener("message", onMessage);
+      }
+      if (resizeObserver && typeof resizeObserver.disconnect === "function") {
+        resizeObserver.disconnect();
+      }
+    }
+    function onMessage(event) {
+      if (tornDown) return;
+      if (!event || event.source !== host) return;
+      var data = event.data;
+      if (typeof data === "string") {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          return;
+        }
+      }
+      if (!data || typeof data !== "object") return;
+
+      if (data.method === "ui/resource-teardown" && "id" in data) {
+        post({ jsonrpc: "2.0", id: data.id, result: {} });
+        teardown();
+        return;
+      }
+      if (data.id === initializeId && data.result) {
+        post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+        notifySize();
+        observeSize();
+        return;
+      }
+      if (data.method === "ui/notifications/tool-result") {
+        var grid = doc.getElementById("grid");
+        if (grid) {
+          renderToolResult(doc, grid, data.params);
+          notifySize();
+        }
+      }
+    }
+
+    win.addEventListener("message", onMessage);
+    post({
+      jsonrpc: "2.0",
+      id: initializeId,
+      method: "ui/initialize",
+      params: {
+        protocolVersion: MCP_APP_PROTOCOL_VERSION,
+        appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
+        appInfo: { name: "genie-preview-grid", version: "1.0.0" },
+      },
+    });
+
+    return teardown;
+  }
+
   /**
    * AC5 — filter rendered cards by a case-insensitive substring of the
    * component `name`. Hides non-matching cards, and hides a whole group
@@ -632,10 +838,10 @@
 
   /**
    * AC4 (polling fallback) — pure diff of two manifests: the kit-relative paths
-   * of components PRESENT in both whose `hash` changed. A brand-new or removed
-   * component changes grid STRUCTURE (needs a full re-render, out of scope for
-   * the lightweight fallback — picked up on the next boot), so only in-place
-   * content edits are surfaced here. Never throws on a partial/absent manifest.
+   * of components PRESENT in both whose `hash` changed. Structural and rendered
+   * metadata changes are detected separately by `manifestStructureChanged` and
+   * trigger a full re-render; this helper intentionally reports only in-place
+   * content edits. Never throws on a partial/absent manifest.
    *
    * @param {object} prev
    * @param {object} next
@@ -677,14 +883,20 @@
   function manifestStructureChanged(prev, next) {
     function identity(manifest) {
       var components = (manifest && manifest.components) || [];
-      var paths = [];
+      var cards = [];
       for (var i = 0; i < components.length; i++) {
         var component = components[i] || {};
-        paths.push(component.sourcePath || component.path || "");
+        cards.push({
+          path: component.path || "",
+          sourcePath: component.sourcePath || "",
+          name: component.name || "",
+          group: component.group || "",
+          viewport: component.viewport || "",
+        });
       }
       return JSON.stringify({
         groups: (manifest && manifest.groups) || [],
-        paths: paths,
+        cards: cards,
       });
     }
     return identity(prev) !== identity(next);
@@ -692,9 +904,11 @@
 
   /** Re-render from a fresh manifest while preserving the active search query. */
   function renderManifestUpdate(doc, grid, manifest) {
-    renderGrid(doc, grid, manifest);
-    var search = doc.getElementById("q");
-    if (search) applyFilter(grid, search.value || "");
+    var searchQuery =
+      doc.defaultView && doc.defaultView.location && doc.defaultView.location.search;
+    renderGrid(doc, grid, filterManifestBySearch(manifest, searchQuery || ""));
+    var searchInput = doc.getElementById("q");
+    if (searchInput) applyFilter(grid, searchInput.value || "");
   }
 
   /**
@@ -1009,8 +1223,12 @@
     var inline = readInlineManifest(doc);
     if (inline !== null) {
       try {
-        renderGrid(doc, grid, inline);
+        var inlineSearch = doc.defaultView && doc.defaultView.location;
+        renderGrid(doc, grid, filterManifestBySearch(inline, inlineSearch?.search || ""));
         wireSearch(doc, grid);
+        if (doc.querySelector(`meta[name="${TOOL_RESULT_SHELL_META}"]`)) {
+          initMcpApp(doc);
+        }
         // M4-04 (DRO-266) — this tier is EXACTLY who the postMessage bridge
         // exists for (its strict CSP, connect-src 'none', blocks fetch AND a
         // direct WebSocket alike — see initHmr's own header). hmrSocketUrl
@@ -1044,7 +1262,8 @@
       })
       .then(function (manifest) {
         if (manifest === null) return; // error already rendered above
-        renderGrid(doc, grid, manifest);
+        var fetchedLocation = doc.defaultView && doc.defaultView.location;
+        renderGrid(doc, grid, filterManifestBySearch(manifest, fetchedLocation?.search || ""));
         wireSearch(doc, grid);
 
         // M4-04 (DRO-266) — engage live per-card refresh AFTER the grid exists,
@@ -1087,6 +1306,9 @@
     window.__genieViewerTestHooks.accessibleName = accessibleName;
     window.__genieViewerTestHooks.createCard = createCard;
     window.__genieViewerTestHooks.renderGrid = renderGrid;
+    window.__genieViewerTestHooks.filterManifestBySearch = filterManifestBySearch;
+    window.__genieViewerTestHooks.renderToolResult = renderToolResult;
+    window.__genieViewerTestHooks.initMcpApp = initMcpApp;
     window.__genieViewerTestHooks.applyFilter = applyFilter;
     window.__genieViewerTestHooks.readInlineManifest = readInlineManifest;
     window.__genieViewerTestHooks.wireSearch = wireSearch;
