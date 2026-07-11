@@ -577,6 +577,10 @@
       }
       if (!data || typeof data !== "object") return;
 
+      if (data.method === "ping" && "id" in data) {
+        post({ jsonrpc: "2.0", id: data.id, result: {} });
+        return;
+      }
       if (data.method === "ui/resource-teardown" && "id" in data) {
         post({ jsonrpc: "2.0", id: data.id, result: {} });
         teardown();

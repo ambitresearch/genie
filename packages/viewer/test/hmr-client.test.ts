@@ -595,6 +595,19 @@ describe("initMcpApp — standard tool result delivery", () => {
     expect(grid.querySelector("iframe[data-path]")).toBeNull();
   });
 
+  it("acknowledges host ping requests with an empty JSON-RPC result", () => {
+    const { hooks, document } = setup({ version: 1, groups: [], components: [] });
+    const host = fakeMcpAppWindow();
+    hooks.initMcpApp(document, { win: host.win });
+
+    host.emit({ jsonrpc: "2.0", id: 41, method: "ping" });
+
+    expect(host.parentPostMessage).toHaveBeenCalledWith(
+      { jsonrpc: "2.0", id: 41, result: {} },
+      "*",
+    );
+  });
+
   it("acknowledges ui/resource-teardown and stops processing host messages", () => {
     const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
     const host = fakeMcpAppWindow();
