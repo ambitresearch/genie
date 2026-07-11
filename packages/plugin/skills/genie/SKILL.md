@@ -52,16 +52,22 @@ This is the canonical sequence. Do all four unless the user asks for less.
 User: _"Build me a primary CTA button that says Get Started, and show me."_
 
 ```
-conjure  { kitId, kit: "<one-line kit description>",
-           prompt: "A primary CTA button that says Get Started" }
+conjureResult = conjure {
+  kitId,
+  kit: "<one-line kit description>",
+  prompt: "A primary CTA button that says Get Started"
+}
    → { componentName: "GetStartedButton",
        files: [{ path: "components/actions/GetStartedButton/GetStartedButton.html", ... }] }
 
-plan     { kitId, writes: ["components/actions/GetStartedButton/GetStartedButton.html"] }
+planResult = plan {
+  kitId,
+  writes: conjureResult.files.map(file => file.path)
+}
    → { planId }
 
 write_files {
-  planId,
+  planId: planResult.planId,
   files: conjureResult.files.map(file => ({
     path: file.path,
     data: file.content,
@@ -70,7 +76,7 @@ write_files {
   }))
 }
 
-preview  { kitId }
+preview  { kitId, componentName: conjureResult.componentName }
    → viewer URL / inline grid — the user now SEES the button.
 ```
 

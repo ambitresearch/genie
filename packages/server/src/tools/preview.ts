@@ -613,7 +613,10 @@ export async function runPreview(
   let embeddedManifest: EmbeddedManifest | undefined;
   let embeddedError: string | undefined;
   if (locality === "remote") {
-    if (canDeliverEmbeddedManifest) {
+    if (!uiSupported) {
+      embeddedError =
+        "Client does not support MCP Apps; remote HTTP previews have no browser fallback.";
+    } else if (canDeliverEmbeddedManifest) {
       embeddedManifest = await rewriteCardPaths(filteredManifest, {
         kitId: args.kitId,
         kitDir,

@@ -483,7 +483,7 @@ describe("runPreview (AC3, AC6)", () => {
     const result = await runPreview(
       { kitsRoot, registry, env: {}, previewsBaseUrl: "https://previews.example.com" },
       { kitId: "acme-abc123", group: "actions" },
-      { clientName: "remote-host", transportKind: "http" },
+      { clientName: "remote-host", uiCapable: true, transportKind: "http" },
     );
 
     expect(result.structuredContent.transportKind).toBe("http");
@@ -496,6 +496,31 @@ describe("runPreview (AC3, AC6)", () => {
     expect(result.structuredContent.embeddedManifest.components[0]?.path).toMatch(
       /^https:\/\/previews\.example\.com\//,
     );
+  });
+
+  it("reports an explicit error for a negotiated non-UI remote client", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const readPreviewBytes = vi.fn(async () => Buffer.from("<button>Save</button>"));
+    const booter = okBooter();
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(booter),
+        env: {},
+        previewsBaseUrl: "https://previews.example.com",
+        readPreviewBytes,
+      },
+      { kitId: "acme-abc123" },
+      { clientName: "cursor", uiCapable: false, transportKind: "http", locality: "remote" },
+    );
+
+    expect(readPreviewBytes).not.toHaveBeenCalled();
+    expect(booter.calls).toHaveLength(0);
+    expect(result.structuredContent.embeddedManifest).toBeUndefined();
+    expect(result.structuredContent.embeddedError).toContain("does not support MCP Apps");
+    expect(result.content[0]?.text).toContain("Remote preview unavailable");
   });
 
   it("does not serialize embedded card bytes for local stdio previews", async () => {
@@ -532,7 +557,7 @@ describe("runPreview (AC3, AC6)", () => {
         readPreviewBytes,
       },
       { kitId: "acme-abc123" },
-      { clientName: "remote-host", transportKind: "http", locality: "remote" },
+      { clientName: "remote-host", uiCapable: true, transportKind: "http", locality: "remote" },
     );
 
     expect(readPreviewBytes).not.toHaveBeenCalled();
@@ -555,7 +580,7 @@ describe("runPreview (AC3, AC6)", () => {
         readPreviewBytes,
       },
       { kitId: "acme-abc123", group: "no-matches" },
-      { clientName: "remote-host", transportKind: "http", locality: "remote" },
+      { clientName: "remote-host", uiCapable: true, transportKind: "http", locality: "remote" },
     );
 
     expect(readPreviewBytes).not.toHaveBeenCalled();
@@ -666,7 +691,7 @@ describe("runPreview (AC3, AC6)", () => {
         readPreviewBytes,
       },
       { kitId: "acme-abc123" },
-      { clientName: "remote-host", transportKind: "http", locality: "remote" },
+      { clientName: "remote-host", uiCapable: true, transportKind: "http", locality: "remote" },
     );
 
     expect(readPreviewBytes).not.toHaveBeenCalled();
@@ -1192,7 +1217,10 @@ describe("mcp__genie__preview (wired)", () => {
       }),
       readPreviewBytes: async () => Buffer.from("<button>Save</button>"),
     });
-    const client = new Client({ name: "test", version: "0" });
+    const client = new Client(
+      { name: "test", version: "0" },
+      { capabilities: { extensions: { [UI_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME] } } } },
+    );
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverT), client.connect(clientT)]);
     openClient = client;

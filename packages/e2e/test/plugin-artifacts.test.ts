@@ -60,6 +60,7 @@ describe("Claude plugin artifacts", () => {
     const codex = readFileSync(resolve(ROOT, "docs/harness/codex.md"), "utf8");
     const copilot = readFileSync(resolve(ROOT, "docs/harness/copilot.md"), "utf8");
     const overview = readFileSync(resolve(ROOT, "docs/harness/README.md"), "utf8");
+    const skill = readFileSync(resolve(ROOT, "packages/plugin/skills/genie/SKILL.md"), "utf8");
     const design = readFileSync(
       resolve(ROOT, "docs/superpowers/specs/2026-07-05-genie-chat-invocation-design.md"),
       "utf8",
@@ -77,6 +78,7 @@ describe("Claude plugin artifacts", () => {
     expect(overview).toContain("--preview-locality local");
     expect(overview).toMatch(/remote HTTP/i);
     expect(copilot).toContain("HTTP surfaces never auto-open");
+    expect(skill).toContain("writes: conjureResult.files.map(file => file.path)");
     expect(cursor).toContain("Only local Cursor / VS Code");
     expect(cursor).toContain("ChatGPT receives the inline app");
   });
