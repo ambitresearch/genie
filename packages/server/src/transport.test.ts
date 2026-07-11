@@ -1,5 +1,6 @@
 import { createServer as createNodeHttpServer, request as nodeHttpRequest } from "node:http";
 import type { AddressInfo } from "node:net";
+import { PassThrough } from "node:stream";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -157,6 +158,26 @@ describe("startTransport", () => {
     await expect(startTransport(server, { kind: "http", port: -1 })).rejects.toThrow(
       /explicit serverFactory/,
     );
+  });
+
+  it("drains server resources when the stdio input reaches EOF", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const server = new McpServer({ name: "stdio-eof-test", version: "0" });
+    const dispose = vi.fn(async () => {});
+    registerServerDisposer(server, dispose);
+
+    try {
+      await startTransport(server, {
+        kind: "stdio",
+        stdioInput: input,
+        stdioOutput: output,
+      });
+      input.end();
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    } finally {
+      await server.close();
+    }
   });
 });
 
@@ -368,6 +389,46 @@ describe("createStreamableHttpRequestHandler", () => {
       await transport.terminateSession();
     } finally {
       await client.close();
+      await new Promise<void>((resolve, reject) =>
+        http.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it("disposes a session server when connection fails before initialization", async () => {
+    const dispose = vi.fn(async () => {});
+    const makeServer = (): McpServer => {
+      const server = new McpServer({ name: "failed-init-test", version: "0" });
+      registerServerDisposer(server, dispose);
+      vi.spyOn(server, "connect").mockRejectedValue(new Error("connect failed"));
+      return server;
+    };
+    const http = createNodeHttpServer(createStreamableHttpRequestHandler(makeServer));
+    await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+    const { port } = http.address() as AddressInfo;
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: { name: "broken-client", version: "0" },
+          },
+        }),
+      });
+
+      expect(response.status).toBe(500);
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    } finally {
       await new Promise<void>((resolve, reject) =>
         http.close((error) => (error ? reject(error) : resolve())),
       );

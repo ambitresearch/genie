@@ -566,6 +566,7 @@
 
   function initMcpApp(doc, options) {
     var opts = options || {};
+    var onTeardown = typeof opts.onTeardown === "function" ? opts.onTeardown : function () {};
     var win = "win" in opts ? opts.win : typeof window !== "undefined" ? window : undefined;
     if (
       !win ||
@@ -616,6 +617,7 @@
       if (resizeObserver && typeof resizeObserver.disconnect === "function") {
         resizeObserver.disconnect();
       }
+      onTeardown();
     }
     function onMessage(event) {
       if (tornDown) return;
@@ -1293,9 +1295,6 @@
         var inlineSearch = doc.defaultView && doc.defaultView.location;
         renderGrid(doc, grid, filterManifestBySearch(inline, inlineSearch?.search || ""));
         wireSearch(doc, grid);
-        if (doc.querySelector(`meta[name="${TOOL_RESULT_SHELL_META}"]`)) {
-          initMcpApp(doc);
-        }
         // M4-04 (DRO-266) — this tier is EXACTLY who the postMessage bridge
         // exists for (its strict CSP, connect-src 'none', blocks fetch AND a
         // direct WebSocket alike — see initHmr's own header). hmrSocketUrl
@@ -1306,10 +1305,14 @@
         // this call (as an earlier revision did) left the bridge dead code in
         // the one tier it was built for. Best-effort, like the fetch path
         // below: a throw here must never take down an otherwise-good render.
+        var teardownHmr = function () {};
         try {
-          initHmr(doc, { initialManifest: inline });
+          teardownHmr = initHmr(doc, { initialManifest: inline });
         } catch {
           /* live refresh is an enhancement, never a boot blocker */
+        }
+        if (doc.querySelector(`meta[name="${TOOL_RESULT_SHELL_META}"]`)) {
+          initMcpApp(doc, { onTeardown: teardownHmr });
         }
       } catch (err) {
         var inlineDetail = err && err.message ? err.message : String(err);

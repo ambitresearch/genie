@@ -742,6 +742,45 @@ describe("initMcpApp — standard tool result delivery", () => {
     });
     expect(grid.querySelector("iframe.ds-viewer-embed")).toBeNull();
   });
+
+  it("boot composes MCP App teardown with the embedded HMR bridge", async () => {
+    const { hooks, window, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const manifestNode = document.createElement("script");
+    manifestNode.id = "manifest";
+    manifestNode.type = "application/json";
+    manifestNode.textContent = JSON.stringify(twoCardManifest());
+    document.head.appendChild(manifestNode);
+    const shellMarker = document.createElement("meta");
+    shellMarker.name = "genie-tool-result-shell";
+    document.head.appendChild(shellMarker);
+    const parent = { postMessage: vi.fn() };
+    Object.defineProperty(window, "parent", { value: parent, configurable: true });
+
+    await hooks.boot(document, vi.fn());
+    const initialize = parent.postMessage.mock.calls[0]?.[0] as { id: number };
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        source: parent as unknown as Window,
+        data: { jsonrpc: "2.0", id: initialize.id, result: { protocolVersion: "2026-01-26" } },
+      }),
+    );
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        source: parent as unknown as Window,
+        data: { jsonrpc: "2.0", id: 99, method: "ui/resource-teardown", params: {} },
+      }),
+    );
+    const before = iframeFor(grid, BUTTON_PATH).getAttribute("src");
+
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        source: parent as unknown as Window,
+        data: { type: "refresh", path: BUTTON_PATH },
+      }),
+    );
+
+    expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(before);
+  });
 });
 
 describe("initHmr — WebSocket transport (AC2/AC5)", () => {

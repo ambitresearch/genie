@@ -8,6 +8,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { isIP } from "node:net";
+import type { Readable, Writable } from "node:stream";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
@@ -43,6 +44,7 @@ export function formatHttpEndpoint(host: string, port: number): string {
 
 const serverTransportKinds = new WeakMap<McpServer, TransportKind>();
 const serverDisposers = new WeakMap<McpServer, Set<() => void | Promise<void>>>();
+const serverDisposerHooks = new WeakSet<McpServer>();
 
 /** Register session-scoped resources that must close with their MCP server. */
 export function registerServerDisposer(
@@ -52,6 +54,17 @@ export function registerServerDisposer(
   const disposers = serverDisposers.get(server) ?? new Set();
   disposers.add(disposer);
   serverDisposers.set(server, disposers);
+  if (!serverDisposerHooks.has(server)) {
+    serverDisposerHooks.add(server);
+    const previousOnClose = server.server.onclose;
+    server.server.onclose = () => {
+      try {
+        previousOnClose?.();
+      } finally {
+        void disposeServer(server);
+      }
+    };
+  }
 }
 
 async function disposeServer(server: McpServer): Promise<void> {
@@ -102,9 +115,35 @@ export function resolvePreviewLocality(
 }
 
 /** Connect the server over stdio (the default for local harnesses). */
-async function startStdio(server: McpServer): Promise<void> {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+async function startStdio(
+  server: McpServer,
+  input: Readable = process.stdin,
+  output: Writable = process.stdout,
+): Promise<void> {
+  const transport = new StdioServerTransport(input, output);
+  let closing = false;
+  const closeOnEof = (): void => {
+    if (closing) return;
+    closing = true;
+    void transport.close().catch((error: unknown) => {
+      process.stderr.write(
+        `genie: stdio close failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    });
+  };
+  const removeEofListeners = (): void => {
+    input.off("end", closeOnEof);
+    input.off("close", closeOnEof);
+  };
+  transport.onclose = removeEofListeners;
+  input.once("end", closeOnEof);
+  input.once("close", closeOnEof);
+  try {
+    await server.connect(transport);
+  } catch (error) {
+    removeEofListeners();
+    throw error;
+  }
   // No stdout logging on stdio — it would corrupt the JSON-RPC stream.
 }
 
@@ -213,6 +252,7 @@ export function createStreamableHttpRequestHandler(
   ): Promise<void> => {
     const sessionId = sessionIdFrom(req);
     let session = acquiredLease?.session ?? sessions.get(sessionId ?? "");
+    let createdSession = false;
 
     if (session === undefined) {
       if (sessionId !== undefined) {
@@ -233,13 +273,20 @@ export function createStreamableHttpRequestHandler(
         },
       });
       session = { server: sessionServer, transport, activeRequests: 0, disposed: false };
+      createdSession = true;
       transport.onclose = () => {
         const closedId = transport.sessionId;
         if (closedId !== undefined) sessions.delete(closedId);
         disposeSession(session as HttpSession);
       };
       serverTransportKinds.set(sessionServer, "http");
-      await sessionServer.connect(transport);
+      try {
+        await sessionServer.connect(transport);
+      } catch (error) {
+        await transport.close().catch(() => undefined);
+        disposeSession(session);
+        throw error;
+      }
     }
 
     const lease = acquiredLease ?? acquireSession(session, sessionId);
@@ -247,6 +294,10 @@ export function createStreamableHttpRequestHandler(
       await session.transport.handleRequest(req, res, body);
     } finally {
       releaseSession(lease);
+      if (createdSession && session.transport.sessionId === undefined) {
+        await session.transport.close().catch(() => undefined);
+        disposeSession(session);
+      }
     }
   };
 
@@ -338,6 +389,9 @@ export interface StartOptions {
   host?: string;
   /** Required for HTTP; must include every caller-added registration per session. */
   serverFactory?: () => McpServer;
+  /** Injectable stdio streams for embedders and EOF lifecycle tests. */
+  stdioInput?: Readable;
+  stdioOutput?: Writable;
 }
 
 /** Start the server on the resolved transport. Returns the kind actually used. */
@@ -355,7 +409,7 @@ export async function startTransport(
         opts.serverFactory,
       );
     } else {
-      await startStdio(server);
+      await startStdio(server, opts.stdioInput, opts.stdioOutput);
     }
   } catch (error) {
     serverTransportKinds.delete(server);
