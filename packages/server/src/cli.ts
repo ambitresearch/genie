@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { createServer, SERVER_INFO } from "./server.js";
-import { isLoopbackHost, resolveTransport, startTransport } from "./transport.js";
+import { resolvePreviewLocality, resolveTransport, startTransport } from "./transport.js";
 
 /** Minimal flag parser — no dependency needed for M0's tiny surface. */
 function parseArgs(argv: string[]): {
   transport?: string;
   port?: number;
   host?: string;
+  previewLocality?: string;
   help: boolean;
   version: boolean;
 } {
@@ -23,6 +24,14 @@ function parseArgs(argv: string[]): {
       case "--host":
         out.host = argv[++i];
         break;
+      case "--preview-locality": {
+        const value = argv[++i];
+        if (value === undefined || value.trim() === "" || value.startsWith("-")) {
+          throw new Error("--preview-locality requires a value: local or remote.");
+        }
+        out.previewLocality = value;
+        break;
+      }
       case "-h":
       case "--help":
         out.help = true;
@@ -47,11 +56,13 @@ Options:
   --transport <stdio|http>   Transport to use (default: auto-detect by TTY)
   --port <n>                 HTTP port (default: 3000)
   --host <addr>              HTTP host (default: 127.0.0.1)
+  --preview-locality <mode>  Preview reachability: local or remote
   -v, --version              Print version and exit
   -h, --help                 Show this help
 
 Env:
   MCP_TRANSPORT              Same as --transport
+  GENIE_PREVIEW_LOCALITY     Same as --preview-locality
   GENIE_KITS_ROOT            Directory where kit tools read/write UI kits
   GENIE_PROJECTS_ROOT        Directory where create_project writes project roots
 
@@ -73,7 +84,7 @@ async function main(): Promise<void> {
 
   const transportKind = resolveTransport(args.transport);
   const host = args.host ?? "127.0.0.1";
-  const previewLocality = transportKind === "stdio" || isLoopbackHost(host) ? "local" : "remote";
+  const previewLocality = resolvePreviewLocality(transportKind, args.previewLocality);
   const server = createServer({ transportKind, previewLocality });
   await startTransport(server, {
     kind: transportKind,

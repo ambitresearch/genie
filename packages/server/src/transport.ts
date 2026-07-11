@@ -57,6 +57,25 @@ export function resolveTransport(kind?: string): TransportKind {
   return process.stdin.isTTY ? "http" : "stdio";
 }
 
+/**
+ * Resolve whether preview URLs are reachable from the MCP client. HTTP is
+ * conservative by default because a loopback bind can still sit behind a
+ * reverse proxy or tunnel; same-machine HTTP deployments must opt into local
+ * URLs explicitly.
+ */
+export function resolvePreviewLocality(
+  transportKind: TransportKind,
+  locality?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): "local" | "remote" {
+  const choice = (locality ?? env.GENIE_PREVIEW_LOCALITY ?? "").trim().toLowerCase();
+  if (choice === "local" || choice === "remote") return choice;
+  if (choice) {
+    throw new Error(`Unknown preview locality "${choice}". Use "local" or "remote".`);
+  }
+  return transportKind === "stdio" ? "local" : "remote";
+}
+
 /** Connect the server over stdio (the default for local harnesses). */
 async function startStdio(server: McpServer): Promise<void> {
   const transport = new StdioServerTransport();

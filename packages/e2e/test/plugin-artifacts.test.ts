@@ -73,8 +73,10 @@ describe("Claude plugin artifacts", () => {
     expect(design).toContain("source checkout");
     expect(design).not.toContain("Ship `SKILL.md` + command files inside the npm/`.mcpb` package");
     expect(overview).toContain("local stdio");
-    expect(overview).toContain("Loopback HTTP returns a");
+    expect(overview).toContain("HTTP defaults to remote");
+    expect(overview).toContain("--preview-locality local");
     expect(overview).toMatch(/remote HTTP/i);
+    expect(copilot).toContain("HTTP surfaces never auto-open");
     expect(cursor).toContain("Only local Cursor / VS Code");
     expect(cursor).toContain("ChatGPT receives the inline app");
   });

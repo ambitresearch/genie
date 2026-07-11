@@ -5,6 +5,7 @@ import {
   formatHttpEndpoint,
   isLoopbackHost,
   normalizeListenHost,
+  resolvePreviewLocality,
   resolveTransport,
   startTransport,
 } from "./transport.js";
@@ -90,6 +91,33 @@ describe("resolveTransport", () => {
 
   it("throws on an unknown transport name", () => {
     expect(() => resolveTransport("carrier-pigeon")).toThrow(/Unknown transport/);
+  });
+});
+
+describe("resolvePreviewLocality", () => {
+  it("defaults stdio to local and HTTP to remote", () => {
+    expect(resolvePreviewLocality("stdio", undefined, {})).toBe("local");
+    expect(resolvePreviewLocality("http", undefined, {})).toBe("remote");
+  });
+
+  it("allows same-machine HTTP to opt into local viewer URLs", () => {
+    expect(resolvePreviewLocality("http", "local", {})).toBe("local");
+  });
+
+  it("reads GENIE_PREVIEW_LOCALITY when no CLI value is provided", () => {
+    expect(resolvePreviewLocality("http", undefined, { GENIE_PREVIEW_LOCALITY: "local" })).toBe(
+      "local",
+    );
+  });
+
+  it("prefers the CLI value over GENIE_PREVIEW_LOCALITY", () => {
+    expect(resolvePreviewLocality("http", "remote", { GENIE_PREVIEW_LOCALITY: "local" })).toBe(
+      "remote",
+    );
+  });
+
+  it("rejects an unknown locality", () => {
+    expect(() => resolvePreviewLocality("http", "nearby", {})).toThrow(/Unknown preview locality/);
   });
 });
 

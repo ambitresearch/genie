@@ -4,6 +4,7 @@ export {
   isLoopbackHost,
   normalizeListenHost,
   formatHttpEndpoint,
+  resolvePreviewLocality,
   resolveTransport,
   type TransportKind,
   type StartOptions,

@@ -10,9 +10,10 @@ the specific host:
   `io.modelcontextprotocol/ui` extension during initialization. genie detects
   that negotiated capability and renders `ui://genie/grid` inline without
   opening a redundant browser tab.
-- **Other Copilot MCP surfaces** that do not advertise MCP Apps receive the
+- **Local stdio Copilot surfaces** that do not advertise MCP Apps receive the
   live viewer in a server-opened browser tab. Disable that fallback with
-  `GENIE_PREVIEW_NO_OPEN=1`.
+  `GENIE_PREVIEW_NO_OPEN=1`. HTTP Copilot surfaces never auto-open a browser;
+  remote HTTP requires the inline MCP App plus `GENIE_PREVIEWS_BASE_URL`.
 
 ## Install the Agent Skill
 
@@ -54,9 +55,11 @@ in `/v1`.
 
 Ask for a component in chat; the Skill (or tool-description fallback) runs the
 four-verb chain. On an MCP Apps-capable VS Code build, `preview` renders the
-grid inline. On a tools-only Copilot host, it opens a browser tab at the live
-grid. If the viewer cannot boot, use the `file://` fallback path returned by
-`preview`.
+grid inline. On a tools-only local stdio Copilot host, it opens a browser tab at
+the live grid. HTTP surfaces never auto-open; a genuinely same-machine HTTP
+client can request a local viewer URL with `--preview-locality local`, while a
+remote HTTP host needs MCP Apps plus `GENIE_PREVIEWS_BASE_URL`. If a local
+viewer cannot boot, use the returned `file://` fallback on that server machine.
 
 The broader M5 VS Code distribution issue still owns the production HTTP
 snippet, sandbox-domain settings, one-click/CLI installation paths, and an

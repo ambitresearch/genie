@@ -12,7 +12,7 @@ capabilities:
   fallback when a host or session does not load the Skill.
 - **`ui://` rendering** — can the harness render an MCP-Apps `ui://` resource
   inline? If so, `preview` shows the card grid _in-panel_. If not, the genie
-  server opens a browser tab for you instead.
+  server opens a browser tab only for a local stdio connection.
 
 These are orthogonal, so harnesses fall into a grid:
 
@@ -34,12 +34,12 @@ These are orthogonal, so harnesses fall into a grid:
 - On **ChatGPT's remote connector**, tool descriptions carry the workflow and
   `preview` renders inline.
 - On **local stdio Codex / tools-only Copilot hosts**, the **genie server opens
-  a browser tab itself** when you call `preview`. Loopback HTTP returns a
-  reachable viewer URL but does not auto-open it. VS Code Copilot builds that
-  negotiate MCP Apps render inline instead. Remote HTTP hosts require the inline
-  MCP App plus `GENIE_PREVIEWS_BASE_URL`; they never open a browser on the
-  server machine. Disable local stdio auto-open with
-  `GENIE_PREVIEW_NO_OPEN=1`.
+  a browser tab itself** when you call `preview`. HTTP defaults to remote
+  locality and never auto-opens a browser. A genuinely same-machine HTTP client
+  can opt into a manually opened local viewer URL with
+  `--preview-locality local` (or `GENIE_PREVIEW_LOCALITY=local`). Remote HTTP
+  hosts require the inline MCP App plus `GENIE_PREVIEWS_BASE_URL`. Disable local
+  stdio auto-open with `GENIE_PREVIEW_NO_OPEN=1`.
 
 ## Guidance delivery channels
 

@@ -18,7 +18,9 @@ live card grid:
   - no kits → tell the user there's no kit yet and suggest `create_kit`.
 
 After the call, relay the returned viewer URL to the user. On a ui://-capable
-host the inline grid renders in-panel; otherwise the genie server opens a
-browser tab itself (suppress with `GENIE_PREVIEW_NO_OPEN=1`). If `preview`
-reports the viewer could not boot, pass along the `file://` fallback path it
-returns so the user can still open the kit's `index.html` directly.
+host the inline grid renders in-panel; on a local stdio host without UI support,
+the genie server opens a browser tab itself (suppress with
+`GENIE_PREVIEW_NO_OPEN=1`). HTTP deployments never auto-open a browser. If
+`preview` reports the local viewer could not boot, pass along the `file://`
+fallback path it returns so the user can still open the kit's `index.html`
+directly on that machine.
