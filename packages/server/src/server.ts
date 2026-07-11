@@ -122,7 +122,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       "refine (LLM component iteration — diff + updated files against existing kit source), " +
       "plan creation (the capability-grant " +
       "boundary for write/delete verbs), write_files, delete_files, and preview (returns the " +
-      "viewer URL + a file:// fallback plus a ui://genie/grid resource pointer in " +
+      "viewer URL + a local-only file:// fallback plus a ui://genie/grid resource pointer in " +
       "_meta.ui.resourceUri). write_files and " +
       "delete_files share one plan-boundary validation middleware — every call is checked " +
       "for planId presence/existence/expiry and per-path glob membership before the tool " +
@@ -276,11 +276,11 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // so the two verbs enforce plan authorization through one identical seam.
   registerDeleteFilesTool(server, kitStore);
 
-  // preview (M4-05 / DRO-267): returns the viewer URL + a file:// fallback as
-  // text, and points ui://-capable hosts at the inline `ui://genie/grid`
+  // preview (M4-05 / DRO-267): returns local viewer/file URLs only to local
+  // clients, and points ui://-capable hosts at the inline `ui://genie/grid`
   // resource (registered by M4-06) via `_meta.ui.resourceUri`. Boots the Vite
   // viewer on demand and reuses it across calls (its own ViewerRegistry),
-  // falling back to `file://<kitDir>/index.html` when the viewer can't boot.
+  // falling back to a local file URL or CSP-safe embedded manifest when needed.
   // Bound to the same `kitsRoot` the kit verbs resolve against so a `kitId`
   // maps to the same on-disk kit dir the viewer serves.
   registerPreviewTool(server, {

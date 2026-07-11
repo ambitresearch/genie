@@ -1,8 +1,8 @@
 /**
  * MCP tool: preview (M4-05 / DRO-267).
  *
- * Returns a human-readable summary — the live viewer URL plus a `file://`
- * fallback — as `content`. The tool advertises the static
+ * Returns a human-readable summary — the live viewer URL plus a local-only
+ * `file://` fallback — as `content`. The tool advertises the static
  * `ui://genie/grid` app shell in tools/list for standards-compliant discovery;
  * the host then delivers this call's input/result to that shell. The result
  * also retains its query-bearing resource URI for legacy/result-level hosts.
@@ -23,8 +23,10 @@
  * (so `tsc` never hard-resolves it) and degrades gracefully when it is absent —
  * exactly the OPTIONAL-peer-dependency pattern `refine` uses for Playwright.
  * A failed boot (Vite missing, port unbindable, kit dir invalid) is caught and
- * turned into AC6's `file://<kitDir>/index.html` fallback; `_meta` is still
- * emitted. A `ViewerRegistry` caches one running viewer per kit dir (AC5).
+ * turned into AC6's local `file://<kitDir>/index.html` fallback; MCP Apps can
+ * instead receive a CSP-safe embedded manifest when a previews origin is
+ * configured. `_meta` is still emitted. A `ViewerRegistry` caches one running
+ * viewer per kit dir (AC5).
  */
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -492,9 +494,10 @@ export interface PreviewResult {
     kitId: string;
     componentName?: string;
     group?: string;
-    /** The live Vite viewer URL when it booted; absent on the file:// fallback. */
+    /** The live Vite viewer URL when it booted; absent on local file/inline fallbacks. */
     viewerUrl?: string;
-    fileUrl: string;
+    /** Local-only fallback; omitted from remote results to avoid leaking server paths. */
+    fileUrl?: string;
     transportKind?: TransportKind;
     locality: PreviewLocality;
     embeddedManifest?: EmbeddedManifest;
@@ -541,7 +544,9 @@ export function shouldAutoOpen(
  * builds the text summary: the live URL when the viewer is up (AC5), else a
  * `file://` fallback (AC6). `_meta.ui.resourceUri` is emitted either way
  * (AC3/AC4), and one `preview.request` line is logged recording the client and
- * its `ui://` support (AC7).
+ * its `ui://` support (AC7). Remote results never expose server-local file
+ * paths; a failed local viewer can deliver a CSP-safe manifest to an MCP App
+ * when a previews origin is configured.
  */
 export async function runPreview(
   deps: PreviewDeps,
@@ -579,19 +584,23 @@ export async function runPreview(
   const locality = ctx.locality ?? (ctx.transportKind === "http" ? "remote" : "local");
   const previewsBaseUrl = deps.previewsBaseUrl ?? env.GENIE_PREVIEWS_BASE_URL;
   const normalizedPreviewsBaseUrl = normalizePreviewsBaseUrl(previewsBaseUrl);
+  // Authoritative first: the MCP Apps extension capability from the initialize
+  // handshake. The name sniff remains only for hosts that render ui:// without
+  // advertising the extension yet (older Claude/VS Code/Cursor builds).
+  const uiSupported = ctx.uiCapable ?? clientSupportsUi(ctx.clientName);
+  const readPreviewBytes: PreviewReader =
+    deps.readPreviewBytes ??
+    (async (root, path) => {
+      try {
+        return await readFile(join(root, path));
+      } catch {
+        return null;
+      }
+    });
   let embeddedManifest: EmbeddedManifest | undefined;
   let embeddedError: string | undefined;
   if (locality === "remote") {
     if (normalizedPreviewsBaseUrl !== undefined) {
-      const readPreviewBytes: PreviewReader =
-        deps.readPreviewBytes ??
-        (async (root, path) => {
-          try {
-            return await readFile(join(root, path));
-          } catch {
-            return null;
-          }
-        });
       embeddedManifest = await rewriteCardPaths(filteredManifest, {
         kitId: args.kitId,
         kitDir,
@@ -613,10 +622,6 @@ export async function runPreview(
     group: args.group,
   });
 
-  // Authoritative first: the MCP Apps extension capability from the initialize
-  // handshake. The name sniff remains only for hosts that render ui:// without
-  // advertising the extension yet (older Claude/VS Code/Cursor builds).
-  const uiSupported = ctx.uiCapable ?? clientSupportsUi(ctx.clientName);
   const autoOpen = shouldAutoOpen(uiSupported, deps.env, ctx.transportKind);
   // AC7 — one structured line per request; the sniffed client + its ui:// support.
   logStderr({
@@ -631,16 +636,16 @@ export async function runPreview(
     ...(args.componentName !== undefined ? { componentName: args.componentName } : {}),
   });
 
-  const fileUrl = pathToFileURL(join(kitDir, "index.html")).href;
-
   let text: string;
   let viewerUrl: string | undefined;
+  let fileUrl: string | undefined;
   if (locality === "remote") {
     text =
       embeddedManifest !== undefined
         ? "Preview ready in the inline MCP App."
         : `Remote preview unavailable: ${embeddedError ?? "no declared previews origin"}`;
   } else {
+    fileUrl = pathToFileURL(join(kitDir, "index.html")).href;
     try {
       const viewer = await deps.registry.ensure(kitDir, DEFAULT_VIEWER_PORT, false); // AC5 + piece B
       const url = new URL(viewer.url);
@@ -660,11 +665,39 @@ export async function runPreview(
         reason: "viewer-boot-failed",
         error: String(error),
       });
-      embeddedError =
-        "The local preview viewer could not start; use the returned file URL or start it manually.";
-      text =
-        `Preview viewer could not start; open the kit directly: ${fileUrl}\n` +
-        "(Start the genie viewer manually, or a ui://-capable host can render the inline grid.)";
+      // The preloaded tool-result shell cannot safely accept dynamically
+      // delivered data: cards: they inherit its already-fixed CSP hashes. A
+      // declared previews origin produces http(s) card URLs that remain safe to
+      // deliver after initialization. An empty manifest is safe either way.
+      if (
+        uiSupported &&
+        (normalizedPreviewsBaseUrl !== undefined || filteredManifest.components.length === 0)
+      ) {
+        try {
+          embeddedManifest = await rewriteCardPaths(filteredManifest, {
+            kitId: args.kitId,
+            kitDir,
+            previewsBaseUrl: normalizedPreviewsBaseUrl?.toString(),
+            readPreviewBytes,
+          });
+        } catch (fallbackError) {
+          logStderr({
+            event: "preview.fallback",
+            kitId: args.kitId,
+            reason: "embedded-manifest-failed",
+            error: String(fallbackError),
+          });
+        }
+      }
+      if (embeddedManifest !== undefined) {
+        text = `Preview ready in the inline MCP App.\nOr open the kit directly: ${fileUrl}`;
+      } else {
+        embeddedError =
+          "The local preview viewer could not start; use the returned file URL or start it manually.";
+        text =
+          `Preview viewer could not start; open the kit directly: ${fileUrl}\n` +
+          "(Start the genie viewer manually, or configure GENIE_PREVIEWS_BASE_URL for a CSP-safe inline fallback.)";
+      }
     }
   }
 
@@ -675,7 +708,7 @@ export async function runPreview(
       ...(args.componentName !== undefined ? { componentName: args.componentName } : {}),
       ...(args.group !== undefined ? { group: args.group } : {}),
       ...(viewerUrl !== undefined ? { viewerUrl } : {}),
-      fileUrl,
+      ...(fileUrl !== undefined ? { fileUrl } : {}),
       ...(ctx.transportKind !== undefined ? { transportKind: ctx.transportKind } : {}),
       locality,
       ...(embeddedManifest !== undefined ? { embeddedManifest } : {}),
@@ -713,7 +746,7 @@ const previewOutputSchema = {
   componentName: z.string().optional(),
   group: z.string().optional(),
   viewerUrl: z.string().optional(),
-  fileUrl: z.string(),
+  fileUrl: z.string().optional(),
   transportKind: z.enum(["stdio", "http"]).optional(),
   locality: z.enum(["local", "remote"]),
   embeddedManifest: z
@@ -801,8 +834,8 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
         "Preview a UI kit as a live card grid — call this to SHOW the user a component " +
         "(typically right after write_files persists one). Compiles + persists the kit " +
         "manifest so the grid always reflects what's on disk, then returns the viewer URL " +
-        "(booting the Vite viewer on demand and reusing it across calls) plus a file:// " +
-        "fallback. MCP Apps-capable hosts get the inline grid via _meta.ui.resourceUri. " +
+        "(booting the Vite viewer on demand and reusing it across calls) plus a local-only " +
+        "file:// fallback. MCP Apps-capable hosts get the inline grid via _meta.ui.resourceUri. " +
         "Local stdio clients that do not negotiate UI support get a server-opened browser " +
         "tab (disable with GENIE_PREVIEW_NO_OPEN=1); HTTP deployments never auto-open on " +
         "the server machine. Optionally focus one component or group.",

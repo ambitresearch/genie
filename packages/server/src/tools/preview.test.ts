@@ -458,6 +458,8 @@ describe("runPreview (AC3, AC6)", () => {
 
     expect(result.structuredContent.transportKind).toBe("http");
     expect(result.structuredContent.viewerUrl).toBeUndefined();
+    expect(result.structuredContent.fileUrl).toBeUndefined();
+    expect(result.content[0]?.text).not.toContain("file:");
     expect(booter.calls).toHaveLength(0);
     expect(result.structuredContent.embeddedManifest.groups).toEqual(["actions"]);
     expect(result.structuredContent.embeddedManifest.components).toHaveLength(1);
@@ -529,6 +531,54 @@ describe("runPreview (AC3, AC6)", () => {
     expect(result.structuredContent.locality).toBe("local");
     expect(result.structuredContent.viewerUrl).toBe("http://127.0.0.1:5173/");
     expect(result.structuredContent.embeddedError).toBeUndefined();
+  });
+
+  it("falls back to a CSP-safe embedded manifest when a local MCP App viewer cannot boot", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const readPreviewBytes = vi.fn(async () => Buffer.from("<button>Save</button>"));
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(failBooter("EADDRINUSE")),
+        env: {},
+        previewsBaseUrl: "https://previews.example.com",
+        readPreviewBytes,
+      },
+      { kitId: "acme-abc123" },
+      { clientName: "cursor", uiCapable: true, transportKind: "stdio", locality: "local" },
+    );
+
+    expect(readPreviewBytes).not.toHaveBeenCalled();
+    expect(result.structuredContent.viewerUrl).toBeUndefined();
+    expect(result.structuredContent.embeddedError).toBeUndefined();
+    expect(result.structuredContent.embeddedManifest.components[0]?.path).toMatch(
+      /^https:\/\/previews\.example\.com\//,
+    );
+    expect(result.content[0]?.text).toContain("inline MCP App");
+  });
+
+  it("does not deliver data-card bytes through a preloaded shell with fixed CSP hashes", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const readPreviewBytes = vi.fn(async () => Buffer.from("<button>Save</button>"));
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(failBooter("EADDRINUSE")),
+        env: {},
+        readPreviewBytes,
+      },
+      { kitId: "acme-abc123" },
+      { clientName: "cursor", uiCapable: true, transportKind: "stdio", locality: "local" },
+    );
+
+    expect(readPreviewBytes).not.toHaveBeenCalled();
+    expect(result.structuredContent.embeddedManifest).toBeUndefined();
+    expect(result.structuredContent.embeddedError).toContain("viewer could not start");
+    expect(result.structuredContent.fileUrl).toMatch(/^file:/);
   });
 
   it("rejects a malformed previews origin without serializing card bytes", async () => {
@@ -1000,8 +1050,9 @@ describe("mcp__genie__preview (wired)", () => {
         kitId: { type: "string" },
         fileUrl: { type: "string" },
       },
-      required: expect.arrayContaining(["kitId", "fileUrl"]),
+      required: expect.arrayContaining(["kitId", "locality"]),
     });
+    expect((preview?.outputSchema as { required?: string[] }).required).not.toContain("fileUrl");
   });
 
   it("returns structuredContent over the wire", async () => {

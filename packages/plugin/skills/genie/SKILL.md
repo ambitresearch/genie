@@ -140,4 +140,5 @@ what's on disk (`list_components` reads that compiled manifest). Then:
   browser tab at the viewer URL itself. Set `GENIE_PREVIEW_NO_OPEN=1` to
   suppress that. HTTP deployments never auto-open on the server machine.
 
-Either way, relay the viewer URL to the user so they always have a way in.
+Relay the viewer URL when `preview` returns one. Remote inline previews omit
+server-local viewer and `file://` URLs.
