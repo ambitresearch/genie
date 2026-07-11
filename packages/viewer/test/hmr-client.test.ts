@@ -608,6 +608,24 @@ describe("initMcpApp — standard tool result delivery", () => {
     );
   });
 
+  it("observes both the document root and body for size changes", () => {
+    const { hooks, document } = setup({ version: 1, groups: [], components: [] });
+    const host = fakeMcpAppWindow();
+    const observed: Element[] = [];
+    host.win.ResizeObserver = class {
+      observe(element: Element) {
+        observed.push(element);
+      }
+      disconnect() {}
+    };
+    hooks.initMcpApp(document, { win: host.win });
+    const initialize = host.parentPostMessage.mock.calls[0]?.[0] as { id: number };
+
+    host.emit({ jsonrpc: "2.0", id: initialize.id, result: { protocolVersion: "2026-01-26" } });
+
+    expect(observed).toEqual([document.documentElement, document.body]);
+  });
+
   it("acknowledges ui/resource-teardown and stops processing host messages", () => {
     const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
     const host = fakeMcpAppWindow();
@@ -958,7 +976,7 @@ describe("initHmr — polling fallback (AC4)", () => {
     expect(iframeFor(grid, CARD_PATH)).toBeDefined();
   });
 
-  it("drains a polling refresh queued behind an active message fetch", async () => {
+  it("skips an overlapping poll tick while a message fetch is active", async () => {
     const { hooks, window, document, grid } = setup();
     const timers = fakeTimers();
     const first = twoCardManifest();
@@ -996,8 +1014,8 @@ describe("initHmr — polling fallback (AC4)", () => {
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(iframeFor(grid, CARD_PATH)).toBeDefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(grid.querySelector(`iframe[data-path="${CARD_PATH}"]`)).toBeNull();
   });
 
   it("polls from the start when a dev server is present but WebSocket is unavailable", () => {

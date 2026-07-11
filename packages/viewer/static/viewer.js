@@ -553,6 +553,7 @@
       if (typeof ResizeObserverCtor !== "function" || !doc.documentElement) return;
       resizeObserver = new ResizeObserverCtor(notifySize);
       resizeObserver.observe(doc.documentElement);
+      if (doc.body) resizeObserver.observe(doc.body);
     }
     function teardown() {
       if (tornDown) return;
@@ -1079,11 +1080,7 @@
 
     // ── AC4: polling fallback ────────────────────────────────────────────────
     function poll() {
-      if (torn || !fetchImpl) return;
-      if (pollInFlight) {
-        manifestRefreshPending = true;
-        return;
-      }
+      if (torn || pollInFlight || !fetchImpl) return;
       pollInFlight = true;
       fetchImpl(manifestUrl)
         .then(function (res) {

@@ -1,8 +1,8 @@
 # Using genie in your harness
 
-genie is an MCP server. Every harness that speaks MCP can call its 19 tools —
-but how much _guidance_ and _GUI_ you get depends on two independent harness
-capabilities:
+genie is an MCP server. Every harness that speaks MCP can call its 20 tools —
+`ping` plus 19 workflow tools — but how much _guidance_ and _GUI_ you get
+depends on two independent harness capabilities:
 
 - **Agent Skills** — does the harness load a bundled `SKILL.md`? Claude,
   Cursor, Codex, and GitHub Copilot support the open Agent Skills format, with
