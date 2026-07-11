@@ -581,7 +581,7 @@ export async function runPreview(
     group: args.group,
   });
   const env = deps.env ?? process.env;
-  const locality = ctx.locality ?? (ctx.transportKind === "http" ? "remote" : "local");
+  const locality = ctx.locality ?? (ctx.transportKind === "stdio" ? "local" : "remote");
   const previewsBaseUrl = deps.previewsBaseUrl ?? env.GENIE_PREVIEWS_BASE_URL;
   const normalizedPreviewsBaseUrl = normalizePreviewsBaseUrl(previewsBaseUrl);
   // Authoritative first: the MCP Apps extension capability from the initialize

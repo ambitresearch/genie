@@ -401,7 +401,11 @@ describe("runPreview (AC3, AC6)", () => {
     const kitsRoot = await makeKitsRoot();
     const registry = new ViewerRegistry(failBooter("EADDRINUSE"));
 
-    const result = await runPreview({ kitsRoot, registry }, { kitId: "acme-abc123" }, {});
+    const result = await runPreview(
+      { kitsRoot, registry },
+      { kitId: "acme-abc123" },
+      { transportKind: "stdio" },
+    );
 
     const fileUrl = pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href;
     expect(result.content[0]?.text).toContain(fileUrl);
@@ -509,6 +513,22 @@ describe("runPreview (AC3, AC6)", () => {
     expect(booter.calls).toHaveLength(0);
     expect(result.structuredContent.embeddedManifest).toBeUndefined();
     expect(result.structuredContent.embeddedError).toContain("GENIE_PREVIEWS_BASE_URL");
+  });
+
+  it("defaults an unspecified transport/locality to remote without exposing local paths", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+
+    const result = await runPreview(
+      { kitsRoot, registry: new ViewerRegistry(booter), env: {} },
+      { kitId: "acme-abc123" },
+      {},
+    );
+
+    expect(booter.calls).toHaveLength(0);
+    expect(result.structuredContent.locality).toBe("remote");
+    expect(result.structuredContent.viewerUrl).toBeUndefined();
+    expect(result.structuredContent.fileUrl).toBeUndefined();
   });
 
   it("uses the live viewer for loopback HTTP without serializing cards", async () => {
@@ -632,7 +652,7 @@ describe("runPreview (AC3, AC6)", () => {
     await runPreview(
       { kitsRoot, registry },
       { kitId: "acme-abc123" },
-      { clientName: "totally-unknown-host", uiCapable: true },
+      { clientName: "totally-unknown-host", uiCapable: true, transportKind: "stdio" },
     );
 
     lines.restore();
@@ -777,7 +797,11 @@ describe("runPreview manifest compile (piece A)", () => {
     await mkdir(join(kitsRoot, "acme-abc123"), { recursive: true });
     const registry = new ViewerRegistry(okBooter("http://127.0.0.1:5173/"));
 
-    const result = await runPreview({ kitsRoot, registry }, { kitId: "acme-abc123" }, {});
+    const result = await runPreview(
+      { kitsRoot, registry },
+      { kitId: "acme-abc123" },
+      { transportKind: "stdio" },
+    );
 
     // Still reports the viewer URL — a compile that yields an empty manifest is
     // a fine result, not an error.
@@ -888,7 +912,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: {} },
       { kitId: "acme-abc123" },
-      { clientName: "claude" },
+      { clientName: "claude", transportKind: "stdio" },
     );
 
     expect(booter.calls[0]?.open).toBe(false);

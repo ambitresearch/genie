@@ -10,6 +10,49 @@ import {
   startTransport,
 } from "./transport.js";
 
+describe("isLoopbackHost", () => {
+  it.each([
+    "127.0.0.1",
+    "127.42.0.9",
+    "localhost",
+    "preview.localhost",
+    "::1",
+    "[::1]",
+    "0:0:0:0:0:0:0:1",
+  ])("recognizes local host %s", (host) => {
+    expect(isLoopbackHost(host)).toBe(true);
+  });
+
+  it.each(["0.0.0.0", "::", "192.168.1.10", "mcp.example.com"])(
+    "treats externally reachable host %s as remote",
+    (host) => {
+      expect(isLoopbackHost(host)).toBe(false);
+    },
+  );
+});
+
+describe("normalizeListenHost", () => {
+  it("unwraps bracketed IPv6 literals for node:http listen", () => {
+    expect(normalizeListenHost("[::1]")).toBe("::1");
+  });
+
+  it("leaves ordinary hostnames and IPv4 literals unchanged", () => {
+    expect(normalizeListenHost("localhost")).toBe("localhost");
+    expect(normalizeListenHost("127.0.0.1")).toBe("127.0.0.1");
+  });
+});
+
+describe("formatHttpEndpoint", () => {
+  it("brackets IPv6 literals in user-facing URLs", () => {
+    expect(formatHttpEndpoint("::1", 3000)).toBe("http://[::1]:3000/mcp");
+  });
+
+  it("leaves IPv4 and hostnames unbracketed", () => {
+    expect(formatHttpEndpoint("127.0.0.1", 3000)).toBe("http://127.0.0.1:3000/mcp");
+    expect(formatHttpEndpoint("localhost", 3000)).toBe("http://localhost:3000/mcp");
+  });
+});
+
 describe("resolveTransport", () => {
   const savedEnv = process.env.MCP_TRANSPORT;
   const savedTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
@@ -18,49 +61,6 @@ describe("resolveTransport", () => {
     if (savedEnv === undefined) delete process.env.MCP_TRANSPORT;
     else process.env.MCP_TRANSPORT = savedEnv;
     if (savedTty) Object.defineProperty(process.stdin, "isTTY", savedTty);
-  });
-
-  describe("isLoopbackHost", () => {
-    it.each([
-      "127.0.0.1",
-      "127.42.0.9",
-      "localhost",
-      "preview.localhost",
-      "::1",
-      "[::1]",
-      "0:0:0:0:0:0:0:1",
-    ])("recognizes local host %s", (host) => {
-      expect(isLoopbackHost(host)).toBe(true);
-    });
-
-    describe("normalizeListenHost", () => {
-      it("unwraps bracketed IPv6 literals for node:http listen", () => {
-        expect(normalizeListenHost("[::1]")).toBe("::1");
-      });
-
-      describe("formatHttpEndpoint", () => {
-        it("brackets IPv6 literals in user-facing URLs", () => {
-          expect(formatHttpEndpoint("::1", 3000)).toBe("http://[::1]:3000/mcp");
-        });
-
-        it("leaves IPv4 and hostnames unbracketed", () => {
-          expect(formatHttpEndpoint("127.0.0.1", 3000)).toBe("http://127.0.0.1:3000/mcp");
-          expect(formatHttpEndpoint("localhost", 3000)).toBe("http://localhost:3000/mcp");
-        });
-      });
-
-      it("leaves ordinary hostnames and IPv4 literals unchanged", () => {
-        expect(normalizeListenHost("localhost")).toBe("localhost");
-        expect(normalizeListenHost("127.0.0.1")).toBe("127.0.0.1");
-      });
-    });
-
-    it.each(["0.0.0.0", "::", "192.168.1.10", "mcp.example.com"])(
-      "treats externally reachable host %s as remote",
-      (host) => {
-        expect(isLoopbackHost(host)).toBe(false);
-      },
-    );
   });
 
   it("honors an explicit stdio argument", () => {
