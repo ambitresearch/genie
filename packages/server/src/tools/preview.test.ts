@@ -12,7 +12,7 @@
  * port or importing Vite — mirroring how `refine.test.ts` fakes the Playwright
  * cropper and `write_files.test.ts` fakes the store.
  */
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,16 +24,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createServer } from "../server.js";
 import type { Manifest } from "../manifest/index.js";
+import type { CardAssetBroker, CardAssetKit } from "../ui/card-asset-broker.js";
+import { GRID_RESOURCE_URI, type EmbeddedManifest } from "../ui/grid-resource.js";
 import {
   PREVIEW_TOOL_NAME,
+  PREVIEW_EMBEDDED_MANIFEST_META_KEY,
   DEFAULT_VIEWER_PORT,
-  GRID_RESOURCE_BASE,
   InvalidKitIdError,
   KitNotFoundError,
   ViewerRegistry,
   autoOpenDisabledByEnv,
   buildResourceUri,
-  clientSupportsUi,
   getUiExtensionCapability,
   hasUiExtensionCapability,
   MCP_APP_MIME,
@@ -96,6 +97,45 @@ function deferredBooter(): {
   return { booter: Object.assign(fn, { calls }), resolve: (v) => resolveFn(v) };
 }
 
+/** A lazy process broker seam that records when UI-capable local previews use it. */
+function fakeCardAssetBroker(origin = "http://g-opaque.localhost:5188"): {
+  broker: CardAssetBroker;
+  getBroker: ReturnType<typeof vi.fn<() => Promise<CardAssetBroker>>>;
+  registerKit: ReturnType<typeof vi.fn<(kitId: string, root: string) => Promise<CardAssetKit>>>;
+} {
+  const parsed = new URL(origin);
+  const registerKit = vi.fn(
+    async (kitId: string, _root: string): Promise<CardAssetKit> => ({
+      kitId,
+      hostname: parsed.hostname,
+      authority: parsed.host,
+      origin,
+      urlFor: (path: string) =>
+        `${origin}/${path
+          .replace(/^\//, "")
+          .split("/")
+          .map((segment) => encodeURIComponent(segment))
+          .join("/")}`,
+    }),
+  );
+  const broker: CardAssetBroker = {
+    address: "127.0.0.1",
+    port: Number(parsed.port),
+    registerKit,
+    getKit: () => undefined,
+    frameOrigins: () => [],
+    close: async () => {},
+  };
+  return { broker, getBroker: vi.fn(async () => broker), registerKit };
+}
+
+function embeddedManifestFrom(result: { _meta?: unknown }): EmbeddedManifest | undefined {
+  if (typeof result._meta !== "object" || result._meta === null) return undefined;
+  return (result._meta as Record<string, unknown>)[PREVIEW_EMBEDDED_MANIFEST_META_KEY] as
+    | EmbeddedManifest
+    | undefined;
+}
+
 async function makeKitsRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "genie-preview-kits-"));
   await mkdir(join(root, "acme-abc123"), { recursive: true });
@@ -106,8 +146,8 @@ async function makeKitsRoot(): Promise<string> {
  * Create a kit dir under `kitsRoot` holding one valid `@genie`-marked component,
  * so `ensureManifest` (piece A) has something real to compile. Returns the
  * kitId. The marker's `name="Get Started"` is deliberately different from the
- * filename stem so a later assertion can prove the manifest was actually
- * compiled from this file (not a leftover seed).
+ * filename stem so assertions exercise the compiler's filename-derived naming
+ * contract (`preview`) rather than treating marker metadata as authoritative.
  */
 async function seedKitWithComponent(kitsRoot: string, kitId: string): Promise<void> {
   const compDir = join(kitsRoot, kitId, "components", "actions", "Button");
@@ -125,25 +165,38 @@ async function seedKitWithComponent(kitsRoot: string, kitId: string): Promise<vo
 
 describe("buildResourceUri (AC3/AC4)", () => {
   it("always targets ui://genie/grid and carries kitId", () => {
-    expect(buildResourceUri({ kitId: "acme-abc123" })).toBe("ui://genie/grid?kitId=acme-abc123");
+    expect(buildResourceUri({ kitId: "acme-abc123" })).toBe(
+      `${GRID_RESOURCE_URI}&kitId=acme-abc123`,
+    );
   });
 
   it("appends group when present", () => {
     expect(buildResourceUri({ kitId: "acme-abc123", group: "actions" })).toBe(
-      "ui://genie/grid?kitId=acme-abc123&group=actions",
+      `${GRID_RESOURCE_URI}&kitId=acme-abc123&group=actions`,
     );
   });
 
   it("appends componentName when present", () => {
     expect(buildResourceUri({ kitId: "acme-abc123", componentName: "Button" })).toBe(
-      "ui://genie/grid?kitId=acme-abc123&componentName=Button",
+      `${GRID_RESOURCE_URI}&kitId=acme-abc123&componentName=Button`,
     );
   });
 
   it("carries kitId, componentName, and group in a stable order", () => {
     expect(
       buildResourceUri({ kitId: "acme-abc123", componentName: "Button", group: "actions" }),
-    ).toBe("ui://genie/grid?kitId=acme-abc123&componentName=Button&group=actions");
+    ).toBe(`${GRID_RESOURCE_URI}&kitId=acme-abc123&componentName=Button&group=actions`);
+  });
+
+  it("extends the versioned resource URI without replacing its cache-busting query", () => {
+    const instance = new URL(GRID_RESOURCE_URI).searchParams.get("instance");
+    expect(instance).toMatch(/^[a-f0-9]{32}$/);
+    const uri = new URL(buildResourceUri({ kitId: "acme-abc123" }));
+    expect([...uri.searchParams.entries()]).toEqual([
+      ["v", "2"],
+      ["instance", instance],
+      ["kitId", "acme-abc123"],
+    ]);
   });
 
   it("url-encodes filter values with spaces / special chars", () => {
@@ -152,44 +205,6 @@ describe("buildResourceUri (AC3/AC4)", () => {
     const qs = new URLSearchParams(uri.split("?")[1]);
     expect(qs.get("group")).toBe("form controls");
     expect(qs.get("kitId")).toBe("acme-abc123");
-  });
-});
-
-// ─── AC7: clientSupportsUi ───────────────────────────────────────────────────
-
-describe("clientSupportsUi (AC7)", () => {
-  it.each([
-    "claude",
-    "Claude Code",
-    "claude-ai",
-    "vscode",
-    "Visual Studio Code",
-    "ChatGPT",
-    "openai-chatgpt",
-    "cursor",
-    "Cursor",
-    "goose",
-    "Postman",
-    "MCPJam",
-  ])("recognizes %s as a ui:// host", (name) => {
-    expect(clientSupportsUi(name)).toBe(true);
-  });
-
-  it.each([
-    "codex",
-    "cline",
-    "continue",
-    "openai",
-    "openai-node",
-    "OpenAI SDK",
-    "some-random-cli",
-    "",
-  ])("treats %s as a non-ui:// host", (name) => {
-    expect(clientSupportsUi(name)).toBe(false);
-  });
-
-  it("returns false when the client name is unknown/undefined", () => {
-    expect(clientSupportsUi(undefined)).toBe(false);
   });
 });
 
@@ -251,13 +266,13 @@ describe("getUiExtensionCapability", () => {
     ["undefined caps", undefined],
     ["empty caps", {}],
     ["no extensions", { tools: {} }],
+    ["empty extensions", { extensions: {} }],
+    ["different extension", { extensions: { "io.example/other": {} } }],
   ])("returns undefined when extension negotiation is unavailable: %s", (_label, caps) => {
     expect(getUiExtensionCapability(caps)).toBeUndefined();
   });
 
   it.each([
-    ["empty extensions", { extensions: {} }],
-    ["different extension", { extensions: { "io.example/other": {} } }],
     ["missing app MIME", { extensions: { [UI_EXTENSION_ID]: { mimeTypes: ["text/html"] } } }],
   ])("returns false for a negotiated negative: %s", (_label, caps) => {
     expect(getUiExtensionCapability(caps)).toBe(false);
@@ -407,7 +422,7 @@ describe("runPreview (AC3, AC6)", () => {
     const result = await runPreview(
       { kitsRoot, registry },
       { kitId: "acme-abc123" },
-      { transportKind: "stdio" },
+      { uiCapable: false, transportKind: "stdio" },
     );
 
     expect(result.content).toHaveLength(1);
@@ -417,10 +432,10 @@ describe("runPreview (AC3, AC6)", () => {
     // The file:// vehicle is always present (RFC G-5).
     const fileUrl = pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href;
     expect(result.content[0]?.text).toContain(fileUrl);
-    expect(result._meta.ui.resourceUri).toBe("ui://genie/grid?kitId=acme-abc123");
+    expect(result._meta.ui.resourceUri).toBe(`${GRID_RESOURCE_URI}&kitId=acme-abc123`);
     // M4-06 AC6 — the same resourceUri is ALSO exposed under the ChatGPT Apps
     // SDK key so that ecosystem links the result to the ui://genie/grid widget.
-    expect(result._meta["openai/outputTemplate"]).toBe("ui://genie/grid?kitId=acme-abc123");
+    expect(result._meta["openai/outputTemplate"]).toBe(`${GRID_RESOURCE_URI}&kitId=acme-abc123`);
   });
 
   it("AC6: falls back to file://<kitDir>/index.html when the viewer cannot boot, still emitting _meta", async () => {
@@ -430,14 +445,14 @@ describe("runPreview (AC3, AC6)", () => {
     const result = await runPreview(
       { kitsRoot, registry },
       { kitId: "acme-abc123" },
-      { transportKind: "stdio" },
+      { uiCapable: false, transportKind: "stdio" },
     );
 
     const fileUrl = pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href;
     expect(result.content[0]?.text).toContain(fileUrl);
     expect(result.content[0]?.text).not.toContain("Preview running at");
     // _meta is emitted regardless of viewer availability (progressive enhancement).
-    expect(result._meta.ui.resourceUri).toBe("ui://genie/grid?kitId=acme-abc123");
+    expect(result._meta.ui.resourceUri).toBe(`${GRID_RESOURCE_URI}&kitId=acme-abc123`);
   });
 
   it("AC4: threads componentName + group into the resource URI", async () => {
@@ -451,7 +466,7 @@ describe("runPreview (AC3, AC6)", () => {
     );
 
     expect(result._meta.ui.resourceUri).toBe(
-      "ui://genie/grid?kitId=acme-abc123&componentName=Button&group=actions",
+      `${GRID_RESOURCE_URI}&kitId=acme-abc123&componentName=Button&group=actions`,
     );
   });
 
@@ -474,14 +489,194 @@ describe("runPreview (AC3, AC6)", () => {
     });
   });
 
+  it("renders a local UI-capable preview through the lazy card broker without Vite or a browser", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const booter = okBooter();
+    const broker = fakeCardAssetBroker();
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(booter),
+        env: {},
+        getCardAssetBroker: broker.getBroker,
+      },
+      { kitId: "acme-abc123", componentName: "preview", group: "actions" },
+      {
+        clientName: "some-future-host",
+        uiCapable: true,
+        transportKind: "stdio",
+        locality: "local",
+      },
+    );
+
+    expect(broker.getBroker).toHaveBeenCalledOnce();
+    expect(broker.registerKit).toHaveBeenCalledWith("acme-abc123", join(kitsRoot, "acme-abc123"));
+    expect(booter.calls).toHaveLength(0);
+    expect(booter.openedUrls).toHaveLength(0);
+    expect(result.structuredContent.viewerUrl).toBeUndefined();
+    expect(result.structuredContent.embeddedError).toBeUndefined();
+    expect(result.structuredContent).not.toHaveProperty("embeddedManifest");
+    expect(JSON.stringify(result.structuredContent)).not.toContain("g-opaque.localhost");
+    expect(embeddedManifestFrom(result)).toMatchObject({
+      groups: ["actions"],
+      components: [
+        {
+          name: "preview",
+          sourcePath: "components/actions/Button/preview.html",
+          path: "http://g-opaque.localhost:5188/components/actions/Button/preview.html",
+        },
+      ],
+    });
+    expect(result.content[0]?.text).toContain("inline MCP App");
+    expect(result.content[0]?.text).not.toContain("127.0.0.1:5173");
+  });
+
+  it("returns both inline and viewer fallbacks when the UI extension is omitted", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const booter = okBooter();
+    const broker = fakeCardAssetBroker();
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(booter),
+        env: {},
+        getCardAssetBroker: broker.getBroker,
+      },
+      { kitId: "acme-abc123" },
+      { clientName: "codex", transportKind: "stdio", locality: "local" },
+    );
+
+    expect(broker.getBroker).toHaveBeenCalledOnce();
+    expect(booter.calls).toHaveLength(1);
+    expect(booter.calls[0]?.open).toBe(false);
+    expect(booter.openedUrls).toHaveLength(0);
+    expect(embeddedManifestFrom(result)?.components).toHaveLength(1);
+    expect(result.structuredContent.viewerUrl).toBe("http://127.0.0.1:5173/");
+    expect(result.content[0]?.text).toContain("inline MCP App");
+    expect(result.content[0]?.text).toContain("http://127.0.0.1:5173/");
+  });
+
+  it("uses a valid configured previews origin instead of binding the local card broker", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const booter = okBooter();
+    const broker = fakeCardAssetBroker();
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(booter),
+        env: {},
+        previewsBaseUrl: "https://previews.example.com/root/",
+        getCardAssetBroker: broker.getBroker,
+      },
+      { kitId: "acme-abc123" },
+      { uiCapable: true, transportKind: "stdio", locality: "local" },
+    );
+
+    expect(broker.getBroker).not.toHaveBeenCalled();
+    expect(booter.calls).toHaveLength(0);
+    expect(booter.openedUrls).toHaveLength(0);
+    expect(embeddedManifestFrom(result)?.components[0]?.path).toMatch(
+      /^https:\/\/previews\.example\.com\/root\/acme-abc123\//,
+    );
+  });
+
+  it("reports a local inline fallback without starting Vite when the card broker fails", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const getCardAssetBroker = vi.fn(async (): Promise<CardAssetBroker> => {
+      throw new Error("EADDRINUSE: card asset port");
+    });
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(booter),
+        env: {},
+        getCardAssetBroker,
+      },
+      { kitId: "acme-abc123" },
+      { uiCapable: true, transportKind: "stdio", locality: "local" },
+    );
+
+    expect(getCardAssetBroker).toHaveBeenCalledOnce();
+    expect(booter.calls).toHaveLength(0);
+    expect(booter.openedUrls).toHaveLength(0);
+    expect(result.structuredContent.viewerUrl).toBeUndefined();
+    expect(embeddedManifestFrom(result)).toBeUndefined();
+    expect(result.structuredContent.embeddedError).toContain("card asset broker could not start");
+    expect(result.structuredContent.fileUrl).toMatch(/^file:/);
+  });
+
+  it("keeps the viewer fallback without opening it when the omitted-capability broker fails", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const getCardAssetBroker = vi.fn(async (): Promise<CardAssetBroker> => {
+      throw new Error("EADDRINUSE: card asset port");
+    });
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(booter),
+        env: {},
+        getCardAssetBroker,
+      },
+      { kitId: "acme-abc123" },
+      { transportKind: "stdio", locality: "local" },
+    );
+
+    expect(getCardAssetBroker).toHaveBeenCalledOnce();
+    expect(booter.calls).toHaveLength(1);
+    expect(booter.openedUrls).toHaveLength(0);
+    expect(embeddedManifestFrom(result)).toBeUndefined();
+    expect(result.structuredContent.viewerUrl).toBe("http://127.0.0.1:5173/");
+    expect(result.content[0]?.text).toContain("http://127.0.0.1:5173/");
+  });
+
+  it("does not start the lazy card broker for a local tools-only client", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = okBooter();
+    const broker = fakeCardAssetBroker();
+
+    const result = await runPreview(
+      {
+        kitsRoot,
+        registry: new ViewerRegistry(booter),
+        env: {},
+        getCardAssetBroker: broker.getBroker,
+      },
+      { kitId: "acme-abc123" },
+      { clientName: "tools-only", uiCapable: false, transportKind: "stdio", locality: "local" },
+    );
+
+    expect(broker.getBroker).not.toHaveBeenCalled();
+    expect(broker.registerKit).not.toHaveBeenCalled();
+    expect(booter.calls).toHaveLength(1);
+    expect(booter.openedUrls).toEqual(["http://127.0.0.1:5173/"]);
+    expect(result.structuredContent.viewerUrl).toBe("http://127.0.0.1:5173/");
+  });
+
   it("returns a filtered embedded manifest without starting a remote viewer", async () => {
     const kitsRoot = await makeKitsRoot();
     await seedKitWithComponent(kitsRoot, "acme-abc123");
     const booter = okBooter("http://127.0.0.1:5173/");
     const registry = new ViewerRegistry(booter);
 
+    const broker = fakeCardAssetBroker();
     const result = await runPreview(
-      { kitsRoot, registry, env: {}, previewsBaseUrl: "https://previews.example.com" },
+      {
+        kitsRoot,
+        registry,
+        env: {},
+        previewsBaseUrl: "https://previews.example.com",
+        getCardAssetBroker: broker.getBroker,
+      },
       { kitId: "acme-abc123", group: "actions" },
       { clientName: "remote-host", uiCapable: true, transportKind: "http" },
     );
@@ -490,10 +685,11 @@ describe("runPreview (AC3, AC6)", () => {
     expect(result.structuredContent.viewerUrl).toBeUndefined();
     expect(result.structuredContent.fileUrl).toBeUndefined();
     expect(result.content[0]?.text).not.toContain("file:");
+    expect(broker.getBroker).not.toHaveBeenCalled();
     expect(booter.calls).toHaveLength(0);
-    expect(result.structuredContent.embeddedManifest.groups).toEqual(["actions"]);
-    expect(result.structuredContent.embeddedManifest.components).toHaveLength(1);
-    expect(result.structuredContent.embeddedManifest.components[0]?.path).toMatch(
+    expect(embeddedManifestFrom(result)?.groups).toEqual(["actions"]);
+    expect(embeddedManifestFrom(result)?.components).toHaveLength(1);
+    expect(embeddedManifestFrom(result)?.components[0]?.path).toMatch(
       /^https:\/\/previews\.example\.com\//,
     );
   });
@@ -518,7 +714,7 @@ describe("runPreview (AC3, AC6)", () => {
 
     expect(readPreviewBytes).not.toHaveBeenCalled();
     expect(booter.calls).toHaveLength(0);
-    expect(result.structuredContent.embeddedManifest).toBeUndefined();
+    expect(embeddedManifestFrom(result)).toBeUndefined();
     expect(result.structuredContent.embeddedError).toContain("does not support MCP Apps");
     expect(result.structuredContent.embeddedError).toContain("remote-locality");
     expect(result.structuredContent.embeddedError).not.toContain("HTTP");
@@ -542,7 +738,7 @@ describe("runPreview (AC3, AC6)", () => {
     );
 
     expect(readPreviewBytes).not.toHaveBeenCalled();
-    expect(result.structuredContent.embeddedManifest).toBeUndefined();
+    expect(embeddedManifestFrom(result)).toBeUndefined();
   });
 
   it("returns an explicit embedded error for HTTP without a previews origin", async () => {
@@ -564,7 +760,7 @@ describe("runPreview (AC3, AC6)", () => {
 
     expect(readPreviewBytes).not.toHaveBeenCalled();
     expect(booter.calls).toHaveLength(0);
-    expect(result.structuredContent.embeddedManifest).toBeUndefined();
+    expect(embeddedManifestFrom(result)).toBeUndefined();
     expect(result.structuredContent.embeddedError).toContain("GENIE_PREVIEWS_BASE_URL");
   });
 
@@ -587,7 +783,7 @@ describe("runPreview (AC3, AC6)", () => {
 
     expect(readPreviewBytes).not.toHaveBeenCalled();
     expect(booter.calls).toHaveLength(0);
-    expect(result.structuredContent.embeddedManifest?.components).toEqual([]);
+    expect(embeddedManifestFrom(result)?.components).toEqual([]);
     expect(result.structuredContent.embeddedError).toBeUndefined();
     expect(result.content[0]?.text).toContain("inline MCP App");
   });
@@ -627,18 +823,21 @@ describe("runPreview (AC3, AC6)", () => {
     expect(readPreviewBytes).not.toHaveBeenCalled();
     expect(result.structuredContent.locality).toBe("local");
     expect(result.structuredContent.viewerUrl).toBe("http://127.0.0.1:5173/");
-    expect(result.structuredContent.embeddedError).toBeUndefined();
+    expect(result.structuredContent.embeddedError).toContain(
+      "No CSP-safe inline card origin is available",
+    );
   });
 
-  it("falls back to a CSP-safe embedded manifest when a local MCP App viewer cannot boot", async () => {
+  it("uses a configured CSP-safe origin without booting the browser viewer", async () => {
     const kitsRoot = await makeKitsRoot();
     await seedKitWithComponent(kitsRoot, "acme-abc123");
     const readPreviewBytes = vi.fn(async () => Buffer.from("<button>Save</button>"));
+    const booter = failBooter("EADDRINUSE");
 
     const result = await runPreview(
       {
         kitsRoot,
-        registry: new ViewerRegistry(failBooter("EADDRINUSE")),
+        registry: new ViewerRegistry(booter),
         env: {},
         previewsBaseUrl: "https://previews.example.com",
         readPreviewBytes,
@@ -648,9 +847,10 @@ describe("runPreview (AC3, AC6)", () => {
     );
 
     expect(readPreviewBytes).not.toHaveBeenCalled();
+    expect(booter.calls).toHaveLength(0);
     expect(result.structuredContent.viewerUrl).toBeUndefined();
     expect(result.structuredContent.embeddedError).toBeUndefined();
-    expect(result.structuredContent.embeddedManifest.components[0]?.path).toMatch(
+    expect(embeddedManifestFrom(result)?.components[0]?.path).toMatch(
       /^https:\/\/previews\.example\.com\//,
     );
     expect(result.content[0]?.text).toContain("inline MCP App");
@@ -660,11 +860,12 @@ describe("runPreview (AC3, AC6)", () => {
     const kitsRoot = await makeKitsRoot();
     await seedKitWithComponent(kitsRoot, "acme-abc123");
     const readPreviewBytes = vi.fn(async () => Buffer.from("<button>Save</button>"));
+    const booter = failBooter("EADDRINUSE");
 
     const result = await runPreview(
       {
         kitsRoot,
-        registry: new ViewerRegistry(failBooter("EADDRINUSE")),
+        registry: new ViewerRegistry(booter),
         env: {},
         readPreviewBytes,
       },
@@ -673,8 +874,11 @@ describe("runPreview (AC3, AC6)", () => {
     );
 
     expect(readPreviewBytes).not.toHaveBeenCalled();
-    expect(result.structuredContent.embeddedManifest).toBeUndefined();
-    expect(result.structuredContent.embeddedError).toContain("viewer could not start");
+    expect(booter.calls).toHaveLength(0);
+    expect(embeddedManifestFrom(result)).toBeUndefined();
+    expect(result.structuredContent.embeddedError).toContain(
+      "No CSP-safe inline card origin is available",
+    );
     expect(result.structuredContent.fileUrl).toMatch(/^file:/);
   });
 
@@ -698,7 +902,7 @@ describe("runPreview (AC3, AC6)", () => {
 
     expect(readPreviewBytes).not.toHaveBeenCalled();
     expect(booter.calls).toHaveLength(0);
-    expect(result.structuredContent.embeddedManifest).toBeUndefined();
+    expect(embeddedManifestFrom(result)).toBeUndefined();
     expect(result.structuredContent.embeddedError).toMatch(/invalid/i);
   });
 
@@ -709,7 +913,7 @@ describe("runPreview (AC3, AC6)", () => {
     const result = await runPreview(
       { kitsRoot, registry },
       { kitId: "acme-abc123" },
-      { transportKind: "stdio" },
+      { uiCapable: false, transportKind: "stdio" },
     );
 
     expect(result.structuredContent.viewerUrl).toBeUndefined();
@@ -735,9 +939,9 @@ describe("runPreview (AC3, AC6)", () => {
     lines.restore();
     const req = lines.parsed().find((l) => l.event === "preview.request");
     expect(req?.uiCapable).toBe(true);
-    expect(req?.uiSupported).toBe(true);
+    expect(req?.uiCapability).toBe("supported");
     expect(req?.autoOpen).toBe(false);
-    expect(booter.calls[0]?.open).toBe(false);
+    expect(booter.calls).toHaveLength(0);
   });
 
   it("uiCapable: false overrides a known UI host name", async () => {
@@ -755,7 +959,7 @@ describe("runPreview (AC3, AC6)", () => {
     lines.restore();
     const req = lines.parsed().find((l) => l.event === "preview.request");
     expect(req?.uiCapable).toBe(false);
-    expect(req?.uiSupported).toBe(false);
+    expect(req?.uiCapability).toBe("unsupported");
     expect(req?.autoOpen).toBe(true);
     expect(booter.calls[0]?.open).toBe(false);
     expect(booter.openedUrls).toEqual(["http://127.0.0.1:5173/"]);
@@ -814,6 +1018,24 @@ describe("runPreview (AC3, AC6)", () => {
     expect(booter.calls).toHaveLength(0);
   });
 
+  it("rejects a symlinked kit directory before compiling or booting", async () => {
+    const kitsRoot = await mkdtemp(join(tmpdir(), "genie-preview-kits-"));
+    const outside = await mkdtemp(join(tmpdir(), "genie-preview-outside-"));
+    await symlink(outside, join(kitsRoot, "acme-abc123"), "dir");
+    const booter = okBooter();
+    const compile = vi.fn(async () => ({ version: 1, groups: [], components: [] }) as Manifest);
+
+    await expect(
+      runPreview(
+        { kitsRoot, registry: new ViewerRegistry(booter), ensureManifest: compile },
+        { kitId: "acme-abc123" },
+        {},
+      ),
+    ).rejects.toThrow(KitNotFoundError);
+    expect(compile).not.toHaveBeenCalled();
+    expect(booter.calls).toHaveLength(0);
+  });
+
   it("AC7: logs a preview.request line recording the client + ui:// support", async () => {
     const kitsRoot = await makeKitsRoot();
     const registry = new ViewerRegistry(okBooter());
@@ -824,11 +1046,11 @@ describe("runPreview (AC3, AC6)", () => {
     const req = lines.parsed().find((l) => l.event === "preview.request");
     expect(req).toBeDefined();
     expect(req?.client).toBe("claude");
-    expect(req?.uiSupported).toBe(true);
+    expect(req?.uiCapability).toBe("unknown");
     lines.restore();
   });
 
-  it("AC7: records uiSupported=false for a non-ui:// harness", async () => {
+  it("AC7: treats missing capability metadata as metadata-first regardless of product name", async () => {
     const kitsRoot = await makeKitsRoot();
     const registry = new ViewerRegistry(okBooter());
     const lines = captureStderr();
@@ -837,7 +1059,7 @@ describe("runPreview (AC3, AC6)", () => {
 
     const req = lines.parsed().find((l) => l.event === "preview.request");
     expect(req?.client).toBe("codex");
-    expect(req?.uiSupported).toBe(false);
+    expect(req?.uiCapability).toBe("unknown");
     lines.restore();
   });
 });
@@ -883,7 +1105,7 @@ describe("runPreview manifest compile (piece A)", () => {
     // Still reports the viewer URL — a compile that yields an empty manifest is
     // a fine result, not an error.
     expect(result.content[0]?.text).toContain("http://127.0.0.1:5173/");
-    expect(result._meta.ui.resourceUri).toBe("ui://genie/grid?kitId=acme-abc123");
+    expect(result._meta.ui.resourceUri).toBe(`${GRID_RESOURCE_URI}&kitId=acme-abc123`);
   });
 
   it("propagates genuine manifest compilation failures and does not boot", async () => {
@@ -946,6 +1168,10 @@ describe("shouldAutoOpen (piece B decision)", () => {
   it("does NOT open when the embedding transport is unknown", () => {
     expect(shouldAutoOpen(false, {})).toBe(false);
   });
+
+  it("does NOT open when UI capability negotiation is omitted", () => {
+    expect(shouldAutoOpen(undefined, {}, "stdio")).toBe(false);
+  });
 });
 
 describe("runPreview auto-open wiring (piece B)", () => {
@@ -957,7 +1183,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: {} },
       { kitId: "acme-abc123" },
-      { clientName: "codex", transportKind: "stdio" },
+      { clientName: "codex", uiCapable: false, transportKind: "stdio" },
     );
 
     expect(booter.calls).toHaveLength(1);
@@ -973,7 +1199,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: {} },
       { kitId: "acme-abc123", componentName: "Button", group: "actions" },
-      { clientName: "codex", transportKind: "stdio", locality: "local" },
+      { clientName: "codex", uiCapable: false, transportKind: "stdio", locality: "local" },
     );
 
     expect(booter.openedUrls).toEqual([
@@ -981,7 +1207,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     ]);
   });
 
-  it("passes open:false to the booter for a ui://-capable host", async () => {
+  it("does not boot the browser viewer for a ui://-capable host", async () => {
     const kitsRoot = await makeKitsRoot();
     const booter = okBooter();
     const registry = new ViewerRegistry(booter);
@@ -989,10 +1215,10 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: {} },
       { kitId: "acme-abc123" },
-      { clientName: "claude", transportKind: "stdio" },
+      { clientName: "claude", uiCapable: true, transportKind: "stdio" },
     );
 
-    expect(booter.calls[0]?.open).toBe(false);
+    expect(booter.calls).toHaveLength(0);
   });
 
   it("passes open:false for a non-ui:// host when GENIE_PREVIEW_NO_OPEN is set", async () => {
@@ -1003,7 +1229,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: { GENIE_PREVIEW_NO_OPEN: "1" } },
       { kitId: "acme-abc123" },
-      { clientName: "codex", transportKind: "stdio" },
+      { clientName: "codex", uiCapable: false, transportKind: "stdio" },
     );
 
     expect(booter.calls[0]?.open).toBe(false);
@@ -1017,7 +1243,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: {} },
       { kitId: "acme-abc123" },
-      { clientName: "codex", transportKind: "http", locality: "local" },
+      { clientName: "codex", uiCapable: false, transportKind: "http", locality: "local" },
     );
 
     expect(booter.calls[0]?.open).toBe(false);
@@ -1032,12 +1258,12 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       deps,
       { kitId: "acme-abc123" },
-      { clientName: "codex", transportKind: "stdio" },
+      { clientName: "codex", uiCapable: false, transportKind: "stdio" },
     );
     await runPreview(
       deps,
       { kitId: "acme-abc123" },
-      { clientName: "codex", transportKind: "stdio" },
+      { clientName: "codex", uiCapable: false, transportKind: "stdio" },
     );
 
     // Second call reuses both the cached viewer and the same-target browser open.
@@ -1051,7 +1277,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     const booter = okBooter();
     const registry = new ViewerRegistry(booter);
     const deps = { kitsRoot, registry, env: {} };
-    const ctx = { clientName: "codex", transportKind: "stdio" as const };
+    const ctx = { clientName: "codex", uiCapable: false, transportKind: "stdio" as const };
 
     await runPreview(deps, { kitId: "acme-abc123", componentName: "Button" }, ctx);
     await runPreview(deps, { kitId: "acme-abc123", componentName: "Card" }, ctx);
@@ -1071,7 +1297,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry, env: {} },
       { kitId: "acme-abc123" },
-      { clientName: "codex", transportKind: "stdio" },
+      { clientName: "codex", uiCapable: false, transportKind: "stdio" },
     );
 
     lines.restore();
@@ -1087,7 +1313,7 @@ describe("runPreview auto-open wiring (piece B)", () => {
     await runPreview(
       { kitsRoot, registry: new ViewerRegistry(booter), env: {} },
       { kitId: "acme-abc123" },
-      { clientName: "codex", transportKind: "stdio", locality: "remote" },
+      { clientName: "codex", uiCapable: false, transportKind: "stdio", locality: "remote" },
     );
 
     lines.restore();
@@ -1150,7 +1376,7 @@ describe("mcp__genie__preview (wired)", () => {
 
     expect(result.content[0]?.type).toBe("text");
     expect(result.content[0]?.text).toContain("http://127.0.0.1:5173/");
-    expect(result._meta?.ui?.resourceUri).toBe("ui://genie/grid?kitId=acme-abc123");
+    expect(result._meta?.ui?.resourceUri).toBe(`${GRID_RESOURCE_URI}&kitId=acme-abc123`);
   });
 
   it("advertises the static MCP App resource through tools/list discovery", async () => {
@@ -1159,7 +1385,7 @@ describe("mcp__genie__preview (wired)", () => {
     const { tools } = await client.listTools();
     const preview = tools.find((t) => t.name === PREVIEW_TOOL_NAME);
     expect((preview?._meta as { ui?: { resourceUri?: string } } | undefined)?.ui?.resourceUri).toBe(
-      GRID_RESOURCE_BASE,
+      GRID_RESOURCE_URI,
     );
   });
 
@@ -1169,7 +1395,7 @@ describe("mcp__genie__preview (wired)", () => {
     const { tools } = await client.listTools();
     const preview = tools.find((t) => t.name === PREVIEW_TOOL_NAME);
 
-    expect(preview?.description).toContain("do not negotiate UI support");
+    expect(preview?.description).toContain("explicitly negotiate no UI support");
     expect(preview?.description).not.toContain("other hosts (Codex, Copilot)");
   });
 
@@ -1188,6 +1414,7 @@ describe("mcp__genie__preview (wired)", () => {
       required: expect.arrayContaining(["kitId", "locality"]),
     });
     expect((preview?.outputSchema as { required?: string[] }).required).not.toContain("fileUrl");
+    expect(preview?.outputSchema).not.toHaveProperty("properties.embeddedManifest");
   });
 
   it("returns structuredContent over the wire", async () => {
@@ -1208,7 +1435,7 @@ describe("mcp__genie__preview (wired)", () => {
     expect(result.structuredContent?.viewerUrl).toBe("http://127.0.0.1:5173/");
   });
 
-  it("accepts optional subtitle and tags in embedded manifest cards over the wire", async () => {
+  it("returns optional embedded card details only in widget metadata over the wire", async () => {
     const kitsRoot = await makeKitsRoot();
     const server = new McpServer({ name: "genie-test", version: "0" });
     registerPreviewTool(server, {
@@ -1250,31 +1477,50 @@ describe("mcp__genie__preview (wired)", () => {
     });
 
     expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      embeddedManifest: {
-        components: [{ subtitle: "Primary action", tags: ["cta", "interactive"] }],
-      },
+    expect(result.structuredContent).not.toHaveProperty("embeddedManifest");
+    expect(embeddedManifestFrom(result)).toMatchObject({
+      components: [{ subtitle: "Primary action", tags: ["cta", "interactive"] }],
     });
   });
 
-  it("falls back to the initialize handshake's clientInfo name when no per-request _meta is sent", async () => {
+  it("uses hybrid inline and viewer delivery when initialize omits the UI extension", async () => {
     const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
     const server = new McpServer({ name: "genie-test", version: "0" });
-    registerPreviewTool(server, { kitsRoot, booter: okBooter() });
-    // A real ui:// host name in clientInfo — the way production hosts identify.
-    const client = new Client({ name: "cursor", version: "1.0.0" });
+    const booter = okBooter();
+    const broker = fakeCardAssetBroker();
+    registerPreviewTool(server, {
+      kitsRoot,
+      booter,
+      transportKind: "stdio",
+      getCardAssetBroker: broker.getBroker,
+    });
+    const client = new Client({ name: "codex", version: "1.0.0" });
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverT), client.connect(clientT)]);
     openClient = client;
     const lines = captureStderr();
 
-    await client.callTool({ name: PREVIEW_TOOL_NAME, arguments: { kitId: "acme-abc123" } });
+    const result = await client.callTool({
+      name: PREVIEW_TOOL_NAME,
+      arguments: { kitId: "acme-abc123" },
+    });
 
     lines.restore();
     const req = lines.parsed().find((l) => l.event === "preview.request");
-    expect(req?.client).toBe("cursor");
-    expect(req?.uiSupported).toBe(true);
+    expect(req?.client).toBe("codex");
+    expect(req?.uiCapable).toBeNull();
     expect(req?.autoOpen).toBe(false);
+    expect(broker.getBroker).toHaveBeenCalledOnce();
+    expect(booter.calls).toHaveLength(1);
+    expect(booter.openedUrls).toHaveLength(0);
+    expect(result.structuredContent).toMatchObject({
+      viewerUrl: "http://127.0.0.1:5173/",
+    });
+    expect(result.structuredContent).not.toHaveProperty("embeddedManifest");
+    expect(embeddedManifestFrom(result)).toMatchObject({
+      components: [{ name: "preview" }],
+    });
   });
 
   it("honours the MCP Apps extension capability from initialize (unknown client name)", async () => {
@@ -1297,9 +1543,60 @@ describe("mcp__genie__preview (wired)", () => {
     lines.restore();
     const req = lines.parsed().find((l) => l.event === "preview.request");
     expect(req?.uiCapable).toBe(true);
-    expect(req?.uiSupported).toBe(true);
+    expect(req?.uiCapability).toBe("supported");
     expect(req?.autoOpen).toBe(false);
-    expect(booter.calls[0]?.open).toBe(false);
+    expect(booter.calls).toHaveLength(0);
+  });
+
+  it("starts the registered card broker lazily on the first negotiated local UI call", async () => {
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const server = new McpServer({ name: "genie-test", version: "0" });
+    const booter = okBooter();
+    const broker = fakeCardAssetBroker();
+    registerPreviewTool(server, {
+      kitsRoot,
+      booter,
+      transportKind: "stdio",
+      getCardAssetBroker: broker.getBroker,
+    });
+    expect(broker.getBroker).not.toHaveBeenCalled();
+
+    const client = new Client(
+      { name: "some-future-host", version: "1.0.0" },
+      { capabilities: { extensions: { [UI_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME] } } } },
+    );
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+    openClient = client;
+    expect(broker.getBroker).not.toHaveBeenCalled();
+
+    const result = await client.callTool({
+      name: PREVIEW_TOOL_NAME,
+      arguments: { kitId: "acme-abc123", componentName: "preview", group: "actions" },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(broker.getBroker).toHaveBeenCalledOnce();
+    expect(broker.registerKit).toHaveBeenCalledWith("acme-abc123", join(kitsRoot, "acme-abc123"));
+    expect(booter.calls).toHaveLength(0);
+    expect(booter.openedUrls).toHaveLength(0);
+    expect(result.structuredContent).toMatchObject({
+      kitId: "acme-abc123",
+      componentName: "preview",
+      group: "actions",
+    });
+    expect(result.structuredContent).not.toHaveProperty("embeddedManifest");
+    expect(embeddedManifestFrom(result)).toMatchObject({
+      groups: ["actions"],
+      components: [
+        {
+          name: "preview",
+          sourcePath: "components/actions/Button/preview.html",
+          path: "http://g-opaque.localhost:5188/components/actions/Button/preview.html",
+        },
+      ],
+    });
   });
 
   it("honours an explicit negative capability instead of a known host name", async () => {
@@ -1309,7 +1606,11 @@ describe("mcp__genie__preview (wired)", () => {
     registerPreviewTool(server, { kitsRoot, booter, transportKind: "stdio" });
     const client = new Client(
       { name: "cursor", version: "1.0.0" },
-      { capabilities: { extensions: {} } },
+      {
+        capabilities: {
+          extensions: { [UI_EXTENSION_ID]: { mimeTypes: ["text/html"] } },
+        },
+      },
     );
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(serverT), client.connect(clientT)]);
@@ -1321,7 +1622,7 @@ describe("mcp__genie__preview (wired)", () => {
     lines.restore();
     const req = lines.parsed().find((l) => l.event === "preview.request");
     expect(req?.uiCapable).toBe(false);
-    expect(req?.uiSupported).toBe(false);
+    expect(req?.uiCapability).toBe("unsupported");
     expect(req?.autoOpen).toBe(true);
     expect(booter.calls[0]?.open).toBe(false);
     expect(booter.openedUrls).toEqual(["http://127.0.0.1:5173/"]);
@@ -1356,7 +1657,7 @@ describe("mcp__genie__preview (wired)", () => {
     lines.restore();
     const req = lines.parsed().find((l) => l.event === "preview.request");
     expect(req?.client).toBe("claude");
-    expect(req?.uiSupported).toBe(true);
+    expect(req?.uiCapability).toBe("unknown");
   });
 
   it("AC2: rejects a call with no kitId", async () => {

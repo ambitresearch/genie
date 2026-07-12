@@ -23,11 +23,12 @@ import {
   registerPreviewTool,
   type PreviewLocality,
 } from "./tools/preview.js";
-import { registerGridResource } from "./ui/grid-resource.js";
+import { normalizePreviewsBaseUrl, registerGridResource } from "./ui/grid-resource.js";
+import { startCardAssetBroker, type CardAssetBroker } from "./ui/card-asset-broker.js";
 import { LocalFsKitStore } from "./store/local.js";
 import type { KitStore } from "./store/interface.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
-import { registerServerDisposer, type TransportKind } from "./transport.js";
+import { getServerTransportKind, registerServerDisposer, type TransportKind } from "./transport.js";
 
 /** Server identity. Bumped independently of the workspace version. */
 export const SERVER_INFO = {
@@ -276,6 +277,60 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // so the two verbs enforce plan authorization through one identical seam.
   registerDeleteFilesTool(server, kitStore);
 
+  // Keep locality unresolved when an embedder has not selected its transport
+  // yet. `startTransport` records the actual kind before connecting, and both
+  // preview plus the lazy broker provider resolve against that runtime value.
+  const previewLocality =
+    options.previewLocality ??
+    (options.transportKind === undefined
+      ? undefined
+      : options.transportKind === "stdio"
+        ? "local"
+        : "remote");
+  const mayNeedLocalCardBroker =
+    options.transportKind !== "http" &&
+    options.previewLocality !== "remote" &&
+    normalizePreviewsBaseUrl(process.env.GENIE_PREVIEWS_BASE_URL) === undefined;
+
+  // Local stdio app surfaces share one loopback card-asset broker. Explicit
+  // remote/HTTP configurations omit the provider; an unresolved embedder gets
+  // a guarded provider that cannot bind until startup records local stdio.
+  let cardAssetBrokerPromise: Promise<CardAssetBroker> | undefined;
+  let cardAssetBrokerDisposed = false;
+  const getCardAssetBroker = mayNeedLocalCardBroker
+    ? async (): Promise<CardAssetBroker> => {
+        if (cardAssetBrokerDisposed) {
+          throw new Error("Card asset broker provider is disposed.");
+        }
+        const transportKind = options.transportKind ?? getServerTransportKind(server);
+        const locality =
+          options.previewLocality ?? (transportKind === "stdio" ? "local" : "remote");
+        if (transportKind !== "stdio" || locality !== "local") {
+          throw new Error("Card asset broker requires a local stdio transport.");
+        }
+
+        if (cardAssetBrokerPromise === undefined) {
+          const startup = startCardAssetBroker();
+          cardAssetBrokerPromise = startup;
+          // Preserve single-flight startup while allowing a transient bind
+          // failure to recover on the next preview/resource request.
+          void startup.catch(() => {
+            if (cardAssetBrokerPromise === startup) cardAssetBrokerPromise = undefined;
+          });
+        }
+        return cardAssetBrokerPromise;
+      }
+    : undefined;
+  if (getCardAssetBroker !== undefined) {
+    registerServerDisposer(server, async () => {
+      cardAssetBrokerDisposed = true;
+      const startup = cardAssetBrokerPromise;
+      if (startup === undefined) return;
+      const cardAssetBroker = await startup.catch(() => undefined);
+      await cardAssetBroker?.close();
+    });
+  }
+
   // preview (M4-05 / DRO-267): returns local viewer/file URLs only to local
   // clients, and points ui://-capable hosts at the inline `ui://genie/grid`
   // resource (registered by M4-06) via `_meta.ui.resourceUri`. Boots the Vite
@@ -286,7 +341,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   const previewRegistry = registerPreviewTool(server, {
     kitsRoot,
     transportKind: options.transportKind,
-    locality: options.previewLocality,
+    locality: previewLocality,
+    ...(getCardAssetBroker !== undefined ? { getCardAssetBroker } : {}),
   });
   registerServerDisposer(server, () => previewRegistry.closeAll());
 
@@ -298,7 +354,10 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // `<script type="application/json" id="manifest">` so the iframe — whose CSP
   // is `connect-src 'none'` — needs no fetch. Bound to the same `kitsRoot` as
   // the kit verbs + `preview`, so a `kitId` resolves to the same on-disk kit.
-  registerGridResource(server, { kitsRoot });
+  registerGridResource(server, {
+    kitsRoot,
+    ...(getCardAssetBroker !== undefined ? { getCardAssetBroker } : {}),
+  });
 
   return server;
 }
