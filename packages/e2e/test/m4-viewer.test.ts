@@ -28,17 +28,22 @@
  *   AC5 — HMR is covered through the real Vite server (50-card save → one
  *         iframe load under 100ms) and the assembled ui:// resource (trusted
  *         postMessage installs fresh bytes by stable sourcePath).             ✅
- *
- * ── Deferred to a tracked follow-up (dependency not yet merged) ──────────────
  *   AC6-CSP — the embedded tier's `default-src 'none'` + iframe `sandbox`
- *         ENFORCEMENT check depends on DRO-269 (M4-07, dispatched as DRO-796),
- *         also unmerged. AC6's core — "vehicle (c) renders the same DOM" — IS
- *         covered here (the ui:// vehicle is a first-class part of the identity
- *         assertion); only the CSP-header enforcement assertion is deferred.
+ *         enforcement is asserted directly in THIS gate (below): the injected
+ *         CSP meta carries the hardened directives, and a probe injection into
+ *         the assembled document never executes. The exhaustive browser-level
+ *         enforcement mechanics (per-directive proofs, cross-origin sandbox
+ *         isolation, etc.) live in
+ *         `packages/server/src/ui/grid-resource.csp.chromium.test.ts` (M4-07,
+ *         DRO-269) — this gate's job is only to prove the SAME hardening is
+ *         wired into the one document this E2E suite's vehicle (c) actually
+ *         serves, not to re-derive M4-07's proofs.                            ✅
  *
- * The dispatch (DRO-797) explicitly authorises this split: "land the grid +
- * byte-identity coverage first and note the HMR/CSP cases as a tracked
- * follow-up rather than blocking the whole suite."
+ * (DRO-813 closed out this section: AC5 and AC6-CSP were tracked as a
+ * follow-up from the original M4-10 dispatch (DRO-797) — "land the grid +
+ * byte-identity coverage first, note the HMR/CSP cases as a tracked follow-up
+ * rather than blocking the whole suite" — pending DRO-266 (M4-04) and DRO-269
+ * (M4-07). Both merged to `main`; DRO-813 layered the deferred assertions in.)
  *
  * ── Sandboxed-workspace note (same as a11y.test.ts) ──────────────────────────
  * Chromium needs a lib closure + fonts this authoring sandbox provides via
@@ -49,7 +54,7 @@
  * less machine stays green; CI's dedicated `viewer-e2e` job sets
  * `GENIE_REQUIRE_VIEWER_E2E=1` so a broken install there fails loudly instead.
  */
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -60,6 +65,7 @@ import { compileManifest } from "../../server/src/manifest/index.js";
 import {
   buildFileVehicle,
   buildUiGridDocument,
+  closeServer,
   createViewerFixture,
   expectedIdentities,
   FIXTURE_COMPONENTS,
@@ -67,6 +73,7 @@ import {
   isChromiumAvailable,
   launchBrowser,
   readCardIdentities,
+  serveDir,
   startUiVehicle,
   startViteVehicle,
   type CardIdentity,
@@ -202,6 +209,65 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
     expect(html).toContain("<script>");
     expect(html).toContain("<style>");
   });
+
+  // ── AC6 (CSP half, DRO-813) — the served document carries the M4-07 policy ─
+  it("vehicle (c) ui:// — the served document carries the hardened CSP meta (AC6)", async () => {
+    const html = await buildUiGridDocument(fixture);
+    const metaMatch = html.match(
+      /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/,
+    );
+    expect(metaMatch).not.toBeNull();
+    const policy = metaMatch![1]!;
+    // The exact directive set grid-resource.ts's buildCspMeta emits (M4-07):
+    // deny by default, no unsafe-inline anywhere, no network egress, no
+    // form/object/base escape hatches.
+    expect(policy).toContain("default-src 'none'");
+    expect(policy).not.toContain("unsafe-inline");
+    expect(policy).toContain("connect-src 'none'");
+    expect(policy).toContain("object-src 'none'");
+    expect(policy).toContain("base-uri 'none'");
+    expect(policy).toContain("form-action 'none'");
+    // Placed before any other head content so it governs the whole document.
+    expect(html.indexOf(metaMatch![0])).toBeLessThan(html.indexOf("<script"));
+  });
+
+  // ── AC6 (CSP half, DRO-813) — the policy is actually ENFORCED by a browser ──
+  // (grid-resource.csp.chromium.test.ts owns the exhaustive per-directive/
+  // cross-origin proofs; this is the one "does the gate's own served document
+  // actually enforce it" check, run against the exact vehicle (c) this suite
+  // serves rather than a hand-built HTML string.)
+  it("vehicle (c) ui:// — an injected inline <script>/onerror never executes (AC6 enforcement)", async () => {
+    const html = await buildUiGridDocument(fixture);
+    const probe =
+      '<script>window.__genieCspProbe="script-ran"</script>' +
+      "<img src=\"x\" onerror='window.__genieCspProbe=\"onerror-ran\"'>";
+    const headClose = html.indexOf("</head>");
+    const withProbe =
+      headClose === -1 ? html + probe : html.slice(0, headClose) + probe + html.slice(headClose);
+
+    const root = await mkdtemp(join(fixture.kitsRoot, "csp-probe-"));
+    await writeFile(join(root, "index.html"), withProbe, "utf8");
+    const { server, url } = await serveDir(root);
+    const page = await browser.newPage();
+    const dialogs: string[] = [];
+    page.on("dialog", (dialog) => {
+      dialogs.push(dialog.message());
+      void dialog.dismiss();
+    });
+    try {
+      await gotoAndWaitForGrid(page, url);
+      // Give any (incorrectly unblocked) inline script/handler a tick to run.
+      await page.waitForTimeout(200);
+      const probeResult = await page.evaluate(
+        () => (globalThis as unknown as { __genieCspProbe?: string }).__genieCspProbe,
+      );
+      expect(probeResult).toBeUndefined();
+      expect(dialogs).toEqual([]);
+    } finally {
+      await page.close();
+      await closeServer(server);
+    }
+  }, 30_000);
 
   it("vehicle (c) ui:// — refreshes a data-backed card by stable source path with fresh bytes", async () => {
     const ui = await startUiVehicle(fixture);
