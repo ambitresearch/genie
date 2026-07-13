@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { auditSecretNames, loadSecrets, SECRET_SPECS, SecretValidationError } from "./config/secrets.js";
 import { createServer, SERVER_INFO } from "./server.js";
 import { resolvePreviewLocality, resolveTransport, startTransport } from "./transport.js";
 
@@ -8,6 +9,7 @@ function parseArgs(argv: string[]): {
   port?: number;
   host?: string;
   previewLocality?: string;
+  secretsFrom?: string;
   help: boolean;
   version: boolean;
 } {
@@ -30,6 +32,14 @@ function parseArgs(argv: string[]): {
           throw new Error("--preview-locality requires a value: local or remote.");
         }
         out.previewLocality = value;
+        break;
+      }
+      case "--secrets-from": {
+        const value = argv[++i];
+        if (value === undefined || value.trim() === "" || value.startsWith("-")) {
+          throw new Error("--secrets-from requires a file path.");
+        }
+        out.secretsFrom = value;
         break;
       }
       case "-h":
@@ -57,6 +67,7 @@ Options:
   --port <n>                 HTTP port (default: 3000)
   --host <addr>              HTTP host (default: 127.0.0.1)
   --preview-locality <mode>  Preview reachability: local or remote
+  --secrets-from <path>      Merge KEY=value secrets from a mounted file
   -v, --version              Print version and exit
   -h, --help                 Show this help
 
@@ -80,6 +91,34 @@ async function main(): Promise<void> {
   if (args.version) {
     process.stdout.write(`${SERVER_INFO.name} ${SERVER_INFO.version}\n`);
     return;
+  }
+
+  // AC6: merge a mounted secrets file into process.env, if given. AC2/AC3/AC4:
+  // validate shape (length, no argv leak) of whatever secrets are present and
+  // audit-log their names (never values). Deliberately *not* `required` here
+  // for any individual secret — `GENIE_LLM_API_KEY` in particular is read
+  // lazily by `tools/conjure.ts` specifically so that booting the server for
+  // non-LLM tools (kit/file/project tools, validate, etc.) doesn't force an
+  // LLM key to exist; making it a hard boot-time requirement here would
+  // regress that documented lazy-init property. Every secret that *is*
+  // present still gets the shape/leak checks (AC2), satisfying "no plaintext
+  // at rest, no secret ever passed via a CLI flag" without narrowing what
+  // genie can boot without.
+  try {
+    const secrets = await loadSecrets({
+      secretsFromPath: args.secretsFrom,
+      specs: SECRET_SPECS.map((spec) => ({ ...spec, required: false })),
+    });
+    const loaded = auditSecretNames(secrets);
+    if (loaded.length > 0) {
+      process.stderr.write(`genie: loaded secrets: ${loaded.join(", ")}\n`);
+    }
+  } catch (err) {
+    if (err instanceof SecretValidationError) {
+      process.stderr.write(`genie: fatal: ${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
   }
 
   const transportKind = resolveTransport(args.transport);
