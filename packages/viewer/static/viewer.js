@@ -104,6 +104,7 @@
    */
   var MANIFEST_ELEMENT_ID = "manifest";
   var TOOL_RESULT_SHELL_META = "genie-tool-result-shell";
+  var TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY = "genie/embeddedManifest";
   var MCP_APP_PROTOCOL_VERSION = "2026-01-26";
   var mcpAppRequestId = 0;
 
@@ -471,6 +472,11 @@
   function renderToolResult(doc, grid, result) {
     restoreShellHeader(doc);
     var structured = result && result.structuredContent;
+    var metadata = result && result._meta;
+    var embeddedManifest =
+      metadata && metadata[TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY] !== undefined
+        ? metadata[TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY]
+        : structured && structured.embeddedManifest;
     if ((result && result.isError) || !structured) {
       var messages = [];
       var content = result && Array.isArray(result.content) ? result.content : [];
@@ -482,16 +488,17 @@
       renderToolResultError(doc, grid, messages.join("\n") || "Preview unavailable");
       return false;
     }
+    if (embeddedManifest && canRenderEmbeddedManifest(embeddedManifest)) {
+      renderGrid(doc, grid, embeddedManifest);
+      return true;
+    }
+
     if (typeof structured.embeddedError === "string" && structured.embeddedError) {
       renderError(doc, grid, structured.embeddedError);
       return false;
     }
 
-    if (structured.locality !== "local" && structured.embeddedManifest) {
-      if (canRenderEmbeddedManifest(structured.embeddedManifest)) {
-        renderGrid(doc, grid, structured.embeddedManifest);
-        return true;
-      }
+    if (structured.locality !== "local" && embeddedManifest) {
       renderError(
         doc,
         grid,
@@ -502,11 +509,7 @@
 
     var rawUrl = structured && structured.viewerUrl;
     if (structured.locality !== "local" || typeof rawUrl !== "string") {
-      if (structured.embeddedManifest) {
-        if (canRenderEmbeddedManifest(structured.embeddedManifest)) {
-          renderGrid(doc, grid, structured.embeddedManifest);
-          return true;
-        }
+      if (embeddedManifest) {
         renderError(
           doc,
           grid,

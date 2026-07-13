@@ -50,13 +50,17 @@
  */
 import { createServer } from "node:http";
 import type { Server } from "node:http";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { chromium } from "playwright";
 import type { Browser, BrowserContext, ConsoleMessage, Dialog, Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Manifest, ManifestCard } from "../manifest/index.js";
+import { startCardAssetBroker, type CardAssetBroker } from "./card-asset-broker.js";
 import {
   buildCspMeta,
   collectInlineCspHashes,
@@ -104,7 +108,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close();
-});
+}, 30_000);
 
 async function newPage(): Promise<{ context: BrowserContext; page: Page }> {
   if (!browser) throw new Error("newPage without browser — should be unreachable under skipIf");
@@ -257,6 +261,116 @@ describe.skipIf(!chromiumAvailable)("M4-07 AC4 — script-src blocks inline exec
     } finally {
       await context.close();
       await close(server);
+    }
+  }, 30_000);
+
+  it("a real broker iframe runs hashed styles/scripts while blocking an unlisted handler", async () => {
+    const kitRoot = await mkdtemp(join(tmpdir(), "genie-broker-chromium-"));
+    let broker: CardAssetBroker | undefined;
+    let server: Server | undefined;
+    let context: BrowserContext | undefined;
+    try {
+      const cardPath = join(kitRoot, "components", "StatusBadge", "card.html");
+      await mkdir(join(cardPath, ".."), { recursive: true });
+      await writeFile(
+        cardPath,
+        "<!doctype html><html><head>" +
+          "<style>body{display:grid;gap:7px}</style></head><body>" +
+          '<button id="styled" style="color: rgb(12, 34, 56)" ' +
+          "onclick=\"window.name='handler-ran'\">Operational</button>" +
+          "<script>window.name='trusted-ran'</script>" +
+          "</body></html>",
+      );
+      broker = await startCardAssetBroker({ env: {} });
+      const kit = await broker.registerKit("status", kitRoot);
+      const cardUrl = kit.urlFor("components/StatusBadge/card.html");
+      const doc = injectCspMeta(BASE_SHELL, buildCspMeta(kit.origin)).replace(
+        '<main id="grid"></main>',
+        `<main id="grid"><iframe id="c" sandbox="allow-scripts" src="${cardUrl}"></iframe></main>`,
+      );
+      server = serveOne(doc);
+      const port = await listen(server);
+      const opened = await newPage();
+      context = opened.context;
+      const { page } = opened;
+
+      const { errors } = await collectConsole(page, async () => {
+        await page.goto(`http://127.0.0.1:${port}/`);
+        const frame = page.frames().find((candidate) => candidate.url() === cardUrl);
+        expect(frame).toBeDefined();
+        await frame!.locator("#styled").waitFor();
+
+        expect(await frame!.evaluate(() => window.name)).toBe("trusted-ran");
+        expect(
+          await frame!.locator("body").evaluate((body) => getComputedStyle(body).display),
+        ).toBe("grid");
+        expect(
+          await frame!.locator("#styled").evaluate((button) => getComputedStyle(button).color),
+        ).toBe("rgb(12, 34, 56)");
+
+        await frame!.locator("#styled").click();
+        await page.waitForTimeout(100);
+        expect(await frame!.evaluate(() => window.name)).toBe("trusted-ran");
+      });
+      expect(errors.some((error) => error.text().toLowerCase().includes("content security"))).toBe(
+        true,
+      );
+    } finally {
+      await context?.close();
+      if (server !== undefined) await close(server);
+      await broker?.close();
+      await rm(kitRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("a sandboxed broker card can load its relative stylesheet and script", async () => {
+    const kitRoot = await mkdtemp(join(tmpdir(), "genie-broker-assets-chromium-"));
+    let broker: CardAssetBroker | undefined;
+    let server: Server | undefined;
+    let context: BrowserContext | undefined;
+    try {
+      const componentDir = join(kitRoot, "components", "StatusBadge");
+      const assetsDir = join(kitRoot, "assets");
+      await mkdir(componentDir, { recursive: true });
+      await mkdir(assetsDir, { recursive: true });
+      await writeFile(
+        join(componentDir, "card.html"),
+        '<!doctype html><html><head><link rel="stylesheet" href="../../assets/card.css">' +
+          '</head><body><span id="status">Operational</span>' +
+          '<script src="../../assets/card.js"></script></body></html>',
+      );
+      await writeFile(assetsDir + "/card.css", "#status{color:rgb(12,34,56)}");
+      await writeFile(assetsDir + "/card.js", "window.name='external-assets-ran'");
+
+      broker = await startCardAssetBroker({ env: {} });
+      const kit = await broker.registerKit("status-assets", kitRoot);
+      const cardUrl = kit.urlFor("components/StatusBadge/card.html");
+      const doc = injectCspMeta(
+        BASE_SHELL,
+        buildCspMeta(undefined, undefined, [kit.origin]),
+      ).replace(
+        '<main id="grid"></main>',
+        `<main id="grid"><iframe id="c" sandbox="allow-scripts" src="${cardUrl}"></iframe></main>`,
+      );
+      server = serveOne(doc);
+      const port = await listen(server);
+      const opened = await newPage();
+      context = opened.context;
+      const { page } = opened;
+
+      await page.goto(`http://127.0.0.1:${port}/`);
+      const frame = page.frames().find((candidate) => candidate.url() === cardUrl);
+      expect(frame).toBeDefined();
+      await frame!.locator("#status").waitFor();
+      expect(await frame!.evaluate(() => window.name)).toBe("external-assets-ran");
+      expect(
+        await frame!.locator("#status").evaluate((status) => getComputedStyle(status).color),
+      ).toBe("rgb(12, 34, 56)");
+    } finally {
+      await context?.close();
+      if (server !== undefined) await close(server);
+      await broker?.close();
+      await rm(kitRoot, { recursive: true, force: true });
     }
   }, 30_000);
 

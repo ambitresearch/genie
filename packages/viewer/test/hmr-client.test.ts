@@ -554,8 +554,8 @@ describe("initMcpApp — standard tool result delivery", () => {
           transportKind: "http",
           locality: "remote",
           viewerUrl: "http://127.0.0.1:5173/",
-          embeddedManifest,
         },
+        _meta: { "genie/embeddedManifest": embeddedManifest },
       },
     });
 
@@ -563,6 +563,43 @@ describe("initMcpApp — standard tool result delivery", () => {
     expect(document.querySelector("body > header")).not.toBeNull();
     expect(iframeFor(grid, BUTTON_PATH)).toBeDefined();
     expect(iframeFor(grid, CARD_PATH)).toBeDefined();
+  });
+
+  it("prefers the widget-only metadata manifest over the structured compatibility fallback", () => {
+    const { hooks, document, grid } = setup({ version: 1, groups: [], components: [] });
+    const embeddedManifest = twoCardManifest();
+    for (const component of embeddedManifest.components as Array<Record<string, unknown>>) {
+      component.sourcePath = component.path;
+      component.path = `http://127.0.0.1:57321/${String(component.path)}`;
+    }
+    const compatibilityManifest = twoCardManifest();
+    for (const component of compatibilityManifest.components as Array<Record<string, unknown>>) {
+      component.sourcePath = component.path;
+      component.path = `https://fallback.example.com/${String(component.path)}`;
+    }
+
+    expect(
+      hooks.renderToolResult(document, grid, {
+        structuredContent: {
+          transportKind: "stdio",
+          locality: "local",
+          viewerUrl: "http://127.0.0.1:5173/",
+          embeddedManifest: compatibilityManifest,
+          embeddedError: "inline preview unavailable",
+        },
+        _meta: { "genie/embeddedManifest": embeddedManifest },
+      }),
+    ).toBe(true);
+
+    expect(grid.querySelector("iframe.ds-viewer-embed")).toBeNull();
+    expect(grid.querySelector(".ds-error")).toBeNull();
+    expect(document.querySelector("body > header")).not.toBeNull();
+    expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(
+      `http://127.0.0.1:57321/${BUTTON_PATH}`,
+    );
+    expect(iframeFor(grid, CARD_PATH).getAttribute("src")).toBe(
+      `http://127.0.0.1:57321/${CARD_PATH}`,
+    );
   });
 
   it("frames a reachable viewer for explicitly local loopback HTTP", () => {
