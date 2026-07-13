@@ -4,6 +4,9 @@
   "packages": {
     "packages/server": {
       "package-name": "@genie/server"
+    },
+    "packages/viewer": {
+      "package-name": "@genie/viewer"
     }
   },
   "include-component-in-tag": true,

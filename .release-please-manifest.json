@@ -1,3 +1,4 @@
 {
-  "packages/server": "1.1.0"
+  "packages/server": "1.1.0",
+  "packages/viewer": "0.1.0"
 }

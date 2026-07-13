@@ -55,6 +55,11 @@ app to open.
 6. **Skybridge is parked, not adopted** — gated on a spike before M4 (RFC §15.8;
    verdict in `docs/research/skybridge.md` §8). Don't build on it until the spike clears
    genie's CSP + G-5 constraints.
+7. **npm package names (M0-04 fallback, recorded here per that issue's AC5):** the
+   root name `genie` is already registered by an unrelated npm package (verified via
+   `registry.npmjs.org/genie`), so the server publishes as **`@genie/server`** (not bare
+   `genie`) and the viewer as **`@genie/viewer`** — both scoped, public, with npm
+   provenance. See `.github/workflows/release.yml` (DRO-278 / M5-06).
 
 ## Conventions
 

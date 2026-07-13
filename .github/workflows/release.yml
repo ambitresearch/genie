@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      # release-please-action@v4 exposes one `releases_created`/`tag_name` pair
+      # per configured package (`packages/server`, `packages/viewer`) via the
+      # `--<path>--` output suffix documented in its README. Downstream jobs
+      # below read these per-package flags rather than the aggregate output so
+      # a server-only (or viewer-only) release doesn't publish the other
+      # package with a stale/unbumped version.
+      server_released: ${{ steps.release.outputs['packages/server--release_created'] }}
+      server_tag: ${{ steps.release.outputs['packages/server--tag_name'] }}
+      viewer_released: ${{ steps.release.outputs['packages/viewer--release_created'] }}
+      viewer_tag: ${{ steps.release.outputs['packages/viewer--tag_name'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # ── npm publish (DRO-278 / M5-06) ────────────────────────────────────────────
+  # Gated on M0-04 CI having already gone green for this commit (AC6): CI runs
+  # on every push to `main` via the `ci.yml` workflow, and `release-please`
+  # merges its release PR onto `main` only after that PR's own CI run passed —
+  # so by the time `release-please` tags a release here, the tagged commit's
+  # CI is already green. `needs: release-please` plus each publish job's own
+  # `if: needs.release-please.outputs.*_released == 'true'` is what actually
+  # triggers on tag `v*` (AC1): release-please creates the GitHub Release +
+  # tag as part of the same job, so gating on its `release_created` output is
+  # the reliable signal — a separate `on: push: tags: v*` trigger would race
+  # the tag-creation step and is what release-please's own docs warn against.
+  publish-server:
+    name: publish @genie/server (npm)
+    needs: release-please
+    if: needs.release-please.outputs.server_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC — required for `--provenance` (AC2)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.server_tag }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+          always-auth: true
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build @genie/server
+        run: pnpm --filter @genie/server build
+
+      - name: Publish @genie/server (public, provenance)
+        working-directory: packages/server
+        # AC3 — NODE_AUTH_TOKEN sourced from the NPM_TOKEN repo secret; npm's
+        # own tooling reads this env var during `npm publish` when a registry
+        # requires auth (set above via setup-node's registry-url).
+        # AC4 — `publishConfig.access: public` in packages/server/package.json
+        # publishes the scoped `@genie/server` package publicly (the root
+        # `genie` name is already registered by an unrelated npm package —
+        # documented fallback recorded on M0-04 / CLAUDE.md).
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+  publish-viewer:
+    name: publish @genie/viewer (npm)
+    needs: release-please
+    if: needs.release-please.outputs.viewer_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC — required for `--provenance` (AC2)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.viewer_tag }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+          always-auth: true
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build @genie/viewer
+        run: pnpm --filter @genie/viewer build
+
+      - name: Publish @genie/viewer (public, provenance)
+        working-directory: packages/viewer
+        # AC5 — `@genie/viewer` publishes scoped + public via the same
+        # publishConfig pattern as the server package above.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
