@@ -749,7 +749,8 @@ async function registerRequestedCardAssetKit(
     if (
       error instanceof Error &&
       "code" in error &&
-      (error.code === "ENOENT" || error.code === "ENOTDIR")
+      ((error as NodeJS.ErrnoException).code === "ENOENT" ||
+        (error as NodeJS.ErrnoException).code === "ENOTDIR")
     ) {
       return undefined;
     }
