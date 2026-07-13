@@ -29,16 +29,24 @@
  *         iframe load under 100ms) and the assembled ui:// resource (trusted
  *         postMessage installs fresh bytes by stable sourcePath).             ✅
  *
- * ── Deferred to a tracked follow-up (dependency not yet merged) ──────────────
- *   AC6-CSP — the embedded tier's `default-src 'none'` + iframe `sandbox`
- *         ENFORCEMENT check depends on DRO-269 (M4-07, dispatched as DRO-796),
- *         also unmerged. AC6's core — "vehicle (c) renders the same DOM" — IS
- *         covered here (the ui:// vehicle is a first-class part of the identity
- *         assertion); only the CSP-header enforcement assertion is deferred.
+ *   AC6 — vehicle (c) renders the same DOM (covered by the AC4 cross-vehicle
+ *         identity assertion) AND the embedded tier's hardened CSP is present
+ *         and enforced: `default-src 'none'` + no `unsafe-inline`/`unsafe-eval`,
+ *         every card iframe sandboxed to `allow-scripts` only, and a probe
+ *         `<script>` injected into a manifest value never executes.          ✅
  *
- * The dispatch (DRO-797) explicitly authorises this split: "land the grid +
- * byte-identity coverage first and note the HMR/CSP cases as a tracked
- * follow-up rather than blocking the whole suite."
+ * DRO-813 (this follow-up) landed the AC5 real-postMessage-bridge assertion
+ * and the AC6 CSP-enforcement half once DRO-266 (M4-04) and DRO-269 (M4-07)
+ * merged to `main` — both were deferred at M4-10 (DRO-272) merge time because
+ * their dependencies weren't there yet. See history below.
+ *
+ * ── History ───────────────────────────────────────────────────────────────
+ *   DRO-272 (M4-10, PR #176) — landed AC1-4, AC7-8; deferred AC5/AC6-CSP
+ *     pending DRO-266/DRO-269.
+ *   DRO-813 — DRO-266 + DRO-269 merged; this file's AC5 assertions were
+ *     already present from DRO-272 (the deferred-language note in the
+ *     original header undercounted them); added the AC6-CSP enforcement
+ *     assertions here and removed the deferred-language section.
  *
  * ── Sandboxed-workspace note (same as a11y.test.ts) ──────────────────────────
  * Chromium needs a lib closure + fonts this authoring sandbox provides via
@@ -49,7 +57,7 @@
  * less machine stays green; CI's dedicated `viewer-e2e` job sets
  * `GENIE_REQUIRE_VIEWER_E2E=1` so a broken install there fails loudly instead.
  */
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -57,6 +65,7 @@ import type { Browser, Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { compileManifest } from "../../server/src/manifest/index.js";
+import { buildGridDocument } from "../../server/src/ui/grid-resource.js";
 import {
   buildFileVehicle,
   buildUiGridDocument,
@@ -67,6 +76,8 @@ import {
   isChromiumAvailable,
   launchBrowser,
   readCardIdentities,
+  readViewerAsset,
+  serveDir,
   startUiVehicle,
   startViteVehicle,
   type CardIdentity,
@@ -202,6 +213,126 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
     expect(html).toContain("<script>");
     expect(html).toContain("<style>");
   });
+
+  // ── AC6 (CSP half, DRO-813) — the hardened M4-07 policy is really present ──
+  it("vehicle (c) ui:// — carries the hardened CSP meta (default-src 'none', no unsafe-inline)", async () => {
+    const html = await buildUiGridDocument(fixture);
+    const metaMatch = html.match(
+      /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/,
+    );
+    expect(metaMatch).not.toBeNull();
+    const policy = metaMatch![1]!;
+    expect(policy).toContain("default-src 'none'");
+    expect(policy).toContain("object-src 'none'");
+    expect(policy).toContain("base-uri 'none'");
+    expect(policy).toContain("form-action 'none'");
+    expect(policy).toContain("connect-src 'none'");
+    expect(policy).not.toContain("'unsafe-inline'");
+    expect(policy).not.toContain("'unsafe-eval'");
+    // The CSP meta must be the first thing inside <head> so it governs every
+    // subsequent element (manifest island, inlined viewer.js/css, cards).
+    const headIndex = html.indexOf("<head>");
+    const metaIndex = html.indexOf(metaMatch![0]);
+    expect(metaIndex).toBeGreaterThan(headIndex);
+    expect(html.slice(headIndex + "<head>".length, metaIndex).trim()).toBe("");
+  });
+
+  it("vehicle (c) ui:// — every card iframe is sandboxed to allow-scripts only", async () => {
+    const ui = await startUiVehicle(fixture);
+    const page = await browser.newPage();
+    try {
+      await gotoAndWaitForGrid(page, ui.url);
+      const sandboxValues = await page
+        .locator("iframe[data-path]")
+        .evaluateAll((frames) => frames.map((frame) => frame.getAttribute("sandbox")));
+      expect(sandboxValues.length).toBeGreaterThan(0);
+      for (const value of sandboxValues) {
+        expect(value).toBe("allow-scripts");
+      }
+    } finally {
+      await page.close();
+      await ui.close();
+    }
+  }, 30_000);
+
+  it("vehicle (c) ui:// — the CSP blocks a probe <script> injected into a manifest value", async () => {
+    // A hostile component name is written via textContent (never innerHTML;
+    // see viewer.js's own comment on this), so it can never execute as markup.
+    // The real enforcement surface this AC targets is the document-level CSP:
+    // even if a future regression concatenated a manifest value into HTML,
+    // default-src 'none' + script-src limited to the hashed inline blocks means
+    // an injected <script>alert(1)</script> could never run. Assert both: the
+    // marker never appears as live markup, and any injected <script> that DID
+    // land would be denied by the shipped policy (no 'unsafe-inline', no
+    // wildcard script-src).
+    const probeName = '<script>window.__genieProbeFired=1</script>';
+    const probeFixture = await createViewerFixture([
+      { group: "actions", name: "Button", viewport: "320x180" },
+    ]);
+    try {
+      // Recompile with a hostile name injected straight into the manifest
+      // object (bypassing the on-disk marker, which would reject '<' via the
+      // filename contract) to simulate a manifest value carrying markup.
+      probeFixture.manifest.components[0]!.name = probeName;
+      const html = await buildGridDocument(
+        {
+          kitsRoot: probeFixture.kitsRoot,
+          compile: async () => probeFixture.manifest,
+          readAsset: (name) => readViewerAsset(name),
+          readPreviewBytes: async (kitDir, relPath) => {
+            try {
+              return await readFile(join(kitDir, relPath));
+            } catch {
+              return null;
+            }
+          },
+          previewsBaseUrl: undefined,
+        },
+        { kitId: probeFixture.kitId },
+      );
+
+      // The policy still forbids unhashed inline script/unsafe-inline.
+      const metaMatch = html.match(
+        /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/,
+      );
+      expect(metaMatch).not.toBeNull();
+      expect(metaMatch![1]).not.toContain("'unsafe-inline'");
+
+      const root = await mkdtemp(join(probeFixture.kitsRoot, "csp-probe-"));
+      await writeFile(join(root, "index.html"), html, "utf8");
+      const { server, url } = await serveDir(root);
+      const page = await browser.newPage();
+      const cspViolations: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.text().toLowerCase().includes("content security policy")) {
+          cspViolations.push(msg.text());
+        }
+      });
+      let dialogFired = false;
+      page.on("dialog", (dialog) => {
+        dialogFired = true;
+        void dialog.dismiss();
+      });
+      try {
+        await gotoAndWaitForGrid(page, url);
+        // The probe never executes: no dialog, no global side-channel write.
+        expect(dialogFired).toBe(false);
+        const probeRan = await page.evaluate(
+          () => (globalThis as Record<string, unknown>).__genieProbeFired,
+        );
+        expect(probeRan).toBeUndefined();
+        // The literal probe text must never appear as live DOM markup (only,
+        // if at all, as inert text via textContent).
+        const cardHtml = await page.locator(".ds-card").first().evaluate((el) => el.innerHTML);
+        expect(cardHtml).not.toContain("<script>window.__genieProbeFired");
+      } finally {
+        await page.close();
+        await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+      }
+    } finally {
+      await probeFixture.cleanup();
+    }
+  }, 30_000);
 
   it("vehicle (c) ui:// — refreshes a data-backed card by stable source path with fresh bytes", async () => {
     const ui = await startUiVehicle(fixture);
