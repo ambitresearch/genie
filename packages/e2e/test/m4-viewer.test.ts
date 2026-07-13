@@ -35,18 +35,20 @@
  *         every card iframe sandboxed to `allow-scripts` only, and a probe
  *         `<script>` injected into a manifest value never executes.          ✅
  *
- * DRO-813 (this follow-up) landed the AC5 real-postMessage-bridge assertion
- * and the AC6 CSP-enforcement half once DRO-266 (M4-04) and DRO-269 (M4-07)
- * merged to `main` — both were deferred at M4-10 (DRO-272) merge time because
- * their dependencies weren't there yet. See history below.
+ * DRO-813 (this follow-up) closed out AC5/AC6 once DRO-266 (M4-04) and
+ * DRO-269 (M4-07) merged to `main` — both were deferred at M4-10 (DRO-272)
+ * merge time because their dependencies weren't there yet. See history below.
  *
  * ── History ───────────────────────────────────────────────────────────────
- *   DRO-272 (M4-10, PR #176) — landed AC1-4, AC7-8; deferred AC5/AC6-CSP
- *     pending DRO-266/DRO-269.
- *   DRO-813 — DRO-266 + DRO-269 merged; this file's AC5 assertions were
- *     already present from DRO-272 (the deferred-language note in the
- *     original header undercounted them); added the AC6-CSP enforcement
- *     assertions here and removed the deferred-language section.
+ *   DRO-272 (M4-10, PR #176) — landed AC1-4, AC7-8 and the AC5 real-Vite-HMR
+ *     + ui:// postMessage assertions (AC5 was already fully covered here);
+ *     deferred only the AC6-CSP-enforcement half pending DRO-269, since M4-07
+ *     hadn't merged yet and there was no hardened policy to assert against.
+ *   DRO-813 — DRO-269 merged; corrected this header's stale "AC5 deferred"
+ *     language (AC5 needed no new test code) and added the AC6-CSP
+ *     enforcement assertions (hardened meta shape, sandboxed iframes, and a
+ *     real unhashed-live-script probe proving the browser actually enforces
+ *     the policy) here.
  *
  * ── Sandboxed-workspace note (same as a11y.test.ts) ──────────────────────────
  * Chromium needs a lib closure + fonts this authoring sandbox provides via
@@ -256,15 +258,21 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
   }, 30_000);
 
   it("vehicle (c) ui:// — the CSP blocks a probe <script> injected into a manifest value", async () => {
-    // A hostile component name is written via textContent (never innerHTML;
-    // see viewer.js's own comment on this), so it can never execute as markup.
-    // The real enforcement surface this AC targets is the document-level CSP:
-    // even if a future regression concatenated a manifest value into HTML,
-    // default-src 'none' + script-src limited to the hashed inline blocks means
-    // an injected <script>alert(1)</script> could never run. Assert both: the
-    // marker never appears as live markup, and any injected <script> that DID
-    // land would be denied by the shipped policy (no 'unsafe-inline', no
-    // wildcard script-src).
+    // Two distinct probes, because they exercise two distinct defenses:
+    //
+    //  1. A hostile component name written into the manifest. The manifest
+    //     serializer escapes '<' and viewer.js writes the name through
+    //     textContent (never innerHTML), so this NEVER reaches the DOM as
+    //     live markup regardless of CSP — it's a serialization/DOM-API
+    //     defense, not a CSP one. Kept as a belt-and-suspenders assertion.
+    //  2. An UNHASHED, LIVE <script> tag spliced directly into the assembled
+    //     document's <body> — bypassing the manifest/textContent path
+    //     entirely — to prove the shipped `default-src 'none'` (no
+    //     'unsafe-inline', no script-src allowance for arbitrary inline
+    //     script) is what actually stops it from running in a real browser.
+    //     A real CSP violation must fire and the probe's side effect must
+    //     never land; this is the assertion Copilot's review (PR #182)
+    //     flagged as missing.
     const probeName = '<script>window.__genieProbeFired=1</script>';
     const probeFixture = await createViewerFixture([
       { group: "actions", name: "Button", viewport: "320x180" },
@@ -298,8 +306,20 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
       expect(metaMatch).not.toBeNull();
       expect(metaMatch![1]).not.toContain("'unsafe-inline'");
 
+      // Splice an UNHASHED live <script> straight into <body> — the actual
+      // enforcement probe. If a future regression ever weakened the policy
+      // (e.g. added 'unsafe-inline' or a permissive script-src), this script
+      // WOULD execute and this assertion would catch it; today it must be
+      // blocked by the browser's CSP engine, not by escaping or textContent.
+      const bodyClose = html.lastIndexOf("</body>");
+      expect(bodyClose).toBeGreaterThan(-1);
+      const livewireProbe =
+        '<script>window.__genieLiveProbeFired=1</script>';
+      const htmlWithLiveProbe =
+        html.slice(0, bodyClose) + livewireProbe + html.slice(bodyClose);
+
       const root = await mkdtemp(join(probeFixture.kitsRoot, "csp-probe-"));
-      await writeFile(join(root, "index.html"), html, "utf8");
+      await writeFile(join(root, "index.html"), htmlWithLiveProbe, "utf8");
       const { server, url } = await serveDir(root);
       const page = await browser.newPage();
       const cspViolations: string[] = [];
@@ -315,7 +335,8 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
       });
       try {
         await gotoAndWaitForGrid(page, url);
-        // The probe never executes: no dialog, no global side-channel write.
+        // The manifest-value probe never executes: no dialog, no global
+        // side-channel write.
         expect(dialogFired).toBe(false);
         const probeRan = await page.evaluate(
           () => (globalThis as Record<string, unknown>).__genieProbeFired,
@@ -325,6 +346,17 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
         // if at all, as inert text via textContent).
         const cardHtml = await page.locator(".ds-card").first().evaluate((el) => el.innerHTML);
         expect(cardHtml).not.toContain("<script>window.__genieProbeFired");
+
+        // The REAL enforcement assertion: the unhashed live <script> spliced
+        // into <body> must be blocked by the document's CSP — the browser
+        // must report a real CSP violation, and its side effect must never
+        // land, even though it is syntactically a live, executable script
+        // (not escaped, not routed through textContent).
+        expect(cspViolations.length).toBeGreaterThan(0);
+        const liveProbeRan = await page.evaluate(
+          () => (globalThis as Record<string, unknown>).__genieLiveProbeFired,
+        );
+        expect(liveProbeRan).toBeUndefined();
       } finally {
         await page.close();
         await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
