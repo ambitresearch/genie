@@ -55,10 +55,11 @@ in `/v1`.
 
 Ask for a component in a Codex Desktop task. Because the current client omits
 the UI capability, `preview` returns both inline data and a tools-only viewer
-URL without opening Dia or another system browser. In an Apps-enabled Codex
-Desktop task, Codex mounts the MCP App via `_meta.ui.resourceUri` and renders
-the component grid directly beneath the tool call. If Apps are unavailable in
-that task, open the returned viewer URL manually.
+URL without opening Dia or another system browser. When Apps support is
+available and the task's MCP child was started after the server was built,
+Codex Desktop can mount the MCP App via `_meta.ui.resourceUri` and render
+the component grid beneath the tool call. If Apps are unavailable or the
+task predates the rebuilt server, open the returned viewer URL manually.
 
 Local card assets are served by one process-scoped loopback broker shared by
 all registered UI kits, not by one listener per kit. Each app resource declares

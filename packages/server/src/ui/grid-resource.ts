@@ -742,13 +742,21 @@ async function registerRequestedCardAssetKit(
 ): Promise<CardAssetKit | undefined> {
   const kitDir = resolveKitDir(kitsRoot, kitId);
   if (kitDir === null) return undefined;
+  let info;
   try {
-    const info = await lstat(kitDir);
-    if (!info.isDirectory()) return undefined;
-    return await broker.registerKit(kitId, kitDir);
-  } catch {
-    return undefined;
+    info = await lstat(kitDir);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return undefined;
+    }
+    throw error;
   }
+  if (!info.isDirectory()) return undefined;
+  return await broker.registerKit(kitId, kitDir);
 }
 
 async function prepareCardBroker(
