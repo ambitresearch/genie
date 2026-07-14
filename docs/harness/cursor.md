@@ -119,7 +119,7 @@ server-side half of that question, tested in
   registration path or the SDK's `tools/list` handler truncates it at 40 or
   any other number.
 - **Unverified / out of scope:** whether Cursor's own client still visibly
-  limits the *displayed or auto-attached* tool count today. If it does, that
+  limits the _displayed or auto-attached_ tool count today. If it does, that
   enforcement is entirely **client-side** inside Cursor itself — not
   something genie can detect, influence, or test from the server. Ship your
   full tool surface; if Cursor only exposes a subset to the model, that's

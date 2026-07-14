@@ -107,5 +107,8 @@ export async function runTokenCli(argv: string[]): Promise<TokenCliResult> {
     return { output: `Revoked ${removed} token(s) matching prefix "${prefix}".\n`, exitCode: 0 };
   }
 
-  return { output: `genie token: unknown subcommand "${subcommand}".\n\n${TOKEN_HELP}\n`, exitCode: 1 };
+  return {
+    output: `genie token: unknown subcommand "${subcommand}".\n\n${TOKEN_HELP}\n`,
+    exitCode: 1,
+  };
 }

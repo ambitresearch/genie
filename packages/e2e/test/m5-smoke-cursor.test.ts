@@ -56,9 +56,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
 
 const hasBuiltServer =
-  spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`]).status === 0;
+  spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`])
+    .status === 0;
 
-const hasLlmEnv = Boolean(process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim());
+const hasLlmEnv = Boolean(
+  process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim(),
+);
 
 interface ToolResult {
   isError?: boolean;
@@ -200,7 +203,12 @@ describe.skipIf(!hasBuiltServer)(
           // Deliberately pure generation (no write) — plan/write_files below is
           // the caller's separate, plan-gated step, per the tool's own description.
           const conjured = payload(conjureResult) as {
-            files: { path: string; content: string; mimeType: string; encoding: "utf-8" | "base64" }[];
+            files: {
+              path: string;
+              content: string;
+              mimeType: string;
+              encoding: "utf-8" | "base64";
+            }[];
           };
           expect(conjured.files.length).toBeGreaterThan(0);
           const writes = conjured.files.map((f) => f.path);

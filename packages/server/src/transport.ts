@@ -330,7 +330,9 @@ export function createStreamableHttpRequestHandler(
   const authorize = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     if (!requireBearerAuth) return true;
     const token = extractBearerToken(
-      Array.isArray(req.headers.authorization) ? req.headers.authorization[0] : req.headers.authorization,
+      Array.isArray(req.headers.authorization)
+        ? req.headers.authorization[0]
+        : req.headers.authorization,
     );
     if (token === undefined) {
       writeProtocolError(res, 401, "Missing bearer token");

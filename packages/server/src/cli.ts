@@ -157,7 +157,9 @@ async function main(): Promise<void> {
     kind: transportKind,
     port: args.port,
     host,
-    ...(transportKind === "http" ? { serverFactory: createConfiguredServer, requireBearerAuth } : {}),
+    ...(transportKind === "http"
+      ? { serverFactory: createConfiguredServer, requireBearerAuth }
+      : {}),
   });
 }
 
