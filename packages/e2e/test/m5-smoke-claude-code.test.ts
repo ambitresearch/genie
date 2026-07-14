@@ -1,10 +1,20 @@
 /**
  * M5-09 (DRO-281) — Claude Code harness smoke test.
  *
- * Drives the documented four-verb chain (`conjure → preview → write_files →
+ * Drives the documented four-verb chain (`conjure → write_files → preview →
  * validate`) exactly as `docs/harness/claude-code.md` tells a Claude Code user
  * to invoke genie's tools — `mcp__genie__<verb>` names, real MCP `tools/call`
  * request shape — and asserts every call returns non-error (AC5).
+ *
+ * NOTE on ordering: this is `write_files` BEFORE `preview`, not the other way
+ * around. `preview` compiles the grid manifest from whatever the kit
+ * directory holds on disk right now (`ensureManifest`/`compileManifest` in
+ * `packages/server/src/manifest/`), so calling it before the conjured
+ * component is persisted would serve a stale/empty grid — the smoke test
+ * would "pass" without ever proving the new component is visible. This
+ * matches the doc's own stated workflow ("`conjure → plan → write_files →
+ * preview`", see `docs/harness/claude-code.md`'s "What you get here"
+ * section), not a literal `conjure → preview → write_files` reading.
  *
  * ── What this file can and cannot prove in this environment ─────────────────
  * AC4/AC6/AC7 call for booting an actual Claude Code CLI inside a Docker
@@ -60,7 +70,7 @@ const hasLlmConfig = Boolean(
 if (!hasLlmConfig) {
   console.info(
     "[m5-smoke-claude-code] GENIE_LLM_BASE_URL and/or GENIE_LLM_API_KEY is not set — " +
-      "skipping the conjure→preview→write_files→validate protocol walk. Set both to a " +
+      "skipping the conjure→write_files→preview→validate protocol walk. Set both to a " +
       "real OpenAI-compatible endpoint to run this suite for real.",
   );
 }
@@ -119,7 +129,7 @@ function payload(result: ToolResult): unknown {
 }
 
 describe.skipIf(!hasLlmConfig)(
-  "M5-09 — conjure → preview → write_files → validate, exactly as documented for Claude Code",
+  "M5-09 — conjure → write_files → preview → validate, exactly as documented for Claude Code",
   () => {
     let base: string;
     let client: Client;
@@ -156,7 +166,7 @@ describe.skipIf(!hasLlmConfig)(
     });
 
     it(
-      "runs conjure → preview → write_files → validate and every call returns non-error (AC5)",
+      "runs conjure → write_files → preview → validate and every call returns non-error (AC5)",
       async () => {
         // create_kit isn't one of the four AC-named verbs but is the
         // prerequisite every doc snippet assumes ("ask for a component" inside
@@ -194,7 +204,8 @@ describe.skipIf(!hasLlmConfig)(
         expect(conjured.files.length).toBeGreaterThan(0);
 
         // 2. write_files — persist what conjure returned (requires a plan,
-        // same MCP write-gate every write_files caller goes through).
+        // same MCP write-gate every write_files caller goes through). This
+        // MUST run before `preview` — see the file header note on ordering.
         const plan = await client.callTool({
           name: "mcp__genie__plan",
           arguments: { kitId, writes: conjured.files.map((f) => f.path) },
