@@ -1192,6 +1192,33 @@ The operator generates a token with `genie issue-token`, copies the hashed diges
 
 The MCP client (harness) holds the access token and refresh token. On 401 with `WWW-Authenticate: Bearer error="invalid_token"`, the harness calls `POST /oauth/token grant_type=refresh_token`. The server rotates the refresh token (returns a new one, invalidates the old) per OAuth 2.1 best practice.
 
+#### 6.10.5 M5-01 implementation status (DRO-273)
+
+The first cut shipped in `packages/server/src/auth/oauth/` narrows the design above to the
+issue's acceptance criteria; differences from §6.10.1–6.10.4, tracked as follow-ups:
+
+- **Paths are unprefixed** — `/.well-known/oauth-authorization-server`, `/register`,
+  `/authorize`, `/token` (no `/oauth/` prefix, no `/oauth/revoke`, no
+  `/.well-known/oauth-protected-resource` yet).
+- **Signing is HS256**, keyed by `OAUTH_HS256_KEY` (env, ≥ 32 chars; server refuses OAuth
+  routes without it — the rest of the MCP surface still runs unauthenticated in that case).
+  RS256 + key rotation (§6.10.1, §6.10.3) is deferred.
+- **Scopes are `read`/`write`** (flat), not the three-scope `genie:read` /
+  `genie:write` / `genie:generate` model in §6.10.1 — scope-to-tool enforcement
+  (`genie.forbidden`) is not yet wired to individual tool handlers.
+- **State is in-process, in-memory** (`OAuthStore`): registered clients, authorization
+  codes (60 s TTL, single-use, PKCE S256-verified), and refresh tokens do not survive a
+  restart or scale beyond one process. Matches the "one server per `claude mcp add` /
+  `codex mcp login` launch" model; a shared/HA deployment needs a persistent store first.
+  Refresh-token rotation (§6.10.4) is out of scope per the issue (RFC 6749 §6, deferred to v2).
+- **Consent screen** is the minimal server-rendered HTML page called for in the issue
+  (`GET`/`POST /authorize`), not yet themed to genie's design system.
+
+Covers AC1–AC5 (metadata, DCR, consent + PKCE code issuance, token exchange incl.
+refresh, HS256 JWT with `scope` claim). AC6/AC7 (live `claude mcp add` / `codex mcp login`
+round-trips) need manual verification against real installs — see the issue's Definition
+of Done.
+
 ### 6.11 Concurrency model
 
 The MCP server is single-process, single-event-loop. Concurrency is achieved by leveraging libuv's I/O multiplexing — every tool handler is `async`, and the bottlenecks (LLM endpoint calls, git-host HTTP, FS writes) are network/disk-bound. We expect a single process to comfortably handle 50 concurrent tool calls on a modest single-vCPU host (1 vCPU).
