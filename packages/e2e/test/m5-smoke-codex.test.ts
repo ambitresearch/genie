@@ -183,9 +183,18 @@ describe.skipIf(!hasBuiltServer)("AC6 — four-verb chain over real stdio (Codex
         ...(process.env as Record<string, string>),
         GENIE_KITS_ROOT: kitsRoot,
         // Required secret validation (packages/server/src/config/secrets.ts) —
-        // unrelated to the MCP surface this smoke test exercises; a throwaway
-        // value satisfies the boot-time check for this ephemeral test server.
+        // unrelated to the MCP surface this smoke test exercises; throwaway
+        // values (≥16 chars, per MIN_SECRET_LENGTH) satisfy the boot-time
+        // check for this ephemeral test server. `GENIE_LLM_API_KEY` became a
+        // *required* secret in DRO-275 (M5-03) after this test was first
+        // written, which left CI's stdio-boot leg failing with "Secret
+        // validation failed: GENIE_LLM_API_KEY is required but not set" —
+        // only `hasLlmEnv`'s real `GENIE_LLM_API_KEY` (when configured) is
+        // actually used for a live model call, in the separate `conjure`
+        // test below; the other stdio tests never reach the LLM client, so
+        // a non-secret placeholder is sufficient to pass boot validation.
         OAUTH_HS256_KEY: "codex-smoke-test-not-a-real-secret",
+        GENIE_LLM_API_KEY: process.env.GENIE_LLM_API_KEY ?? "codex-smoke-test-not-a-real-key",
       },
     });
     client = new Client({ name: "codex-smoke", version: "0" });
