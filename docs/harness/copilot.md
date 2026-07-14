@@ -171,9 +171,13 @@ provisioned (skipped otherwise, mirroring M2-09's gate):
 - **AC7** — when the client omits or negatives that capability — the shape a
   non-MCP-Apps client presents (any MCP host, VS Code or otherwise, that
   hasn't adopted the `io.modelcontextprotocol/ui` extension, or an older VS
-  Code build predating 1.109) — `preview` falls back to a text/URL-only result
-  with no `ui://` resource pointer, and the suite asserts that fallback shape
-  instead of an inline render.
+  Code build predating 1.109) — `preview` falls back to a result the client
+  can act on directly: a viewer URL or `file://` path in `structuredContent`
+  and echoed in the text content. `_meta.ui.resourceUri` is still emitted
+  alongside it (a later-capable reader of the same result could still resolve
+  it), but the non-MCP-Apps client is never left depending on that pointer —
+  the suite asserts the concrete viewer/file fallback is present, not that the
+  `ui://` pointer is absent.
 
 This suite cannot literally launch the VS Code application in CI (no
 Electron/VS Code binary in the sandboxed/CI runner), so it drives the identical
