@@ -6,9 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# Default to read-only for every job (GitHub's recommended hardening —
+# https://docs.github.com/actions/security-guides/automatic-token-authentication#modifying-the-permissions-for-the-github_token).
+# `publish-dry-run` runs install/build steps driven by PR-controlled source
+# (package.json scripts, lockfile, etc.) on every `pull_request` event, so it
+# must NOT inherit write access to contents/PRs. Only the `release-please`
+# job (which needs to push a release PR + tags) is granted write permissions,
+# scoped on that job itself below.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   # ── Dry-run publish test (M5-06 DoD: "dry-run publish on a non-prod tag") ──
@@ -75,6 +81,9 @@ jobs:
   release-please:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     outputs:
       # release-please-action@v4 exposes one `releases_created`/`tag_name` pair
       # per configured package (`packages/server`, `packages/viewer`) via the
