@@ -7,44 +7,45 @@
  * harness pattern as `m1-conformance.test.ts` / `m5-smoke-cursor` (DRO-285))
  * and asserts the executable claims `docs/harness/copilot.md` documents:
  *
- *   AC6 — on an MCP Apps-capable build (VS Code Insiders, once it advertises
- *         `io.modelcontextprotocol/ui` with the `text/html;profile=mcp-app`
- *         MIME during `initialize`), the four-verb chain
- *         (`conjure → plan → write_files → preview`) is reachable, `preview`'s
- *         `_meta.ui.resourceUri` resolves to `ui://genie/grid`, and the
- *         resource actually renders the previewed card's markup — i.e. the
- *         inline-app path really carries renderable content, not just a
- *         pointer string. `conjure` needs `GENIE_LLM_*` (M2-01); this suite
- *         drives `plan → write_files → preview` directly (the three verbs
- *         that don't need a live model call) and separately asserts `conjure`
- *         is registered and fails closed with a typed error when no LLM
- *         endpoint is configured, matching the M5 Cursor smoke test's
- *         approach to the same LLM dependency.
+ *   AC6 — on an MCP Apps-capable build (VS Code Stable 1.109+ — MCP Apps is
+ *         generally available there as of February 2026 — or Insiders, once
+ *         it advertises `io.modelcontextprotocol/ui` with the
+ *         `text/html;profile=mcp-app` MIME during `initialize`), the
+ *         four-verb chain (`conjure → plan → write_files → preview`) is
+ *         reachable, `preview`'s `_meta.ui.resourceUri` resolves to
+ *         `ui://genie/grid`, and the resource actually renders the previewed
+ *         card's markup — i.e. the inline-app path really carries renderable
+ *         content, not just a pointer string. The full chain, including a
+ *         SUCCESSFUL `conjure` call against a real `GENIE_LLM_*`-configured
+ *         endpoint, is driven by the "conjure -> plan -> write_files ->
+ *         preview" test below (gated the same way M2-09's real-endpoint
+ *         canary is: skipped with a visible breadcrumb when no endpoint is
+ *         configured, required via `GENIE_REQUIRE_LLM=1` once CI provisions
+ *         one). A separate, always-on test also asserts `conjure` is
+ *         registered and fails closed with a typed error when no LLM
+ *         endpoint is configured at all.
  *
- *   AC7 — on VS Code Stable (pre-Jan-2026, tracked in
- *         microsoft/vscode#260218), which omits the MCP Apps capability
- *         entirely, `preview` must fall back to a text/viewer-URL-only
- *         result: no `ui://` resource pointer, `structuredContent` carries a
- *         `viewerUrl` instead, and the text content narrates the fallback —
- *         never a bare inline-render assumption on a host that can't render
- *         one.
+ *   AC7 — on a non-MCP-Apps client (any MCP host — VS Code or otherwise —
+ *         that omits the `io.modelcontextprotocol/ui` extension, including
+ *         VS Code builds predating 1.109), `preview` must fall back to a
+ *         text/viewer-URL-only result: no `ui://` resource pointer,
+ *         `structuredContent` carries a `viewerUrl` instead, and the text
+ *         content narrates the fallback — never a bare inline-render
+ *         assumption on a host that can't render one.
  *
- * ── Why not a literal VS Code Insiders launch in CI ─────────────────────────
+ * ── Why not a literal VS Code application launch in CI ──────────────────────
  * There is no VS Code/Electron binary available in this sandboxed/CI runner
- * (`code`/`code-insiders` are absent from PATH here), and the issue's own
- * AC7 anticipates that VS Code Stable — the only build guaranteed present on
- * any given contributor's machine before Jan 2026 — cannot render `ui://` at
- * all yet. Rather than gate CI on an unscriptable GUI application (or skip
- * the inline-render assertion outright), this suite drives the identical MCP
- * capability-negotiation surface a real Insiders client presents —
+ * (`code`/`code-insiders` are absent from PATH here). Rather than gate CI on
+ * an unscriptable GUI application, this suite drives the identical MCP
+ * capability-negotiation surface a real VS Code Copilot client presents —
  * `hasUiExtensionCapability` / `getUiExtensionCapability` in
  * `packages/server/src/tools/preview.ts` are the SAME functions the real
  * server evaluates against whatever `initialize` capabilities the actual VS
  * Code Copilot extension sends. This is the same substitution the Codex CLI
  * (DRO-283) and Cursor (DRO-285) smoke tests make for their own
- * non-scriptable or provider-gated hosts. A manual Insiders install +
- * inline-grid confirmation is tracked as a Definition of Done item on the
- * issue, not automated here.
+ * non-scriptable or provider-gated hosts. A manual install on a real VS Code
+ * build and confirming the inline grid renders is tracked as a Definition of
+ * Done item on the issue, not automated here.
  *
  * ── AC coverage ──────────────────────────────────────────────────────────
  *   AC1 — canonical `.vscode/mcp.json` HTTP snippet lives in copilot.md.    ✅ (doc)
@@ -52,9 +53,10 @@
  *   AC3 — `sandbox.network.allowedDomains` for stdio installs documented.   ✅ (doc)
  *   AC4 — one-click `@mcp` install documented.                             ✅ (doc)
  *   AC5 — `code --add-mcp "..."` CLI install path documented.              ✅ (doc)
- *   AC6 — four-verb chain + inline `ui://genie/grid` render, driven live
- *         via the real capability-negotiation contract.                    ✅
- *   AC7 — text-only fallback assertion for the pre-MCP-Apps Stable shape.   ✅
+ *   AC6 — four-verb chain (real `conjure` when `GENIE_LLM_*` is configured,
+ *         gated/skipped like M2-09 otherwise) + inline `ui://genie/grid`
+ *         render, driven live via the real capability-negotiation contract. ✅
+ *   AC7 — text-only fallback assertion for the non-MCP-Apps client shape.   ✅
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -64,6 +66,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../../server/src/server.js";
 import { MCP_APP_MIME, UI_EXTENSION_ID } from "../../server/src/tools/preview.js";
+import type { ChatCompletionFn, ConjureDeps } from "../../server/src/tools/conjure.js";
+import type { ChatCompletionResult } from "../../server/src/llm/client.js";
 
 interface ToolResult {
   isError?: boolean;
@@ -88,12 +92,12 @@ interface Harness {
 /**
  * Build one genie server + client pair. `clientCapabilities` lets each test
  * simulate the exact `initialize` shape a given VS Code Copilot build sends —
- * an MCP Apps-capable Insiders build (AC6) vs. a pre-MCP-Apps Stable build
- * that omits the extension entirely (AC7).
+ * an MCP Apps-capable build (AC6, Stable 1.109+ or Insiders) vs. a
+ * non-MCP-Apps client that omits the extension entirely (AC7).
  */
 async function newHarness(
   clientCapabilities?: Record<string, unknown>,
-  serverOptions?: { transportKind?: "stdio" | "http" },
+  serverOptions?: { transportKind?: "stdio" | "http"; conjureDeps?: ConjureDeps },
 ): Promise<Harness> {
   const base = await mkdtemp(join(tmpdir(), "genie-m5-copilot-"));
   const roots = {
@@ -150,7 +154,7 @@ async function planAndWrite(harness: Harness): Promise<string> {
   return kitId;
 }
 
-describe("AC6 — MCP Apps-capable VS Code Insiders build renders ui://genie/grid inline", () => {
+describe("AC6 — MCP Apps-capable VS Code build (Stable 1.109+ or Insiders) renders ui://genie/grid inline", () => {
   let harness: Harness;
   beforeEach(async () => {
     // The AC1 canonical snippet registers genie as a remote HTTP server, so
@@ -224,16 +228,175 @@ describe("AC6 — MCP Apps-capable VS Code Insiders build renders ui://genie/gri
       if (previousApiKey !== undefined) process.env.GENIE_LLM_API_KEY = previousApiKey;
     }
   });
+
+  it("the FULL chain — a successful conjure -> plan -> write_files -> preview — round-trips and renders inline", async () => {
+    // A stubbed `chat` seam (same pattern conjure.test.ts's unit suite uses)
+    // proves the real conjure->plan->write_files->preview wiring succeeds
+    // end-to-end without spending real model dollars in every CI run; the
+    // companion test below additionally drives this same chain against a
+    // REAL GENIE_LLM_*-configured endpoint when one is available, mirroring
+    // M2-09's real-endpoint canary gate.
+    const stubChat: ChatCompletionFn = async () =>
+      ({
+        id: "chatcmpl-copilot-smoke",
+        object: "chat.completion",
+        created: 1_700_000_000,
+        model: "stub-model",
+        choices: [
+          {
+            index: 0,
+            finish_reason: "stop",
+            message: {
+              role: "assistant",
+              refusal: null,
+              content: JSON.stringify({
+                componentName: "Hello",
+                group: "components",
+                files: [
+                  {
+                    path: "components/components/Hello/Hello.html",
+                    content:
+                      '<!-- @genie group="components" viewport="320x180" -->\n' +
+                      "<!doctype html><body>hello from conjure</body>",
+                    mimeType: "text/html",
+                  },
+                ],
+                manifestEntry: { viewport: { width: 320, height: 180 }, subtitle: "Conjured" },
+              }),
+            },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      }) as unknown as ChatCompletionResult;
+
+    const stubHarness = await newHarness(
+      { extensions: { [UI_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME] } } },
+      { transportKind: "http", conjureDeps: { chat: stubChat } },
+    );
+    try {
+      const kitResult = await stubHarness.call("mcp__genie__create_kit", {
+        name: "Copilot Conjure Smoke Kit",
+      });
+      const kitId = (payload(kitResult) as { kitId: string }).kitId;
+
+      const conjureResult = await stubHarness.call("mcp__genie__conjure", {
+        kitId,
+        kit: "Warm-instrument kit: clay accent, 8px radius.",
+        prompt: "A hello component",
+      });
+      expect(conjureResult.isError).not.toBe(true);
+      const conjured = payload(conjureResult) as {
+        files: { path: string; content: string; mimeType: string; encoding: string }[];
+      };
+      expect(conjured.files.length).toBeGreaterThan(0);
+
+      const planResult = await stubHarness.call("mcp__genie__plan", {
+        kitId,
+        writes: conjured.files.map((f) => f.path),
+        deletes: [],
+      });
+      const planId = (payload(planResult) as { planId: string }).planId;
+
+      const writeResult = await stubHarness.call("mcp__genie__write_files", {
+        planId,
+        files: conjured.files.map((f) => ({
+          path: f.path,
+          data: f.content,
+          mimeType: f.mimeType,
+          encoding: f.encoding,
+        })),
+      });
+      expect(writeResult.isError).not.toBe(true);
+
+      const previewResult = await stubHarness.call("mcp__genie__preview", { kitId });
+      expect(previewResult.isError).not.toBe(true);
+      const meta = previewResult._meta as { ui?: { resourceUri?: string } } | undefined;
+      expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/genie\/grid/);
+
+      const read = await stubHarness.client.readResource({ uri: meta!.ui!.resourceUri! });
+      const content = read.contents?.[0];
+      const html = content && "text" in content ? content.text : undefined;
+      const expectedDataUrl = `data:text/html;base64,${Buffer.from(
+        '<!-- @genie group="components" viewport="320x180" -->\n' +
+          "<!doctype html><body>hello from conjure</body>",
+        "utf8",
+      ).toString("base64")}`;
+      expect(html).toContain(expectedDataUrl);
+    } finally {
+      await stubHarness.close();
+    }
+  });
+
+  const hasLlmConfig = Boolean(
+    process.env["GENIE_LLM_BASE_URL"]?.trim() && process.env["GENIE_LLM_API_KEY"]?.trim(),
+  );
+  if (!hasLlmConfig) {
+    console.info(
+      "[m5-smoke-copilot] GENIE_LLM_BASE_URL and/or GENIE_LLM_API_KEY is not set — " +
+        "skipping the real-endpoint conjure->plan->write_files->preview leg of AC6. " +
+        "Set both to run this leg for real.",
+    );
+  }
+  if (!hasLlmConfig && process.env["GENIE_REQUIRE_LLM"] === "1") {
+    throw new Error(
+      "GENIE_REQUIRE_LLM=1 but GENIE_LLM_BASE_URL and/or GENIE_LLM_API_KEY is " +
+        "missing/empty — the m5-smoke-copilot real-endpoint AC6 leg must run for real.",
+    );
+  }
+  it.skipIf(!hasLlmConfig)(
+    "against a REAL GENIE_LLM_*-configured endpoint, conjure -> plan -> write_files -> preview succeeds",
+    async () => {
+      const kitResult = await harness.call("mcp__genie__create_kit", {
+        name: "Copilot Real Conjure Smoke Kit",
+      });
+      const kitId = (payload(kitResult) as { kitId: string }).kitId;
+
+      const conjureResult = await harness.call("mcp__genie__conjure", {
+        kitId,
+        kit: "Warm-instrument kit: clay accent, 8px radius, Inter type scale.",
+        prompt: "A primary button",
+      });
+      expect(conjureResult.isError).not.toBe(true);
+      const conjured = payload(conjureResult) as {
+        files: { path: string; content: string; mimeType: string; encoding: string }[];
+      };
+      expect(conjured.files.length).toBeGreaterThan(0);
+
+      const planResult = await harness.call("mcp__genie__plan", {
+        kitId,
+        writes: conjured.files.map((f) => f.path),
+        deletes: [],
+      });
+      const planId = (payload(planResult) as { planId: string }).planId;
+
+      const writeResult = await harness.call("mcp__genie__write_files", {
+        planId,
+        files: conjured.files.map((f) => ({
+          path: f.path,
+          data: f.content,
+          mimeType: f.mimeType,
+          encoding: f.encoding,
+        })),
+      });
+      expect(writeResult.isError).not.toBe(true);
+
+      const previewResult = await harness.call("mcp__genie__preview", { kitId });
+      expect(previewResult.isError).not.toBe(true);
+      const meta = previewResult._meta as { ui?: { resourceUri?: string } } | undefined;
+      expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/genie\/grid/);
+    },
+    180_000,
+  );
 });
 
-describe("AC7 — VS Code Stable (pre-MCP-Apps) falls back to a text/viewer-URL-only result", () => {
+describe("AC7 — a non-MCP-Apps client falls back to a text/viewer-URL-only result", () => {
   let harness: Harness;
   beforeEach(async () => {
-    // Stable's real `initialize` simply omits the extensions capability
-    // entirely today — it does not know the key exists at all. That is the
-    // "omitted" tri-state, matched by passing no capabilities. Registered as a
-    // local stdio server (per the docs' stdio snippet), matching how a real
-    // pre-MCP-Apps VS Code build actually launches genie today.
+    // A non-MCP-Apps client's real `initialize` simply omits the extensions
+    // capability entirely — it does not know the key exists at all. That is
+    // the "omitted" tri-state, matched by passing no capabilities. Registered
+    // as a local stdio server (per the docs' stdio snippet), matching how a
+    // non-MCP-Apps host actually launches genie today.
     harness = await newHarness(undefined, { transportKind: "stdio" });
   });
   afterEach(async () => {

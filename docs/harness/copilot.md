@@ -9,7 +9,11 @@ the specific host:
 - **VS Code Copilot agent** on an MCP Apps-capable build advertises the
   `io.modelcontextprotocol/ui` extension during initialization. genie detects
   that negotiated capability and renders `ui://genie/grid` inline without
-  opening a redundant browser tab.
+  opening a redundant browser tab. MCP Apps support is generally available in
+  VS Code Stable as of [1.109 (February
+  2026)](https://code.visualstudio.com/updates/v1_109#_mcp-apps-support-is-generally-available)
+  — so on a current Stable install, this is the default path, not an
+  Insiders-only one.
 - **Local stdio Copilot surfaces** that do not advertise MCP Apps receive the
   live viewer in a server-opened browser tab. Disable that fallback with
   `GENIE_PREVIEW_NO_OPEN=1`. HTTP Copilot surfaces never auto-open a browser;
@@ -74,7 +78,12 @@ in `/v1`.
 
 VS Code Copilot can run a stdio MCP server inside its command sandbox. When you
 opt a stdio entry into the sandbox, allow the LLM endpoint's network egress
-explicitly — the sandbox denies network access by default:
+explicitly — the sandbox denies network access by default. **The canonical
+shape (per the [VS Code sandbox configuration
+docs](https://code.visualstudio.com/docs/copilot/chat/chat-mcp#_sandbox-configuration))
+puts `sandboxEnabled` on the server entry, but `sandbox.network.allowedDomains`
+one level up, as a top-level sibling of `servers` — NOT nested inside
+`servers.genie`:**
 
 ```json
 {
@@ -83,21 +92,22 @@ explicitly — the sandbox denies network access by default:
       "type": "stdio",
       "command": "node",
       "args": ["/absolute/path/to/genie/packages/server/dist/cli.js", "--transport", "stdio"],
-      "sandboxEnabled": true,
-      "sandbox": {
-        "network": {
-          "allowedDomains": ["genie.<operator-domain>"]
-        }
-      }
+      "sandboxEnabled": true
+    }
+  },
+  "sandbox": {
+    "network": {
+      "allowedDomains": ["genie.<operator-domain>"]
     }
   }
 }
 ```
 
-`sandboxEnabled` and `sandbox.network.allowedDomains` are macOS/Linux-only —
-there is no Windows sandbox equivalent for stdio servers today. Omit
-`sandboxEnabled` entirely on Windows or when the server needs unrestricted
-network access (for example, an LLM endpoint behind a dynamic set of hosts).
+`sandboxEnabled` and the top-level `sandbox.network.allowedDomains` allowlist
+are macOS/Linux-only — there is no Windows sandbox equivalent for stdio
+servers today. Omit `sandboxEnabled` entirely on Windows or when the server
+needs unrestricted network access (for example, an LLM endpoint behind a
+dynamic set of hosts).
 
 ### One-click install (AC4)
 
@@ -149,21 +159,28 @@ asserts the capability-negotiation contract genie's `preview` tool implements:
 
 - **AC6** — when the client's `initialize` capabilities advertise the MCP Apps
   extension (`io.modelcontextprotocol/ui`) with the `text/html;profile=mcp-app`
-  MIME type — the shape a genuinely MCP Apps-capable VS Code Insiders build
-  negotiates — `preview`'s `_meta.ui.resourceUri` points at `ui://genie/grid`
-  and the resource actually renders the fixture's cards inline (reusing the M4
-  `buildGridDocument` headless-render assertion), never as text.
-- **AC7** — when the client omits or negatives that capability — the shape
-  VS Code Stable negotiates until its MCP Apps support ships (targeted Jan 2026,
-  tracked in [microsoft/vscode#260218](https://github.com/microsoft/vscode/issues/260218))
-  — `preview` falls back to a text/URL-only result with no `ui://` resource
-  pointer, and the suite asserts that fallback shape instead of an inline
-  render.
+  MIME type — the shape any current MCP Apps-capable VS Code build negotiates,
+  Stable (1.109+, GA as of February 2026) or Insiders alike — `preview`'s
+  `_meta.ui.resourceUri` points at `ui://genie/grid` and the resource actually
+  renders the fixture's cards inline (reusing the M4 `buildGridDocument`
+  headless-render assertion), never as text. The suite drives the successful
+  `conjure → plan → write_files → preview` chain against a stubbed `chat` seam
+  (no real model spend, same pattern M2's unit suite uses) plus a companion
+  case that talks to a REAL `GENIE_LLM_*`-configured endpoint when one is
+  provisioned (skipped otherwise, mirroring M2-09's gate) — so the full chain
+  is exercised, not just `plan → write_files → preview` with `conjure` checked
+  separately.
+- **AC7** — when the client omits or negatives that capability — the shape a
+  non-MCP-Apps client presents (any MCP host, VS Code or otherwise, that
+  hasn't adopted the `io.modelcontextprotocol/ui` extension, or an older VS
+  Code build predating 1.109) — `preview` falls back to a text/URL-only result
+  with no `ui://` resource pointer, and the suite asserts that fallback shape
+  instead of an inline render.
 
-This suite cannot literally launch the VS Code Insiders application in CI (no
+This suite cannot literally launch the VS Code application in CI (no
 Electron/VS Code binary in the sandboxed/CI runner), so it drives the identical
-MCP capability-negotiation surface Insiders' real client presents — the same
+MCP capability-negotiation surface a real client presents — the same
 substitution the Codex CLI (DRO-283) and Cursor (DRO-285) smoke tests make for
 their respective non-scriptable hosts. Manually installing on a real VS Code
-Insiders build and confirming the inline grid renders is tracked as a Definition
-of Done item on the issue, not automated here.
+build and confirming the inline grid renders is tracked as a Definition of Done
+item on the issue, not automated here.
