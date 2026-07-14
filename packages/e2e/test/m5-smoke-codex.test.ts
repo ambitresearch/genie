@@ -388,15 +388,25 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
     it(
       "codex exec drives create_kit -> conjure -> plan -> write_files -> preview via genie's real MCP tools, transcript captured to reports/",
       async ({ skip }) => {
+        // `localDir` must already exist on disk before `plan` is called
+        // (the server rejects a missing directory with `InvalidLocalDir`);
+        // reuse `kitsRoot`, which `beforeAll` already created, rather than
+        // asking the model to invent+create a fresh temp directory itself.
+        // `model` must be a concrete model name the configured endpoint
+        // actually serves — genie's DEFAULT_MODEL alias ("design-default")
+        // is not recognized by this smoke test's endpoint (see the
+        // `conjure` stdio test above, which hits the same requirement).
+        const conjureModel = process.env.GENIE_SMOKE_LLM_MODEL ?? "gpt-5.2";
         const prompt = [
           "Using the genie MCP server's tools (mcp__genie__create_kit,",
           "mcp__genie__conjure, mcp__genie__plan, mcp__genie__write_files,",
           "mcp__genie__preview), in this exact order:",
           "1) call create_kit with name 'Codex Repl Smoke'",
-          "2) call conjure for that kit with a prompt asking for a small",
-          "   primary button that says Continue",
-          "3) call plan for that kit with writes ['components/**/*.html'] and",
-          "   localDir set to a new temp directory you create",
+          `2) call conjure for that kit with model '${conjureModel}' and a prompt`,
+          "   asking for a small primary button that says Continue",
+          `3) call plan for that kit with writes ['components/**/*.html'] and`,
+          `   localDir set to the EXISTING directory '${kitsRoot}' (do not`,
+          "   create or use any other directory)",
           "4) call write_files with the conjured file(s) via the plan's planId",
           "5) call preview for that kit",
           "Call the genie MCP tools directly for each step — do not shell out,",
@@ -445,8 +455,15 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
           })
           .filter((e): e is { type?: string; item?: Record<string, unknown> } => e !== null);
 
-        const genieToolCalls = events.filter(
-          (e) => e.item?.type === "mcp_tool_call" && e.item?.server === "genie",
+        // `item.completed` mcp_tool_call events against the genie server,
+        // in the order Codex actually completed them (dedupe against the
+        // `item.started` copy of the same item id — only the terminal
+        // `item.completed` record carries `status`/`result`).
+        const genieToolCallsCompleted = events.filter(
+          (e) =>
+            e.type === "item.completed" &&
+            e.item?.type === "mcp_tool_call" &&
+            e.item?.server === "genie",
         );
 
         // Distinguish "Codex's OWN driving-model provider rejected the
@@ -463,7 +480,7 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
         const providerRejectedRequest = events.some(
           (e) => e.type === "turn.failed" || (e.type === "error" && typeof e.item === "undefined"),
         );
-        if (genieToolCalls.length === 0 && providerRejectedRequest) {
+        if (genieToolCallsCompleted.length === 0 && providerRejectedRequest) {
           skip(
             "Codex's own driving-model provider rejected the turn before any tool call " +
               "was attempted (see reports/codex-repl-transcript.jsonl) — a third-party " +
@@ -472,14 +489,70 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
           return;
         }
 
-        // The transcript is the CI evidence (reports/codex-repl-transcript.jsonl);
-        // this assertion proves Codex's own model chose to call genie's real
-        // tools over the registered stdio connection — the REPL leg AC6 asks
-        // for — not merely that the process exited without crashing.
+        // AC6 asks for the FULL four-verb chain, not "at least one genie
+        // tool call succeeded" — a single successful create_kit call would
+        // satisfy the old `.toBeGreaterThan(0)` assertion while conjure,
+        // plan, write_files, and preview never ran. Assert each expected
+        // verb was called, completed successfully (no per-call `error`,
+        // `status: "completed"` not `"failed"`), and appeared in the
+        // documented order — then assert the whole Codex turn itself
+        // finished as `turn.completed` (not `turn.failed`/aborted).
+        // Codex's transcript records the tool name exactly as advertised by
+        // the MCP server — genie's tools are namespaced `mcp__genie__<verb>`
+        // (see the `listTools()` assertion earlier in this file), not the
+        // bare verb name.
+        const EXPECTED_VERB_ORDER = [
+          "mcp__genie__create_kit",
+          "mcp__genie__conjure",
+          "mcp__genie__plan",
+          "mcp__genie__write_files",
+          "mcp__genie__preview",
+        ];
+
+        const calledVerbsInOrder = genieToolCallsCompleted.map((e) => e.item?.tool);
+        const failedCalls = genieToolCallsCompleted.filter(
+          (e) => e.item?.status !== "completed" || e.item?.error,
+        );
+
+        const transcriptHint = "see reports/codex-repl-transcript.jsonl";
+
         expect(
-          genieToolCalls.length,
-          `expected at least one genie mcp_tool_call in the transcript; see reports/codex-repl-transcript.jsonl. stderr: ${result.stderr}`,
-        ).toBeGreaterThan(0);
+          failedCalls,
+          `expected every genie mcp_tool_call to complete successfully (no per-call errors), ` +
+            `got failures: ${JSON.stringify(failedCalls)} — ${transcriptHint}`,
+        ).toHaveLength(0);
+
+        for (const verb of EXPECTED_VERB_ORDER) {
+          expect(
+            calledVerbsInOrder,
+            `expected genie tool "${verb}" to be called during the chain — ${transcriptHint}. ` +
+              `actual call order: ${JSON.stringify(calledVerbsInOrder)}`,
+          ).toContain(verb);
+        }
+
+        // Order matters: each verb in EXPECTED_VERB_ORDER must appear no
+        // earlier than the previous one (duplicate/retry calls of the same
+        // verb are fine; out-of-order verbs are not).
+        let cursor = -1;
+        for (const verb of EXPECTED_VERB_ORDER) {
+          const idx = calledVerbsInOrder.indexOf(verb, cursor + 1);
+          expect(
+            idx,
+            `expected "${verb}" to be called after the preceding chain verbs — ` +
+              `actual call order: ${JSON.stringify(calledVerbsInOrder)} — ${transcriptHint}`,
+          ).toBeGreaterThan(cursor);
+          cursor = idx;
+        }
+
+        // The transcript is the CI evidence (reports/codex-repl-transcript.jsonl);
+        // this assertion proves Codex's own turn actually finished — not
+        // merely that the process exited zero while the model gave up
+        // partway through the chain.
+        const turnCompleted = events.some((e) => e.type === "turn.completed");
+        expect(
+          turnCompleted,
+          `expected a turn.completed event (Codex's own turn must finish, not abort/fail) — ${transcriptHint}`,
+        ).toBe(true);
       },
       180_000,
     );
