@@ -24,6 +24,7 @@ These are orthogonal, so harnesses fall into a grid:
 | ChatGPT remote connector          |           yes           |         no          | inline grid + tool descriptions                                            |
 | Codex CLI                         |         **no**          |       **yes**       | Skill + **server-opened browser tab** + descriptions                       |
 | GitHub Copilot (host-dependent)   |  capability-dependent   |       **yes**       | Skill + inline grid when negotiated; local fallback browser + descriptions |
+| Cline                             |         **no**          |         no           | tool descriptions + text-only viewer/`file://` fallback (`preview` always degrades to text) |
 
 **Takeaways:**
 
@@ -67,4 +68,5 @@ Per-harness registration snippets:
 [claude-code.md](./claude-code.md) ·
 [cursor.md](./cursor.md) ·
 [codex.md](./codex.md) ·
-[copilot.md](./copilot.md)
+[copilot.md](./copilot.md) ·
+[cline.md](./cline.md)
