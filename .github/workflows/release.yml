@@ -89,45 +89,76 @@ jobs:
   # could slip past that assumption. This job makes the gate explicit and
   # verifiable: this workflow is itself triggered by the same `push: main`
   # event ci.yml reacts to, so `github.sha` IS the commit release-please just
-  # tagged. This job polls the Checks API for ci.yml's check-run conclusions
-  # on that exact SHA and fails closed (missing or non-`success` ⇒ blocks)
-  # rather than inferring green from merge history. Both publish jobs `need`
-  # this job in addition to `release-please`.
+  # tagged. Both publish jobs `need` this job in addition to `release-please`.
+  #
+  # Implementation (post-review fix): rather than sampling individual
+  # name-matched check-runs (which can go green piecemeal, or pass on a
+  # partial/stale set if ci.yml's job names ever drift from the regex), this
+  # queries the GitHub Actions *workflow run* API for the `CI` workflow
+  # (ci.yml) filtered to this exact commit SHA and reads that whole run's own
+  # top-level `conclusion` — the same signal branch protection uses. A run
+  # only reaches `completed`/`success` once every job in ci.yml (lint,
+  # typecheck, test, build, gitea, viewer a11y, viewer e2e, m2 canary) has
+  # finished, so there is nothing left to partially match.
+  #
+  # ci.yml's own longest job ceiling is `timeout-minutes: 20` (the gitea
+  # conformance job) with up to 2 node-version legs fanning out from the
+  # matrix; this job's own poll budget (60 * 20s = 20 min) is sized with
+  # headroom above that so a still-running CI run is never mistaken for a
+  # missing one.
   verify-ci-green:
     name: verify M0-04 CI is green for the released commit
     needs: release-please
     if: needs.release-please.outputs.server_released == 'true' || needs.release-please.outputs.viewer_released == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       contents: read
       actions: read
       checks: read
     steps:
-      - name: Poll CI workflow conclusion for github.sha
+      - name: Poll CI workflow run conclusion for github.sha
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          echo "Checking CI conclusion for $SHA ..."
+          echo "Checking CI workflow run conclusion for $SHA ..."
           # Poll: the CI workflow run for this SHA may still be finishing
           # (both workflows react to the same push event, so ordering between
           # them isn't guaranteed). Fail closed after the timeout rather than
-          # assume success.
-          for _ in $(seq 1 30); do
-            conclusion=$(gh api "repos/${{ github.repository }}/commits/${SHA}/check-runs" --paginate \
-              --jq '[.check_runs[] | select(.name | test("^lint |^typecheck |^test |^build |^gitea |^viewer |^m2 "))] | if length == 0 then "pending" elif any(.status != "completed") then "pending" elif any(.conclusion != "success") then "failure" else "success" end')
-            if [ "$conclusion" = "success" ]; then
-              echo "CI green for $SHA"
-              exit 0
-            elif [ "$conclusion" = "failure" ]; then
-              echo "::error::CI is red for released commit $SHA — blocking npm publish (AC6)."
-              exit 1
+          # assume success. Budget: 60 * 20s = 20 min, comfortably above
+          # ci.yml's own longest job's 20-minute timeout-minutes ceiling.
+          for i in $(seq 1 60); do
+            run_json=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${SHA}&per_page=1" \
+              --jq '.workflow_runs[0] // empty')
+
+            if [ -z "$run_json" ]; then
+              echo "No CI workflow run found yet for $SHA (attempt $i/60) ..."
+              sleep 20
+              continue
             fi
-            sleep 10
+
+            status=$(echo "$run_json" | jq -r '.status')
+            conclusion=$(echo "$run_json" | jq -r '.conclusion // "null"')
+
+            if [ "$status" != "completed" ]; then
+              echo "CI workflow run for $SHA is still '$status' (attempt $i/60) ..."
+              sleep 20
+              continue
+            fi
+
+            if [ "$conclusion" = "success" ]; then
+              echo "CI workflow run for $SHA completed with conclusion=success."
+              exit 0
+            fi
+
+            echo "::error::CI workflow run for $SHA completed with conclusion=${conclusion} — blocking npm publish (AC6)."
+            exit 1
           done
-          echo "::error::Timed out waiting for CI conclusion on $SHA — blocking npm publish (AC6)."
+
+          echo "::error::Timed out after 20m waiting for the CI workflow run on $SHA — blocking npm publish (AC6)."
           exit 1
 
   # ── npm publish (DRO-278 / M5-06) ────────────────────────────────────────────
