@@ -163,8 +163,20 @@ real built server, not a stand-in for either:
 
 CI runs both legs on every PR (`codex-smoke` job); the `conjure` step in leg 2
 additionally requires `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` and skips
-cleanly without them. Driving the actual Codex REPL end-to-end (asking a live
-Codex session to generate a component) is a manual verification step — see the
-test file's header for why that leg isn't automated in CI (a third-party model
-provider's tool-calling behavior, not genie's MCP surface, is what would make
-that leg flaky).
+cleanly without them.
+
+A third leg drives the actual Codex REPL end-to-end: `codex exec` (Codex's own
+non-interactive entry point — the same binary an interactive session runs) is
+launched with genie registered exactly per the stdio snippet above via
+`codex mcp add`, and asked in plain language to run the four-verb chain. The
+full JSONL event transcript Codex emits is captured to
+`reports/codex-repl-transcript.jsonl` as evidence, and the test asserts the
+transcript shows Codex's own model actually calling genie's tools. This leg
+reuses `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` as Codex's own driving-model
+provider (separate from genie's backend, but the same OpenAI-`responses`-API
+shape satisfies both), so it's gated on the same secrets as `conjure` and
+skips the same way without them. If Codex's own driving-model provider
+rejects the turn before any tool call is attempted — a third-party
+model-provider/tool-schema compatibility issue, not a genie MCP defect — the
+test skips with an attributed reason pointing at the captured transcript
+instead of failing the whole harness suite on an upstream provider bug.

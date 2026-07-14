@@ -449,3 +449,12 @@ jobs:
           path: reports/junit.xml
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Upload Codex REPL transcript (AC6)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-repl-transcript
+          path: reports/codex-repl-transcript.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
