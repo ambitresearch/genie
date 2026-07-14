@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -386,6 +387,59 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-report-m2-generation
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+  # M5-09 (DRO-281) AC7 — manually triggered smoke of the documented
+  # conjure→preview→write_files→validate chain for Claude Code. Same
+  # gate contract as m2-generation above: the test file's own AC2-style
+  # skip (GENIE_LLM_BASE_URL/GENIE_LLM_API_KEY unset) makes an
+  # unprovisioned run exit 0 with a visible breadcrumb rather than fail;
+  # GENIE_REQUIRE_LLM is set only once both secrets resolve non-empty,
+  # so a rotated-to-empty secret fails loudly instead of silently
+  # skipping again. `workflow_dispatch` only (never push/pull_request)
+  # keeps every normal CI run free — this spends real LLM $ like
+  # m2-generation does.
+  m5-smoke-claude-code:
+    name: M5-09 Claude Code smoke (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Linux, X64, genie]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Run M5-09 Claude Code smoke (AC5 — skips protocol walk if LLM secrets unset)
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
+        run: |
+          if [ -n "$GENIE_LLM_BASE_URL" ] && [ -n "$GENIE_LLM_API_KEY" ]; then
+            export GENIE_REQUIRE_LLM=1
+          fi
+          pnpm test m5-smoke-claude-code
+
+      - name: Upload M5-09 smoke test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-m5-smoke-claude-code
           path: reports/junit.xml
           if-no-files-found: warn
           retention-days: 7
