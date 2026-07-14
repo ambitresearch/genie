@@ -44,6 +44,8 @@
  * versioned by git-blob hash, AC5) is where that iteration lives; this file is the
  * stable request/validate/retry harness around it.
  */
+import { lookup as dnsLookup } from "node:dns/promises";
+
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
@@ -131,6 +133,33 @@ export const REF_URL_WARN_BYTES = 1024 * 1024; // 1 MB
  * and `http://169.254.169.254/…` (cloud metadata) holes at the tool boundary.
  * Exported so a future network-egress policy can reuse the exact same rule.
  */
+/** Shared IPv4-literal private/loopback/link-local/CGNAT range check (M6-03
+ * follow-up): factored out of {@link isSafeRefUrl} so the exact same rule can
+ * be applied to a *resolved* address in {@link isSafeResolvedAddress}, not
+ * just to a literal IP typed directly into the URL. */
+function isPrivateIpv4(host: string): boolean {
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!ipv4) return false;
+  const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+  if (a === 127 || a === 10 || a === 0) return true; // loopback / private / this-host
+  if (a === 169 && b === 254) return true; // link-local incl. 169.254.169.254 metadata
+  if (a === 192 && b === 168) return true; // private
+  if (a === 172 && b >= 16 && b <= 31) return true; // private
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  return false;
+}
+
+/** Shared bare-IPv6 loopback/link-local/unique-local check, mirroring
+ * {@link isPrivateIpv4} for the v6 literal forms accepted at either layer. */
+function isPrivateIpv6(inner: string): boolean {
+  return (
+    inner === "::1" ||
+    inner.startsWith("fe80:") ||
+    inner.startsWith("fc") ||
+    inner.startsWith("fd")
+  );
+}
+
 export function isSafeRefUrl(raw: string): boolean {
   let url: URL;
   try {
@@ -146,27 +175,46 @@ export function isSafeRefUrl(raw: string): boolean {
   if (host === "" || host === "[::1]" || host === "::1") return false;
 
   // IPv4 literal → block loopback/private/link-local/CGNAT ranges.
-  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (ipv4) {
-    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
-    if (a === 127 || a === 10 || a === 0) return false; // loopback / private / this-host
-    if (a === 169 && b === 254) return false; // link-local incl. 169.254.169.254 metadata
-    if (a === 192 && b === 168) return false; // private
-    if (a === 172 && b >= 16 && b <= 31) return false; // private
-    if (a === 100 && b >= 64 && b <= 127) return false; // CGNAT
-  }
+  if (isPrivateIpv4(host)) return false;
   // Bare IPv6 loopback/link-local/unique-local.
   if (host.startsWith("[")) {
     const inner = host.replace(/^\[|\]$/g, "");
-    if (
-      inner === "::1" ||
-      inner.startsWith("fe80:") ||
-      inner.startsWith("fc") ||
-      inner.startsWith("fd")
-    )
-      return false;
+    if (isPrivateIpv6(inner)) return false;
   }
   return true;
+}
+
+/**
+ * DNS-rebinding guard (M6-03 follow-up, fixes the gap the audit flagged in
+ * `docs/security-audit-v1.md`): {@link isSafeRefUrl} is a *syntactic*
+ * pre-filter on the hostname as typed — it cannot catch an attacker-controlled
+ * DNS name that resolves to a private/loopback/link-local address (the
+ * classic SSRF/DNS-rebinding bypass: `evil.example.com` passes the hostname
+ * check today and answers `127.0.0.1` at fetch time). This resolves the
+ * hostname (or accepts a literal IP unresolved) and re-checks every returned
+ * address against the same private/loopback/link-local ranges before the
+ * fetch is allowed to proceed. Returns `false` (safe to skip the fetch, not
+ * throw) on a DNS failure — an unresolvable host has no reference to fetch
+ * anyway, and treating a lookup error as "unsafe" avoids leaking timing
+ * differences between "blocked" and "doesn't exist".
+ */
+export async function isSafeResolvedAddress(hostname: string): Promise<boolean> {
+  const host = hostname.toLowerCase();
+  // Already a literal — no DNS involved, `isSafeRefUrl` covered it.
+  if (isPrivateIpv4(host)) return false;
+  if (host.startsWith("[")) {
+    if (isPrivateIpv6(host.replace(/^\[|\]$/g, ""))) return false;
+  }
+  try {
+    const results = await dnsLookup(hostname, { all: true, verbatim: true });
+    for (const { address, family } of results) {
+      if (family === 4 && isPrivateIpv4(address)) return false;
+      if (family === 6 && isPrivateIpv6(address.toLowerCase())) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Reusable Zod schema for `refUrl`: a bounded http(s) URL that passes the SSRF
@@ -290,6 +338,15 @@ export function truncateUtf8(text: string, maxBytes: number): string {
  */
 async function fetchReference(fetchImpl: FetchFn, refUrl: string): Promise<string | undefined> {
   try {
+    // Re-validate at fetch time against the *resolved* address (M6-03 follow-up):
+    // `isSafeRefUrl` already ran at schema-parse time on the hostname as typed,
+    // but a DNS-rebinding host can pass that syntactic check and still resolve
+    // to a private/loopback address by the time we actually fetch it.
+    const hostname = new URL(refUrl).hostname;
+    if (!(await isSafeResolvedAddress(hostname))) {
+      logStderr({ event: "conjure.ref_url.ssrf_blocked", refUrl });
+      return undefined;
+    }
     const res = await fetchImpl(refUrl);
     if (!res.ok) {
       logStderr({ event: "conjure.ref_url.skip", refUrl, status: res.status });

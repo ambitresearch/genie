@@ -23,6 +23,7 @@ import {
   REF_URL_WARN_BYTES,
   conjure,
   isSafeRefUrl,
+  isSafeResolvedAddress,
   truncateUtf8,
   registerConjureTool,
   ConjureError,
@@ -396,6 +397,20 @@ describe("AC7 — reference URL fetch + inline", () => {
     expect(isSafeRefUrl("file:///etc/passwd")).toBe(false);
     expect(isSafeRefUrl("http://172.16.0.1/x")).toBe(false);
     expect(isSafeRefUrl("http://172.32.0.1/x")).toBe(true); // .32 is outside 16-31 private range
+  });
+
+  it("isSafeResolvedAddress rejects a hostname that resolves to a private/loopback address (DNS-rebinding, M6-03 follow-up)", async () => {
+    // `isSafeRefUrl` is a syntactic pre-filter on the hostname as typed and
+    // cannot see this — a name that resolves to 127.0.0.1 passes it today.
+    // `isSafeResolvedAddress` closes that gap by resolving and re-checking.
+    expect(await isSafeResolvedAddress("localhost")).toBe(false);
+    expect(await isSafeResolvedAddress("127.0.0.1")).toBe(false);
+    expect(await isSafeResolvedAddress("169.254.169.254")).toBe(false);
+    expect(await isSafeResolvedAddress("[::1]")).toBe(false);
+  });
+
+  it("isSafeResolvedAddress accepts a public literal without a DNS lookup", async () => {
+    expect(await isSafeResolvedAddress("93.184.216.34")).toBe(true);
   });
 });
 
