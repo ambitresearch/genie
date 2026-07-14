@@ -56,6 +56,62 @@ through ChatGPT's connector/app configuration. The M5 ChatGPT distribution work
 owns the production auth and smoke-tested connector instructions; do not paste
 the Cursor stdio snippet into ChatGPT.
 
+## Register a local server (Cursor / VS Code) — OAuth `auth` block
+
+For a hosted genie MCP endpoint, Cursor's `mcp.json` also accepts an `auth`
+block using Cursor's OAuth shape (static callback, per research §4):
+
+```json
+{
+  "mcpServers": {
+    "genie": {
+      "url": "https://your-genie-endpoint.example.com/mcp",
+      "auth": {
+        "type": "oauth",
+        "client_id": "${env:GENIE_CURSOR_CLIENT_ID}",
+        "client_secret": "${env:GENIE_CURSOR_CLIENT_SECRET}",
+        "scopes": ["genie:tools"]
+      }
+    }
+  }
+}
+```
+
+- `${env:VAR}` tokens are interpolated by Cursor from its own process
+  environment at config-load time — never write a literal secret into
+  `mcp.json` itself.
+- Cursor's OAuth exchange redirects to a **static callback URL**:
+  `https://www.cursor.com/agents/mcp/oauth/callback`. That URL is owned by
+  Cursor, not genie — the remote genie endpoint only needs to accept it as a
+  registered redirect URI in whatever OAuth provider fronts it (see the M5-04
+  OIDC integration test for the provider side of that contract).
+- This block only applies to a **remote** (`url`) server entry. The local
+  `stdio` snippet above needs no `auth` block — the local process inherits
+  `GENIE_LLM_*` from its own environment directly.
+
+## Tool-cap probe — empirical finding (AC4)
+
+The historical claim that Cursor caps loaded MCP tools at 40 is **not present
+in Cursor's current docs** (research §4/§8) and was unverified. This is now
+tested empirically in
+`packages/e2e/test/m5-smoke-cursor.test.ts` ("AC4 — tool-cap probe"):
+
+- The suite registers 50+ dummy tools alongside genie's real tool surface on
+  one live `McpServer` instance and asserts `tools/list` returns **every**
+  one of them (real + dummy), unclipped.
+- **Finding: genie / the MCP TypeScript SDK impose no server-side cap.**
+  `tools/list` is a plain unbounded response — nothing in genie's registration
+  path or the SDK's `tools/list` handler truncates it at 40 or any other
+  number.
+- Conclusion: if Cursor's UI still visibly limits the *displayed or
+  auto-attached* tool count today, that enforcement is entirely **client-side**
+  inside Cursor itself, not something genie can detect or influence from the
+  server. Ship your full tool surface; if Cursor only exposes a subset to the
+  model, that's Cursor's selection policy, observable only by testing inside
+  an actual Cursor session (out of scope for this server-side suite — file a
+  follow-up against Cursor's own docs/support if a live cap is later
+  reproduced by a human tester).
+
 ## Using it
 
 Just ask in chat — "generate a Card component and show me." The Skill (or the
