@@ -11,6 +11,7 @@ import { isIP } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { extractBearerToken, verifyToken } from "./auth/bearer.js";
 
 export type TransportKind = "stdio" | "http";
 
@@ -165,6 +166,13 @@ const DEFAULT_HTTP_SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 export interface StreamableHttpHandlerOptions {
   sessionIdleTimeoutMs?: number;
+  /**
+   * When true, every `/mcp` request must carry a valid
+   * `Authorization: Bearer genie_<token>` header (M5-02, DRO-274). `/health`
+   * is always exempt. Off by default so embedders that haven't provisioned
+   * tokens yet (or that terminate auth upstream) are unaffected.
+   */
+  requireBearerAuth?: boolean;
 }
 
 function sessionIdFrom(req: IncomingMessage): string | undefined {
@@ -311,8 +319,44 @@ export function createStreamableHttpRequestHandler(
     }
   };
 
+  const requireBearerAuth = options.requireBearerAuth ?? false;
+
+  /**
+   * Returns true if the request is authorized to proceed. Writes a 401 and
+   * returns false otherwise. When `requireBearerAuth` is off, every request
+   * passes through unchanged (auth is opt-in per AC1's "in addition to
+   * OAuth", not a replacement for existing embedders).
+   */
+  const authorize = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
+    if (!requireBearerAuth) return true;
+    const token = extractBearerToken(
+      Array.isArray(req.headers.authorization) ? req.headers.authorization[0] : req.headers.authorization,
+    );
+    if (token === undefined) {
+      writeProtocolError(res, 401, "Missing bearer token");
+      return false;
+    }
+    const result = await verifyToken(token);
+    if (!result.ok) {
+      writeProtocolError(res, 401, "Invalid or revoked bearer token");
+      return false;
+    }
+    return true;
+  };
+
   return (req, res) => {
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (requireBearerAuth && pathname === "/mcp") {
+      void authorize(req, res).then((authorized) => {
+        if (!authorized) return;
+        dispatchMcp(req, res, pathname);
+      });
+      return;
+    }
+    dispatchMcp(req, res, pathname);
+  };
+
+  function dispatchMcp(req: IncomingMessage, res: ServerResponse, pathname: string): void {
     if (req.method === "POST" && pathname === "/mcp") {
       const sessionId = sessionIdFrom(req);
       let lease: SessionLease | undefined;
@@ -365,7 +409,7 @@ export function createStreamableHttpRequestHandler(
       return;
     }
     res.writeHead(404).end();
-  };
+  }
 }
 
 /** Connect the server over Streamable HTTP (for remote / multi-client use). */
@@ -373,13 +417,16 @@ async function startHttp(
   port: number,
   host: string,
   serverFactory?: () => McpServer,
+  requireBearerAuth?: boolean,
 ): Promise<void> {
   if (serverFactory === undefined) {
     throw new Error(
       "HTTP transport requires an explicit serverFactory for per-client session isolation.",
     );
   }
-  const http = createHttpServer(createStreamableHttpRequestHandler(serverFactory));
+  const http = createHttpServer(
+    createStreamableHttpRequestHandler(serverFactory, { requireBearerAuth }),
+  );
 
   await new Promise<void>((resolve) => http.listen(port, host, resolve));
   process.stderr.write(`genie MCP server listening on ${formatHttpEndpoint(host, port)}\n`);
@@ -394,6 +441,8 @@ export interface StartOptions {
   /** Injectable stdio streams for embedders and EOF lifecycle tests. */
   stdioInput?: Readable;
   stdioOutput?: Writable;
+  /** HTTP only — require a valid `Authorization: Bearer` token (M5-02, DRO-274). */
+  requireBearerAuth?: boolean;
 }
 
 /** Start the server on the resolved transport. Returns the kind actually used. */
@@ -409,6 +458,7 @@ export async function startTransport(
         opts.port ?? 3000,
         normalizeListenHost(opts.host ?? "127.0.0.1"),
         opts.serverFactory,
+        opts.requireBearerAuth,
       );
     } else {
       await startStdio(server, opts.stdioInput, opts.stdioOutput);

@@ -442,4 +442,74 @@ describe("createStreamableHttpRequestHandler", () => {
       );
     }
   });
+
+  describe("requireBearerAuth", () => {
+    it("rejects /mcp requests without a valid bearer token, allows /health through", async () => {
+      const { mkdtemp, rm } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const { createToken } = await import("./auth/bearer.js");
+
+      const genieHome = await mkdtemp(join(tmpdir(), "genie-transport-auth-"));
+      const previousHome = process.env["GENIE_HOME"];
+      process.env["GENIE_HOME"] = genieHome;
+
+      const makeServer = (): McpServer => new McpServer({ name: "auth-test", version: "0" });
+      const http = createNodeHttpServer(
+        createStreamableHttpRequestHandler(makeServer, { requireBearerAuth: true }),
+      );
+      await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+      const { port } = http.address() as AddressInfo;
+
+      try {
+        const health = await fetch(`http://127.0.0.1:${port}/health`);
+        expect(health.status).toBe(200);
+
+        const noAuth = await fetch(`http://127.0.0.1:${port}/mcp`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+        });
+        expect(noAuth.status).toBe(401);
+
+        const badAuth = await fetch(`http://127.0.0.1:${port}/mcp`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer genie_wrongwrongwrongwrongwrongwrongwr",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+        });
+        expect(badAuth.status).toBe(401);
+
+        const { token } = await createToken({ sub: "test-client" });
+        const goodAuth = await fetch(`http://127.0.0.1:${port}/mcp`, {
+          method: "POST",
+          headers: {
+            accept: "application/json, text/event-stream",
+            "content-type": "application/json",
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-11-25",
+              capabilities: {},
+              clientInfo: { name: "authed-client", version: "0" },
+            },
+          }),
+        });
+        expect(goodAuth.status).not.toBe(401);
+      } finally {
+        await new Promise<void>((resolve, reject) =>
+          http.close((error) => (error ? reject(error) : resolve())),
+        );
+        if (previousHome === undefined) delete process.env["GENIE_HOME"];
+        else process.env["GENIE_HOME"] = previousHome;
+        await rm(genieHome, { recursive: true, force: true });
+      }
+    });
+  });
 });
