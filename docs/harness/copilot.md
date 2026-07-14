@@ -166,13 +166,8 @@ provisioned (skipped otherwise, mirroring M2-09's gate):
   Stable (1.109+, GA as of February 2026) or Insiders alike — `preview`'s
   `_meta.ui.resourceUri` points at `ui://genie/grid` and the resource actually
   renders the fixture's cards inline (reusing the M4 `buildGridDocument`
-  headless-render assertion), never as text. The suite drives the successful
-  `conjure → plan → write_files → preview` chain against a stubbed `chat` seam
-  (no real model spend, same pattern M2's unit suite uses) plus a companion
-  case that talks to a REAL `GENIE_LLM_*`-configured endpoint when one is
-  provisioned (skipped otherwise, mirroring M2-09's gate) — so the full chain
-  is exercised, not just `plan → write_files → preview` with `conjure` checked
-  separately.
+  headless-render assertion), never as text — so the full chain is exercised,
+  not just `plan → write_files → preview` with `conjure` checked separately.
 - **AC7** — when the client omits or negatives that capability — the shape a
   non-MCP-Apps client presents (any MCP host, VS Code or otherwise, that
   hasn't adopted the `io.modelcontextprotocol/ui` extension, or an older VS
