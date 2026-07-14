@@ -1,10 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createServer, type RequestListener } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type RequestListener,
+  type ServerResponse,
+} from "node:http";
 import type { AddressInfo } from "node:net";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createStreamableHttpRequestHandler } from "./transport.js";
-import { createHash, randomBytes } from "node:crypto";
-import { verifyJwtHS256 } from "./auth/oauth/jwt.js";
+import { createHash, createHmac, randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { JwtVerificationError, signJwtHS256, verifyJwtHS256 } from "./auth/oauth/jwt.js";
+import { createOAuthRouter } from "./auth/oauth/router.js";
 
 /**
  * Integration test for DRO-273 (M5-01): OAuth 2.0 + Dynamic Client
@@ -146,7 +153,88 @@ describe("OAuth 2.0 + Dynamic Client Registration (DRO-273)", () => {
       }).toString(),
     });
     expect(refreshRes.status).toBe(200);
+
+    const replayedRefreshRes = await fetch(`${baseUrl}/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: tokenBody.refresh_token,
+        client_id,
+        client_secret,
+      }).toString(),
+    });
+    expect(replayedRefreshRes.status).toBe(400);
   });
+
+  it.each(["javascript:alert(1)", "data:text/html,hello"])(
+    "rejects unsafe DCR redirect URI %s",
+    async (redirectUri) => {
+      const res = await fetch(`${baseUrl}/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ redirect_uris: [redirectUri] }),
+      });
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ error: "invalid_client_metadata" });
+    },
+  );
+
+  it("rejects a correctly signed JWT with a non-HS256 algorithm header", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = signJwtHS256(
+      { sub: "user", client_id: "client", scope: "read", iat: now, exp: now + 60 },
+      SIGNING_KEY,
+    );
+    const [, encodedPayload] = token.split(".");
+    const encodedHeader = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString(
+      "base64url",
+    );
+    const signingInput = `${encodedHeader}.${encodedPayload}`;
+    const signature = createHmac("sha256", SIGNING_KEY).update(signingInput).digest("base64url");
+
+    expect(() => verifyJwtHS256(`${signingInput}.${signature}`, SIGNING_KEY)).toThrow(
+      JwtVerificationError,
+    );
+  });
+
+  it.each(["/register", "/authorize", "/token"])(
+    "returns 500 when reading the %s request body fails",
+    async (pathname) => {
+      const router = createOAuthRouter({
+        issuer: "http://127.0.0.1:9999",
+        env: { OAUTH_HS256_KEY: SIGNING_KEY },
+      });
+      const request = new EventEmitter() as IncomingMessage;
+      Object.assign(request, {
+        method: "POST",
+        url: pathname,
+        headers: { "content-type": "application/json" },
+      });
+      let statusCode: number | undefined;
+      let ended = false;
+      const response = {
+        headersSent: false,
+        writeHead(status: number) {
+          statusCode = status;
+          this.headersSent = true;
+          return this;
+        },
+        end() {
+          ended = true;
+          return this;
+        },
+      } as unknown as ServerResponse;
+
+      expect(router.handle(request, response, pathname)).toBe(true);
+      request.emit("error", new Error("socket closed"));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(statusCode).toBe(500);
+      expect(ended).toBe(true);
+    },
+  );
 
   it("rejects a reused authorization code (single-use)", async () => {
     const redirectUri = "http://127.0.0.1:9999/callback";
@@ -169,7 +257,10 @@ describe("OAuth 2.0 + Dynamic Client Registration (DRO-273)", () => {
       method: "POST",
       redirect: "manual",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ decision: "allow", params: authorizeParams.toString() }).toString(),
+      body: new URLSearchParams({
+        decision: "allow",
+        params: authorizeParams.toString(),
+      }).toString(),
     });
     const location = new URL(decisionRes.headers.get("location")!);
     const code = location.searchParams.get("code")!;

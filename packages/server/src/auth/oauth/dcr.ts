@@ -25,6 +25,15 @@ export function registerDynamicClient(
     if (typeof uri !== "string" || uri.length === 0) {
       throw new DcrValidationError("Each redirect_uri must be a non-empty string.");
     }
+    let parsedUri: URL;
+    try {
+      parsedUri = new URL(uri);
+    } catch {
+      throw new DcrValidationError("Each redirect_uri must be an absolute HTTP(S) URL.");
+    }
+    if (parsedUri.protocol !== "http:" && parsedUri.protocol !== "https:") {
+      throw new DcrValidationError("Each redirect_uri must use the http or https scheme.");
+    }
   }
   const clientName = typeof body.client_name === "string" ? body.client_name : undefined;
 

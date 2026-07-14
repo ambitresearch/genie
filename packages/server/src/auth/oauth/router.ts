@@ -29,9 +29,7 @@ export interface OAuthHttpRouterOptions {
  * per the issue's Implementation Notes, while still allowing unauthenticated
  * MCP transport to run (OAuth is opt-in).
  */
-export function createOAuthRouter(
-  opts: OAuthHttpRouterOptions,
-): {
+export function createOAuthRouter(opts: OAuthHttpRouterOptions): {
   signingKey: string;
   store: OAuthStore;
   handle: (req: IncomingMessage, res: ServerResponse, pathname: string) => boolean;
@@ -52,6 +50,10 @@ export function createOAuthRouter(
       req.on("end", () => resolve(Buffer.concat(chunks)));
       req.on("error", reject);
     });
+  }
+
+  function handleBodyReadError(res: ServerResponse): void {
+    if (!res.headersSent) json(res, 500, { error: "server_error" });
   }
 
   function parseBody(raw: Buffer, contentType: string | undefined): Record<string, unknown> {
@@ -83,19 +85,24 @@ export function createOAuthRouter(
     }
 
     if (req.method === "POST" && pathname === "/register") {
-      void readBody(req).then((raw) => {
-        try {
-          const body = JSON.parse(raw.toString("utf8") || "{}") as Record<string, unknown>;
-          const result = registerDynamicClient(store, body);
-          json(res, 201, result);
-        } catch (error) {
-          if (error instanceof DcrValidationError) {
-            json(res, 400, { error: "invalid_client_metadata", error_description: error.message });
-          } else {
-            json(res, 500, { error: "server_error" });
+      void readBody(req)
+        .then((raw) => {
+          try {
+            const body = JSON.parse(raw.toString("utf8") || "{}") as Record<string, unknown>;
+            const result = registerDynamicClient(store, body);
+            json(res, 201, result);
+          } catch (error) {
+            if (error instanceof DcrValidationError) {
+              json(res, 400, {
+                error: "invalid_client_metadata",
+                error_description: error.message,
+              });
+            } else {
+              json(res, 500, { error: "server_error" });
+            }
           }
-        }
-      });
+        })
+        .catch(() => handleBodyReadError(res));
       return true;
     }
 
@@ -114,37 +121,41 @@ export function createOAuthRouter(
     }
 
     if (req.method === "POST" && pathname === "/authorize") {
-      void readBody(req).then((raw) => {
-        try {
-          const form = new URLSearchParams(raw.toString("utf8"));
-          const params = new URLSearchParams(form.get("params") ?? "");
-          const decision = form.get("decision") ?? "deny";
-          const redirectUrl = handleConsentDecision(store, params, decision);
-          res.writeHead(302, { location: redirectUrl });
-          res.end();
-        } catch (error) {
-          const status = error instanceof AuthorizeError ? error.status : 500;
-          res.writeHead(status, { "content-type": "text/plain" });
-          res.end(error instanceof Error ? error.message : "Internal error");
-        }
-      });
+      void readBody(req)
+        .then((raw) => {
+          try {
+            const form = new URLSearchParams(raw.toString("utf8"));
+            const params = new URLSearchParams(form.get("params") ?? "");
+            const decision = form.get("decision") ?? "deny";
+            const redirectUrl = handleConsentDecision(store, params, decision);
+            res.writeHead(302, { location: redirectUrl });
+            res.end();
+          } catch (error) {
+            const status = error instanceof AuthorizeError ? error.status : 500;
+            res.writeHead(status, { "content-type": "text/plain" });
+            res.end(error instanceof Error ? error.message : "Internal error");
+          }
+        })
+        .catch(() => handleBodyReadError(res));
       return true;
     }
 
     if (req.method === "POST" && pathname === "/token") {
-      void readBody(req).then((raw) => {
-        try {
-          const body = parseBody(raw, req.headers["content-type"]);
-          const result = handleTokenRequest(store, signingKey, body);
-          json(res, 200, result);
-        } catch (error) {
-          if (error instanceof TokenError) {
-            json(res, 400, { error: error.error, error_description: error.message });
-          } else {
-            json(res, 500, { error: "server_error" });
+      void readBody(req)
+        .then((raw) => {
+          try {
+            const body = parseBody(raw, req.headers["content-type"]);
+            const result = handleTokenRequest(store, signingKey, body);
+            json(res, 200, result);
+          } catch (error) {
+            if (error instanceof TokenError) {
+              json(res, 400, { error: error.error, error_description: error.message });
+            } else {
+              json(res, 500, { error: "server_error" });
+            }
           }
-        }
-      });
+        })
+        .catch(() => handleBodyReadError(res));
       return true;
     }
 

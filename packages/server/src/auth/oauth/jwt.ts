@@ -35,6 +35,13 @@ export function verifyJwtHS256(token: string, secret: string): JwtPayload {
   const parts = token.split(".");
   if (parts.length !== 3) throw new JwtVerificationError("Malformed JWT");
   const [encodedHeader, encodedPayload, encodedSignature] = parts as [string, string, string];
+  let header: { alg?: unknown };
+  try {
+    header = JSON.parse(base64urlToBuffer(encodedHeader).toString("utf8")) as { alg?: unknown };
+  } catch {
+    throw new JwtVerificationError("Malformed JWT header");
+  }
+  if (header.alg !== "HS256") throw new JwtVerificationError("Unsupported JWT algorithm");
   const signingInput = `${encodedHeader}.${encodedPayload}`;
   const expected = createHmac("sha256", secret).update(signingInput).digest();
   const actual = base64urlToBuffer(encodedSignature);

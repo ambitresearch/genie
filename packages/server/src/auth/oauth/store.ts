@@ -105,6 +105,7 @@ export class OAuthStore {
   consumeRefreshToken(token: string, clientId: string): RefreshTokenRecord | undefined {
     const record = this.refreshTokens.get(token);
     if (record === undefined || record.client_id !== clientId) return undefined;
+    this.refreshTokens.delete(token);
     return record;
   }
 }
