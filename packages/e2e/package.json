@@ -8,7 +8,11 @@
     "build": "echo \"@genie/e2e: test-only package, nothing to build\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:e2e:viewer": "vitest run --root ../.. --config vitest.config.ts packages/e2e/test/m4-viewer.test.ts",
+<<<<<<< HEAD
     "test:e2e:copilot": "vitest run --root ../.. --config vitest.config.ts packages/e2e/test/m5-smoke-copilot.test.ts"
+=======
+    "test:e2e:codex": "vitest run --root ../.. --config vitest.config.ts packages/e2e/test/m5-smoke-codex.test.ts"
+>>>>>>> 598282b (feat(harness): Codex CLI config snippet + smoke test (M5-11, DRO-283))
   },
   "license": "MIT",
   "author": "Roshan Gautam",
