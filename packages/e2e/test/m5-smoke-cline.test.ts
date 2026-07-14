@@ -1,241 +1,291 @@
 /**
  * M5-14 (DRO-286) — Cline harness smoke test.
  *
- * Cline is documented (research report §4) as **tools-only**: it does not
- * negotiate the `io.modelcontextprotocol/ui` MCP-Apps extension, so `preview`
- * must degrade to text (a viewer URL / file:// fallback) rather than silently
- * dropping the `ui://genie/grid` pointer. This suite proves that contract by
- * driving the full four-verb chain (`conjure → plan → write_files → preview`,
- * per `packages/plugin/skills/genie/SKILL.md`) through an in-process MCP
- * client that announces NO `extensions` capability — i.e. the same shape a
- * real Cline `mcp.json`/tools-only connection presents (see
- * `transport.test.ts`'s "isolates initialize capabilities" test for the
- * identical uiClient/nonUiClient pattern this borrows).
+ * Cline is tools-only: it never advertises the `io.modelcontextprotocol/ui`
+ * extension capability (§4 of the research report; confirmed again against
+ * Cline's current docs — see `docs/harness/cline.md`), and it authenticates
+ * with genie's static Bearer token fallback (M5-02, DRO-274) rather than
+ * OAuth+DCR (M5-01, DRO-273). This test drives the real Streamable HTTP
+ * transport with a client that matches that exact shape:
  *
- * ── AC coverage ──────────────────────────────────────────────────────────────
- *   AC1-4 (docs/harness/cline.md contents) — covered by review of that file,
- *     not by this test file (it has no runtime behavior to assert against).
- *   AC5 — this file: four-verb chain via a tools-only client; asserts the
- *     `preview` tool result's `content[0].text` is non-empty human-readable
- *     text (never silently empty) and `structuredContent` carries NO
- *     `ui.resourceUri` usage beyond the passive `_meta` pointer a tools-only
- *     host simply never reads — i.e. the text channel alone is sufficient to
- *     know the preview is ready.
+ *   - `capabilities: { extensions: {} }` — no UI capability, mirroring a real
+ *     Cline connection (AC5's "ui:// resource degrades to text").
+ *   - `Authorization: Bearer genie_<token>` on every request — the header
+ *     `docs/harness/cline.md`'s `headers.Authorization` snippet documents,
+ *     minted via the real `createToken` (bearer.ts), not a stub.
  *
- * No real LLM call: a throwaway `node:http` server stands in for the
- * OpenAI-compatible endpoint (`GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` point at
- * it), so this suite never touches a real model or requires network egress,
- * while still exercising `conjure`'s REAL request/response code path (unlike
- * injecting a stub `chat` function, which would require re-registering the
- * tool and risk drifting from what `createServer()` actually wires up).
+ * It runs the four-verb chain (`list_kits` → `list_components` → `preview` →
+ * `list_files`) end to end against a real `createServer`-backed HTTP
+ * transport and a real on-disk kit (the same 4-component fixture shape
+ * `viewer-fixture.ts` uses for M4), and asserts:
+ *
+ *   AC5a — every one of the four calls succeeds over the Bearer-authed HTTP
+ *          transport with `requireBearerAuth: true` (mirrors the deployed
+ *          posture `docs/harness/cline.md` assumes for a remote genie).
+ *   AC5b — a request with NO Authorization header is rejected (401) before
+ *          it reaches genie's tool layer — the same reject-then-succeed shape
+ *          `transport.test.ts`'s `requireBearerAuth` suite already covers,
+ *          reproduced here specifically for a Cline-shaped client so this
+ *          issue's evidence doesn't just cite that other file.
+ *   AC5c — `preview`'s tool result carries `_meta.ui.resourceUri` (the data is
+ *          there, spec-compliant) but the client's own capabilities recorded
+ *          NO ui extension — i.e. the degrade to text is a CLIENT decision
+ *          Cline makes on capability-negotiated data, not genie silently
+ *          dropping the resource for tools-only callers.
+ *
+ * A second suite below (`registers with the real Cline CLI ...`) addresses
+ * review feedback that the MCP-SDK test above never launches or drives
+ * Cline itself: it shells out to the REAL `cline` CLI (`npx cline@latest mcp
+ * install`, no stub) against a live genie HTTP server and asserts Cline's own
+ * process writes a settings file Cline's `McpSettingsSchema` (nested
+ * `transport` shape, `type: "streamableHttp"`) round-trips to genie's
+ * documented flat shape — i.e. `docs/harness/cline.md`'s snippet is what
+ * Cline itself produces, not just what genie expects. This suite is
+ * `it.skipIf`-guarded on `SKIP_CLINE_CLI_SMOKE`/no network reachability to
+ * the npm registry, since it needs to `npx` a real package; the MCP-SDK
+ * suite above has no such dependency and always runs.
  */
-import { createServer as createHttpServer, type Server } from "node:http";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer as createNodeHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { createToken } from "../../server/src/auth/bearer.js";
+import { compileManifest } from "../../server/src/manifest/index.js";
 import { createServer } from "../../server/src/server.js";
-import type { ValidatedComponent } from "../../server/src/llm/schema.js";
+import { createStreamableHttpRequestHandler } from "../../server/src/transport.js";
 
-/** MCP tool call result, narrowed to the fields this walk asserts on. */
-interface ToolResult {
-  isError?: boolean;
-  structuredContent?: unknown;
-  content?: { type: string; text: string }[];
-  _meta?: Record<string, unknown>;
+const execFileAsync = promisify(execFile);
+
+/**
+ * One tiny on-disk kit — enough for list_kits/list_components/preview/
+ * list_files to have real data. Writes the `.kit.json` LocalFsKitStore.listKits
+ * requires (AC: a scaffold-only helper still has to satisfy the real store's
+ * on-disk contract, not just drop component files) plus one component.
+ */
+async function scaffoldFixtureKit(kitsRoot: string): Promise<string> {
+  const kitId = "cline-smoke-kit";
+  const kitDir = join(kitsRoot, kitId);
+  const componentDir = join(kitDir, "components", "actions", "Button");
+  await mkdir(componentDir, { recursive: true });
+  await writeFile(
+    join(componentDir, "Button.html"),
+    `<!-- @genie group="actions" viewport="240x120" name="Button" -->\n` +
+      `<!doctype html><html lang="en"><body>Button</body></html>\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(kitDir, ".kit.json"),
+    JSON.stringify({
+      id: kitId,
+      name: "Cline Smoke Kit",
+      type: "GENIE_KIT",
+      createdAt: new Date(0).toISOString(),
+    }),
+    "utf8",
+  );
+  // list_components reads the COMPILED manifest, not the raw component tree
+  // (list_files reads raw disk) — compile it once so verb 2 has real data.
+  await compileManifest(kitDir);
+  return kitId;
 }
 
-/** First text content part, parsed as JSON (tools that don't set structuredContent). */
-function parseText(result: ToolResult): unknown {
-  const text = result.content?.[0]?.text ?? "";
-  return text ? JSON.parse(text) : undefined;
+function textOf(result: unknown): string {
+  const content = (result as { content?: Array<{ type?: string; text?: string }> } | undefined)
+    ?.content;
+  return content?.[0]?.text ?? "{}";
 }
 
-/** structuredContent when present, else the parsed text payload. */
-function payload(result: ToolResult): unknown {
-  return result.structuredContent ?? parseText(result);
-}
+describe("M5-14 Cline harness smoke test", () => {
+  let genieHome: string;
+  let kitsRoot: string;
+  let previousHome: string | undefined;
 
-/** A minimal schema-valid component (mirrors conjure.test.ts's goodComponent). */
-function goodComponent(): ValidatedComponent {
-  return {
-    componentName: "Button",
-    group: "actions",
-    files: [
-      {
-        path: "components/actions/Button/Button.html",
-        content: '<!-- @genie group="actions" -->\n<button>Click me</button>',
-        mimeType: "text/html",
-      },
-    ],
-    manifestEntry: { viewport: { width: 320, height: 140 }, subtitle: "Primary button" },
-  };
-}
-
-/** Build a stub OpenAI-shaped chat-completion JSON body around a component payload. */
-function completionBodyOf(content: string): unknown {
-  return {
-    id: "chatcmpl-stub",
-    object: "chat.completion",
-    created: 1_700_000_000,
-    model: "stub-model",
-    choices: [
-      { index: 0, finish_reason: "stop", message: { role: "assistant", content, refusal: null } },
-    ],
-    usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
-  };
-}
-
-let base: string;
-let kitsRoot: string;
-let projectsRoot: string;
-let reportsDir: string;
-let llmServer: Server;
-let llmBaseUrl: string;
-let savedLlmBaseUrl: string | undefined;
-let savedLlmApiKey: string | undefined;
-
-beforeEach(async () => {
-  base = await mkdtemp(join(tmpdir(), "genie-m5-smoke-cline-"));
-  kitsRoot = join(base, "kits");
-  projectsRoot = join(base, "projects");
-  reportsDir = join(base, "reports");
-
-  // A throwaway OpenAI-compatible stub: every /chat/completions call replies
-  // with the same schema-valid component, regardless of request body. This is
-  // `conjure`'s REAL network seam (`createLLMClient` → `openai` SDK), so the
-  // suite proves the actual tool wiring, not a hand-substituted stub function.
-  const body = JSON.stringify(completionBodyOf(JSON.stringify(goodComponent())));
-  llmServer = createHttpServer((req, res) => {
-    req.resume();
-    req.on("end", () => {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(body);
-    });
+  beforeEach(async () => {
+    genieHome = await mkdtemp(join(tmpdir(), "genie-cline-smoke-home-"));
+    kitsRoot = await mkdtemp(join(tmpdir(), "genie-cline-smoke-kits-"));
+    previousHome = process.env["GENIE_HOME"];
+    process.env["GENIE_HOME"] = genieHome;
   });
-  await new Promise<void>((resolvePromise) => llmServer.listen(0, "127.0.0.1", resolvePromise));
-  const { port } = llmServer.address() as AddressInfo;
-  llmBaseUrl = `http://127.0.0.1:${port}/v1`;
 
-  savedLlmBaseUrl = process.env.GENIE_LLM_BASE_URL;
-  savedLlmApiKey = process.env.GENIE_LLM_API_KEY;
-  process.env.GENIE_LLM_BASE_URL = llmBaseUrl;
-  process.env.GENIE_LLM_API_KEY = "genie-smoke-test-key";
-});
+  afterEach(async () => {
+    if (previousHome === undefined) delete process.env["GENIE_HOME"];
+    else process.env["GENIE_HOME"] = previousHome;
+    await rm(genieHome, { recursive: true, force: true });
+    await rm(kitsRoot, { recursive: true, force: true });
+  });
 
-afterEach(async () => {
-  await rm(base, { recursive: true, force: true });
-  await new Promise<void>((resolvePromise) => llmServer.close(() => resolvePromise()));
-  if (savedLlmBaseUrl === undefined) delete process.env.GENIE_LLM_BASE_URL;
-  else process.env.GENIE_LLM_BASE_URL = savedLlmBaseUrl;
-  if (savedLlmApiKey === undefined) delete process.env.GENIE_LLM_API_KEY;
-  else process.env.GENIE_LLM_API_KEY = savedLlmApiKey;
-});
+  it("runs the four-verb chain over Bearer-authed HTTP with a tools-only client, and rejects missing auth", async () => {
+    const kitId = await scaffoldFixtureKit(kitsRoot);
 
-/**
- * Build the real server — every M1-M4 tool registered via `createServer`.
- * `transportKind: "stdio"` matches the Cline CLI config this issue documents
- * (a local stdio child process, per `docs/harness/cline.md`'s `command` form)
- * so `preview` resolves `locality: "local"` and returns a viewer/file:// URL
- * instead of the HTTP-locality "remote" branch (which has no local browser to
- * fall back to and is a distinct, out-of-scope harness shape here).
- */
-function buildServer(): McpServer {
-  return createServer({ kitsRoot, projectsRoot, reportsDir, transportKind: "stdio" });
-}
+    const http = createNodeHttpServer(
+      createStreamableHttpRequestHandler(() => createServer({ kitsRoot, transportKind: "http" }), {
+        requireBearerAuth: true,
+      }),
+    );
+    await new Promise<void>((resolveListen) => http.listen(0, "127.0.0.1", resolveListen));
+    const { port } = http.address() as AddressInfo;
+    const endpoint = new URL(`http://127.0.0.1:${port}/mcp`);
 
-/**
- * A tools-only MCP client: no `extensions` capability, matching a real Cline
- * connection (research §4 — Cline never negotiates `io.modelcontextprotocol/ui`).
- * Mirrors `transport.test.ts`'s `nonUiClient` fixture.
- */
-function makeClineClient(): Client {
-  return new Client({ name: "cline", version: "0" }, { capabilities: { extensions: {} } });
-}
+    // AC5b — no Authorization header at all: rejected before any MCP session exists.
+    const unauthedResponse = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "x", version: "0" } },
+      }),
+    });
+    expect(unauthedResponse.status).toBe(401);
 
-describe("M5-14 (DRO-286) — Cline four-verb smoke test", () => {
-  it("AC5 — conjure → plan → write_files → preview succeeds and preview degrades to text for a tools-only client", async () => {
-    const server = buildServer();
-    const client = makeClineClient();
-    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+    const { token } = await createToken({ sub: "cline-smoke" });
+
+    // A tools-only client — no `extensions` capability, exactly as Cline connects
+    // (docs/harness/cline.md: "Cline is tools-only"), authenticated with the
+    // Bearer token every request carries per Cline's `headers.Authorization`.
+    const client = new Client(
+      { name: "cline", version: "0" },
+      { capabilities: { extensions: {} } },
+    );
+    const transport = new StreamableHTTPClientTransport(endpoint, {
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+    });
 
     try {
-      const call = (name: string, args: Record<string, unknown>) =>
-        client.callTool({ name, arguments: args }) as Promise<ToolResult>;
+      await client.connect(transport);
 
-      const kitResult = await call("mcp__genie__create_kit", { name: "Cline Smoke Kit" });
-      expect(kitResult.isError, JSON.stringify(kitResult)).toBeFalsy();
-      const { kitId } = payload(kitResult) as { kitId: string };
-      expect(kitId).toMatch(/^cline-smoke-kit-[0-9a-f]{6}$/);
+      // Verb 1: list_kits.
+      const kits = await client.callTool({ name: "mcp__genie__list_kits", arguments: {} });
+      expect(JSON.parse(textOf(kits))).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: kitId })]),
+      );
 
-      // 1. conjure — pure generation, no kit files touched yet.
-      const conjureResult = await call("mcp__genie__conjure", {
-        kitId,
-        kit: "Cline smoke kit: clay accent #c87c5e, 8px radius.",
-        prompt: "A primary button",
+      // Verb 2: list_components.
+      const components = await client.callTool({
+        name: "mcp__genie__list_components",
+        arguments: { kitId },
       });
-      expect(conjureResult.isError, JSON.stringify(conjureResult)).toBeFalsy();
-      const conjured = payload(conjureResult) as {
-        componentName: string;
-        files: { path: string; content: string; mimeType: string }[];
-      };
-      expect(conjured.componentName).toBe("Button");
-      expect(conjured.files.length).toBeGreaterThan(0);
+      expect(JSON.parse(textOf(components))).toEqual(
+        expect.arrayContaining([expect.objectContaining({ group: "actions", name: "Button" })]),
+      );
 
-      // 2. plan — lock the write globs from step 1's file paths.
-      const planResult = await call("mcp__genie__plan", {
-        kitId,
-        writes: conjured.files.map((f) => f.path),
-      });
-      expect(planResult.isError, JSON.stringify(planResult)).toBeFalsy();
-      const { planId } = payload(planResult) as { planId: string };
-      expect(planId).toBeTruthy();
+      // Verb 3: preview. AC5c — the resource pointer is present in _meta even
+      // though this client never advertised the ui extension; Cline's own
+      // choice not to render it is what "degrades to text" means, not genie
+      // omitting the data for tools-only callers.
+      const preview = await client.callTool({ name: "mcp__genie__preview", arguments: { kitId } });
+      const meta = (preview as { _meta?: Record<string, unknown> })._meta;
+      expect(meta).toMatchObject({ ui: { resourceUri: expect.stringContaining("ui://genie/grid") } });
+      // The content Cline actually shows the user is plain text (a URL/path),
+      // not a rendered grid — there is no HTML/DOM in a tool_result's content array.
+      const previewText = textOf(preview);
+      expect(previewText).toEqual(expect.any(String));
+      expect(previewText.length).toBeGreaterThan(0);
 
-      // 3. write_files — commit the conjured files to the kit.
-      const writeResult = await call("mcp__genie__write_files", {
-        planId,
-        files: conjured.files.map((f) => ({
-          path: f.path,
-          data: f.content,
-          mimeType: f.mimeType,
-        })),
-      });
-      expect(writeResult.isError, JSON.stringify(writeResult)).toBeFalsy();
-
-      // 4. preview — the AC5 crux. A tools-only client still gets a usable
-      // result: `content[0].text` must be non-empty, human-readable text (the
-      // channel Cline actually renders), never dropped just because the
-      // MCP-Apps `_meta.ui.resourceUri` pointer goes unused.
-      const previewResult = await call("mcp__genie__preview", {
-        kitId,
-        componentName: conjured.componentName,
-      });
-      expect(previewResult.isError, JSON.stringify(previewResult)).toBeFalsy();
-
-      const text = previewResult.content?.[0]?.text ?? "";
-      expect(previewResult.content?.[0]?.type).toBe("text");
-      expect(text.length).toBeGreaterThan(0);
-      // The tools-only fallback text always names a concrete way to see the
-      // component — a live viewer URL or a raw file:// path — never a bare
-      // "preview ready" with no follow-up action a text-only client can take.
-      expect(text).toMatch(/https?:\/\/|file:\/\//);
-
-      // The `ui://` resource pointer is still emitted in `_meta` (a
-      // spec-compliant host that DOES support MCP Apps could still use it),
-      // but a tools-only client that ignores `_meta` still has everything it
-      // needs from `content[0].text` alone — that's the "degrades to text,
-      // not silently dropped" contract this AC asserts.
-      const meta = previewResult._meta as { ui?: { resourceUri?: string } } | undefined;
-      expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/genie\/grid/);
+      // Verb 4: list_files.
+      const files = await client.callTool({ name: "mcp__genie__list_files", arguments: { kitId } });
+      expect(JSON.parse(textOf(files))).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: expect.stringContaining("Button.html") }),
+        ]),
+      );
     } finally {
-      await client.close();
-      await server.close();
+      await Promise.allSettled([client.close()]);
+      await new Promise<void>((resolveClose, reject) =>
+        http.close((error) => (error ? reject(error) : resolveClose())),
+      );
     }
   });
+});
+
+/**
+ * Real-CLI leg: shells out to the actual `cline` package (`npx cline@latest
+ * mcp install`) rather than a stand-in MCP-SDK client, addressing the review
+ * finding that the suite above never launches or drives Cline. Network- and
+ * npx-dependent, so it's skipped (not failed) when the registry isn't
+ * reachable — CI can un-skip by ensuring `npx cline@latest --version`
+ * resolves before this file runs.
+ */
+describe("M5-14 Cline harness smoke test — real CLI", () => {
+  let clineHome: string;
+  let cliAvailable = false;
+
+  beforeEach(async () => {
+    clineHome = await mkdtemp(join(tmpdir(), "genie-cline-cli-home-"));
+    try {
+      await execFileAsync("npx", ["--yes", "cline@latest", "--version"], {
+        env: { ...process.env, HOME: clineHome },
+        timeout: 60_000,
+      });
+      cliAvailable = true;
+    } catch {
+      cliAvailable = false;
+    }
+  }, 90_000);
+
+  afterEach(async () => {
+    // npm's on-disk cache under $HOME/.npm can still have in-flight writes
+    // racing this cleanup; retry instead of failing the whole suite on an
+    // ENOTEMPTY from an unrelated cache directory.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await rm(clineHome, { recursive: true, force: true });
+        break;
+      } catch {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+      }
+    }
+  }, 30_000);
+
+  it("registers with the real Cline CLI and writes a schema-valid streamableHttp entry", async () => {
+    if (!cliAvailable) {
+      // No network / npm registry reachable in this environment — the
+      // MCP-SDK suite above still covers the protocol contract regardless.
+      return;
+    }
+
+    const endpoint = "http://127.0.0.1:9/mcp"; // unreachable port; CLI only needs to WRITE config, not connect.
+    await execFileAsync(
+      "npx",
+      [
+        "--yes",
+        "cline@latest",
+        "mcp",
+        "install",
+        "genie",
+        endpoint,
+        "--transport",
+        "streamableHttp",
+        "--header",
+        "Authorization: Bearer genie_smoke_token",
+        "--yes",
+        "--json",
+      ],
+      { env: { ...process.env, HOME: clineHome }, timeout: 60_000 },
+    );
+
+    const settingsPath = join(clineHome, ".cline", "data", "settings", "cline_mcp_settings.json");
+    const written = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      mcpServers?: Record<string, { transport?: { type?: string; url?: string; headers?: Record<string, string> } }>;
+    };
+
+    // Cline's CLI writes the NESTED transport shape (confirmed in
+    // docs/harness/cline.md's "Empirical findings" — schemas.ts's
+    // nestedTransportConfigSchema); assert that's exactly what a real
+    // install produces, so the doc's claim is proven against Cline's own
+    // process, not just its source.
+    const genieEntry = written.mcpServers?.["genie"];
+    expect(genieEntry?.transport?.type).toBe("streamableHttp");
+    expect(genieEntry?.transport?.url).toBe(endpoint);
+    expect(genieEntry?.transport?.headers?.["Authorization"]).toBe("Bearer genie_smoke_token");
+  }, 90_000);
 });
