@@ -47,7 +47,7 @@ interface ToolResult {
   _meta?: Record<string, unknown>;
 }
 
-function payload(result: ToolResult): any {
+function payload(result: ToolResult): unknown {
   if (result.structuredContent !== undefined) return result.structuredContent;
   const text = result.content?.[0]?.text ?? "";
   return text ? JSON.parse(text) : undefined;
