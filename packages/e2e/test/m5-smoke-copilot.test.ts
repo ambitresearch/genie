@@ -413,7 +413,8 @@ describe("AC7 — a non-MCP-Apps client falls back to a text/viewer-URL-only res
     // the SAME result later could still resolve it), but on this omitted-
     // capability shape the tool must ALSO hand back a directly consumable
     // viewer URL/file path — it cannot assume the host will ever render the
-    // ui:// pointer inline, which is exactly what Stable can't do pre-Jan-2026.
+    // ui:// pointer inline, which is exactly what a non-MCP-Apps host (any
+    // client, or a VS Code build predating 1.109) can't do.
     const structured = previewResult.structuredContent as
       | { kitId?: string; viewerUrl?: string; fileUrl?: string; embeddedManifest?: unknown }
       | undefined;
