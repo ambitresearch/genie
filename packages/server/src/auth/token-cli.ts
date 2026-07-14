@@ -88,7 +88,7 @@ export async function runTokenCli(argv: string[]): Promise<TokenCliResult> {
     }
     const lines = tokens.map(
       (t) =>
-        `${t.prefix}...  sub=${t.sub}  scopes=${t.scopes.join(",")}  createdAt=${t.createdAt}  lastUsedAt=${
+        `${t.prefix}...  hash=${t.hash}  sub=${t.sub}  scopes=${t.scopes.join(",")}  createdAt=${t.createdAt}  lastUsedAt=${
           t.lastUsedAt ?? "never"
         }`,
     );

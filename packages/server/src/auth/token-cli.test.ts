@@ -57,6 +57,7 @@ describe("genie token CLI", () => {
     const result = await runTokenCli(["list"]);
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("sub=bob");
+    expect(result.output).toMatch(/hash=[a-f0-9]{64}/);
     expect(result.output).not.toMatch(/genie_[A-Z2-7]{32}/);
   });
 

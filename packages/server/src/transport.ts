@@ -346,7 +346,7 @@ export function createStreamableHttpRequestHandler(
 
   return (req, res) => {
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-    if (pathname === "/mcp") {
+    if (requireBearerAuth && pathname === "/mcp") {
       void authorize(req, res).then((authorized) => {
         if (!authorized) return;
         dispatchMcp(req, res, pathname);
