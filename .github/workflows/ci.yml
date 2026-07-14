@@ -435,6 +435,25 @@ jobs:
           fi
           pnpm test m5-smoke-claude-code
 
+      - name: Surface AC4/AC6 skip status (do not let this job go silently green)
+        if: ${{ !cancelled() }}
+        run: |
+          if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
+            echo "AC4/AC6: Docker + \`claude\` CLI detected on this runner — full Claude-Code-in-Docker leg ran for real." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Docker/Claude CLI unavailable — AC4/AC6 smoke assertions were skipped, not verified"
+            {
+              echo "## ⚠️ AC4/AC6 unverified"
+              echo ""
+              echo "Docker and/or the \`claude\` CLI were not available on this runner, so the full"
+              echo "Claude-Code-CLI-in-Docker leg (boot Claude Code, install the genie MCP server,"
+              echo "drive the four-verb chain through Claude's own agent loop, capture screenshots"
+              echo "to \`docs/harness/screenshots/claude-code/\`) was **skipped**, not verified."
+              echo ""
+              echo "This job is green because AC5's protocol-level walk passed, not because AC4/AC6 ran."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload M5-09 smoke test report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

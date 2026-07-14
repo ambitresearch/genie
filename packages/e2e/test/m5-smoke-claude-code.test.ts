@@ -255,10 +255,32 @@ describe.skipIf(!hasLlmConfig)(
 // endpoint from inside the container — none of which this suite provisions
 // today. Tracked as a follow-up rather than silently declared done; see the
 // issue this file implements (DRO-281) for the acceptance-criteria checklist.
-describe.skipIf(!dockerAvailable)("AC4/AC6/AC7 — Claude Code CLI in Docker (not yet implemented)", () => {
-  it.todo(
-    "boot Claude Code CLI in a Docker sandbox, install the genie MCP server, run the four-verb " +
-      "chain through Claude's own agent loop, capture screenshots to docs/harness/screenshots/claude-code/ " +
-      "(needs a Docker image with the `claude` CLI baked in — see DRO-281 follow-up)",
-  );
+describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
+  if (dockerAvailable) {
+    it.todo(
+      "boot Claude Code CLI in a Docker sandbox, install the genie MCP server, run the four-verb " +
+        "chain through Claude's own agent loop, capture screenshots to docs/harness/screenshots/claude-code/ " +
+        "(needs a Docker image with the `claude` CLI baked in — see DRO-281 follow-up)",
+    );
+  } else {
+    // Not `it.todo` here on purpose: an unconditional `it.todo` silently
+    // reports "todo" in the summary without ever printing *why* — a reader
+    // skimming green/todo counts can mistake that for "not urgent" rather
+    // than "AC4/AC6 are entirely unverified in this run". This test always
+    // executes, always fails loudly if GENIE_REQUIRE_DOCKER=1, and otherwise
+    // prints an explicit, greppable skip breadcrumb before marking itself
+    // skipped so both the console output AND the test-runner summary flag it.
+    it("SKIPPED: Docker/Claude CLI unavailable in this sandbox; AC4/AC6 not verified", (ctx) => {
+      const message =
+        "[m5-smoke-claude-code] SKIPPED: Docker/Claude CLI unavailable in this sandbox; " +
+        "AC4/AC6 not verified. The full Claude-Code-CLI-in-Docker leg (boot Claude Code, " +
+        "install the genie MCP server, drive the four-verb chain through Claude's own agent " +
+        "loop, capture screenshots to docs/harness/screenshots/claude-code/) did NOT run. " +
+        "Set GENIE_REQUIRE_DOCKER=1 once Docker + the `claude` CLI are provisioned to turn " +
+        "this into a hard failure instead of a skip.";
+      console.warn(message);
+      (ctx.task.meta as Record<string, unknown>)["acStatus"] = "AC4/AC6 unverified — skipped (no Docker)";
+      ctx.skip();
+    });
+  }
 });

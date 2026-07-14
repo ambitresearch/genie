@@ -32,12 +32,36 @@ by Claude Code), register it over `http` and supply credentials through a
 per-server `headersHelper` script instead of a literal token in the config
 file.
 
-**Do not use top-level `apiKeyHelper` for this.** `apiKeyHelper` (Claude Code
-`2.1.203`+) governs Claude Code's own Anthropic/model API routing key, not any
-individual MCP server's auth — it has no per-`mcpServers` entry equivalent.
-The mechanism that *does* attach to a specific HTTP/SSE MCP server is
-`headersHelper`, a per-server field that returns a JSON object of headers
-merged into every request Claude Code makes to that server:
+**Do not use top-level `apiKeyHelper` for this.** `apiKeyHelper` and
+`headersHelper` are two different settings at two different scopes, and
+Claude Code `2.1.203`'s `claude mcp add-json` only serializes `type`/`url`
+for an MCP server entry — anything else nested under `mcpServers.<name>`
+(like an `apiKeyHelper` placed there by mistake) is silently dropped, not
+merely ignored at runtime.
+
+- **`apiKeyHelper`** is a **top-level** Claude Code setting, unrelated to any
+  MCP server. It governs Claude Code's own Anthropic/model-API routing
+  credential:
+
+  ```json
+  {
+    "apiKeyHelper": "/absolute/path/to/anthropic-api-key-helper.sh",
+    "mcpServers": {
+      "genie": { "...": "see the headersHelper snippet below" }
+    }
+  }
+  ```
+
+  `apiKeyHelper` is any executable that prints the model-API key/token (a
+  bare string, not JSON) to stdout; Claude Code uses it to authenticate its
+  own calls to the configured LLM endpoint (`ANTHROPIC_BASE_URL` / a custom
+  router). It has no per-`mcpServers` entry equivalent and nothing to do with
+  authenticating to the genie MCP server.
+
+- **`headersHelper`** is the mechanism that *does* attach to a specific
+  HTTP/SSE MCP server: a field nested inside that server's own
+  `mcpServers.<name>` config, returning a JSON object of headers merged into
+  every request Claude Code makes to that server:
 
 ```json
 {
