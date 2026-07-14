@@ -1,6 +1,6 @@
 {
   "name": "@genie/server",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "genie MCP server — harness-agnostic AI UI-component generation.",
   "repository": {
@@ -38,6 +38,7 @@
     "mime-types": "^3.0.2",
     "openai": "^6.45.0",
     "parse5": "^7.3.0",
+    "pino": "^10.3.1",
     "pngjs": "^7.0.0",
     "prom-client": "^15.1.3",
     "ts-morph": "^28.0.0",

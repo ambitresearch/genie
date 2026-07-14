@@ -42,6 +42,7 @@ docs/.deliverables/
 # ── Secrets (belt-and-suspenders; none currently in repo) ──
 .env
 .env.*
+!.env.example
 *.local
 **/shellprivatevars
 .gstack/
