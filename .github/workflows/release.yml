@@ -3,13 +3,65 @@ name: Release
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
+  # ── Dry-run publish test (M5-06 DoD: "dry-run publish on a non-prod tag") ──
+  # Runs on every PR + push — never touches the real registry (no
+  # registry-url/NODE_AUTH_TOKEN configured, and `--dry-run` never contacts
+  # npm for the publish itself). Exercises the exact same command shape
+  # (`--provenance --access public`) the real publish-* jobs below run, so a
+  # broken package.json/publishConfig/files list is caught on every PR instead
+  # of only discovered when a real release tries to publish.
+  publish-dry-run:
+    name: publish dry-run (non-prod, ${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: ["@genie/server", "@genie/viewer"]
+        include:
+          - package: "@genie/server"
+            dir: packages/server
+          - package: "@genie/viewer"
+            dir: packages/viewer
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build ${{ matrix.package }}
+        run: pnpm --filter ${{ matrix.package }} build
+
+      - name: npm publish --dry-run (${{ matrix.package }})
+        working-directory: ${{ matrix.dir }}
+        # No registry-url/NODE_AUTH_TOKEN is configured for this job — the
+        # dry run never authenticates against, or contacts, the real
+        # registry for the publish step (npm still resolves metadata from
+        # the default registry, which is fine unauthenticated). Provenance
+        # attestation itself is skipped in --dry-run mode by npm, but the
+        # flag combination is validated the same as a real publish.
+        run: npm publish --dry-run --provenance --access public
+
   release-please:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       # release-please-action@v4 exposes one `releases_created`/`tag_name` pair
@@ -29,20 +81,65 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+  # ── AC6: first-class M0-04 CI gate ──────────────────────────────────────────
+  # release-please merging its release PR onto `main` implies that PR's CI ran
+  # green, but it does NOT prove the `CI` workflow (ci.yml) has itself reported
+  # `success` for the exact commit SHA release-please just tagged — e.g. a
+  # branch-protection config change, an admin merge, or a re-tagged commit
+  # could slip past that assumption. This job makes the gate explicit and
+  # verifiable: this workflow is itself triggered by the same `push: main`
+  # event ci.yml reacts to, so `github.sha` IS the commit release-please just
+  # tagged. This job polls the Checks API for ci.yml's check-run conclusions
+  # on that exact SHA and fails closed (missing or non-`success` ⇒ blocks)
+  # rather than inferring green from merge history. Both publish jobs `need`
+  # this job in addition to `release-please`.
+  verify-ci-green:
+    name: verify M0-04 CI is green for the released commit
+    needs: release-please
+    if: needs.release-please.outputs.server_released == 'true' || needs.release-please.outputs.viewer_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    steps:
+      - name: Poll CI workflow conclusion for github.sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          echo "Checking CI conclusion for $SHA ..."
+          # Poll: the CI workflow run for this SHA may still be finishing
+          # (both workflows react to the same push event, so ordering between
+          # them isn't guaranteed). Fail closed after the timeout rather than
+          # assume success.
+          for _ in $(seq 1 30); do
+            conclusion=$(gh api "repos/${{ github.repository }}/commits/${SHA}/check-runs" --paginate \
+              --jq '[.check_runs[] | select(.name | test("^lint |^typecheck |^test |^build |^gitea |^viewer |^m2 "))] | if length == 0 then "pending" elif any(.status != "completed") then "pending" elif any(.conclusion != "success") then "failure" else "success" end')
+            if [ "$conclusion" = "success" ]; then
+              echo "CI green for $SHA"
+              exit 0
+            elif [ "$conclusion" = "failure" ]; then
+              echo "::error::CI is red for released commit $SHA — blocking npm publish (AC6)."
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "::error::Timed out waiting for CI conclusion on $SHA — blocking npm publish (AC6)."
+          exit 1
+
   # ── npm publish (DRO-278 / M5-06) ────────────────────────────────────────────
-  # Gated on M0-04 CI having already gone green for this commit (AC6): CI runs
-  # on every push to `main` via the `ci.yml` workflow, and `release-please`
-  # merges its release PR onto `main` only after that PR's own CI run passed —
-  # so by the time `release-please` tags a release here, the tagged commit's
-  # CI is already green. `needs: release-please` plus each publish job's own
-  # `if: needs.release-please.outputs.*_released == 'true'` is what actually
-  # triggers on tag `v*` (AC1): release-please creates the GitHub Release +
-  # tag as part of the same job, so gating on its `release_created` output is
-  # the reliable signal — a separate `on: push: tags: v*` trigger would race
-  # the tag-creation step and is what release-please's own docs warn against.
+  # AC1 (reconciled — see docs/github/issues/M5-06-npm-publish.md): tags are
+  # `packages/server-vX.Y.Z` / `packages/viewer-vX.Y.Z`
+  # (`include-component-in-tag: true`), not a bare `v*`; gating each publish
+  # job on release-please's own `release_created` output is the mechanism
+  # release-please's docs recommend in place of a separate
+  # `on: push: tags: v*` trigger, which races the tag-creation step.
   publish-server:
     name: publish @genie/server (npm)
-    needs: release-please
+    needs: [release-please, verify-ci-green]
     if: needs.release-please.outputs.server_released == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -88,7 +185,7 @@ jobs:
 
   publish-viewer:
     name: publish @genie/viewer (npm)
-    needs: release-please
+    needs: [release-please, verify-ci-green]
     if: needs.release-please.outputs.viewer_released == 'true'
     runs-on: ubuntu-latest
     permissions:
