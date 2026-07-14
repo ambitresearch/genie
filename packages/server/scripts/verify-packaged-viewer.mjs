@@ -33,7 +33,20 @@ try {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 
-  const result = await client.readResource({ uri: "ui://genie/grid" });
+  const listed = await client.listResources();
+  const grid = listed.resources.find((resource) => resource.uri.startsWith("ui://genie/grid?"));
+  if (grid === undefined) {
+    throw new Error("packaged server did not advertise the MCP App grid resource");
+  }
+  const gridUri = new URL(grid.uri);
+  if (
+    gridUri.searchParams.get("v") !== "2" ||
+    !/^[a-f0-9]{32}$/.test(gridUri.searchParams.get("instance") ?? "")
+  ) {
+    throw new Error("packaged grid resource is missing its process cache-busting identity");
+  }
+
+  const result = await client.readResource({ uri: grid.uri });
   const html = String(result.contents[0]?.text ?? "");
   if (viewerResolutionAttempted) {
     throw new Error("packaged grid resource attempted to resolve optional @genie/viewer");

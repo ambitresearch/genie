@@ -43,9 +43,9 @@
  * The preview HTML bytes themselves are untouched — the card renders identically
  * in all three vehicles.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -55,11 +55,17 @@ import { parse } from "parse5";
 
 import { ensureManifest, type Manifest, type ManifestCard } from "../manifest/index.js";
 import { KIT_ID_PATTERN } from "../tools/get_kit.js";
+import type { CardAssetBroker, CardAssetKit } from "./card-asset-broker.js";
 
 // ─── Public constants (AC1) ──────────────────────────────────────────────────
 
-/** The embedded preview resource URI (bare; `preview` appends `?kitId=…`). */
-export const GRID_RESOURCE_URI = "ui://genie/grid";
+/**
+ * The embedded preview resource URI. `v` identifies the wire contract while
+ * the process-scoped nonce prevents hosts from reusing a stale app document
+ * after the MCP server restarts. It remains stable for every read in one
+ * process, so resource registration and tool metadata always agree.
+ */
+export const GRID_RESOURCE_URI = `ui://genie/grid?v=2&instance=${randomBytes(16).toString("hex")}`;
 
 /** The spec-mandated MCP-Apps MIME (stable spec 2026-01-26; RFC §6.5). */
 export const GRID_RESOURCE_MIME = "text/html;profile=mcp-app";
@@ -67,7 +73,6 @@ export const GRID_RESOURCE_MIME = "text/html;profile=mcp-app";
 /** The DOM id `viewer.js` reads the inlined manifest from (must match it). */
 export const MANIFEST_ELEMENT_ID = "manifest";
 export const TOOL_RESULT_SHELL_META = "genie-tool-result-shell";
-export const LOCAL_VIEWER_FRAME_DOMAINS = ["http://127.0.0.1:*", "http://localhost:*"] as const;
 
 /** Legacy sibling asset URIs retained for older experimental hosts. */
 export const VIEWER_JS_URI = "ui://genie/viewer.js";
@@ -121,6 +126,12 @@ export interface GridResourceOptions {
    * bytes. Defaults to `process.env.GENIE_PREVIEWS_BASE_URL`.
    */
   previewsBaseUrl?: string;
+  /**
+   * Lazily resolves the process-scoped local card broker used by UI-capable
+   * hosts. Omit this seam for legacy/unit callers that require the self-
+   * contained `data:` fallback.
+   */
+  getCardAssetBroker?: () => Promise<CardAssetBroker>;
 }
 
 // ─── kitId → kit dir (path-traversal guard, shared with `preview`) ────────────
@@ -216,10 +227,11 @@ export async function rewriteCardPaths(
     kitDir: string;
     previewsBaseUrl?: string;
     readPreviewBytes: PreviewReader;
+    cardAssetKit?: CardAssetKit;
     onPreviewHtml?: (html: string) => void;
   },
 ): Promise<EmbeddedManifest> {
-  const { kitId, kitDir, previewsBaseUrl, readPreviewBytes, onPreviewHtml } = opts;
+  const { kitId, kitDir, previewsBaseUrl, readPreviewBytes, cardAssetKit, onPreviewHtml } = opts;
 
   // Validate the previews base URL ONCE up front; a malformed value degrades to
   // the solo-dev `data:` path rather than throwing per-card.
@@ -234,6 +246,9 @@ export async function rewriteCardPaths(
         // not replacing the last path part; `URL` percent-encodes the join.
         const src = new URL(`${encodeURIComponent(kitId)}/${card.path}`, base).toString();
         return { ...card, sourcePath, path: src };
+      }
+      if (cardAssetKit !== undefined) {
+        return { ...card, sourcePath, path: cardAssetKit.urlFor(card.path) };
       }
       // Solo-dev fallback: inline the preview bytes as a data: URL.
       const bytes = await readPreviewBytes(kitDir, card.path);
@@ -409,20 +424,21 @@ export interface GridCspMeta {
 export function buildCspMeta(
   previewsBaseUrl: string | undefined,
   inlineHashes: InlineCspHashes = { scriptHashes: [], styleHashes: [] },
-  includeLocalViewer = false,
+  exactFrameDomains?: readonly string[],
 ): GridCspMeta {
   // Validate via the shared normaliser so a malformed GENIE_PREVIEWS_BASE_URL
   // NEVER throws here — an invalid value degrades to the solo-dev `data:` frame
   // origin exactly as `rewriteCardPaths` does, keeping the two in lockstep and
   // never crashing `registerGridResource`/server startup (reviewer flag).
   const base = normalizePreviewsBaseUrl(previewsBaseUrl);
-  const cardFrameDomains = base !== undefined ? [base.origin] : ["data:"];
-  const frameDomains = [
-    ...cardFrameDomains,
-    ...(includeLocalViewer ? LOCAL_VIEWER_FRAME_DOMAINS : []),
-  ];
+  const frameDomains =
+    base !== undefined
+      ? [base.origin]
+      : exactFrameDomains === undefined
+        ? ["data:"]
+        : [...new Set(exactFrameDomains)];
   const resourceDomains: string[] = [];
-  const frameSrc = frameDomains.join(" ");
+  const frameSrc = frameDomains.length === 0 ? "'none'" : frameDomains.join(" ");
   const scriptHashes = validCspHashes(inlineHashes.scriptHashes);
   const styleHashes = validCspHashes(inlineHashes.styleHashes);
   const scriptSrc = scriptHashes.length > 0 ? scriptHashes.join(" ") : "'none'";
@@ -496,14 +512,21 @@ export function injectCspMeta(html: string, meta: GridCspMeta): string {
 /** Canonical MCP Apps resource metadata (stable 2026-01-26 shape). */
 export function gridResourceMeta(
   previewsBaseUrl: string | undefined,
-  includeLocalViewer = false,
+  exactFrameDomains?: readonly string[],
 ): Record<string, unknown> {
   const { connectDomains, resourceDomains, frameDomains } = buildCspMeta(
     previewsBaseUrl,
     undefined,
-    includeLocalViewer,
+    exactFrameDomains,
   );
-  return { ui: { csp: { connectDomains, resourceDomains, frameDomains } } };
+  return {
+    ui: { csp: { connectDomains, resourceDomains, frameDomains } },
+    "openai/widgetCSP": {
+      connect_domains: connectDomains,
+      resource_domains: resourceDomains,
+      frame_domains: frameDomains,
+    },
+  };
 }
 
 // ─── Default seams ───────────────────────────────────────────────────────────
@@ -602,6 +625,10 @@ interface ResolvedDeps {
   readAsset: AssetReader;
   readPreviewBytes: PreviewReader;
   previewsBaseUrl: string | undefined;
+  getCardAssetBroker?: () => Promise<CardAssetBroker>;
+  cardAssetKit?: CardAssetKit;
+  exactFrameDomains?: readonly string[];
+  denyRequestedKit?: boolean;
 }
 
 /**
@@ -618,7 +645,7 @@ export async function buildGridDocument(
   deps: ResolvedDeps,
   params: { kitId?: string; componentName?: string; group?: string },
 ): Promise<string> {
-  const kitDir = resolveKitDir(deps.kitsRoot, params.kitId);
+  const kitDir = deps.denyRequestedKit ? null : resolveKitDir(deps.kitsRoot, params.kitId);
   const scriptHashes = new Set<string>();
   const styleHashes = new Set<string>();
   const addHashes = (html: string): void => {
@@ -647,6 +674,7 @@ export async function buildGridDocument(
       kitDir,
       previewsBaseUrl: deps.previewsBaseUrl,
       readPreviewBytes: deps.readPreviewBytes,
+      cardAssetKit: deps.cardAssetKit,
       onPreviewHtml: addHashes,
     });
   }
@@ -663,7 +691,7 @@ export async function buildGridDocument(
   } catch {
     const fallback = fallbackShell(
       manifest,
-      buildCspMeta(deps.previewsBaseUrl, currentHashes(), params.kitId === undefined),
+      buildCspMeta(deps.previewsBaseUrl, currentHashes(), deps.exactFrameDomains),
     );
     return params.kitId === undefined ? markToolResultShell(fallback) : fallback;
   }
@@ -671,7 +699,7 @@ export async function buildGridDocument(
   const inlinedAssets = inlineViewerAssets(indexHtml, viewerJs, viewerCss);
   for (const hash of inlinedAssets.hashes.scriptHashes) scriptHashes.add(hash);
   for (const hash of inlinedAssets.hashes.styleHashes) styleHashes.add(hash);
-  const cspMeta = buildCspMeta(deps.previewsBaseUrl, currentHashes(), params.kitId === undefined);
+  const cspMeta = buildCspMeta(deps.previewsBaseUrl, currentHashes(), deps.exactFrameDomains);
   const document = inlineManifest(inlinedAssets.html, manifest);
   return injectCspMeta(
     params.kitId === undefined ? markToolResultShell(document) : document,
@@ -701,6 +729,75 @@ function paramsFromUri(uri: URL): { kitId?: string; componentName?: string; grou
   return { kitId: get("kitId"), componentName: get("componentName"), group: get("group") };
 }
 
+interface PreparedCardBroker {
+  cardAssetKit?: CardAssetKit;
+  exactFrameDomains: readonly string[];
+  denyRequestedKit?: boolean;
+}
+
+async function registerRequestedCardAssetKit(
+  broker: CardAssetBroker,
+  kitsRoot: string,
+  kitId: string,
+): Promise<CardAssetKit | undefined> {
+  const kitDir = resolveKitDir(kitsRoot, kitId);
+  if (kitDir === null) return undefined;
+  let info;
+  try {
+    info = await lstat(kitDir);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      ((error as NodeJS.ErrnoException).code === "ENOENT" ||
+        (error as NodeJS.ErrnoException).code === "ENOTDIR")
+    ) {
+      return undefined;
+    }
+    throw error;
+  }
+  if (!info.isDirectory()) return undefined;
+  return await broker.registerKit(kitId, kitDir);
+}
+
+async function prepareCardBroker(
+  deps: ResolvedDeps,
+  params: { kitId?: string },
+): Promise<PreparedCardBroker | undefined> {
+  if (
+    deps.getCardAssetBroker === undefined ||
+    normalizePreviewsBaseUrl(deps.previewsBaseUrl) !== undefined
+  ) {
+    return undefined;
+  }
+
+  let broker: CardAssetBroker;
+  try {
+    broker = await deps.getCardAssetBroker();
+  } catch {
+    return {
+      exactFrameDomains: [],
+      denyRequestedKit: params.kitId !== undefined,
+    };
+  }
+
+  if (params.kitId === undefined) {
+    return { exactFrameDomains: broker.frameOrigins() };
+  }
+
+  if (!KIT_ID_PATTERN.test(params.kitId)) {
+    return { exactFrameDomains: broker.frameOrigins() };
+  }
+  const cardAssetKit = await registerRequestedCardAssetKit(broker, deps.kitsRoot, params.kitId);
+  if (cardAssetKit === undefined) {
+    return {
+      exactFrameDomains: broker.frameOrigins(),
+      denyRequestedKit: true,
+    };
+  }
+  return { cardAssetKit, exactFrameDomains: broker.frameOrigins() };
+}
+
 /**
  * Register `ui://genie/grid` and its sibling assets on `server`.
  *
@@ -720,10 +817,19 @@ export function registerGridResource(server: McpServer, options: GridResourceOpt
     readAsset: options.readAsset ?? makeDefaultAssetReader(),
     readPreviewBytes: options.readPreviewBytes ?? defaultReadPreviewBytes,
     previewsBaseUrl: options.previewsBaseUrl ?? process.env.GENIE_PREVIEWS_BASE_URL,
+    getCardAssetBroker: options.getCardAssetBroker,
   };
 
-  const queryMeta = gridResourceMeta(deps.previewsBaseUrl);
-  const shellMeta = gridResourceMeta(deps.previewsBaseUrl, true);
+  const hasLocalCardBroker =
+    deps.getCardAssetBroker !== undefined &&
+    normalizePreviewsBaseUrl(deps.previewsBaseUrl) === undefined;
+  // Resource-list metadata is necessarily static. A broker is lazy, so its
+  // concrete origins are attached to resources/read after discovery; publish
+  // an empty (deny-all) exact list here rather than a wildcard or `data:`.
+  const registrationMeta = gridResourceMeta(
+    deps.previewsBaseUrl,
+    hasLocalCardBroker ? [] : undefined,
+  );
   const baseGridConfig = {
     title: "genie preview grid",
     description:
@@ -735,8 +841,18 @@ export function registerGridResource(server: McpServer, options: GridResourceOpt
 
   const readGrid = async (uri: URL): Promise<ReadResourceResult> => {
     const params = paramsFromUri(uri);
-    const meta = params.kitId === undefined ? shellMeta : queryMeta;
-    const html = await buildGridDocument(deps, params);
+    const prepared = await prepareCardBroker(deps, params);
+    const readDeps: ResolvedDeps =
+      prepared === undefined
+        ? deps
+        : {
+            ...deps,
+            cardAssetKit: prepared.cardAssetKit,
+            exactFrameDomains: prepared.exactFrameDomains,
+            denyRequestedKit: prepared.denyRequestedKit,
+          };
+    const meta = gridResourceMeta(deps.previewsBaseUrl, prepared?.exactFrameDomains);
+    const html = await buildGridDocument(readDeps, params);
     return {
       contents: [{ uri: uri.toString(), mimeType: GRID_RESOURCE_MIME, text: html, _meta: meta }],
     };
@@ -746,7 +862,7 @@ export function registerGridResource(server: McpServer, options: GridResourceOpt
   server.registerResource(
     "genie-grid",
     GRID_RESOURCE_URI,
-    { ...baseGridConfig, _meta: shellMeta },
+    { ...baseGridConfig, _meta: registrationMeta },
     (uri) => readGrid(uri),
   );
 
@@ -757,7 +873,7 @@ export function registerGridResource(server: McpServer, options: GridResourceOpt
   server.registerResource(
     "genie-grid-query",
     template,
-    { ...baseGridConfig, _meta: queryMeta },
+    { ...baseGridConfig, _meta: registrationMeta },
     (uri) => readGrid(uri),
   );
 

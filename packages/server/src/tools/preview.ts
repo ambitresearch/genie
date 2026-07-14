@@ -28,7 +28,7 @@
  * configured. `_meta` is still emitted. A `ViewerRegistry` caches one running
  * viewer per kit dir (AC5).
  */
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -37,8 +37,10 @@ import { z } from "zod";
 
 import { ensureManifest, type Manifest } from "../manifest/index.js";
 import { getServerTransportKind, type TransportKind } from "../transport.js";
+import type { CardAssetBroker, CardAssetKit } from "../ui/card-asset-broker.js";
 import {
   filterManifest,
+  GRID_RESOURCE_URI,
   normalizePreviewsBaseUrl,
   rewriteCardPaths,
   type EmbeddedManifest,
@@ -49,9 +51,6 @@ import { KIT_ID_PATTERN } from "./get_kit.js";
 
 export const PREVIEW_TOOL_NAME = "mcp__genie__preview";
 
-/** The MCP-Apps resource this tool references (registered by M4-06). */
-export const GRID_RESOURCE_BASE = "ui://genie/grid";
-
 /**
  * Vite dev-server default port. Duplicated as a local literal (rather than
  * imported from `@genie/viewer`) so this module carries no build-time edge to
@@ -59,38 +58,6 @@ export const GRID_RESOURCE_BASE = "ui://genie/grid";
  * sync with `@genie/viewer`'s `DEFAULT_VIEWER_PORT` (RFC §6.9/§14).
  */
 export const DEFAULT_VIEWER_PORT = 5173;
-
-// ─── Client → ui:// capability sniff (AC7) ───────────────────────────────────
-
-/**
- * Substrings that mark a harness known to render `ui://` MCP-Apps resources
- * today (RFC §8.3 / research report §3.4): Claude, VS Code, ChatGPT, Cursor,
- * plus the Goose / Postman / MCPJam trio. Matched case-insensitively as a
- * SUBSTRING because harnesses report varied client names ("Claude Code",
- * "claude-ai", "Visual Studio Code", "openai-chatgpt", …). It is consulted only
- * when the client exposes no extensions bag, affecting legacy browser fallback
- * and logging; it never gates `_meta.ui.resourceUri`, which is always emitted.
- */
-const UI_HOST_MARKERS = [
-  "claude",
-  "vscode",
-  "visual studio code",
-  "chatgpt",
-  "cursor",
-  "goose",
-  "postman",
-  "mcpjam",
-] as const;
-
-/**
- * True when `clientName` names a harness known to render `ui://` resources.
- * Undefined / empty / unrecognized names → false (AC7's "everyone else").
- */
-export function clientSupportsUi(clientName: string | undefined): boolean {
-  if (clientName === undefined) return false;
-  const lower = clientName.toLowerCase();
-  return UI_HOST_MARKERS.some((marker) => lower.includes(marker));
-}
 
 /**
  * The MCP Apps extension identifier (ext-apps spec 2026-01-26, "Client<>Server
@@ -103,14 +70,15 @@ export const UI_EXTENSION_ID = "io.modelcontextprotocol/ui";
 /** The MCP-Apps HTML profile the grid resource serves (spec §Resource Discovery). */
 export const MCP_APP_MIME = "text/html;profile=mcp-app";
 
+/** Widget-only tool-result metadata carrying CSP-authorized card routes. */
+export const PREVIEW_EMBEDDED_MANIFEST_META_KEY = "genie/embeddedManifest";
+
 /**
  * Authoritative `ui://` capability check: true when the client's `initialize`
  * capabilities carry the MCP Apps extension with a `mimeTypes` array that
- * includes {@link MCP_APP_MIME}. This is the spec-defined negotiation and takes
- * precedence over the {@link clientSupportsUi} name sniff, which remains only
- * as a fallback for hosts that render `ui://` without yet advertising the
- * extension. `caps` is typed `unknown` because the SDK's `ClientCapabilities`
- * models `extensions` as a passthrough bag — every level is checked defensively.
+ * includes {@link MCP_APP_MIME}. This is the spec-defined negotiation. `caps`
+ * is typed `unknown` because the SDK's `ClientCapabilities` models
+ * `extensions` as a passthrough bag — every level is checked defensively.
  */
 export function hasUiExtensionCapability(caps: unknown): boolean {
   return getUiExtensionCapability(caps) === true;
@@ -119,15 +87,17 @@ export function hasUiExtensionCapability(caps: unknown): boolean {
 /**
  * Resolve MCP Apps negotiation without collapsing "not advertised" and
  * "explicitly not supported." A missing `extensions` mechanism returns
- * `undefined` so legacy name sniffing may apply. Once an extensions bag is
- * present, only the required app MIME is positive; every other shape is a
- * negotiated negative.
+ * `undefined`. This is distinct from an explicit negative because metadata-linked
+ * MCP Apps hosts may omit the extension capability even when they advertise
+ * unrelated extensions. Only a present UI extension with a malformed or
+ * unsupported MIME declaration is a negotiated negative.
  */
 export function getUiExtensionCapability(caps: unknown): boolean | undefined {
   if (typeof caps !== "object" || caps === null) return undefined;
   if (!Object.prototype.hasOwnProperty.call(caps, "extensions")) return undefined;
   const extensions = (caps as { extensions?: unknown }).extensions;
   if (typeof extensions !== "object" || extensions === null) return false;
+  if (!Object.prototype.hasOwnProperty.call(extensions, UI_EXTENSION_ID)) return undefined;
   const ext = (extensions as Record<string, unknown>)[UI_EXTENSION_ID];
   if (typeof ext !== "object" || ext === null) return false;
   const mimeTypes = (ext as { mimeTypes?: unknown }).mimeTypes;
@@ -161,11 +131,12 @@ export interface ResourceUriParams {
  * given argument set. Values are percent-encoded via `URLSearchParams`.
  */
 export function buildResourceUri(params: ResourceUriParams): string {
-  const qs = new URLSearchParams();
-  qs.set("kitId", params.kitId);
-  if (params.componentName !== undefined) qs.set("componentName", params.componentName);
-  if (params.group !== undefined) qs.set("group", params.group);
-  return `${GRID_RESOURCE_BASE}?${qs.toString()}`;
+  const uri = new URL(GRID_RESOURCE_URI);
+  uri.searchParams.set("kitId", params.kitId);
+  if (params.componentName !== undefined)
+    uri.searchParams.set("componentName", params.componentName);
+  if (params.group !== undefined) uri.searchParams.set("group", params.group);
+  return uri.toString();
 }
 
 // ─── kitId → kit dir (path safety) ───────────────────────────────────────────
@@ -455,6 +426,12 @@ export interface PreviewDeps {
   readPreviewBytes?: PreviewReader;
   /** Optional separate-origin previews host for embedded manifest card URLs. */
   previewsBaseUrl?: string;
+  /**
+   * Lazily resolves the process-scoped local card broker. It is consulted only
+   * for a local MCP Apps-capable host, so tools-only clients never start the
+   * listener merely because the preview tool was registered.
+   */
+  getCardAssetBroker?: () => Promise<CardAssetBroker>;
 }
 
 /** The three-field tool input (AC2). */
@@ -469,8 +446,8 @@ export interface PreviewContext {
   clientName?: string;
   /**
    * Tri-state MCP Apps negotiation from `initialize`: true/false are
-   * authoritative, while undefined means the client exposed no extensions
-   * mechanism and allows the legacy {@link clientSupportsUi} name fallback.
+   * authoritative, while undefined means the client omitted the extension and
+   * should receive the metadata-linked app before any browser fallback.
    */
   uiCapable?: boolean;
   /** Active server transport; HTTP suppresses server-machine browser opening. */
@@ -481,25 +458,37 @@ export interface PreviewContext {
 
 export type PreviewLocality = "local" | "remote";
 
+/** Point filtered cards at one broker-owned kit origin without changing bytes. */
+function rewriteCardPathsForBroker(
+  manifest: Manifest,
+  registeredKit: CardAssetKit,
+): EmbeddedManifest {
+  return {
+    ...manifest,
+    components: manifest.components.map((card) => ({
+      ...card,
+      sourcePath: card.path,
+      path: registeredKit.urlFor(card.path),
+    })),
+  };
+}
+
 /**
  * The tool's return shape (AC3): text URLs + the ui:// resource pointer.
  *
  * `_meta` carries the resource pointer under TWO keys so both app ecosystems
  * link the result to the same `ui://genie/grid` widget:
- *   - `ui.resourceUri` — the MCP-Apps convention (Claude, VS Code, Cursor).
- *   - `openai/outputTemplate` — the ChatGPT Apps SDK convention (M4-06 AC6,
- *     research report §3.4 cross-vendor note). Same URI value; a host reads
- *     whichever key it understands and ignores the other.
+ *   - `ui.resourceUri` — the portable MCP Apps standard, including current
+ *     ChatGPT Apps SDK guidance.
+ *   - `openai/outputTemplate` — the ChatGPT compatibility alias (M4-06 AC6,
+ *     research report §3.4 cross-vendor note). Both carry the same URI.
  */
 export interface PreviewResult {
   content: { type: "text"; text: string }[];
   /**
-   * Spec-shaped view payload (ext-apps §"Tool Result"): the host forwards the
-   * whole tool result to the rendered app via `ui/notifications/tool-result`,
-   * and `structuredContent` is the part meant for UI rendering (never added to
-   * model context). Carries what the grid app needs to know WHICH kit/filters
-   * this call was about — the registration-time template URI is bare, so this
-   * is the app's only per-call signal.
+   * Model-visible tool state. The host also forwards it to the rendered app via
+   * `ui/notifications/tool-result`, but route-bearing card data belongs in
+   * result `_meta`, which MCP Apps keeps out of model context.
    */
   structuredContent: {
     kitId: string;
@@ -511,10 +500,13 @@ export interface PreviewResult {
     fileUrl?: string;
     transportKind?: TransportKind;
     locality: PreviewLocality;
-    embeddedManifest?: EmbeddedManifest;
     embeddedError?: string;
   };
-  _meta: { ui: { resourceUri: string }; "openai/outputTemplate": string };
+  _meta: {
+    ui: { resourceUri: string };
+    "openai/outputTemplate": string;
+    "genie/embeddedManifest"?: EmbeddedManifest;
+  };
 }
 
 /**
@@ -532,17 +524,18 @@ export function autoOpenDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boo
 }
 
 /**
- * Decide whether {@link runPreview} should ask the booter to open a browser:
- * open only when the host is NOT `ui://`-capable (a ui:// host renders the
- * inline grid, so a tab is redundant) AND the operator has not opted out via
- * `GENIE_PREVIEW_NO_OPEN`. Extracted for direct unit testing of the branch.
+ * Decide whether {@link runPreview} should ask the booter to open a browser.
+ * Only an explicit negotiated negative authorizes auto-open. An omitted
+ * capability is ambiguous (Codex Desktop and tools-only Codex currently look
+ * identical to a custom MCP server), so it receives a viewer URL but never a
+ * surprise system-browser launch.
  */
 export function shouldAutoOpen(
-  uiSupported: boolean,
+  uiCapable: boolean | undefined,
   env: NodeJS.ProcessEnv = process.env,
   transportKind?: TransportKind,
 ): boolean {
-  if (uiSupported) return false;
+  if (uiCapable !== false) return false;
   if (transportKind !== "stdio") return false;
   return !autoOpenDisabledByEnv(env);
 }
@@ -569,7 +562,7 @@ export async function runPreview(
 
   let kitStat;
   try {
-    kitStat = await stat(kitDir);
+    kitStat = await lstat(kitDir);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") {
@@ -597,10 +590,20 @@ export async function runPreview(
   const normalizedPreviewsBaseUrl = normalizePreviewsBaseUrl(previewsBaseUrl);
   const canDeliverEmbeddedManifest =
     normalizedPreviewsBaseUrl !== undefined || filteredManifest.components.length === 0;
-  // Authoritative first: the MCP Apps extension capability from the initialize
-  // handshake. The name sniff remains only for hosts that render ui:// without
-  // advertising the extension yet (older Claude/VS Code/Cursor builds).
-  const uiSupported = ctx.uiCapable ?? clientSupportsUi(ctx.clientName);
+  // Keep the handshake tri-state. Explicit support is inline-only, explicit
+  // rejection is viewer-only, and omission gets BOTH so metadata-linked hosts
+  // can mount the canvas while tools-only hosts still have a usable URL.
+  const prepareInline = ctx.uiCapable !== false;
+  const prepareViewerFallback = ctx.uiCapable !== true;
+  const getCardAssetBroker = deps.getCardAssetBroker;
+  const useLocalCardBroker =
+    locality === "local" &&
+    ctx.transportKind === "stdio" &&
+    prepareInline &&
+    normalizedPreviewsBaseUrl === undefined &&
+    getCardAssetBroker !== undefined;
+  const useConfiguredPreviewsOrigin =
+    locality === "local" && prepareInline && normalizedPreviewsBaseUrl !== undefined;
   const readPreviewBytes: PreviewReader =
     deps.readPreviewBytes ??
     (async (root, path) => {
@@ -613,7 +616,7 @@ export async function runPreview(
   let embeddedManifest: EmbeddedManifest | undefined;
   let embeddedError: string | undefined;
   if (locality === "remote") {
-    if (!uiSupported) {
+    if (!prepareInline) {
       embeddedError =
         "Client does not support MCP Apps; remote-locality previews have no server-side browser fallback.";
     } else if (canDeliverEmbeddedManifest) {
@@ -638,14 +641,19 @@ export async function runPreview(
     group: args.group,
   });
 
-  const autoOpen = locality === "local" && shouldAutoOpen(uiSupported, deps.env, ctx.transportKind);
+  const autoOpen =
+    locality === "local" && shouldAutoOpen(ctx.uiCapable, deps.env, ctx.transportKind);
   // AC7 — one structured line per request; the sniffed client + its ui:// support.
   logStderr({
     event: "preview.request",
     kitId: args.kitId,
     client: ctx.clientName ?? null,
     uiCapable: ctx.uiCapable ?? null,
-    uiSupported,
+    uiCapability:
+      ctx.uiCapable === true ? "supported" : ctx.uiCapable === false ? "unsupported" : "unknown",
+    inlineDelivery: prepareInline,
+    viewerFallback: prepareViewerFallback,
+    localCardBroker: useLocalCardBroker,
     autoOpen,
     transport: ctx.transportKind ?? null,
     ...(args.group !== undefined ? { group: args.group } : {}),
@@ -662,55 +670,88 @@ export async function runPreview(
         : `Remote preview unavailable: ${embeddedError ?? "no declared previews origin"}`;
   } else {
     fileUrl = pathToFileURL(join(kitDir, "index.html")).href;
-    try {
-      const viewer = await deps.registry.ensure(kitDir, DEFAULT_VIEWER_PORT, false); // AC5 + piece B
-      const url = new URL(viewer.url);
-      if (args.componentName !== undefined)
-        url.searchParams.set("componentName", args.componentName);
-      if (args.group !== undefined) url.searchParams.set("group", args.group);
-      viewerUrl = url.toString();
-      if (autoOpen) await deps.registry.open(kitDir, viewerUrl);
-      text = `Preview running at ${viewerUrl}\n` + `Or open the kit directly: ${fileUrl}`;
-    } catch (error) {
-      // AC6 — the local viewer could not boot (Vite/@genie/viewer absent,
-      // port unbindable, …). Degrade to the file:// vehicle and tell the app
-      // shell explicitly rather than leaving its empty initial state visible.
-      logStderr({
-        event: "preview.fallback",
-        kitId: args.kitId,
-        reason: "viewer-boot-failed",
-        error: String(error),
-      });
-      // The preloaded tool-result shell cannot safely accept dynamically
-      // delivered data: cards: they inherit its already-fixed CSP hashes. A
-      // declared previews origin produces http(s) card URLs that remain safe to
-      // deliver after initialization. An empty manifest is safe either way.
-      if (uiSupported && canDeliverEmbeddedManifest) {
+    if (prepareInline) {
+      if (useConfiguredPreviewsOrigin) {
+        embeddedManifest = await rewriteCardPaths(filteredManifest, {
+          kitId: args.kitId,
+          kitDir,
+          previewsBaseUrl: normalizedPreviewsBaseUrl.toString(),
+          readPreviewBytes,
+        });
+      } else if (useLocalCardBroker) {
+        // A local UI host already owns the visible MCP App canvas. Give it the
+        // filtered manifest with exact broker origins instead of nesting the
+        // dynamic Vite viewer (which the host's fixed CSP cannot authorize).
         try {
-          embeddedManifest = await rewriteCardPaths(filteredManifest, {
-            kitId: args.kitId,
-            kitDir,
-            previewsBaseUrl: normalizedPreviewsBaseUrl?.toString(),
-            readPreviewBytes,
-          });
-        } catch (fallbackError) {
+          const broker = await getCardAssetBroker();
+          const registeredKit = await broker.registerKit(args.kitId, kitDir);
+          embeddedManifest = rewriteCardPathsForBroker(filteredManifest, registeredKit);
+        } catch (error) {
           logStderr({
             event: "preview.fallback",
             kitId: args.kitId,
-            reason: "embedded-manifest-failed",
-            error: String(fallbackError),
+            reason: "card-asset-broker-failed",
+            error: String(error),
           });
+          embeddedError = "The local card asset broker could not start.";
         }
-      }
-      if (embeddedManifest !== undefined) {
-        text = `Preview ready in the inline MCP App.\nOr open the kit directly: ${fileUrl}`;
+      } else if (canDeliverEmbeddedManifest) {
+        // An empty result has no card bytes or child-script hashes to authorize,
+        // so it is safe to deliver through an already-mounted tool-result shell.
+        embeddedManifest = await rewriteCardPaths(filteredManifest, {
+          kitId: args.kitId,
+          kitDir,
+          previewsBaseUrl: normalizedPreviewsBaseUrl?.toString(),
+          readPreviewBytes,
+        });
       } else {
         embeddedError =
-          "The local preview viewer could not start; use the returned file URL or start it manually.";
-        text =
-          `Preview viewer could not start; open the kit directly: ${fileUrl}\n` +
-          "(Start the genie viewer manually, or configure GENIE_PREVIEWS_BASE_URL for a CSP-safe inline fallback.)";
+          "No CSP-safe inline card origin is available; configure GENIE_PREVIEWS_BASE_URL.";
       }
+    }
+
+    if (prepareViewerFallback) {
+      try {
+        const viewer = await deps.registry.ensure(kitDir, DEFAULT_VIEWER_PORT, false); // AC5 + piece B
+        const url = new URL(viewer.url);
+        if (args.componentName !== undefined)
+          url.searchParams.set("componentName", args.componentName);
+        if (args.group !== undefined) url.searchParams.set("group", args.group);
+        viewerUrl = url.toString();
+        if (autoOpen) await deps.registry.open(kitDir, viewerUrl);
+      } catch (error) {
+        // AC6 — the local viewer could not boot (Vite/@genie/viewer absent,
+        // port unbindable, …). Preserve any independently prepared inline
+        // manifest, otherwise degrade to the file:// vehicle.
+        logStderr({
+          event: "preview.fallback",
+          kitId: args.kitId,
+          reason: "viewer-boot-failed",
+          error: String(error),
+        });
+        if (embeddedManifest === undefined && embeddedError === undefined) {
+          embeddedError =
+            "The local preview viewer could not start; use the returned file URL or start it manually.";
+        }
+      }
+    }
+
+    if (embeddedManifest !== undefined && viewerUrl !== undefined) {
+      text =
+        `Preview ready in the inline MCP App.\n` +
+        `Tools-only fallback running at ${viewerUrl}\n` +
+        `Or open the kit directly: ${fileUrl}`;
+    } else if (embeddedManifest !== undefined) {
+      text = `Preview ready in the inline MCP App.\nOr open the kit directly: ${fileUrl}`;
+    } else if (viewerUrl !== undefined) {
+      text =
+        (embeddedError === undefined ? "" : `Inline preview unavailable: ${embeddedError}\n`) +
+        `Preview running at ${viewerUrl}\n` +
+        `Or open the kit directly: ${fileUrl}`;
+    } else {
+      text =
+        `Preview unavailable: ${embeddedError ?? "no supported delivery path"}\n` +
+        `Open the kit directly: ${fileUrl}`;
     }
   }
 
@@ -724,12 +765,17 @@ export async function runPreview(
       ...(fileUrl !== undefined ? { fileUrl } : {}),
       ...(ctx.transportKind !== undefined ? { transportKind: ctx.transportKind } : {}),
       locality,
-      ...(embeddedManifest !== undefined ? { embeddedManifest } : {}),
       ...(embeddedError !== undefined ? { embeddedError } : {}),
     },
     // Same resourceUri under both the MCP-Apps key (`ui.resourceUri`) and the
     // ChatGPT Apps SDK key (`openai/outputTemplate`, AC6) — cross-vendor link.
-    _meta: { ui: { resourceUri }, "openai/outputTemplate": resourceUri },
+    _meta: {
+      ui: { resourceUri },
+      "openai/outputTemplate": resourceUri,
+      ...(embeddedManifest !== undefined
+        ? { [PREVIEW_EMBEDDED_MANIFEST_META_KEY]: embeddedManifest }
+        : {}),
+    },
   };
 }
 
@@ -762,29 +808,6 @@ const previewOutputSchema = {
   fileUrl: z.string().optional(),
   transportKind: z.enum(["stdio", "http"]).optional(),
   locality: z.enum(["local", "remote"]),
-  embeddedManifest: z
-    .object({
-      version: z.number(),
-      name: z.string(),
-      generatedAt: z.string(),
-      groups: z.array(z.string()),
-      components: z.array(
-        z
-          .object({
-            name: z.string(),
-            group: z.string(),
-            path: z.string(),
-            sourcePath: z.string(),
-            viewport: z.string(),
-            hash: z.string(),
-            lastModified: z.string(),
-            subtitle: z.string().optional(),
-            tags: z.array(z.string()).optional(),
-          })
-          .strict(),
-      ),
-    })
-    .optional(),
   embeddedError: z.string().optional(),
 } as const;
 
@@ -801,6 +824,8 @@ export interface PreviewToolOptions {
   readPreviewBytes?: PreviewReader;
   /** Optional separate-origin previews host used in embedded manifests. */
   previewsBaseUrl?: string;
+  /** Lazy process-scoped card broker for local MCP Apps-capable hosts. */
+  getCardAssetBroker?: () => Promise<CardAssetBroker>;
   /** Explicit transport override for embedded servers and tests. */
   transportKind?: TransportKind;
   /** Explicit deployment locality for embedded servers and tests. */
@@ -828,7 +853,10 @@ function sniffClientName(meta: unknown): string | undefined {
  * else the initialize handshake) and its MCP Apps capability, then delegates
  * to {@link runPreview}.
  */
-export function registerPreviewTool(server: McpServer, options: PreviewToolOptions): ViewerRegistry {
+export function registerPreviewTool(
+  server: McpServer,
+  options: PreviewToolOptions,
+): ViewerRegistry {
   const registry = new ViewerRegistry(options.booter ?? defaultViewerBooter);
   const deps: PreviewDeps = {
     kitsRoot: options.kitsRoot,
@@ -837,6 +865,7 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
     ensureManifest: options.ensureManifest,
     readPreviewBytes: options.readPreviewBytes,
     previewsBaseUrl: options.previewsBaseUrl,
+    getCardAssetBroker: options.getCardAssetBroker,
   };
 
   server.registerTool(
@@ -849,7 +878,7 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
         "manifest so the grid always reflects what's on disk, then returns the viewer URL " +
         "(booting the Vite viewer on demand and reusing it across calls) plus a local-only " +
         "file:// fallback. MCP Apps-capable hosts get the inline grid via _meta.ui.resourceUri. " +
-        "Local stdio clients that do not negotiate UI support get a server-opened browser " +
+        "Local stdio clients that explicitly negotiate no UI support get a server-opened browser " +
         "tab (disable with GENIE_PREVIEW_NO_OPEN=1); HTTP deployments never auto-open on " +
         "the server machine. Optionally focus one component or group.",
       inputSchema: previewInputSchema,
@@ -859,8 +888,8 @@ export function registerPreviewTool(server: McpServer, options: PreviewToolOptio
       // the invocation's viewer URL. Keep the query-bearing result URI below for
       // legacy/result-level hosts and the self-contained embedded resource path.
       _meta: {
-        ui: { resourceUri: GRID_RESOURCE_BASE },
-        "openai/outputTemplate": GRID_RESOURCE_BASE,
+        ui: { resourceUri: GRID_RESOURCE_URI },
+        "openai/outputTemplate": GRID_RESOURCE_URI,
       },
     },
     async (args: PreviewArgs, extra: { _meta?: unknown }) => {

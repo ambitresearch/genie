@@ -13,16 +13,20 @@
  * importing Vite, or reading `@genie/viewer` off disk — mirroring how
  * `preview.test.ts` fakes the viewer booter.
  */
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { describe, expect, it } from "vitest";
 
 import type { Manifest, ManifestCard } from "../manifest/index.js";
+import type { CardAssetBroker, CardAssetKit } from "./card-asset-broker.js";
 import {
   GRID_RESOURCE_URI,
   GRID_RESOURCE_MIME,
-  LOCAL_VIEWER_FRAME_DOMAINS,
   MANIFEST_ELEMENT_ID,
   TOOL_RESULT_SHELL_META,
   VIEWER_JS_URI,
@@ -86,6 +90,51 @@ const bytesPreviewReader =
   (bytes: Buffer): PreviewReader =>
   async () =>
     bytes;
+
+function fakeCardAssetBroker(port = 5188): {
+  broker: CardAssetBroker;
+  registrations: Array<{ kitId: string; root: string }>;
+} {
+  const registrations: Array<{ kitId: string; root: string }> = [];
+  const kits = new Map<string, CardAssetKit>();
+  const origin = `http://127.0.0.1:${port}`;
+  const frameOrigins = Object.freeze([origin]);
+  const broker: CardAssetBroker = {
+    address: "127.0.0.1",
+    port,
+    async registerKit(kitId, root) {
+      registrations.push({ kitId, root });
+      const existing = kits.get(kitId);
+      if (existing !== undefined) return existing;
+      const registered: CardAssetKit = {
+        kitId,
+        token: `token-${kitId}`,
+        routePrefix: `/k/token-${kitId}`,
+        hostname: "127.0.0.1",
+        authority: `127.0.0.1:${port}`,
+        origin,
+        urlFor: (path) =>
+          `${origin}/k/token-${kitId}/${path
+            .replace(/^\//, "")
+            .split("/")
+            .map((segment) => encodeURIComponent(segment))
+            .join("/")}`,
+      };
+      kits.set(kitId, registered);
+      return registered;
+    },
+    getKit: (kitId) => kits.get(kitId),
+    frameOrigins: () => frameOrigins,
+    close: async () => {},
+  };
+  return { broker, registrations };
+}
+
+function gridUri(params: Record<string, string>): string {
+  const uri = new URL(GRID_RESOURCE_URI);
+  for (const [key, value] of Object.entries(params)) uri.searchParams.set(key, value);
+  return uri.toString();
+}
 
 // ─── resolveKitDir (path-traversal guard) ────────────────────────────────────
 
@@ -369,7 +418,7 @@ describe("buildCspMeta (AC5)", () => {
     expect(csp.metaPolicy).not.toContain("frame-ancestors");
   });
 
-  it("publishes the canonical MCP Apps _meta.ui.csp domain shape only", () => {
+  it("publishes canonical MCP Apps CSP plus the OpenAI snake-case compatibility mirror", () => {
     expect(gridResourceMeta("https://previews.example.com")).toEqual({
       ui: {
         csp: {
@@ -377,6 +426,11 @@ describe("buildCspMeta (AC5)", () => {
           resourceDomains: [],
           frameDomains: ["https://previews.example.com"],
         },
+      },
+      "openai/widgetCSP": {
+        connect_domains: [],
+        resource_domains: [],
+        frame_domains: ["https://previews.example.com"],
       },
     });
   });
@@ -590,6 +644,12 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
   it("lists the bare grid resource with the spec MIME (AC1)", async () => {
     const { client } = await connectedClient(okCompiler(manifest()));
     const { resources } = await client.listResources();
+    const resourceUri = new URL(GRID_RESOURCE_URI);
+    expect(`${resourceUri.protocol}//${resourceUri.host}${resourceUri.pathname}`).toBe(
+      "ui://genie/grid",
+    );
+    expect(resourceUri.searchParams.get("v")).toBe("2");
+    expect(resourceUri.searchParams.get("instance")).toMatch(/^[a-f0-9]{32}$/);
     const grid = resources.find((r) => r.uri === GRID_RESOURCE_URI);
     expect(grid).toBeDefined();
     expect(grid?.mimeType).toBe(GRID_RESOURCE_MIME);
@@ -599,8 +659,13 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
         csp: {
           connectDomains: [],
           resourceDomains: [],
-          frameDomains: ["https://previews.example.com", ...LOCAL_VIEWER_FRAME_DOMAINS],
+          frameDomains: ["https://previews.example.com"],
         },
+      },
+      "openai/widgetCSP": {
+        connect_domains: [],
+        resource_domains: [],
+        frame_domains: ["https://previews.example.com"],
       },
     });
   });
@@ -616,8 +681,13 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
         csp: {
           connectDomains: [],
           resourceDomains: [],
-          frameDomains: ["https://previews.example.com", ...LOCAL_VIEWER_FRAME_DOMAINS],
+          frameDomains: ["https://previews.example.com"],
         },
+      },
+      "openai/widgetCSP": {
+        connect_domains: [],
+        resource_domains: [],
+        frame_domains: ["https://previews.example.com"],
       },
     });
   });
@@ -628,9 +698,9 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
       card({ name: "Card", group: "Surfaces", path: "components/surfaces/Card/preview.html" }),
     ]);
     const { client } = await connectedClient(okCompiler(full));
-    const res = await client.readResource({
-      uri: `${GRID_RESOURCE_URI}?kitId=acme-abc123&group=Actions`,
-    });
+    const uri = gridUri({ kitId: "acme-abc123", group: "Actions" });
+    const res = await client.readResource({ uri });
+    expect(res.contents[0]?.uri).toBe(uri);
     const text = String(res.contents[0]?.text);
     expect(text).toContain("Button");
     // group=Actions filtered Card out before inlining.
@@ -639,8 +709,169 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
 
   it("reads a kitId-only query URI (componentName/group omitted)", async () => {
     const { client } = await connectedClient(okCompiler(manifest()));
-    const res = await client.readResource({ uri: `${GRID_RESOURCE_URI}?kitId=acme-abc123` });
+    const res = await client.readResource({ uri: gridUri({ kitId: "acme-abc123" }) });
     expect(String(res.contents[0]?.text)).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
+  });
+
+  it("starts the broker for the bare shell without scanning kits and advertises its stable origin", async () => {
+    const kitsRoot = await mkdtemp(join(tmpdir(), "genie-grid-no-scan-"));
+    try {
+      await Promise.all([mkdir(join(kitsRoot, "alpha-kit")), mkdir(join(kitsRoot, "zeta-kit"))]);
+      const { broker, registrations } = fakeCardAssetBroker();
+      let brokerReads = 0;
+      const server = new McpServer({ name: "t", version: "0" });
+      registerGridResource(server, {
+        kitsRoot,
+        compile: okCompiler(manifest()),
+        readAsset: fakeAssetReader(),
+        readPreviewBytes: nullPreviewReader,
+        previewsBaseUrl: "",
+        getCardAssetBroker: async () => {
+          brokerReads += 1;
+          return broker;
+        },
+      });
+      const client = new Client({ name: "c", version: "0" });
+      const [a, b] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(a), client.connect(b)]);
+
+      const listed = (await client.listResources()).resources.find(
+        (resource) => resource.uri === GRID_RESOURCE_URI,
+      );
+      expect(brokerReads).toBe(0);
+      expect(listed?._meta).toMatchObject({
+        ui: { csp: { frameDomains: [] } },
+        "openai/widgetCSP": { frame_domains: [] },
+      });
+
+      const res = await client.readResource({ uri: GRID_RESOURCE_URI });
+      const origin = "http://127.0.0.1:5188";
+      expect(brokerReads).toBe(1);
+      expect(registrations).toEqual([]);
+      expect(res.contents[0]?._meta).toMatchObject({
+        ui: { csp: { frameDomains: [origin] } },
+        "openai/widgetCSP": { frame_domains: [origin] },
+      });
+      const text = String(res.contents[0]?.text);
+      expect(text).toContain(`frame-src ${origin}`);
+      expect(text).not.toContain("localhost:*");
+      expect(text).not.toContain("127.0.0.1:*");
+    } finally {
+      await rm(kitsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("registers a requested local kit and rewrites its embedded cards to the broker origin", async () => {
+    const kitsRoot = await mkdtemp(join(tmpdir(), "genie-grid-requested-kit-"));
+    try {
+      await mkdir(join(kitsRoot, "acme-abc123"));
+      const { broker, registrations } = fakeCardAssetBroker(5199);
+      const server = new McpServer({ name: "t", version: "0" });
+      registerGridResource(server, {
+        kitsRoot,
+        compile: okCompiler(manifest()),
+        readAsset: fakeAssetReader(),
+        readPreviewBytes: nullPreviewReader,
+        previewsBaseUrl: "",
+        getCardAssetBroker: async () => broker,
+      });
+      const client = new Client({ name: "c", version: "0" });
+      const [a, b] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(a), client.connect(b)]);
+
+      const res = await client.readResource({
+        uri: gridUri({ kitId: "acme-abc123", componentName: "Button" }),
+      });
+      const origin = "http://127.0.0.1:5199";
+      expect(registrations).toEqual([
+        { kitId: "acme-abc123", root: join(kitsRoot, "acme-abc123") },
+      ]);
+      expect(String(res.contents[0]?.text)).toContain(
+        `${origin}/k/token-acme-abc123/components/actions/Button/preview.html`,
+      );
+      expect(res.contents[0]?._meta).toMatchObject({
+        ui: { csp: { frameDomains: [origin] } },
+        "openai/widgetCSP": { frame_domains: [origin] },
+      });
+    } finally {
+      await rm(kitsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the requested kit root is a symlink rejected by the broker", async () => {
+    const kitsRoot = await mkdtemp(join(tmpdir(), "genie-grid-linked-root-"));
+    const outsideRoot = await mkdtemp(join(tmpdir(), "genie-grid-outside-root-"));
+    const secret = "<p>OUTSIDE_SECRET</p>";
+    try {
+      const previewPath = join(outsideRoot, "components", "actions", "Button");
+      await mkdir(previewPath, { recursive: true });
+      await writeFile(join(previewPath, "preview.html"), secret);
+      await symlink(outsideRoot, join(kitsRoot, "acme-abc123"));
+
+      const { broker, registrations } = fakeCardAssetBroker(5199);
+      let compileCalls = 0;
+      const server = new McpServer({ name: "t", version: "0" });
+      registerGridResource(server, {
+        kitsRoot,
+        compile: async () => {
+          compileCalls += 1;
+          return manifest();
+        },
+        readAsset: fakeAssetReader(),
+        previewsBaseUrl: "",
+        getCardAssetBroker: async () => broker,
+      });
+      const client = new Client({ name: "c", version: "0" });
+      const [a, b] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(a), client.connect(b)]);
+
+      const res = await client.readResource({ uri: gridUri({ kitId: "acme-abc123" }) });
+      const html = String(res.contents[0]?.text);
+      expect(registrations).toEqual([]);
+      expect(compileCalls).toBe(0);
+      expect(html).toContain('"components":[]');
+      expect(html).not.toContain(secret);
+      expect(html).not.toContain(Buffer.from(secret).toString("base64"));
+      expect(res.contents[0]?._meta).toMatchObject({
+        ui: { csp: { frameDomains: ["http://127.0.0.1:5199"] } },
+        "openai/widgetCSP": { frame_domains: ["http://127.0.0.1:5199"] },
+      });
+    } finally {
+      await Promise.all([
+        rm(kitsRoot, { recursive: true, force: true }),
+        rm(outsideRoot, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  it("keeps configured remote previews authoritative and never starts the local broker", async () => {
+    const { broker } = fakeCardAssetBroker();
+    let brokerReads = 0;
+    const server = new McpServer({ name: "t", version: "0" });
+    registerGridResource(server, {
+      kitsRoot: "/kits",
+      compile: okCompiler(manifest()),
+      readAsset: fakeAssetReader(),
+      readPreviewBytes: nullPreviewReader,
+      previewsBaseUrl: "https://previews.example.com",
+      getCardAssetBroker: async () => {
+        brokerReads += 1;
+        return broker;
+      },
+    });
+    const client = new Client({ name: "c", version: "0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+
+    const res = await client.readResource({ uri: gridUri({ kitId: "acme-abc123" }) });
+    expect(brokerReads).toBe(0);
+    expect(String(res.contents[0]?.text)).toContain(
+      "https://previews.example.com/acme-abc123/components/actions/Button/preview.html",
+    );
+    expect(res.contents[0]?._meta).toMatchObject({
+      ui: { csp: { frameDomains: ["https://previews.example.com"] } },
+      "openai/widgetCSP": { frame_domains: ["https://previews.example.com"] },
+    });
   });
 
   it("keeps sibling viewer.js / viewer.css resources available for compatibility", async () => {
