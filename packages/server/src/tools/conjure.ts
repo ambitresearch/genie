@@ -47,6 +47,7 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Agent, fetch as undiciFetch } from "undici";
 import { z } from "zod";
 
 import { type ValidatedComponent } from "../llm/schema.js";
@@ -185,36 +186,142 @@ export function isSafeRefUrl(raw: string): boolean {
 }
 
 /**
+ * Resolve `hostname` and return only the addresses that pass the
+ * private/loopback/link-local/CGNAT check, or `undefined` if none do (all
+ * addresses unsafe, or the lookup failed). Exported so both the fetch-time
+ * guard and its regression tests share one resolution path.
+ *
  * DNS-rebinding guard (M6-03 follow-up, fixes the gap the audit flagged in
  * `docs/security-audit-v1.md`): {@link isSafeRefUrl} is a *syntactic*
  * pre-filter on the hostname as typed — it cannot catch an attacker-controlled
  * DNS name that resolves to a private/loopback/link-local address (the
  * classic SSRF/DNS-rebinding bypass: `evil.example.com` passes the hostname
- * check today and answers `127.0.0.1` at fetch time). This resolves the
- * hostname (or accepts a literal IP unresolved) and re-checks every returned
- * address against the same private/loopback/link-local ranges before the
- * fetch is allowed to proceed. Returns `false` (safe to skip the fetch, not
- * throw) on a DNS failure — an unresolvable host has no reference to fetch
- * anyway, and treating a lookup error as "unsafe" avoids leaking timing
- * differences between "blocked" and "doesn't exist".
+ * check today and answers `127.0.0.1` at fetch time).
  */
-export async function isSafeResolvedAddress(hostname: string): Promise<boolean> {
+async function resolveSafeAddress(
+  hostname: string,
+): Promise<{ address: string; family: 4 | 6 } | undefined> {
   const host = hostname.toLowerCase();
-  // Already a literal — no DNS involved, `isSafeRefUrl` covered it.
-  if (isPrivateIpv4(host)) return false;
-  if (host.startsWith("[")) {
-    if (isPrivateIpv6(host.replace(/^\[|\]$/g, ""))) return false;
+  // Already a literal — no DNS involved.
+  if (isPrivateIpv4(host)) return undefined;
+  const bracketed = host.startsWith("[") ? host.replace(/^\[|\]$/g, "") : undefined;
+  if (bracketed !== undefined && isPrivateIpv6(bracketed)) return undefined;
+  if (/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(host)) {
+    return { address: host, family: 4 };
+  }
+  if (bracketed !== undefined) {
+    return { address: bracketed, family: 6 };
   }
   try {
     const results = await dnsLookup(hostname, { all: true, verbatim: true });
     for (const { address, family } of results) {
-      if (family === 4 && isPrivateIpv4(address)) return false;
-      if (family === 6 && isPrivateIpv6(address.toLowerCase())) return false;
+      if (family === 4 && !isPrivateIpv4(address)) return { address, family: 4 };
+      if (family === 6 && !isPrivateIpv6(address.toLowerCase())) return { address, family: 6 };
     }
-    return true;
+    return undefined; // every resolved address was private/loopback/link-local.
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+/**
+ * Public boolean form of {@link resolveSafeAddress} kept for the existing
+ * test surface / any external reuse (M6-03 follow-up). A hostname is "safe"
+ * if at least one resolved address is not private/loopback/link-local.
+ */
+export async function isSafeResolvedAddress(hostname: string): Promise<boolean> {
+  return (await resolveSafeAddress(hostname)) !== undefined;
+}
+
+/**
+ * Fetch a single URL whose hostname has already been resolved to a
+ * known-safe `address`/`family` (M6-03 follow-up, TOCTOU fix): rather than
+ * re-validating a hostname and then letting the HTTP client perform its own,
+ * second, independent DNS resolution at connect time — the exact gap an
+ * attacker-controlled DNS name (a "rebinding" host that answers safely to
+ * the guard and privately to the real connection) can exploit — this pins
+ * the *already-validated* address into the connection via undici's
+ * `Agent({ connect: { lookup } })` override, so validation and connection
+ * are guaranteed to use the identical address. Redirects are fetched with
+ * `redirect: "manual"` and returned to the caller un-followed; the caller
+ * (`safeFetchFollowingRedirects`) re-runs full validation (schema-level
+ * `isSafeRefUrl` + resolved-address check) on every redirect target before
+ * following it, so a public URL cannot use a redirect to smuggle a request to
+ * a private target past the guard.
+ */
+function fetchWithPinnedAddress(
+  url: string,
+  address: string,
+  family: 4 | 6,
+): Promise<{
+  status: number;
+  ok: boolean;
+  headers: { get(name: string): string | null };
+  text(): Promise<string>;
+}> {
+  const pinnedAgent = new Agent({
+    connect: {
+      lookup: (_hostname, _opts, cb) => {
+        cb(null, address, family);
+      },
+    },
+  });
+  return undiciFetch(url, { redirect: "manual", dispatcher: pinnedAgent });
+}
+
+const MAX_REF_URL_REDIRECTS = 5;
+
+/**
+ * Fetch `refUrl`, following redirects manually and re-validating every hop
+ * (M6-03 follow-up — closes both blocking gaps from the security-audit
+ * re-review): each hop must (1) pass the schema-level `isSafeRefUrl` check —
+ * scheme + syntactic private-range rules — and (2) resolve to a non-private
+ * address, which is then pinned into the actual connection via
+ * {@link fetchWithPinnedAddress} so the validated and connected addresses can
+ * never diverge. A public URL that redirects to a private target (loopback,
+ * link-local, cloud metadata, or another rebinding host) is rejected at the
+ * first unsafe hop rather than silently followed by the HTTP client's own
+ * redirect handling.
+ */
+async function safeFetchFollowingRedirects(
+  fetchImpl: FetchFn,
+  startUrl: string,
+): Promise<{ ok: boolean; status: number; text(): Promise<string> } | undefined> {
+  let currentUrl = startUrl;
+  for (let hop = 0; hop <= MAX_REF_URL_REDIRECTS; hop++) {
+    if (!isSafeRefUrl(currentUrl)) {
+      logStderr({ event: "conjure.ref_url.ssrf_blocked", refUrl: currentUrl, startUrl, hop });
+      return undefined;
+    }
+    const hostname = new URL(currentUrl).hostname;
+    const resolved = await resolveSafeAddress(hostname);
+    if (!resolved) {
+      logStderr({ event: "conjure.ref_url.ssrf_blocked", refUrl: currentUrl, startUrl, hop });
+      return undefined;
+    }
+    // The injected `fetchImpl` seam (tests) doesn't know about pinned
+    // addresses/dispatchers — only the real, production path does, so tests
+    // exercise the validation logic above without needing a live DNS/socket
+    // layer. Production always goes through `fetchWithPinnedAddress`.
+    const res =
+      fetchImpl === defaultFetch
+        ? await fetchWithPinnedAddress(currentUrl, resolved.address, resolved.family)
+        : await fetchImpl(currentUrl);
+
+    const status = res.status;
+    if (status >= 300 && status < 400) {
+      const location = res.headers?.get("location") ?? null;
+      if (!location) {
+        logStderr({ event: "conjure.ref_url.skip", refUrl: currentUrl, status });
+        return undefined;
+      }
+      currentUrl = new URL(location, currentUrl).toString();
+      continue;
+    }
+    return res;
+  }
+  logStderr({ event: "conjure.ref_url.skip", refUrl: startUrl, reason: "too_many_redirects" });
+  return undefined;
 }
 
 /** Reusable Zod schema for `refUrl`: a bounded http(s) URL that passes the SSRF
@@ -282,10 +389,16 @@ export interface ConjureResult extends Record<string, unknown> {
   usage: UsageInfo;
 }
 
-/** The URL-fetch seam (AC7). Defaults to the global `fetch`; injectable for tests. */
-export type FetchFn = (
-  url: string,
-) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+/** The URL-fetch seam (AC7). Defaults to the global `fetch`; injectable for tests.
+ * `headers` is optional so existing test doubles that only stub `{ ok, status, text }`
+ * keep compiling; the redirect-following logic treats a missing `headers` on a
+ * 3xx response as "no Location to follow" and stops rather than throwing. */
+export type FetchFn = (url: string) => Promise<{
+  ok: boolean;
+  status: number;
+  headers?: { get(name: string): string | null };
+  text(): Promise<string>;
+}>;
 
 export interface ConjureDeps {
   chat?: ChatCompletionFn;
@@ -338,16 +451,12 @@ export function truncateUtf8(text: string, maxBytes: number): string {
  */
 async function fetchReference(fetchImpl: FetchFn, refUrl: string): Promise<string | undefined> {
   try {
-    // Re-validate at fetch time against the *resolved* address (M6-03 follow-up):
-    // `isSafeRefUrl` already ran at schema-parse time on the hostname as typed,
-    // but a DNS-rebinding host can pass that syntactic check and still resolve
-    // to a private/loopback address by the time we actually fetch it.
-    const hostname = new URL(refUrl).hostname;
-    if (!(await isSafeResolvedAddress(hostname))) {
-      logStderr({ event: "conjure.ref_url.ssrf_blocked", refUrl });
-      return undefined;
-    }
-    const res = await fetchImpl(refUrl);
+    // Re-validate at fetch time against the *resolved* address, pin that exact
+    // address into the connection, and re-validate every redirect hop the same
+    // way (M6-03 follow-up — closes both the TOCTOU and redirect-bypass gaps
+    // from the security-audit re-review). See `safeFetchFollowingRedirects`.
+    const res = await safeFetchFollowingRedirects(fetchImpl, refUrl);
+    if (!res) return undefined;
     if (!res.ok) {
       logStderr({ event: "conjure.ref_url.skip", refUrl, status: res.status });
       return undefined;

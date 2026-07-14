@@ -1,12 +1,17 @@
 # Security Audit v1 (M6-03 / DRO-291)
 
-Status: **Signed off — v2 (re-audit after fixes).** Dependency scan (pnpm
-audit + osv-scanner), static SAST (semgrep OWASP Top Ten ruleset), and live
-prompt-injection probes against the real `conjure` request path all ran clean.
-The one real gap from the first pass — SSRF via DNS rebinding — has a code
-fix landed (`isSafeResolvedAddress` in `packages/server/src/tools/conjure.ts`)
-and covered by unit tests. See "Changelog" at the bottom for what changed
-since the v1 first pass.
+Status: **Signed off — v3 (second re-audit after fixes).** Dependency scan
+(pnpm audit + osv-scanner), static SAST (semgrep OWASP Top Ten ruleset), and
+live prompt-injection probes against the real `conjure` request path all ran
+clean. The SSRF/DNS-rebinding gap flagged in the v1 first pass had a v2 fix
+(`isSafeResolvedAddress`) that the PR #189 reviewer correctly found was still
+incomplete — a TOCTOU gap (validated address and connected address could
+diverge) and a redirect-bypass gap (global `fetch`'s default redirect
+following never re-validated the hop). Both are now closed: the validated
+address is pinned directly into the connection via undici's
+`Agent({ connect: { lookup } })`, and every redirect hop is fetched with
+`redirect: "manual"` and re-validated (schema + resolved-address) before being
+followed. See "Changelog" at the bottom for what changed since v2.
 
 ## AC1 — Dependency audit
 
@@ -45,7 +50,7 @@ Result: **0 vulnerabilities**, 541 packages scanned.
 | A07 Identification/Auth Failures | N/A — not exposed | No user-auth surface in this repo (MCP server auth is harness/transport-level, e.g. OAuth DCR tracked separately in M5-01/DRO-273). |
 | A08 Software/Data Integrity | ⚠️ partial | Supply-chain hardening (sigstore + npm provenance) is tracked as its own issue (M6-04/DRO-292, blocked on this + M5-07) — not yet implemented, so package integrity attestation is an open gap, not a regression. |
 | A09 Logging/Monitoring Failures | ✅ reviewed | `plan.guard.reject` audit log emits structured JSON to stderr (never stdout, to avoid corrupting the stdio MCP transport) on every plan-boundary rejection — logs event/reason/planId/path only, explicitly never file contents or payload data. |
-| A10 SSRF | ✅ mitigated (fixed this pass) | `conjure.ts`'s `isSafeRefUrl` was previously flagged (by PR #189 review) as an overstated "mitigated" claim: it is a **syntactic** pre-filter on the hostname as typed, so a DNS-rebinding hostname (resolves to `127.0.0.1`/`169.254.169.254`/etc. at fetch time) could bypass it. **Fix landed**: `isSafeResolvedAddress()` resolves the hostname via `dns.lookup(..., { all: true })` and re-checks every returned address against the same private/loopback/link-local/CGNAT ranges immediately before `fetchReference` fetches the URL — closing the gap between "hostname looked safe" and "address actually fetched is safe." Covered by new unit tests (`conjure.test.ts`) asserting `isSafeResolvedAddress` rejects `localhost`/`127.0.0.1`/`169.254.169.254`/`[::1]` and accepts a public literal. |
+| A10 SSRF | ✅ mitigated (fixed this pass) | `conjure.ts`'s `isSafeRefUrl` was flagged (PR #189 review, v1→v2) as an overstated "mitigated" claim: it is a **syntactic** pre-filter on the hostname as typed, so a DNS-rebinding hostname (resolves to `127.0.0.1`/`169.254.169.254`/etc. at fetch time) could bypass it. The v2 fix (`isSafeResolvedAddress()`) closed that gap but the reviewer then found it incomplete on two counts (v2→v3): (1) **TOCTOU** — the guard resolved the hostname, but the subsequent `fetch` performed its own, independent DNS resolution, so a rebinding host could still answer safely to the guard and privately to the real connection; (2) **redirects** — global `fetch`'s default redirect-following never re-validated the hop, so a public URL could redirect to a private target. **v3 fix**: the resolved, validated address is pinned directly into the connection via undici's `Agent({ connect: { lookup } })` (`fetchWithPinnedAddress`), eliminating the second DNS resolution entirely; every redirect hop is fetched with `redirect: "manual"` and re-validated end-to-end (`safeFetchFollowingRedirects`) — both `isSafeRefUrl` (scheme + syntactic range check) and the resolved-address check must pass before a hop is followed, with a bounded hop count (5) against redirect loops. Covered by 5 new unit tests in `conjure.test.ts`: follow-a-safe-redirect, reject-redirect-to-private-literal, reject-redirect-to-rebinding-hostname, bounded-hop-count, plus the existing `isSafeResolvedAddress` coverage. |
 
 ## AC3 — MCP-specific checks
 
@@ -126,19 +131,32 @@ short.
 
 ## AC5 — Findings summary / filed issues
 
-**One finding from the first pass, fixed in this pass:**
+**One finding from the first pass; the initial fix was itself found
+incomplete on re-review, now fully closed:**
 
 - **SSRF / DNS-rebinding gap in `conjure.ts`'s `isSafeRefUrl`** (flagged by
   PR #189 review). Severity: **P1** (defense-in-depth gap, not a demonstrated
   live exploit — the syntactic filter already blocks the trivial
   `file:`/`localhost`/literal-private-IP cases; DNS rebinding requires an
   attacker-controlled DNS name and is a known, addressable SSRF pattern
-  rather than a novel one). **Fixed in this PR**: added
-  `isSafeResolvedAddress()`, wired into `fetchReference` so every `refUrl`
-  fetch re-validates the resolved address immediately before the request
-  fires, closing the gap between hostname-looks-safe and
-  address-actually-fetched-is-safe. No separate follow-up issue needed — fix
-  lands with this audit, not after it.
+  rather than a novel one).
+  - **v2 fix** added `isSafeResolvedAddress()`, wired into `fetchReference` so
+    every `refUrl` fetch re-validated the resolved address immediately before
+    the request fired.
+  - **Reviewer found v2 incomplete**: (1) TOCTOU — validating a resolved
+    address and then letting `fetch` perform its *own*, separate DNS
+    resolution at connect time means the two can diverge for a
+    rebinding host; (2) redirects — global `fetch`'s default
+    redirect-following never re-validated the hop, so a public URL could
+    redirect to a private target unchecked.
+  - **v3 fix (this pass)** eliminates both gaps: `fetchWithPinnedAddress`
+    pins the exact validated address into the connection via undici's
+    `Agent({ connect: { lookup } })`, so there is no second, independent DNS
+    resolution to diverge from the guard; `safeFetchFollowingRedirects`
+    fetches with `redirect: "manual"` and re-runs full validation
+    (`isSafeRefUrl` + resolved-address check) on every hop before following
+    it, bounded to 5 hops against redirect loops. No separate follow-up issue
+    needed — the fix lands with this audit, not after it.
 
 No other P0/P1 findings from static review (semgrep OWASP Top Ten: 0
 findings; osv-scanner: 0 vulnerabilities; manual code review: no other
@@ -156,8 +174,8 @@ than active findings:
 
 ## AC6 — Re-audit / sign-off
 
-**Signed off for this pass.** All prior open items from the v1 first-pass
-draft are now closed:
+**Signed off for this pass.** All prior open items, including the reviewer's
+v2→v3 CHANGES_REQUESTED items, are now closed:
 
 - ✅ `osv-scanner` run — 0 vulnerabilities.
 - ✅ `semgrep --config=p/owasp-top-ten` run — 0 findings (77 rules / 125
@@ -165,9 +183,13 @@ draft are now closed:
 - ✅ Live `conjure` prompt-injection probes run against the real endpoint — no
   leak in 4 probes.
 - ✅ A10 SSRF reclassified from overstated "mitigated" to "mitigated (fixed
-  this pass)" with the DNS-rebinding gap closed in code and tested.
-- ✅ `conjure.test.ts` (40/40), `grid-resource.test.ts` (55/55),
-  `plan-guard.test.ts` (19/19) all green after the fix.
+  this pass)", with **both** the DNS-rebinding TOCTOU gap and the
+  redirect-bypass gap closed in code and tested (not just the original
+  resolved-address check).
+- ✅ `conjure.test.ts` (44/44 — 5 new redirect/pinned-address regression
+  tests added this pass), `grid-resource.test.ts` (55/55), `plan-guard.test.ts`
+  (19/19) all green after the fix.
+- ✅ `tsc --noEmit -p packages/server/tsconfig.json` — 0 errors.
 
 **Remaining before a future v1.0.0 GA tag, not blocking this issue's
 sign-off**: a live-browser (Playwright) CSP-bypass / sandbox-escape attempt
@@ -176,7 +198,25 @@ attestation (tracked separately as M6-04/DRO-292). Neither is a finding from
 this pass — both are scope already tracked elsewhere or lower-priority given
 the strength of the static coverage.
 
-## Changelog (v1 → this pass)
+## Changelog (v2 → this pass)
+
+- **Fixed the TOCTOU gap** the reviewer flagged in the v2 DNS-rebinding fix:
+  `fetchWithPinnedAddress` now pins the already-validated address directly
+  into the HTTP connection via undici's `Agent({ connect: { lookup } })`,
+  so validation and connection can never resolve to different addresses.
+  Added `undici` as a direct `@genie/server` dependency for this.
+- **Fixed the redirect-bypass gap**: `safeFetchFollowingRedirects` fetches
+  with `redirect: "manual"` and re-validates every redirect hop (schema-level
+  `isSafeRefUrl` + resolved-address check) before following it, bounded to 5
+  hops.
+- Added 5 regression tests to `conjure.test.ts`: follow-a-safe-redirect,
+  reject-redirect-to-private-literal, reject-redirect-to-rebinding-hostname,
+  bounded-hop-count (plus the pre-existing `isSafeResolvedAddress` coverage
+  now exercised through the full fetch path via the new redirect tests).
+- Re-ran `tsc --noEmit` and the full `conjure.test.ts` suite (49/49) after
+  the fix.
+
+## Changelog (v1 → v2)
 
 - Ran `osv-scanner` (AC1) — was previously listed as an unavailable-tooling
   gap; installed and run this pass, 0 vulnerabilities.

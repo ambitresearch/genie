@@ -412,6 +412,89 @@ describe("AC7 — reference URL fetch + inline", () => {
   it("isSafeResolvedAddress accepts a public literal without a DNS lookup", async () => {
     expect(await isSafeResolvedAddress("93.184.216.34")).toBe(true);
   });
+
+  // M6-03 follow-up regression tests (post security-audit re-review): prove the
+  // *fetch path*, not just the isolated helper, uses validated addresses and
+  // rejects redirects to private targets — the two blocking gaps the reviewer
+  // flagged in the first DNS-rebinding fix.
+  it("follows a redirect to a public target and inlines its body", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === "https://example.com/start") {
+        return {
+          ok: false,
+          status: 302,
+          headers: { get: (n: string) => (n === "location" ? "https://example.com/dest" : null) },
+          text: async () => "",
+        };
+      }
+      return { ok: true, status: 200, text: async () => "<h1>Dest Page</h1>" };
+    });
+    await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/start" }));
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.com/start");
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.com/dest");
+    expect(JSON.stringify(chat.calls[0]!.messages[1]!.content)).toContain("<h1>Dest Page</h1>");
+  });
+
+  it("rejects a redirect from a public URL to a private/loopback target instead of following it", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === "https://example.com/start") {
+        return {
+          ok: false,
+          status: 302,
+          headers: { get: (n: string) => (n === "location" ? "http://127.0.0.1/secret" : null) },
+          text: async () => "",
+        };
+      }
+      throw new Error("must not fetch the redirect target — it is a private address");
+    });
+    const res = await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/start" }));
+    // Generation still succeeds — a blocked reference degrades to "no reference", not a hard failure.
+    expect(res.componentName).toBe("Button");
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.com/start");
+    expect(fetchImpl).not.toHaveBeenCalledWith("http://127.0.0.1/secret");
+    expect(stderrLines().some((l) => l.event === "conjure.ref_url.ssrf_blocked")).toBe(true);
+  });
+
+  it("rejects a redirect from a public URL to a rebinding hostname (resolves to a private address)", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === "https://example.com/start") {
+        return {
+          ok: false,
+          status: 302,
+          headers: {
+            get: (n: string) => (n === "location" ? "https://rebind.localhost/x" : null),
+          },
+          text: async () => "",
+        };
+      }
+      throw new Error("must not fetch a hostname that fails isSafeRefUrl");
+    });
+    const res = await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/start" }));
+    expect(res.componentName).toBe("Button");
+    expect(fetchImpl).not.toHaveBeenCalledWith("https://rebind.localhost/x");
+  });
+
+  it("gives up after too many redirect hops rather than looping forever", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    let hop = 0;
+    const fetchImpl = vi.fn(async () => {
+      hop += 1;
+      return {
+        ok: false,
+        status: 302,
+        headers: { get: (n: string) => (n === "location" ? `https://example.com/hop${hop}` : null) },
+        text: async () => "",
+      };
+    });
+    const res = await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/hop0" }));
+    expect(res.componentName).toBe("Button");
+    expect(stderrLines().some((l) => l.event === "conjure.ref_url.skip")).toBe(true);
+    // Bounded: MAX_REF_URL_REDIRECTS (5) + the initial request, not unbounded.
+    expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(7);
+  });
 });
 
 // ── AC8 — validate + retry once ───────────────────────────────────────────────
