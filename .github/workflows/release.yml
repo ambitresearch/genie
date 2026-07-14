@@ -58,7 +58,19 @@ jobs:
         # the default registry, which is fine unauthenticated). Provenance
         # attestation itself is skipped in --dry-run mode by npm, but the
         # flag combination is validated the same as a real publish.
-        run: npm publish --dry-run --provenance --access public
+        # Regression guard: npm's publish-time manifest normalization can
+        # silently rewrite/strip fields (e.g. it removed a `./`-prefixed
+        # `bin` target in the past — see DRO-278 review) while still
+        # exiting 0. Capture output and fail closed on any "auto-corrected"
+        # notice so a future manifest regression breaks CI instead of
+        # publishing a corrected-but-unintended package.
+        run: |
+          set -o pipefail
+          npm publish --dry-run --provenance --access public 2>&1 | tee publish-dry-run.log
+          if grep -qi "auto-corrected" publish-dry-run.log; then
+            echo "::error::npm reported package.json auto-corrections during publish --dry-run. This means the published manifest would differ from the source manifest (e.g. an invalid bin/script field was silently dropped). Fix the manifest so no auto-correction is needed." >&2
+            exit 1
+          fi
 
   release-please:
     if: github.event_name == 'push'

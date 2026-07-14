@@ -13,7 +13,7 @@
     "provenance": true
   },
   "bin": {
-    "genie-viewer": "./dist/cli.js"
+    "genie-viewer": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
