@@ -11,29 +11,32 @@
  * executable claims:
  *
  *   AC3 — the four-verb chain (`conjure → plan → write_files → preview`) is
- *         reachable end-to-end over real stdio and `preview` emits the
- *         `ui://genie/grid` resource pointer Cursor's inline Apps extension
- *         consumes. `conjure` requires `GENIE_LLM_*` (M2-01); this suite
- *         drives `plan → write_files → preview` directly (the three verbs
- *         that don't need an LLM call) unconditionally, and separately runs
- *         a REAL `conjure` call over the same live stdio connection whenever
- *         `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` are configured (mirrors
- *         the Codex suite's `it.skipIf(!hasLlmEnv)` leg) — plus an
- *         unconditional check that `conjure` fails closed with a typed error
- *         when no LLM endpoint is configured, so the chain's reachability is
- *         proven either way.
+ *         reachable as ONE contiguous chain over real stdio and `preview`
+ *         emits the `ui://genie/grid` resource pointer Cursor's inline Apps
+ *         extension consumes. `conjure` requires `GENIE_LLM_*` (M2-01); this
+ *         suite drives `plan → write_files → preview` directly (the three
+ *         verbs that don't need an LLM call) unconditionally, and separately
+ *         runs the FULL `conjure → plan → write_files → preview` chain over
+ *         the same live stdio connection — carrying conjure's own generated
+ *         files forward into plan/write_files/preview, not four isolated
+ *         calls — whenever `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` are
+ *         configured, plus an unconditional check that `conjure` fails
+ *         closed with a typed error when no LLM endpoint is configured, so
+ *         the chain's reachability is proven either way.
  *
  *   AC4 — the historical "Cursor caps tool lists at 40" claim (research §4/§8,
  *         unverified against current docs) is tested empirically here against
- *         genie's OWN server/SDK layer only: this suite registers 50+
- *         additional dummy tools on the SAME MCP server instance used by the
- *         real chain, then asserts `tools/list` returns ALL of them over the
- *         real stdio transport. This proves genie's server and the
- *         `@modelcontextprotocol/sdk` impose no cap and ship the full list
- *         for Cursor to choose from — it does NOT observe what Cursor's own
- *         client actually loads/displays, which can only be checked by a
- *         human tester inside a live Cursor session (see `docs/harness/
- *         cursor.md`'s finding section for the precise scope of this claim).
+ *         genie's OWN server/SDK layer only: this suite spawns genie's real
+ *         built server as a real stdio child process (a second one, alongside
+ *         the AC3 connection) with 50+ additional dummy tools registered on
+ *         that live instance via a test-only CLI env hook, then asserts
+ *         `tools/list` returns ALL of them over that real stdio transport.
+ *         This proves genie's server and the `@modelcontextprotocol/sdk`
+ *         impose no cap and ship the full list for Cursor to choose from —
+ *         it does NOT observe what Cursor's own client actually
+ *         loads/displays, which can only be checked by a human tester inside
+ *         a live Cursor session (see `docs/harness/cursor.md`'s finding
+ *         section for the precise scope of this claim).
  *
  * AC1/AC2/AC5 (documenting the snippet's `auth` block, `env:` tokens, and the
  * static OAuth callback URL) are pure documentation — see `cursor.md` — and
@@ -174,89 +177,140 @@ describe.skipIf(!hasBuiltServer)(
       });
 
       it.skipIf(!hasLlmEnv)(
-        "conjure generates a real component over real stdio when an LLM endpoint is configured (full chain incl. generation)",
+        "conjure -> plan -> write_files -> preview is one contiguous chain over real stdio when an LLM endpoint is configured (full chain incl. generation, preview emits ui://genie/grid)",
         async () => {
           const kitResult = (await client.callTool({
             name: "mcp__genie__create_kit",
             arguments: { name: "Cursor Smoke Conjure Kit" },
           })) as ToolResult;
           expect(kitResult.isError, JSON.stringify(kitResult)).not.toBe(true);
+          const kitId = (payload(kitResult) as { kitId: string }).kitId;
 
           const conjureResult = (await client.callTool({
             name: "mcp__genie__conjure",
-            arguments: { prompt: "a small button component" },
+            arguments: {
+              kitId,
+              kit: "A minimal UI kit. Uses semantic HTML and plain CSS.",
+              prompt: "a small button component",
+            },
           })) as ToolResult;
           expect(conjureResult.isError, JSON.stringify(conjureResult)).not.toBe(true);
+          // Shape per packages/server/src/tools/conjure.ts `conjureOutputShape`:
+          // { componentName, group, files: [{path, content, mimeType, encoding}], manifestEntry, usage }.
+          // Deliberately pure generation (no write) — plan/write_files below is
+          // the caller's separate, plan-gated step, per the tool's own description.
+          const conjured = payload(conjureResult) as {
+            files: { path: string; content: string; mimeType: string; encoding: "utf-8" | "base64" }[];
+          };
+          expect(conjured.files.length).toBeGreaterThan(0);
+          const writes = conjured.files.map((f) => f.path);
+
+          // Carry the SAME kit/generation forward through plan -> write_files
+          // -> preview so this is one contiguous chain, not four isolated
+          // calls — the exact gap the changes-requested review flagged.
+          const kitDir = join(kitsRoot, kitId);
+          const planResult = (await client.callTool({
+            name: "mcp__genie__plan",
+            arguments: { kitId, writes, deletes: [], localDir: kitDir },
+          })) as ToolResult;
+          expect(planResult.isError, JSON.stringify(planResult)).not.toBe(true);
+          const planId = (payload(planResult) as { planId: string }).planId;
+
+          const writeResult = (await client.callTool({
+            name: "mcp__genie__write_files",
+            arguments: {
+              planId,
+              files: conjured.files.map((f) => ({
+                path: f.path,
+                data: f.content,
+                mimeType: f.mimeType,
+                encoding: f.encoding,
+              })),
+            },
+          })) as ToolResult;
+          expect(writeResult.isError, JSON.stringify(writeResult)).not.toBe(true);
+
+          const previewResult = (await client.callTool({
+            name: "mcp__genie__preview",
+            arguments: { kitId },
+          })) as ToolResult;
+          expect(previewResult.isError, JSON.stringify(previewResult)).not.toBe(true);
+          const meta = previewResult._meta as { ui?: { resourceUri?: string } } | undefined;
+          expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/genie\/grid/);
+          expect(meta?.ui?.resourceUri).toContain(`kitId=${kitId}`);
         },
         180_000,
       );
     });
 
     describe("AC4 — tool-cap probe (genie/SDK server-side only): does anything server-side truncate tools/list at 40?", () => {
-      it("registers 50+ dummy tools alongside the real surface over real stdio and tools/list returns every one of them", async () => {
-        // This assertion runs against the SAME live connection established
-        // in `beforeAll` above — dummy tools must be registered on the
-        // server BEFORE that connection's `tools/list` is queried, so this
-        // suite instead spins up a second, independent stdio connection to a
-        // freshly-registered dummy-tool set. Genie's server module doesn't
-        // expose a way to append tools to an already-running process from
-        // outside, so the probe drives its own in-process `createServer()`
-        // instance directly (server-side only, as the AC4 scope note above
-        // makes explicit) rather than the child-process transport used for
-        // AC3 — Cursor's actual client-side behavior is out of reach for any
-        // automated suite and is documented as such in cursor.md.
-        const { createServer } = await import("../../server/src/server.js");
-        const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
-
+      it("registers 50+ dummy tools on the real server over the real stdio child-process transport and tools/list returns every one of them", async () => {
+        // Reviewer feedback (changes-requested): the previous version of this
+        // probe used InMemoryTransport while cursor.md claimed real stdio.
+        // This version spawns the SAME built server binary Cursor's local
+        // `.cursor/mcp.json` `command` entry launches, over a real stdio
+        // child process, with `GENIE_TEST_EXTRA_TOOLS` set — a dedicated
+        // test-only CLI hook (packages/server/src/cli.ts) that registers N
+        // no-op tools on that exact live server instance before it starts
+        // serving `tools/list`. This is real stdio end to end, matching the
+        // doc's transport claim.
         const DUMMY_TOOL_COUNT = 55;
         const base = await mkdtemp(join(tmpdir(), "genie-m5-cursor-toolcap-"));
-        const roots = {
-          projectsRoot: join(base, "projects"),
-          kitsRoot: join(base, "kits"),
-          reportsDir: join(base, "reports"),
-        };
-        const server = createServer(roots);
 
-        const baselineNames = new Set<string>();
-        {
-          const probeClient = new Client({ name: "m5-smoke-cursor-baseline", version: "0" });
-          const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-          await Promise.all([server.connect(serverT), probeClient.connect(clientT)]);
-          const { tools } = await probeClient.listTools();
-          for (const t of tools) baselineNames.add(t.name);
-          await probeClient.close();
-        }
-        const realToolCount = baselineNames.size;
+        const baselineTransport = new StdioClientTransport({
+          command: "node",
+          args: [SERVER_CLI, "--transport", "stdio"],
+          env: {
+            ...(process.env as Record<string, string>),
+            GENIE_KITS_ROOT: join(base, "kits-baseline"),
+            OAUTH_HS256_KEY: "cursor-smoke-test-not-a-real-secret",
+            GENIE_LLM_API_KEY: "cursor-smoke-test-not-a-real-secret-key",
+            GENIE_LLM_BASE_URL: "http://127.0.0.1:1/v1",
+          },
+        });
+        const baselineClient = new Client({ name: "m5-smoke-cursor-baseline", version: "0" });
+        await baselineClient.connect(baselineTransport);
+        const { tools: baselineTools } = await baselineClient.listTools();
+        const realToolCount = baselineTools.length;
+        await baselineClient.close();
         expect(realToolCount).toBeGreaterThan(0);
 
-        for (let i = 0; i < DUMMY_TOOL_COUNT; i++) {
-          server.registerTool(
-            `dummy_tool_${i}`,
-            { title: `Dummy ${i}`, description: "M5-13 tool-cap probe filler tool.", inputSchema: {} },
-            () => ({ content: [{ type: "text", text: "dummy" }] }),
-          );
-        }
-
-        const probeConn = new Client({ name: "m5-smoke-cursor-toolcap", version: "0" });
-        const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-        await Promise.all([server.connect(serverT), probeConn.connect(clientT)]);
+        const probeTransport = new StdioClientTransport({
+          command: "node",
+          args: [SERVER_CLI, "--transport", "stdio"],
+          env: {
+            ...(process.env as Record<string, string>),
+            GENIE_KITS_ROOT: join(base, "kits-probe"),
+            OAUTH_HS256_KEY: "cursor-smoke-test-not-a-real-secret",
+            GENIE_LLM_API_KEY: "cursor-smoke-test-not-a-real-secret-key",
+            GENIE_LLM_BASE_URL: "http://127.0.0.1:1/v1",
+            GENIE_TEST_EXTRA_TOOLS: String(DUMMY_TOOL_COUNT),
+          },
+        });
+        const probeClient = new Client({ name: "m5-smoke-cursor-toolcap", version: "0" });
         try {
-          const { tools } = await probeConn.listTools();
+          await probeClient.connect(probeTransport);
+          const { tools } = await probeClient.listTools();
           const dummyNames = tools.filter((t) => t.name.startsWith("dummy_tool_"));
 
           // Empirical finding (AC4, server-side scope): the MCP SDK / genie
           // server impose no server-side cap. All registered tools — real +
-          // dummy — are returned by tools/list. This does NOT prove or
-          // disprove what Cursor's own client loads/displays; a historical
-          // "Cursor caps at 40" claim, if true today, would be enforced
-          // CLIENT-side inside Cursor's own tool-list handling, which this
-          // suite has no way to observe. See `docs/harness/cursor.md`'s
-          // finding section for the exact scope of this claim.
+          // dummy — are returned by tools/list over real stdio. This does
+          // NOT prove or disprove what Cursor's own client actually
+          // loads/displays; if Cursor still limits the displayed/attached
+          // tool count today, that enforcement is entirely CLIENT-side
+          // inside Cursor itself — not something genie can detect,
+          // influence, or test from the server. Ship your full tool
+          // surface; if Cursor only exposes a subset to the model, that's
+          // Cursor's own selection policy, observable only by a human
+          // tester inside an actual Cursor session (file a follow-up
+          // against Cursor's own docs/support if a live cap is reproduced
+          // that way).
           expect(dummyNames).toHaveLength(DUMMY_TOOL_COUNT);
           expect(tools.length).toBe(realToolCount + DUMMY_TOOL_COUNT);
           expect(tools.length).toBeGreaterThan(40);
         } finally {
-          await probeConn.close();
+          await probeClient.close();
           await rm(base, { recursive: true, force: true });
         }
       });

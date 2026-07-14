@@ -106,10 +106,14 @@ Cursor's client-side behavior**. What IS now confirmed and empirical is the
 server-side half of that question, tested in
 `packages/e2e/test/m5-smoke-cursor.test.ts` ("AC4 — tool-cap probe"):
 
-- The suite registers 50+ dummy tools alongside genie's real tool surface on
-  one live `McpServer` instance and asserts `tools/list` returns **every**
-  one of them (real + dummy), unclipped, over the same real stdio transport
-  Cursor's local `command` config launches.
+- The suite spawns genie's real built server binary
+  (`packages/server/dist/cli.js`) as a real stdio child process — the exact
+  transport Cursor's local `.cursor/mcp.json` `command` entry launches — with
+  a dedicated test-only env var (`GENIE_TEST_EXTRA_TOOLS`, wired in
+  `packages/server/src/cli.ts`) that registers 50+ additional no-op tools on
+  that live server instance before it starts serving `tools/list`. It then
+  asserts `tools/list` returns **every** one of them (real + dummy),
+  unclipped, over that real stdio connection.
 - **Confirmed finding: genie / the MCP TypeScript SDK impose no server-side
   cap.** `tools/list` is a plain unbounded response — nothing in genie's
   registration path or the SDK's `tools/list` handler truncates it at 40 or
