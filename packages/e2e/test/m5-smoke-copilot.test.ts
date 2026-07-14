@@ -28,10 +28,12 @@
  *   AC7 — on a non-MCP-Apps client (any MCP host — VS Code or otherwise —
  *         that omits the `io.modelcontextprotocol/ui` extension, including
  *         VS Code builds predating 1.109), `preview` must fall back to a
- *         text/viewer-URL-only result: no `ui://` resource pointer,
- *         `structuredContent` carries a `viewerUrl` instead, and the text
- *         content narrates the fallback — never a bare inline-render
- *         assumption on a host that can't render one.
+ *         text/viewer-URL-only result: `_meta.ui.resourceUri` is still
+ *         emitted (a capable host reading the same result later could still
+ *         resolve it), but `structuredContent` ALSO carries a concrete
+ *         `viewerUrl`/`fileUrl` and the text content narrates that fallback
+ *         — never a bare inline-render assumption on a host that can't
+ *         render one.
  *
  * ── Why not a literal VS Code application launch in CI ──────────────────────
  * There is no VS Code/Electron binary available in this sandboxed/CI runner
@@ -56,7 +58,8 @@
  *   AC6 — four-verb chain (real `conjure` when `GENIE_LLM_*` is configured,
  *         gated/skipped like M2-09 otherwise) + inline `ui://genie/grid`
  *         render, driven live via the real capability-negotiation contract. ✅
- *   AC7 — text-only fallback assertion for the non-MCP-Apps client shape.   ✅
+ *   AC7 — viewer/file fallback assertion (plus retained `_meta.ui.resourceUri`)
+ *         for the non-MCP-Apps client shape.                               ✅
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -389,7 +392,7 @@ describe("AC6 — MCP Apps-capable VS Code build (Stable 1.109+ or Insiders) ren
   );
 });
 
-describe("AC7 — a non-MCP-Apps client falls back to a text/viewer-URL-only result", () => {
+describe("AC7 — a non-MCP-Apps client falls back to a viewer/file result (resourceUri still retained)", () => {
   let harness: Harness;
   beforeEach(async () => {
     // A non-MCP-Apps client's real `initialize` simply omits the extensions
@@ -408,6 +411,12 @@ describe("AC7 — a non-MCP-Apps client falls back to a text/viewer-URL-only res
 
     const previewResult = await harness.call("mcp__genie__preview", { kitId });
     expect(previewResult.isError).not.toBe(true);
+
+    // Regression: the resource pointer must still be emitted in `_meta` even
+    // on this omitted-capability shape — a capable host reading the SAME
+    // result later could still resolve it.
+    const meta = previewResult._meta as { ui?: { resourceUri?: string } } | undefined;
+    expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/genie\/grid/);
 
     // The resource pointer is still emitted in `_meta` (a capable host reading
     // the SAME result later could still resolve it), but on this omitted-
