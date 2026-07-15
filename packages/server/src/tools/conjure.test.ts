@@ -485,7 +485,9 @@ describe("AC7 — reference URL fetch + inline", () => {
       return {
         ok: false,
         status: 302,
-        headers: { get: (n: string) => (n === "location" ? `https://example.com/hop${hop}` : null) },
+        headers: {
+          get: (n: string) => (n === "location" ? `https://example.com/hop${hop}` : null),
+        },
         text: async () => "",
       };
     });

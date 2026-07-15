@@ -154,10 +154,7 @@ function isPrivateIpv4(host: string): boolean {
  * {@link isPrivateIpv4} for the v6 literal forms accepted at either layer. */
 function isPrivateIpv6(inner: string): boolean {
   return (
-    inner === "::1" ||
-    inner.startsWith("fe80:") ||
-    inner.startsWith("fc") ||
-    inner.startsWith("fd")
+    inner === "::1" || inner.startsWith("fe80:") || inner.startsWith("fc") || inner.startsWith("fd")
   );
 }
 
