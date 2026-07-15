@@ -12,6 +12,7 @@ import type { Readable, Writable } from "node:stream";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { extractBearerToken, verifyToken } from "./auth/bearer.js";
+import { tryCreateOAuthRouter } from "./auth/oauth/router.js";
 
 export type TransportKind = "stdio" | "http";
 
@@ -173,6 +174,15 @@ export interface StreamableHttpHandlerOptions {
    * tokens yet (or that terminate auth upstream) are unaffected.
    */
   requireBearerAuth?: boolean;
+  /**
+   * Public issuer URL for OAuth (DRO-273 / M5-01), e.g. `http://127.0.0.1:3000`.
+   * When set and `OAUTH_HS256_KEY` is a valid signing key, the OAuth 2.0 +
+   * DCR endpoints (`/.well-known/oauth-authorization-server`, `/register`,
+   * `/authorize`, `/token`) are mounted on this HTTP server. OAuth is
+   * opt-in: omit `oauthIssuer`, or leave `OAUTH_HS256_KEY` unset, to run
+   * without it.
+   */
+  oauthIssuer?: string;
 }
 
 function sessionIdFrom(req: IncomingMessage): string | undefined {
@@ -216,6 +226,9 @@ export function createStreamableHttpRequestHandler(
   if (!Number.isFinite(sessionIdleTimeoutMs) || sessionIdleTimeoutMs <= 0) {
     throw new Error("sessionIdleTimeoutMs must be a positive finite number.");
   }
+  const oauthRouter = options.oauthIssuer
+    ? tryCreateOAuthRouter({ issuer: options.oauthIssuer })
+    : undefined;
 
   const refreshIdleTimer = (sessionId: string, session: HttpSession): void => {
     if (session.idleTimer !== undefined) clearTimeout(session.idleTimer);
@@ -348,6 +361,22 @@ export function createStreamableHttpRequestHandler(
 
   return (req, res) => {
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+
+    if (oauthRouter?.handle(req, res, pathname)) return;
+
+    if (oauthRouter !== undefined && pathname === "/mcp") {
+      try {
+        oauthRouter.verifyBearerToken(req.headers.authorization);
+      } catch {
+        res.writeHead(401, {
+          "content-type": "application/json",
+          "www-authenticate": `Bearer resource_metadata="${options.oauthIssuer}/.well-known/oauth-authorization-server"`,
+        });
+        res.end(JSON.stringify({ error: "invalid_token" }));
+        return;
+      }
+    }
+
     if (requireBearerAuth && pathname === "/mcp") {
       void authorize(req, res).then((authorized) => {
         if (!authorized) return;
@@ -426,12 +455,24 @@ async function startHttp(
       "HTTP transport requires an explicit serverFactory for per-client session isolation.",
     );
   }
+  // OAuth is opt-in: only mounted when OAUTH_HS256_KEY is set (AC1-AC5). The
+  // issuer is the externally-reachable endpoint clients will hit for DCR +
+  // token exchange, so it must match how `claude mcp add` / `codex mcp
+  // login` reach this process — override via GENIE_OAUTH_ISSUER for
+  // reverse-proxy/tunnel deployments.
+  const oauthIssuer =
+    process.env.OAUTH_HS256_KEY !== undefined
+      ? (process.env.GENIE_OAUTH_ISSUER ?? `http://${normalizeListenHost(host)}:${port}`)
+      : undefined;
   const http = createHttpServer(
-    createStreamableHttpRequestHandler(serverFactory, { requireBearerAuth }),
+    createStreamableHttpRequestHandler(serverFactory, { requireBearerAuth, oauthIssuer }),
   );
 
   await new Promise<void>((resolve) => http.listen(port, host, resolve));
   process.stderr.write(`genie MCP server listening on ${formatHttpEndpoint(host, port)}\n`);
+  if (oauthIssuer) {
+    process.stderr.write(`genie MCP server: OAuth 2.0 + DCR enabled (issuer ${oauthIssuer})\n`);
+  }
 }
 
 export interface StartOptions {
