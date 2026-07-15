@@ -24,6 +24,7 @@ These are orthogonal, so harnesses fall into a grid:
 | ChatGPT remote connector          |           yes           |         no          | inline grid + tool descriptions                                            |
 | Codex CLI                         |         **no**          |       **yes**       | Skill + **server-opened browser tab** + descriptions                       |
 | GitHub Copilot (host-dependent)   |  capability-dependent   |       **yes**       | Skill + inline grid when negotiated; local fallback browser + descriptions |
+| Continue.dev                      |         **no**          |         no           | tool descriptions only; agent mode required; explicit `type` + `${{ secrets.NAME }}` |
 
 **Takeaways:**
 
@@ -40,6 +41,9 @@ These are orthogonal, so harnesses fall into a grid:
   `--preview-locality local` (or `GENIE_PREVIEW_LOCALITY=local`). Remote HTTP
   hosts require the inline MCP App plus `GENIE_PREVIEWS_BASE_URL`. Disable local
   stdio auto-open with `GENIE_PREVIEW_NO_OPEN=1`.
+- On **Continue.dev**, MCP tools only load in agent mode, there is no Agent
+  Skills loader, and the config schema requires an explicit `type` key plus
+  `${{ secrets.NAME }}` interpolation — see [continue.md](./continue.md).
 
 ## Guidance delivery channels
 
@@ -67,4 +71,5 @@ Per-harness registration snippets:
 [claude-code.md](./claude-code.md) ·
 [cursor.md](./cursor.md) ·
 [codex.md](./codex.md) ·
-[copilot.md](./copilot.md)
+[copilot.md](./copilot.md) ·
+[continue.md](./continue.md)
