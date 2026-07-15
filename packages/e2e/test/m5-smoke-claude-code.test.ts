@@ -45,18 +45,16 @@
  * dollars or fails on an unconfigured machine; it skips (with a breadcrumb)
  * rather than throwing when unset.
  */
-import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { GenericContainer, type StartedTestContainer } from "testcontainers";
+import type { GenericContainer as GenericContainerType } from "testcontainers";
 
 import { createServer } from "../../server/src/server.js";
-import { createStreamableHttpRequestHandler } from "../../server/src/transport.js";
 import { CONJURE_TOOL_NAME } from "../../server/src/tools/conjure.js";
 import { PREVIEW_TOOL_NAME } from "../../server/src/tools/preview.js";
 import { WRITE_FILES_TOOL_NAME } from "../../server/src/tools/write_files.js";
@@ -275,25 +273,14 @@ describe.skipIf(!hasLlmConfig)(
 // Boots the real `claude` CLI (packages/e2e/docker/claude-code-smoke/Dockerfile)
 // against a genie HTTP server started in this process, drives the documented
 // four-verb chain through Claude's own agent loop (not the MCP SDK client
-// above), and captures a screenshot of the rendered preview grid. This needs a
-// THIRD credential beyond dockerAvailable/hasLlmConfig: an Anthropic API key
-// so Claude Code itself can run non-interactively and decide to call the
-// genie tools (a distinct concern from GENIE_LLM_* which is genie's *own*
-// internal model call inside `conjure`). Named GENIE_ANTHROPIC_SMOKE_API_KEY,
-// not a bare ANTHROPIC_API_KEY, so it can't leak into unrelated suites that
-// happen to read that generic name.
+// above), and captures a screenshot of the rendered preview grid. Gated on
+// `runFullDockerLeg` (Gate 2 + Gate 3 above: Docker reachable, a real
+// Anthropic key for the containerized `claude` CLI, and a real genie LLM
+// endpoint for `conjure`).
 const anthropicSmokeKey = process.env["GENIE_ANTHROPIC_SMOKE_API_KEY"]?.trim();
-const canRunDockerLeg = dockerAvailable && hasLlmConfig && Boolean(anthropicSmokeKey);
-if (dockerAvailable && !anthropicSmokeKey) {
-  console.info(
-    "[m5-smoke-claude-code] Docker is available but GENIE_ANTHROPIC_SMOKE_API_KEY is unset — " +
-      "skipping the Claude-Code-CLI-in-Docker leg (AC4/AC6). Set it to a real Anthropic API key " +
-      "(distinct from GENIE_LLM_API_KEY, which is genie's own conjure endpoint) to run it.",
-  );
-}
 
 describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
-  if (canRunDockerLeg) {
+  if (runFullDockerLeg) {
     it(
       "boots Claude Code CLI in Docker, drives conjure->write_files->preview->validate through " +
         "its own agent loop, and captures a preview screenshot (AC4/AC6)",
@@ -345,9 +332,14 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
         await writeFile(joinPath(base, "mcp-config.json"), JSON.stringify(mcpConfig, null, 2));
         await writeFile(joinPath(base, "prompt.txt"), prompt);
 
-        let container: Awaited<ReturnType<GenericContainer["start"]>> | undefined;
+        let container: Awaited<ReturnType<GenericContainerType["start"]>> | undefined;
         try {
-          container = await new GenericContainer("genie/claude-code-smoke:local")
+          // Build packages/e2e/docker/claude-code-smoke/Dockerfile fresh each
+          // run (mirrors gitea-fixture.ts's convention of a throwaway image
+          // rather than assuming a prebuilt tag is available).
+          const dockerfileDir = joinPath(HERE, "../docker/claude-code-smoke");
+          const builtImage = await GenericContainer.fromDockerfile(dockerfileDir).build();
+          container = await builtImage
             .withEnvironment({ ANTHROPIC_API_KEY: anthropicSmokeKey! })
             .withExtraHosts([{ host: "host.docker.internal", ipAddress: "host-gateway" }])
             .withCopyFilesToContainer([
