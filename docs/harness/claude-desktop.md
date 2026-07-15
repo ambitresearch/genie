@@ -111,6 +111,38 @@ window for the authorization step the first time it connects). Use this
 pattern when you don't want to run genie locally at all — e.g. a team-shared
 genie deployment — rather than the local `npx -y genie` snippet above.
 
+## Manual smoke test (AC6)
+
+Claude Desktop is a native GUI app with no scriptable automation surface, so
+the `.mcpb`-install → `list_kits` → screenshot leg of AC6 cannot be automated
+in CI — it requires a human tester on a real macOS machine with Claude
+Desktop installed. This is the exact protocol to run once
+[M5-05](../github/issues) (`.mcpb` bundle packaging) ships a `genie.mcpb`
+artifact:
+
+1. Download the `genie.mcpb` artifact from the relevant GitHub Release (or
+   build it locally via `pnpm bundle:mcpb` once M5-05 lands).
+2. Quit Claude Desktop if it's running. Double-click `genie.mcpb` — Claude
+   Desktop should launch (if not already open) and show an install prompt
+   for the "genie" MCP server. Confirm the install.
+3. If prompted for `GENIE_LLM_BASE_URL` / `GENIE_LLM_API_KEY`, either supply
+   real values or skip — `list_kits` and the other read tools work without
+   an LLM configured.
+4. Open a new chat in Claude Desktop. Confirm "genie" appears as a connected
+   MCP server (Settings → Developer, or the 🔌/tools icon in the composer).
+5. Ask Claude to call `list_kits` (e.g. "list my genie UI kits"). Confirm it
+   returns without error (empty list is fine on a fresh install).
+6. Capture a screenshot showing: the connected "genie" server in Claude
+   Desktop's UI, and the `list_kits` tool call + result in the chat.
+7. Attach the screenshot and a one-line pass/fail note to this issue (or the
+   tracking follow-up issue below) as the AC6 evidence artifact.
+
+This protocol is the concrete, runnable replacement for AC6's automated
+claim — `packages/e2e/test/m5-smoke-claude-desktop.test.ts` covers everything
+verifiable from genie's side (the real stdio four-verb chain, incl.
+`list_kits`); this section is what closes the gap once a human has Claude
+Desktop + the `.mcpb` artifact in hand.
+
 ## What you get here
 
 - **Agent Skill** — Claude Desktop loads the same portable Skill Claude Code
