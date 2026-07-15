@@ -11,10 +11,13 @@
 # booted by testcontainers' GenericContainer, no host-side install required.
 #
 # NOTE: exact `@anthropic-ai/claude-code` CLI flags used by the test harness
-# (`claude -p ... --mcp-config ... --output-format json`) were verified
-# against a locally available `claude` binary (2.x) at authoring time — see
-# the test file's header comment for details on what could/couldn't be
-# confirmed in this environment.
+# (`claude -p ... --mcp-config ... --output-format stream-json --verbose`)
+# were verified against a locally available `claude` binary (2.x) at
+# authoring time — see the test file's header comment for details on what
+# could/couldn't be confirmed in this environment. `stream-json` (rather
+# than the collapsed `json` mode) is required so the test can assert each
+# of the four documented mcp__genie__* tool calls actually ran and returned
+# a non-error tool_result, not just that the final summary looks plausible.
 FROM node:24-slim
 
 # The Claude Code CLI needs git for some internal operations and a CA bundle

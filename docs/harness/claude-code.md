@@ -58,7 +58,7 @@ merely ignored at runtime.
   router). It has no per-`mcpServers` entry equivalent and nothing to do with
   authenticating to the genie MCP server.
 
-- **`headersHelper`** is the mechanism that *does* attach to a specific
+- **`headersHelper`** is the mechanism that _does_ attach to a specific
   HTTP/SSE MCP server: a field nested inside that server's own
   `mcpServers.<name>` config, returning a JSON object of headers merged into
   every request Claude Code makes to that server:
@@ -116,10 +116,66 @@ The static-Bearer-token + `headersHelper` pattern above remains supported for
 deployments that haven't enabled OAuth (`OAUTH_HS256_KEY` unset), or that
 prefer a pre-provisioned token over an interactive consent flow.
 
+### Combined example: HTTP transport + top-level `apiKeyHelper`
+
+Putting the two independent settings from above into one complete,
+valid config file — Claude Code's own model-API credential
+(`apiKeyHelper`, top-level) alongside genie's MCP server registered over
+HTTP with its own credential (`headersHelper`, nested under
+`mcpServers.genie`):
+
+```json
+{
+  "apiKeyHelper": "/absolute/path/to/anthropic-api-key-helper.sh",
+  "mcpServers": {
+    "genie": {
+      "type": "http",
+      "url": "https://genie.example.internal/mcp",
+      "headersHelper": "/absolute/path/to/genie-headers-helper.sh"
+    }
+  }
+}
+```
+
+Both helpers are separate executables with separate jobs: `apiKeyHelper`
+prints Claude Code's own model-API key (a bare string) so Claude Code can
+authenticate its calls to `ANTHROPIC_BASE_URL`/your router; `genie-headers-
+helper.sh` (shown above, in the `headersHelper` section) prints a JSON
+object of headers so Claude Code can authenticate its calls to the genie
+MCP server. Neither can substitute for the other, and Claude Code never
+merges them.
+
+An executable, runnable `apiKeyHelper` template — copy this, `chmod +x`
+it, and point the JSON's `apiKeyHelper` field at its absolute path:
+
+```bash
+#!/usr/bin/env bash
+# anthropic-api-key-helper.sh — prints Claude Code's own model-API key
+# (a bare string, NOT JSON) to stdout. Claude Code calls this script itself;
+# it never sees the raw key in your config file. Store the actual key in
+# your OS keychain / secret manager, not in this script's source.
+set -euo pipefail
+
+# macOS Keychain example:
+security find-generic-password -a "$USER" -s anthropic-api-key -w
+
+# Alternatives, pick one and delete the others:
+#   1Password CLI:   op read "op://vault/anthropic-api-key/credential"
+#   HashiCorp Vault:  vault kv get -field=key secret/anthropic-api-key
+#   Env var fallback (least secure, dev-only):
+#     printf '%s\n' "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY not set}"
+```
+
+Make it executable once:
+
+```bash
+chmod +x /absolute/path/to/anthropic-api-key-helper.sh
+```
+
 ### Gotcha: `/login` (Claude Code OAuth) can silently bypass configured LLM routing
 
 If you separately run `/login` inside Claude Code to authenticate against
-Anthropic's own OAuth (a *different* credential from the genie MCP server's
+Anthropic's own OAuth (a _different_ credential from the genie MCP server's
 `headersHelper`), Claude Code can start routing model calls through that
 OAuth session instead of your configured LLM endpoint (`ANTHROPIC_BASE_URL` /
 custom router / top-level `apiKeyHelper`) — none of that governs the genie

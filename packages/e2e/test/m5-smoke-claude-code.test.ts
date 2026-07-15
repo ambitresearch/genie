@@ -183,89 +183,90 @@ describe.skipIf(!hasLlmConfig)(
     it("advertises the four documented verbs under their mcp__genie__ names (AC5 precondition)", async () => {
       const { tools } = await client.listTools();
       const names = new Set(tools.map((t) => t.name));
-      for (const verb of [CONJURE_TOOL_NAME, PREVIEW_TOOL_NAME, WRITE_FILES_TOOL_NAME, VALIDATE_TOOL_NAME]) {
+      for (const verb of [
+        CONJURE_TOOL_NAME,
+        PREVIEW_TOOL_NAME,
+        WRITE_FILES_TOOL_NAME,
+        VALIDATE_TOOL_NAME,
+      ]) {
         expect(names, `expected ${verb} to be registered`).toContain(verb);
       }
     });
 
-    it(
-      "runs conjure → write_files → preview → validate and every call returns non-error (AC5)",
-      async () => {
-        // create_kit isn't one of the four AC-named verbs but is the
-        // prerequisite every doc snippet assumes ("ask for a component" inside
-        // an existing kit) — not itself asserted as a chain step.
-        const createKit = await client.callTool({
-          name: CREATE_KIT_TOOL_NAME,
-          arguments: { name: "m5-smoke-claude-code" },
-        });
-        expect(createKit.isError, JSON.stringify(createKit)).toBeFalsy();
-        const { kitId } = payload(createKit as ToolResult) as { kitId: string };
+    it("runs conjure → write_files → preview → validate and every call returns non-error (AC5)", async () => {
+      // create_kit isn't one of the four AC-named verbs but is the
+      // prerequisite every doc snippet assumes ("ask for a component" inside
+      // an existing kit) — not itself asserted as a chain step.
+      const createKit = await client.callTool({
+        name: CREATE_KIT_TOOL_NAME,
+        arguments: { name: "m5-smoke-claude-code" },
+      });
+      expect(createKit.isError, JSON.stringify(createKit)).toBeFalsy();
+      const { kitId } = payload(createKit as ToolResult) as { kitId: string };
 
-        // 1. conjure — generate one component against the real LLM endpoint.
-        // `model` defaults to genie's own deployed alias ("design-default"),
-        // resolved by that operator's litellm config — not guaranteed to
-        // exist on every environment's gateway. Allow an explicit override
-        // (GENIE_SMOKE_MODEL) so this suite proves the tool chain itself
-        // rather than depending on one specific alias being provisioned.
-        const model = process.env["GENIE_SMOKE_MODEL"]?.trim();
-        const conjureResult = await client.callTool({
-          name: CONJURE_TOOL_NAME,
-          arguments: {
-            kitId,
-            kit: "Acme kit: clay accent #c87c5e, 8px radius, Inter type scale.",
-            prompt: "A simple primary Button component with a label prop.",
-            ...(model ? { model } : {}),
-          },
-        });
-        expect(conjureResult.isError, JSON.stringify(conjureResult)).toBeFalsy();
-        const conjured = payload(conjureResult as ToolResult) as {
-          componentName: string;
-          group: string;
-          files: { path: string; content: string }[];
-          manifestEntry: unknown;
-        };
-        expect(conjured.files.length).toBeGreaterThan(0);
+      // 1. conjure — generate one component against the real LLM endpoint.
+      // `model` defaults to genie's own deployed alias ("design-default"),
+      // resolved by that operator's litellm config — not guaranteed to
+      // exist on every environment's gateway. Allow an explicit override
+      // (GENIE_SMOKE_MODEL) so this suite proves the tool chain itself
+      // rather than depending on one specific alias being provisioned.
+      const model = process.env["GENIE_SMOKE_MODEL"]?.trim();
+      const conjureResult = await client.callTool({
+        name: CONJURE_TOOL_NAME,
+        arguments: {
+          kitId,
+          kit: "Acme kit: clay accent #c87c5e, 8px radius, Inter type scale.",
+          prompt: "A simple primary Button component with a label prop.",
+          ...(model ? { model } : {}),
+        },
+      });
+      expect(conjureResult.isError, JSON.stringify(conjureResult)).toBeFalsy();
+      const conjured = payload(conjureResult as ToolResult) as {
+        componentName: string;
+        group: string;
+        files: { path: string; content: string }[];
+        manifestEntry: unknown;
+      };
+      expect(conjured.files.length).toBeGreaterThan(0);
 
-        // 2. write_files — persist what conjure returned (requires a plan,
-        // same MCP write-gate every write_files caller goes through). This
-        // MUST run before `preview` — see the file header note on ordering.
-        const plan = await client.callTool({
-          name: "mcp__genie__plan",
-          arguments: { kitId, writes: conjured.files.map((f) => f.path) },
-        });
-        expect(plan.isError, JSON.stringify(plan)).toBeFalsy();
-        const { planId } = payload(plan as ToolResult) as { planId: string };
+      // 2. write_files — persist what conjure returned (requires a plan,
+      // same MCP write-gate every write_files caller goes through). This
+      // MUST run before `preview` — see the file header note on ordering.
+      const plan = await client.callTool({
+        name: "mcp__genie__plan",
+        arguments: { kitId, writes: conjured.files.map((f) => f.path) },
+      });
+      expect(plan.isError, JSON.stringify(plan)).toBeFalsy();
+      const { planId } = payload(plan as ToolResult) as { planId: string };
 
-        const writeResult = await client.callTool({
-          name: WRITE_FILES_TOOL_NAME,
-          arguments: {
-            kitId,
-            planId,
-            files: conjured.files.map((f) => ({ path: f.path, data: f.content })),
-            manifestEntry: conjured.manifestEntry,
-          },
-        });
-        expect(writeResult.isError, JSON.stringify(writeResult)).toBeFalsy();
+      const writeResult = await client.callTool({
+        name: WRITE_FILES_TOOL_NAME,
+        arguments: {
+          kitId,
+          planId,
+          files: conjured.files.map((f) => ({ path: f.path, data: f.content })),
+          manifestEntry: conjured.manifestEntry,
+        },
+      });
+      expect(writeResult.isError, JSON.stringify(writeResult)).toBeFalsy();
 
-        // 3. preview — compile + serve the grid; asserts a viewer URL or an
-        // inline ui:// resource comes back, not that a browser renders it
-        // (that's m4-viewer.test.ts's job).
-        const previewResult = await client.callTool({
-          name: PREVIEW_TOOL_NAME,
-          arguments: { kitId },
-        });
-        expect(previewResult.isError, JSON.stringify(previewResult)).toBeFalsy();
+      // 3. preview — compile + serve the grid; asserts a viewer URL or an
+      // inline ui:// resource comes back, not that a browser renders it
+      // (that's m4-viewer.test.ts's job).
+      const previewResult = await client.callTool({
+        name: PREVIEW_TOOL_NAME,
+        arguments: { kitId },
+      });
+      expect(previewResult.isError, JSON.stringify(previewResult)).toBeFalsy();
 
-        // 4. validate — full-scan facet over the kit that now has the
-        // just-written component.
-        const validateResult = await client.callTool({
-          name: VALIDATE_TOOL_NAME,
-          arguments: { kitId },
-        });
-        expect(validateResult.isError, JSON.stringify(validateResult)).toBeFalsy();
-      },
-      120_000,
-    );
+      // 4. validate — full-scan facet over the kit that now has the
+      // just-written component.
+      const validateResult = await client.callTool({
+        name: VALIDATE_TOOL_NAME,
+        arguments: { kitId },
+      });
+      expect(validateResult.isError, JSON.stringify(validateResult)).toBeFalsy();
+    }, 120_000);
   },
 );
 
@@ -290,9 +291,8 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
         const { join: joinPath } = await import("node:path");
         const { GenericContainer } = await import("testcontainers");
         const { createServer: createGenieServer } = await import("../../server/src/server.js");
-        const {
-          createStreamableHttpRequestHandler,
-        } = await import("../../server/src/transport.js");
+        const { createStreamableHttpRequestHandler } =
+          await import("../../server/src/transport.js");
         const { createServer: createHttpServer } = await import("node:http");
 
         const base = await mkdtemp(joinPath(osTmpdir(), "genie-m5-docker-smoke-"));
@@ -359,36 +359,124 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             stream.on("error", reject);
           });
 
-          // `--output-format json` (see run-smoke.sh) emits a single JSON
-          // result object; assert Claude's own transcript shows the
-          // documented tools were actually invoked and none errored, rather
-          // than fragile substring matching on prose.
-          let transcript: unknown;
-          try {
-            transcript = JSON.parse(stdout);
-          } catch {
-            throw new Error(
-              `Claude Code container did not emit valid JSON on stdout; raw output:\n${stdout}`,
-            );
+          // `--output-format stream-json` (see run-smoke.sh) emits one JSON
+          // object per line — the actual structured tool-call/tool-result
+          // event stream, not a single collapsed final result. Walk it and
+          // correlate each `tool_use` event (by id) with its matching
+          // `tool_result` event so we can assert the four documented verbs
+          // were genuinely invoked by Claude's own agent loop AND that none
+          // of them came back as an error — `--output-format json`'s single
+          // summary object cannot prove either of those.
+          interface StreamEvent {
+            type?: string;
+            message?: { content?: unknown[] };
           }
-          const text = JSON.stringify(transcript);
+          interface ContentBlock {
+            type?: string;
+            id?: string;
+            name?: string;
+            input?: unknown;
+            tool_use_id?: string;
+            is_error?: boolean;
+            content?: unknown;
+          }
+          const events: StreamEvent[] = [];
+          for (const line of stdout.split("\n")) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              events.push(JSON.parse(trimmed) as StreamEvent);
+            } catch {
+              throw new Error(
+                `Claude Code container emitted a non-JSON line on stdout (expected NDJSON from ` +
+                  `--output-format stream-json); offending line:\n${trimmed}\n\nfull output:\n${stdout}`,
+              );
+            }
+          }
+          expect(
+            events.length,
+            `expected at least one stream-json event; raw output:\n${stdout}`,
+          ).toBeGreaterThan(0);
+
+          const toolUseIdToName = new Map<string, string>();
+          const toolResultsByName = new Map<string, ContentBlock[]>();
+          let previewToolResult: ContentBlock | undefined;
+          for (const event of events) {
+            const blocks = (event.message?.content ?? []) as ContentBlock[];
+            for (const block of blocks) {
+              if (block.type === "tool_use" && block.id && block.name) {
+                toolUseIdToName.set(block.id, block.name);
+              } else if (block.type === "tool_result" && block.tool_use_id) {
+                const name = toolUseIdToName.get(block.tool_use_id);
+                if (name) {
+                  const list = toolResultsByName.get(name) ?? [];
+                  list.push(block);
+                  toolResultsByName.set(name, list);
+                  if (name === "mcp__genie__preview") previewToolResult = block;
+                }
+              }
+            }
+          }
+
           for (const verb of [
             "mcp__genie__conjure",
             "mcp__genie__write_files",
             "mcp__genie__preview",
             "mcp__genie__validate",
           ]) {
-            expect(text, `expected ${verb} to appear in the Claude Code transcript`).toContain(verb);
+            const results = toolResultsByName.get(verb);
+            expect(
+              results && results.length > 0,
+              `expected a tool_use/tool_result pair for ${verb} in the Claude Code stream-json ` +
+                `output; raw output:\n${stdout}`,
+            ).toBe(true);
+            for (const result of results ?? []) {
+              expect(
+                result.is_error,
+                `expected ${verb}'s tool_result to be non-error; got: ${JSON.stringify(result)}`,
+              ).not.toBe(true);
+            }
           }
-          expect(text, "Claude Code transcript reported is_error").not.toMatch(/"is_error"\s*:\s*true/);
 
-          // Screenshot AC6: capture a rendered artifact this run produced, via
-          // Playwright — a real captured PNG, not a placeholder file.
+          // Screenshot AC6: capture the actual generated preview surface —
+          // the URL the `preview` tool call itself returned — not an
+          // unrelated health-check endpoint. The preview tool's payload
+          // carries either a `url` (HTTP viewer) or a `viewerUrl` field
+          // depending on transport; fall back to the raw text content if
+          // structured content isn't present.
+          function extractPreviewUrl(result: ContentBlock | undefined): string | undefined {
+            if (!result) return undefined;
+            const contentBlocks = Array.isArray(result.content) ? result.content : [];
+            for (const c of contentBlocks as { type?: string; text?: string }[]) {
+              if (c.type === "text" && c.text) {
+                try {
+                  const parsed = JSON.parse(c.text) as { url?: string; viewerUrl?: string };
+                  if (parsed.url) return parsed.url;
+                  if (parsed.viewerUrl) return parsed.viewerUrl;
+                } catch {
+                  const match = c.text.match(/https?:\/\/\S+/);
+                  if (match) return match[0];
+                }
+              }
+            }
+            return undefined;
+          }
+          const previewUrl = extractPreviewUrl(previewToolResult);
+          expect(
+            previewUrl,
+            `expected the preview tool_result to contain a viewer URL to screenshot; got: ` +
+              `${JSON.stringify(previewToolResult)}`,
+          ).toBeTruthy();
+          // The container reaches the host server via host.docker.internal,
+          // but this test process (and its Playwright browser) runs on the
+          // host, so rewrite that hostname to 127.0.0.1 for the screenshot.
+          const hostPreviewUrl = previewUrl!.replace("host.docker.internal", "127.0.0.1");
+
           const { chromium } = await import("playwright");
           const browser = await chromium.launch();
           try {
             const page = await browser.newPage();
-            await page.goto(`http://127.0.0.1:${port}/health`);
+            await page.goto(hostPreviewUrl);
             const screenshotDir = joinPath(process.cwd(), "docs/harness/screenshots/claude-code");
             await mkdirp(screenshotDir, { recursive: true });
             await page.screenshot({
@@ -422,7 +510,8 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
         "Set GENIE_REQUIRE_DOCKER=1 once Docker + the `claude` CLI are provisioned to turn " +
         "this into a hard failure instead of a skip.";
       console.warn(message);
-      (ctx.task.meta as Record<string, unknown>)["acStatus"] = "AC4/AC6 unverified — skipped (no Docker)";
+      (ctx.task.meta as Record<string, unknown>)["acStatus"] =
+        "AC4/AC6 unverified — skipped (no Docker)";
       ctx.skip();
     });
   }

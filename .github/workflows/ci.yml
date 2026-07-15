@@ -456,29 +456,39 @@ jobs:
         # that probe could be green while the test itself still skipped for
         # an unrelated reason (e.g. a missing Anthropic key), which is exactly
         # the "misleading green summary" this step exists to prevent.
+        #
+        # This job exists ONLY to prove AC4/AC6/AC7 for real (it is manually
+        # triggered, `workflow_dispatch`-only, precisely so it can spend real
+        # Anthropic/LLM $ running the full Docker leg). A run that quietly
+        # skips that leg — e.g. because `GENIE_ANTHROPIC_SMOKE_API_KEY` isn't
+        # configured — must NOT report success: this step now hard-fails
+        # (non-zero exit) whenever the Docker-leg test did not report a real
+        # pass, instead of only warning while the job stays green.
         if: ${{ !cancelled() }}
         run: |
           REPORT="reports/junit.xml"
           if [ ! -f "$REPORT" ]; then
-            echo "::warning::No JUnit report found at $REPORT — cannot verify AC4/AC6 status."
-            echo "## ⚠️ AC4/AC6 status unknown — no test report produced" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "::error::No JUnit report found at $REPORT — cannot verify AC4/AC6 status."
+            echo "## ❌ AC4/AC6 status unknown — no test report produced" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           if grep -q 'boots Claude Code CLI in Docker' "$REPORT" && \
              ! grep -A2 'boots Claude Code CLI in Docker' "$REPORT" | grep -qi 'skipped\|failure\|error'; then
             echo "AC4/AC6: the Claude-Code-CLI-in-Docker test ran and passed for real." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning::AC4/AC6 Docker leg did not run to a passing result — see reports/junit.xml"
+            echo "::error::AC4/AC6 Docker leg did not run to a passing result — see reports/junit.xml"
             {
-              echo "## ⚠️ AC4/AC6 unverified this run"
+              echo "## ❌ AC4/AC6 unverified this run — failing the job"
               echo ""
               echo "The Claude-Code-CLI-in-Docker test (boot Claude Code, install the genie MCP"
               echo "server, drive the four-verb chain through Claude's own agent loop, capture a"
               echo "screenshot to \`docs/harness/screenshots/claude-code/\`) did not report a pass"
               echo "in \`reports/junit.xml\`. Common cause: \`GENIE_ANTHROPIC_SMOKE_API_KEY\` is not"
-              echo "yet configured as a repo secret. This job is green only because AC5's"
-              echo "protocol-level walk passed, not because AC4/AC6 ran."
+              echo "yet configured as a repo secret. This job is manually triggered specifically to"
+              echo "prove AC4/AC6/AC7 for real, so it fails rather than reporting green when that"
+              echo "leg was skipped or failed."
             } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
 
       - name: Upload M5-09 smoke test report
