@@ -23,11 +23,15 @@ resolves from the transport, not from the harness:
 Skill support carries the `conjure → plan → write_files → preview` workflow;
 without it, tool descriptions are the fallback guidance. See
 [Install the Agent Skill](#install-the-agent-skill-optional) below — current
-Cline (`cline@0.0.x` CLI, confirmed 2026-07-14) discovers portable `SKILL.md`
+Cline (`cline@latest`, which resolved to `3.0.40` at probe time, confirmed
+2026-07-14) discovers portable `SKILL.md`
 packages via its own `skill` subcommand (`cline skill add <owner/repo> --skill
 <name> --agent cline`), which forwards to the open `skills` CLI and installs
 into the shared `.agents/skills` / `~/.agents/skills` convention the other
 harness guides ([codex.md](./codex.md), [cursor.md](./cursor.md)) also use.
+Cline ships frequent releases, so treat the exact version number as a
+point-in-time data point rather than a pin — re-check `cline --version`
+against your own install if these specifics matter.
 
 ## Empirical findings (probed 2026-07-14)
 
@@ -117,7 +121,7 @@ not just Cline's published docs or source:
       "type": "streamableHttp",
       "url": "https://genie.<operator-domain>/mcp",
       "headers": {
-        "Authorization": "Bearer <paste-token-here>"
+        "Authorization": "Bearer ${env:GENIE_TOKEN}"
       },
       "disabled": false,
       "autoApprove": [
@@ -133,13 +137,17 @@ not just Cline's published docs or source:
 - `type: "streamableHttp"` — required; do not omit (see above).
 - `headers.Authorization` — genie's static Bearer token fallback (M5-02,
   DRO-274). Mint a token out-of-band with `genie token create --sub cline`
-  server-side. Cline's shared settings loader reads this JSON file directly —
-  it does **not** expand `${VAR}`/`${env:VAR}`-style placeholders (that
-  substitution is a VS Code-host-only convention some *other* extensions use,
-  not Cline's). Paste the plaintext token directly into this file (keep it out
-  of version control — it lives under `~/.cline`, not the repo) rather than
-  writing an unexpanded `${GENIE_TOKEN}` placeholder that would be sent
-  literally and fail Bearer auth.
+  server-side. **Correction (post-review):** Cline's MCP settings loader does
+  expand `${env:VAR_NAME}` placeholders in header values at connect time,
+  resolving them from the process environment Cline itself runs in — this
+  corrects an earlier claim in this doc that no expansion occurred. Prefer
+  `"Authorization": "Bearer ${env:GENIE_TOKEN}"` and export `GENIE_TOKEN` in
+  the shell/environment Cline launches from, so the token itself never lands
+  in `cline_mcp_settings.json` on disk. If you must hand-edit a literal token
+  instead (e.g. an environment that can't set `GENIE_TOKEN` for Cline's
+  process), paste the plaintext value directly and keep the settings file out
+  of version control (it lives under `~/.cline`, not the repo) — either form
+  works, but the `${env:...}` form avoids ever writing the secret to disk.
 - `autoApprove` — uses genie's actual registered MCP tool names
   (`mcp__genie__list_components`, `mcp__genie__preview`,
   `mcp__genie__list_files` — see `packages/server/src/tools/*.ts`'s
