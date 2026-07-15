@@ -6,7 +6,7 @@ import { registerGetProjectTool } from "./tools/get_project.js";
 import { registerDeleteProjectTool } from "./tools/delete_project.js";
 import { registerBindKitTool } from "./tools/bind_kit.js";
 import { LocalScaffoldScreenGenerator, registerConjureScreenTool } from "./tools/conjure_screen.js";
-import { registerConjureTool } from "./tools/conjure.js";
+import { registerConjureTool, type ConjureDeps } from "./tools/conjure.js";
 import { registerRefineTool } from "./tools/refine.js";
 import { registerCreateKit } from "./tools/create_kit.js";
 import { registerReadFile } from "./tools/read_file.js";
@@ -106,6 +106,16 @@ export interface CreateServerOptions {
    * remains.
    */
   projectStore?: ProjectStore;
+  /**
+   * Injectable `conjure` dependencies (test seam only — e.g. a stubbed `chat`
+   * function so a smoke test can drive a genuinely SUCCESSFUL
+   * `conjure -> plan -> write_files -> preview` chain without a real network
+   * call, or explicitly the real default so the same test can also assert the
+   * live-endpoint path when `GENIE_LLM_*` is configured). Defaults to `{}`,
+   * which is `registerConjureTool`'s own default: the real endpoint via the
+   * lazily-imported LLM client.
+   */
+  conjureDeps?: ConjureDeps;
 }
 
 export function createServer(options: CreateServerOptions = {}): McpServer {
@@ -207,7 +217,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // generation: it does NOT write files (AC9) and takes no store — the default
   // `chat` seam lazily imports the LLM client only on first call, so registering
   // it here never requires GENIE_LLM_* to be set just to build the server.
-  registerConjureTool(server);
+  registerConjureTool(server, options.conjureDeps);
 
   // refine (M2-04): iterate on an existing component. Loads the component's
   // current files from the kit (`kitStore.listFiles`/`readFile`), sends them plus

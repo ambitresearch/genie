@@ -219,9 +219,7 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
   // ── AC6 (CSP half, DRO-813) — the hardened M4-07 policy is really present ──
   it("vehicle (c) ui:// — carries the hardened CSP meta (default-src 'none', no unsafe-inline)", async () => {
     const html = await buildUiGridDocument(fixture);
-    const metaMatch = html.match(
-      /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/,
-    );
+    const metaMatch = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/);
     expect(metaMatch).not.toBeNull();
     const policy = metaMatch![1]!;
     expect(policy).toContain("default-src 'none'");
@@ -273,7 +271,7 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
     //     A real CSP violation must fire and the probe's side effect must
     //     never land; this is the assertion Copilot's review (PR #182)
     //     flagged as missing.
-    const probeName = '<script>window.__genieProbeFired=1</script>';
+    const probeName = "<script>window.__genieProbeFired=1</script>";
     const probeFixture = await createViewerFixture([
       { group: "actions", name: "Button", viewport: "320x180" },
     ]);
@@ -300,9 +298,7 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
       );
 
       // The policy still forbids unhashed inline script/unsafe-inline.
-      const metaMatch = html.match(
-        /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/,
-      );
+      const metaMatch = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)">/);
       expect(metaMatch).not.toBeNull();
       expect(metaMatch![1]).not.toContain("'unsafe-inline'");
 
@@ -313,10 +309,8 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
       // blocked by the browser's CSP engine, not by escaping or textContent.
       const bodyClose = html.lastIndexOf("</body>");
       expect(bodyClose).toBeGreaterThan(-1);
-      const livewireProbe =
-        '<script>window.__genieLiveProbeFired=1</script>';
-      const htmlWithLiveProbe =
-        html.slice(0, bodyClose) + livewireProbe + html.slice(bodyClose);
+      const livewireProbe = "<script>window.__genieLiveProbeFired=1</script>";
+      const htmlWithLiveProbe = html.slice(0, bodyClose) + livewireProbe + html.slice(bodyClose);
 
       const root = await mkdtemp(join(probeFixture.kitsRoot, "csp-probe-"));
       await writeFile(join(root, "index.html"), htmlWithLiveProbe, "utf8");
@@ -344,7 +338,10 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
         expect(probeRan).toBeUndefined();
         // The literal probe text must never appear as live DOM markup (only,
         // if at all, as inert text via textContent).
-        const cardHtml = await page.locator(".ds-card").first().evaluate((el) => el.innerHTML);
+        const cardHtml = await page
+          .locator(".ds-card")
+          .first()
+          .evaluate((el) => el.innerHTML);
         expect(cardHtml).not.toContain("<script>window.__genieProbeFired");
 
         // The REAL enforcement assertion: the unhashed live <script> spliced

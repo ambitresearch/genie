@@ -508,3 +508,72 @@ jobs:
           path: docs/harness/screenshots/claude-code/
           if-no-files-found: warn
           retention-days: 7
+
+  # ── Codex CLI harness smoke (M5-11 / DRO-283) ────────────────────────────────
+  # `packages/e2e/test/m5-smoke-codex.test.ts` — two independent live checks:
+  #   (1) the real `codex` binary parses docs/harness/codex.md's canonical
+  #       TOML snippet exactly as documented (no `type` key; transport
+  #       inferred from `url` vs `command`; `bearer_token_env_var`;
+  #       `enabled_tools`/`disabled_tools`) via `codex mcp add`/`get --json`.
+  #   (2) the four-verb chain runs over real stdio against genie's own built
+  #       server binary, launched the same way Codex's `command`-keyed
+  #       `mcp_servers` entry launches it.
+  # Neither leg needs a paid model call except the optional `conjure` case,
+  # which is gated on GENIE_LLM_BASE_URL/GENIE_LLM_API_KEY exactly like the M2
+  # canary above — unset secrets skip that one test (not the whole file), a
+  # difference from m2-generation.test.ts intentional here: the config-CLI and
+  # stdio-chain legs are free and should run on every PR regardless of secrets.
+  codex-smoke:
+    name: codex CLI harness smoke (M5-11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build @genie/server
+        run: pnpm --filter @genie/server build
+
+      - name: Install Codex CLI
+        # Public npm package; no auth needed just to exercise `codex mcp
+        # add`/`get` (config-file parsing) — no model call happens in that leg.
+        run: npm install -g @openai/codex
+
+      - name: Run Codex CLI harness smoke (AC1, AC2, AC3 doc, AC4, AC6)
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
+        run: pnpm --filter @genie/e2e test:e2e:codex
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-codex-smoke
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Codex REPL transcript (AC6)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-repl-transcript
+          path: reports/codex-repl-transcript.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
