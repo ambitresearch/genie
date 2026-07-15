@@ -75,8 +75,8 @@ not just Cline's published docs or source:
   re-verified via `cline mcp install` in this change (the CLI only ever
   writes the nested shape; `cline config`, the one command that reads
   settings back, requires an interactive TTY even with `--json` and so
-  couldn't be driven headlessly here — see `m5-smoke-cline-cli.test.ts`'s
-  in-file note). Either shape works — pick the flat one for hand-edited
+  couldn't be driven headlessly here — see `m5-smoke-cline.test.ts`'s
+  "real CLI" suite in-file note). Either shape works — pick the flat one for hand-edited
   configs since it is shorter, but recognize the nested one if you inspect a
   CLI-written file.
 - **Settings-file path — confirmed by the same live run above**: the CLI

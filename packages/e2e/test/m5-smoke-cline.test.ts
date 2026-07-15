@@ -56,14 +56,19 @@
  * A second suite below (`registers with the real Cline CLI ...`) addresses
  * review feedback that an MCP-SDK client alone never launches or drives
  * Cline itself: it shells out to the REAL `cline` CLI (`npx cline@latest mcp
- * install`, no stub) against a live genie HTTP server and asserts Cline's own
- * process writes a settings file whose (nested-`transport`) shape round-trips
- * to genie's documented flat shape — i.e. `docs/harness/cline.md`'s snippet
- * is what Cline itself produces, not just what genie expects. Guarded on a
- * live `npx cline@latest --version` probe (network/registry reachability);
- * unlike a bare early `return`, an unreachable registry marks this test
- * `ctx.skip()` (Vitest's runtime skip), so a run where the real-CLI leg never
- * executed is visibly reported as skipped, not silently passed.
+ * install`, no stub) and asserts Cline's own process writes a settings file
+ * whose (nested-`transport`) shape round-trips to genie's documented flat
+ * shape — i.e. `docs/harness/cline.md`'s snippet is what Cline itself
+ * produces, not just what genie expects. This leg proves Cline's CONFIG
+ * WRITE behavior only: `cline mcp install` only needs to persist the entry,
+ * not open a connection, so it is pointed at an intentionally unreachable
+ * port rather than the real genie HTTP server the suite above boots — the
+ * suite above is what exercises a live, non-mocked genie server end to end.
+ * Guarded on a live `npx cline@latest --version` probe (network/registry
+ * reachability); unlike a bare early `return`, an unreachable registry marks
+ * this test `ctx.skip()` (Vitest's runtime skip), so a run where the
+ * real-CLI leg never executed is visibly reported as skipped, not silently
+ * passed.
  */
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createNodeHttpServer, type Server as NodeHttpServer } from "node:http";
@@ -100,6 +105,22 @@ async function scaffoldFixtureKit(kitsRoot: string): Promise<string> {
     join(componentDir, "Button.html"),
     `<!-- @genie group="actions" viewport="240x120" name="Button" -->\n` +
       `<!doctype html><html lang="en"><body>Button</body></html>\n`,
+    "utf8",
+  );
+  // @genie/viewer's multi-page Vite config always includes the kit root's
+  // `index.html` as the `main` Rollup entry (config.ts:227), independent of
+  // how many component previews exist. Without this file present, Vite's
+  // dependency-scan step fails to resolve that entry — the dev server still
+  // starts and this test's `viewerUrl`/`fileUrl` assertions still pass, but
+  // only because they check the URL shape, not that the page actually
+  // renders. Write a minimal root page so `preview`'s viewer fallback boots
+  // a real, functioning viewer response, matching a genuine kit dir instead
+  // of exercising a silently degraded dep-scan path.
+  await writeFile(
+    join(kitDir, "index.html"),
+    `<!doctype html><html lang="en"><head><meta charset="utf-8" />` +
+      `<title>cline smoke kit</title></head><body><main id="grid">` +
+      `cline smoke fixture</main></body></html>\n`,
     "utf8",
   );
   await writeFile(
@@ -333,6 +354,13 @@ describe("M5-14 Cline harness smoke test", () => {
         // same concrete URL — there is no HTML/DOM in a tool_result's content array.
         const previewText = textOf(preview);
         expect(previewText).toContain(previewStructured?.["viewerUrl"] as string);
+        // Prove the viewer is a genuinely functioning response, not just a
+        // well-shaped URL string — fetch it and confirm the booted Vite dev
+        // server actually serves the fixture kit's root page.
+        const viewerResponse = await fetch(previewStructured?.["viewerUrl"] as string);
+        expect(viewerResponse.status).toBe(200);
+        const viewerBody = await viewerResponse.text();
+        expect(viewerBody).toContain("cline smoke fixture");
       } finally {
         await Promise.allSettled([client.close()]);
       }
