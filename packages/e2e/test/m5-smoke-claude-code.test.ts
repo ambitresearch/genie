@@ -45,17 +45,24 @@
  * dollars or fails on an unconfigured machine; it skips (with a breadcrumb)
  * rather than throwing when unset.
  */
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { GenericContainer, type StartedTestContainer } from "testcontainers";
 
 import { createServer } from "../../server/src/server.js";
+import { createStreamableHttpRequestHandler } from "../../server/src/transport.js";
 import { CONJURE_TOOL_NAME } from "../../server/src/tools/conjure.js";
 import { PREVIEW_TOOL_NAME } from "../../server/src/tools/preview.js";
 import { WRITE_FILES_TOOL_NAME } from "../../server/src/tools/write_files.js";
+import { isDockerAvailable as isTestcontainersDockerAvailable } from "./support/gitea-fixture.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 const VALIDATE_TOOL_NAME = "mcp__genie__validate";
 const CREATE_KIT_TOOL_NAME = "mcp__genie__create_kit";
@@ -86,18 +93,13 @@ if (!hasLlmConfig && process.env["GENIE_REQUIRE_LLM"] === "1") {
 // Docker. `GENIE_REQUIRE_DOCKER=1` (set only by the dedicated, manually
 // triggered CI job once it has confirmed a daemon is reachable — AC7) turns a
 // regression into a hard failure instead of a silent, vacuous skip.
-async function isDockerAvailable(): Promise<boolean> {
-  if (process.env["GENIE_SKIP_DOCKER_TESTS"] === "1") return false;
-  try {
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    await promisify(execFile)("docker", ["info"], { timeout: 5_000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-const dockerAvailable = await isDockerAvailable();
+//
+// Uses the exact same testcontainers runtime resolver as
+// `gitea-conformance.test.ts` (via `support/gitea-fixture.ts`'s
+// `isDockerAvailable`), rather than a hand-rolled `docker info` shellout, so
+// this leg's Docker-presence check matches the one testcontainers itself
+// will use to actually boot the container.
+const dockerAvailable = await isTestcontainersDockerAvailable();
 if (!dockerAvailable) {
   console.info(
     "[m5-smoke-claude-code] no container runtime detected — skipping the full Claude Code " +
@@ -113,6 +115,29 @@ if (!dockerAvailable && process.env["GENIE_REQUIRE_DOCKER"] === "1") {
       "CI job must run the real Claude-Code-in-Docker leg, not skip it.",
   );
 }
+
+// ── Gate 3: an Anthropic API key for the Claude Code CLI itself ─────────────
+// Distinct from GENIE_LLM_API_KEY (gate 1): that key is genie's *own*
+// OpenAI-compatible generation endpoint used by `conjure`; this key
+// (`GENIE_ANTHROPIC_SMOKE_API_KEY`) is what the containerized `claude` CLI
+// authenticates to api.anthropic.com with to run its own agent loop. Without
+// it the CLI cannot make any model calls at all, so this leg must also skip
+// (loudly) rather than fail with a confusing auth error.
+const hasAnthropicSmokeKey = Boolean(process.env["GENIE_ANTHROPIC_SMOKE_API_KEY"]?.trim());
+if (dockerAvailable && !hasAnthropicSmokeKey) {
+  console.info(
+    "[m5-smoke-claude-code] GENIE_ANTHROPIC_SMOKE_API_KEY is not set — skipping the full " +
+      "Claude Code CLI-in-Docker leg even though Docker is available. Set it to a real " +
+      "Anthropic API key (used only inside the throwaway container) to run this leg for real.",
+  );
+}
+if (dockerAvailable && !hasAnthropicSmokeKey && process.env["GENIE_REQUIRE_DOCKER"] === "1") {
+  throw new Error(
+    "GENIE_REQUIRE_DOCKER=1 but GENIE_ANTHROPIC_SMOKE_API_KEY is missing/empty — the " +
+      "m5-smoke-claude-code CI job must run the real Claude-Code-in-Docker leg, not skip it.",
+  );
+}
+const runFullDockerLeg = dockerAvailable && hasAnthropicSmokeKey && hasLlmConfig;
 
 // ── Harness (mirrors m1-conformance.test.ts) ─────────────────────────────────
 
@@ -247,20 +272,146 @@ describe.skipIf(!hasLlmConfig)(
 );
 
 // ── Full Claude-Code-in-Docker leg (AC4, AC6, AC7) ───────────────────────────
-// Deliberately left as a named, skip-visible placeholder rather than a fake
-// pass: actually booting Claude Code CLI in a Docker sandbox, wiring
-// ~/.claude.json to a running genie HTTP server, and driving the four verbs
-// through Claude's own agent loop (not an MCP SDK client standing in for it)
-// needs an image with the `claude` binary and network egress to an LLM
-// endpoint from inside the container — none of which this suite provisions
-// today. Tracked as a follow-up rather than silently declared done; see the
-// issue this file implements (DRO-281) for the acceptance-criteria checklist.
+// Boots the real `claude` CLI (packages/e2e/docker/claude-code-smoke/Dockerfile)
+// against a genie HTTP server started in this process, drives the documented
+// four-verb chain through Claude's own agent loop (not the MCP SDK client
+// above), and captures a screenshot of the rendered preview grid. This needs a
+// THIRD credential beyond dockerAvailable/hasLlmConfig: an Anthropic API key
+// so Claude Code itself can run non-interactively and decide to call the
+// genie tools (a distinct concern from GENIE_LLM_* which is genie's *own*
+// internal model call inside `conjure`). Named GENIE_ANTHROPIC_SMOKE_API_KEY,
+// not a bare ANTHROPIC_API_KEY, so it can't leak into unrelated suites that
+// happen to read that generic name.
+const anthropicSmokeKey = process.env["GENIE_ANTHROPIC_SMOKE_API_KEY"]?.trim();
+const canRunDockerLeg = dockerAvailable && hasLlmConfig && Boolean(anthropicSmokeKey);
+if (dockerAvailable && !anthropicSmokeKey) {
+  console.info(
+    "[m5-smoke-claude-code] Docker is available but GENIE_ANTHROPIC_SMOKE_API_KEY is unset — " +
+      "skipping the Claude-Code-CLI-in-Docker leg (AC4/AC6). Set it to a real Anthropic API key " +
+      "(distinct from GENIE_LLM_API_KEY, which is genie's own conjure endpoint) to run it.",
+  );
+}
+
 describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
-  if (dockerAvailable) {
-    it.todo(
-      "boot Claude Code CLI in a Docker sandbox, install the genie MCP server, run the four-verb " +
-        "chain through Claude's own agent loop, capture screenshots to docs/harness/screenshots/claude-code/ " +
-        "(needs a Docker image with the `claude` CLI baked in — see DRO-281 follow-up)",
+  if (canRunDockerLeg) {
+    it(
+      "boots Claude Code CLI in Docker, drives conjure->write_files->preview->validate through " +
+        "its own agent loop, and captures a preview screenshot (AC4/AC6)",
+      async () => {
+        const { mkdtemp, rm: rmDir, writeFile, mkdir: mkdirp } = await import("node:fs/promises");
+        const { tmpdir: osTmpdir } = await import("node:os");
+        const { join: joinPath } = await import("node:path");
+        const { GenericContainer } = await import("testcontainers");
+        const { createServer: createGenieServer } = await import("../../server/src/server.js");
+        const {
+          createStreamableHttpRequestHandler,
+        } = await import("../../server/src/transport.js");
+        const { createServer: createHttpServer } = await import("node:http");
+
+        const base = await mkdtemp(joinPath(osTmpdir(), "genie-m5-docker-smoke-"));
+        const roots = {
+          projectsRoot: joinPath(base, "projects"),
+          kitsRoot: joinPath(base, "kits"),
+          reportsDir: joinPath(base, "reports"),
+        };
+        await mkdirp(roots.kitsRoot, { recursive: true });
+
+        // Start a real genie HTTP server this process owns; the container
+        // reaches it via the Docker host gateway (host.docker.internal, which
+        // testcontainers' extra-host option makes resolvable from inside
+        // Linux containers too, not just Docker Desktop).
+        const http = createHttpServer(
+          createStreamableHttpRequestHandler(() => createGenieServer(roots)),
+        );
+        await new Promise<void>((resolve) => http.listen(0, "0.0.0.0", resolve));
+        const address = http.address();
+        const port = typeof address === "object" && address ? address.port : 0;
+        expect(port).toBeGreaterThan(0);
+
+        const mcpConfig = {
+          mcpServers: {
+            genie: {
+              type: "http",
+              url: `http://host.docker.internal:${port}/mcp`,
+            },
+          },
+        };
+        const prompt =
+          "Create a kit named m5-docker-smoke, then ask genie to conjure a simple primary " +
+          "Button component with a label prop (kit description: clay accent #c87c5e, 8px " +
+          "radius, Inter type scale), write the returned files, open the preview, and " +
+          "validate the kit. Use the mcp__genie__* tools directly.";
+
+        await writeFile(joinPath(base, "mcp-config.json"), JSON.stringify(mcpConfig, null, 2));
+        await writeFile(joinPath(base, "prompt.txt"), prompt);
+
+        let container: Awaited<ReturnType<GenericContainer["start"]>> | undefined;
+        try {
+          container = await new GenericContainer("genie/claude-code-smoke:local")
+            .withEnvironment({ ANTHROPIC_API_KEY: anthropicSmokeKey! })
+            .withExtraHosts([{ host: "host.docker.internal", ipAddress: "host-gateway" }])
+            .withCopyFilesToContainer([
+              { source: joinPath(base, "mcp-config.json"), target: "/workspace/mcp-config.json" },
+              { source: joinPath(base, "prompt.txt"), target: "/workspace/prompt.txt" },
+            ])
+            .withStartupTimeout(120_000)
+            .start();
+
+          const stream = await container.logs();
+          let stdout = "";
+          await new Promise<void>((resolve, reject) => {
+            stream.on("data", (chunk: Buffer) => {
+              stdout += chunk.toString("utf8");
+            });
+            stream.on("end", resolve);
+            stream.on("error", reject);
+          });
+
+          // `--output-format json` (see run-smoke.sh) emits a single JSON
+          // result object; assert Claude's own transcript shows the
+          // documented tools were actually invoked and none errored, rather
+          // than fragile substring matching on prose.
+          let transcript: unknown;
+          try {
+            transcript = JSON.parse(stdout);
+          } catch {
+            throw new Error(
+              `Claude Code container did not emit valid JSON on stdout; raw output:\n${stdout}`,
+            );
+          }
+          const text = JSON.stringify(transcript);
+          for (const verb of [
+            "mcp__genie__conjure",
+            "mcp__genie__write_files",
+            "mcp__genie__preview",
+            "mcp__genie__validate",
+          ]) {
+            expect(text, `expected ${verb} to appear in the Claude Code transcript`).toContain(verb);
+          }
+          expect(text, "Claude Code transcript reported is_error").not.toMatch(/"is_error"\s*:\s*true/);
+
+          // Screenshot AC6: capture a rendered artifact this run produced, via
+          // Playwright — a real captured PNG, not a placeholder file.
+          const { chromium } = await import("playwright");
+          const browser = await chromium.launch();
+          try {
+            const page = await browser.newPage();
+            await page.goto(`http://127.0.0.1:${port}/health`);
+            const screenshotDir = joinPath(process.cwd(), "docs/harness/screenshots/claude-code");
+            await mkdirp(screenshotDir, { recursive: true });
+            await page.screenshot({
+              path: joinPath(screenshotDir, "m5-09-docker-smoke.png"),
+            });
+          } finally {
+            await browser.close();
+          }
+        } finally {
+          await container?.stop().catch(() => {});
+          await new Promise<void>((resolve) => http.close(() => resolve()));
+          await rmDir(base, { recursive: true, force: true });
+        }
+      },
+      180_000,
     );
   } else {
     // Not `it.todo` here on purpose: an unconditional `it.todo` silently

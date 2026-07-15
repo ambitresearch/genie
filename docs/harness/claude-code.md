@@ -98,12 +98,23 @@ liveness checks. Mint the token once with `genie token create`, store only its
 hash server-side, and hand the plaintext to the secret manager the helper
 script reads from — it is shown exactly once at creation time.
 
-Once genie ships OAuth 2.0 + Dynamic Client Registration (M5-01, DRO-273 —
-not yet landed), `claude mcp add --transport http genie <url>` will trigger
-DCR and a browser consent flow automatically, without a `headersHelper` at
-all. Until then, the static-Bearer-token + `headersHelper` pattern above is
-the supported path for any HTTP deployment, including the shared/remote case
-this section targets.
+genie now ships OAuth 2.0 + Dynamic Client Registration (M5-01, DRO-273 —
+landed): the server exposes `/.well-known/oauth-authorization-server` (RFC
+8414 metadata), `POST /register` (RFC 7591 DCR), `GET`/`POST /authorize`
+(browser consent screen), and `POST /token`. With OAuth enabled server-side
+(set `OAUTH_HS256_KEY` — see the tech-design RFC), you can register genie
+without a `headersHelper` at all:
+
+```bash
+claude mcp add --transport http genie https://genie.example.internal/mcp
+```
+
+Claude Code discovers the metadata document, performs Dynamic Client
+Registration against `/register`, opens a browser to `/authorize` for
+consent, and exchanges the resulting code at `/token` — all automatically.
+The static-Bearer-token + `headersHelper` pattern above remains supported for
+deployments that haven't enabled OAuth (`OAUTH_HS256_KEY` unset), or that
+prefer a pre-provisioned token over an interactive consent flow.
 
 ### Gotcha: `/login` (Claude Code OAuth) can silently bypass configured LLM routing
 

@@ -392,20 +392,25 @@ jobs:
           retention-days: 7
 
   # M5-09 (DRO-281) AC7 — manually triggered smoke of the documented
-  # conjure→preview→write_files→validate chain for Claude Code. Same
-  # gate contract as m2-generation above: the test file's own AC2-style
-  # skip (GENIE_LLM_BASE_URL/GENIE_LLM_API_KEY unset) makes an
-  # unprovisioned run exit 0 with a visible breadcrumb rather than fail;
-  # GENIE_REQUIRE_LLM is set only once both secrets resolve non-empty,
-  # so a rotated-to-empty secret fails loudly instead of silently
-  # skipping again. `workflow_dispatch` only (never push/pull_request)
-  # keeps every normal CI run free — this spends real LLM $ like
-  # m2-generation does.
+  # conjure→write_files→preview→validate chain for Claude Code. Same
+  # gate contract as m2-generation above for the AC5 protocol-level leg (the
+  # test file's own skip when GENIE_LLM_BASE_URL/GENIE_LLM_API_KEY are unset
+  # makes an unprovisioned run exit 0 with a visible breadcrumb rather than
+  # fail; GENIE_REQUIRE_LLM is set only once both secrets resolve non-empty).
+  #
+  # The AC4/AC6 Claude-Code-CLI-in-Docker leg additionally needs a real
+  # container runtime + GENIE_ANTHROPIC_SMOKE_API_KEY (Claude Code's own
+  # Anthropic credential, distinct from genie's GENIE_LLM_* endpoint). Pinned
+  # to `ubuntu-latest` (like the `gitea` job) rather than the self-hosted
+  # runner used above so this leg is GUARANTEED a Docker daemon instead of
+  # silently degrading to a skip on a daemon-less runner.
+  # `workflow_dispatch` only (never push/pull_request) keeps every normal CI
+  # run free — this spends real Anthropic + LLM $ like m2-generation does.
   m5-smoke-claude-code:
     name: M5-09 Claude Code smoke (manual)
     if: github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, Linux, X64, genie]
-    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -424,33 +429,60 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Run M5-09 Claude Code smoke (AC5 — skips protocol walk if LLM secrets unset)
+      - name: Build Claude Code smoke image (AC4/AC6)
+        run: |
+          docker build -t genie/claude-code-smoke:local \
+            packages/e2e/docker/claude-code-smoke
+
+      - name: Run M5-09 Claude Code smoke
+        # GENIE_REQUIRE_DOCKER makes the AC4/AC6 leg FAIL (not skip) if this
+        # ubuntu-latest runner somehow lacks a daemon, matching the `gitea`
+        # job's contract — this leg must never go green-but-vacuous here.
+        # GENIE_REQUIRE_LLM is set only once the LLM secrets resolve non-empty
+        # (AC5's protocol walk); GENIE_ANTHROPIC_SMOKE_API_KEY gates AC4/AC6
+        # (Claude Code's own model credential) and is left unset (thus
+        # skipping, not failing) if that secret isn't configured yet, so this
+        # job can still land and run its AC5 leg before the secret exists.
         env:
           VITEST_JUNIT: "1"
+          GENIE_REQUIRE_DOCKER: "1"
           GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
           GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
+          GENIE_ANTHROPIC_SMOKE_API_KEY: ${{ secrets.GENIE_ANTHROPIC_SMOKE_API_KEY }}
         run: |
           if [ -n "$GENIE_LLM_BASE_URL" ] && [ -n "$GENIE_LLM_API_KEY" ]; then
             export GENIE_REQUIRE_LLM=1
           fi
           pnpm test m5-smoke-claude-code
 
-      - name: Surface AC4/AC6 skip status (do not let this job go silently green)
+      - name: Surface AC4/AC6 status (read what the test actually did, not just tool presence)
+        # Reads the JUnit report's own recorded outcome for the Docker-leg
+        # test name, rather than re-probing `docker`/`claude` on the runner —
+        # that probe could be green while the test itself still skipped for
+        # an unrelated reason (e.g. a missing Anthropic key), which is exactly
+        # the "misleading green summary" this step exists to prevent.
         if: ${{ !cancelled() }}
         run: |
-          if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
-            echo "AC4/AC6: Docker + \`claude\` CLI detected on this runner — full Claude-Code-in-Docker leg ran for real." >> "$GITHUB_STEP_SUMMARY"
+          REPORT="reports/junit.xml"
+          if [ ! -f "$REPORT" ]; then
+            echo "::warning::No JUnit report found at $REPORT — cannot verify AC4/AC6 status."
+            echo "## ⚠️ AC4/AC6 status unknown — no test report produced" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if grep -q 'boots Claude Code CLI in Docker' "$REPORT" && \
+             ! grep -A2 'boots Claude Code CLI in Docker' "$REPORT" | grep -qi 'skipped\|failure\|error'; then
+            echo "AC4/AC6: the Claude-Code-CLI-in-Docker test ran and passed for real." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "::warning::Docker/Claude CLI unavailable — AC4/AC6 smoke assertions were skipped, not verified"
+            echo "::warning::AC4/AC6 Docker leg did not run to a passing result — see reports/junit.xml"
             {
-              echo "## ⚠️ AC4/AC6 unverified"
+              echo "## ⚠️ AC4/AC6 unverified this run"
               echo ""
-              echo "Docker and/or the \`claude\` CLI were not available on this runner, so the full"
-              echo "Claude-Code-CLI-in-Docker leg (boot Claude Code, install the genie MCP server,"
-              echo "drive the four-verb chain through Claude's own agent loop, capture screenshots"
-              echo "to \`docs/harness/screenshots/claude-code/\`) was **skipped**, not verified."
-              echo ""
-              echo "This job is green because AC5's protocol-level walk passed, not because AC4/AC6 ran."
+              echo "The Claude-Code-CLI-in-Docker test (boot Claude Code, install the genie MCP"
+              echo "server, drive the four-verb chain through Claude's own agent loop, capture a"
+              echo "screenshot to \`docs/harness/screenshots/claude-code/\`) did not report a pass"
+              echo "in \`reports/junit.xml\`. Common cause: \`GENIE_ANTHROPIC_SMOKE_API_KEY\` is not"
+              echo "yet configured as a repo secret. This job is green only because AC5's"
+              echo "protocol-level walk passed, not because AC4/AC6 ran."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -460,5 +492,14 @@ jobs:
         with:
           name: test-report-m5-smoke-claude-code
           path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Claude Code smoke screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-code-smoke-screenshots
+          path: docs/harness/screenshots/claude-code/
           if-no-files-found: warn
           retention-days: 7
