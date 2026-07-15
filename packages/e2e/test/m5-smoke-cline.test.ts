@@ -415,17 +415,24 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
 
   afterEach(async () => {
     // npm's on-disk cache under $HOME/.npm can still have in-flight writes
-    // racing this cleanup; retry instead of failing the whole suite on an
-    // ENOTEMPTY from an unrelated cache directory.
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // racing this cleanup (background npm/npx helper processes can outlive
+    // the awaited execFileAsync call by a few hundred ms) — retry with
+    // backoff instead of failing the whole suite on an ENOTEMPTY/EBUSY from
+    // an unrelated cache directory. Widened from 3 attempts/250ms fixed delay
+    // (which still timed out under real registry I/O) to 6 attempts with
+    // exponential backoff, and the surrounding test timeout raised to match.
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 6; attempt++) {
       try {
         await rm(clineHome, { recursive: true, force: true });
-        break;
-      } catch {
-        await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+        return;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 250 * 2 ** attempt));
       }
     }
-  }, 30_000);
+    throw lastError;
+  }, 60_000);
 
   it("registers with the real Cline CLI and writes a schema-valid streamableHttp entry", async (ctx) => {
     if (!cliAvailable) {
