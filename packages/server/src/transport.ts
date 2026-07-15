@@ -13,6 +13,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { extractBearerToken, verifyToken } from "./auth/bearer.js";
 import { tryCreateOAuthRouter } from "./auth/oauth/router.js";
+import { tryCreateOidcVerifier, type OidcVerifier } from "./auth/oidc/verifier.js";
+import { GroupAccessDeniedError } from "./auth/oidc/group-policy.js";
 
 export type TransportKind = "stdio" | "http";
 
@@ -183,6 +185,17 @@ export interface StreamableHttpHandlerOptions {
    * without it.
    */
   oauthIssuer?: string;
+  /**
+   * Pre-built OIDC relying-party verifier (M5-04, DRO-276). When supplied,
+   * every `/mcp` request must carry a bearer token issued by the configured
+   * EXTERNAL OIDC provider AND asserting membership in the required group
+   * (`GENIE_OIDC_REQUIRED_GROUP`, default `genie-users`) — see
+   * `auth/oidc/verifier.ts`. Independent of `oauthIssuer` (genie's own
+   * self-issued OAuth server): a deployment can run either, both, or
+   * neither. Missing/invalid token -> 401; valid token but missing the
+   * required group -> 403 (AC6).
+   */
+  oidcVerifier?: OidcVerifier;
 }
 
 function sessionIdFrom(req: IncomingMessage): string | undefined {
@@ -359,6 +372,44 @@ export function createStreamableHttpRequestHandler(
     return true;
   };
 
+  const { oidcVerifier } = options;
+
+  /**
+   * OIDC relying-party gate (M5-04, DRO-276). Returns true if the request may
+   * proceed. Writes 401 (missing/invalid token) or 403 (valid token, missing
+   * required group — AC6) and returns false otherwise. No-ops (returns true)
+   * when `oidcVerifier` isn't configured.
+   */
+  const authorizeOidc = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
+    if (oidcVerifier === undefined) return true;
+    const token = extractBearerToken(
+      Array.isArray(req.headers.authorization)
+        ? req.headers.authorization[0]
+        : req.headers.authorization,
+    );
+    if (token === undefined) {
+      writeProtocolError(res, 401, "Missing bearer token");
+      return false;
+    }
+    try {
+      await oidcVerifier.verify(token);
+      return true;
+    } catch (error) {
+      if (error instanceof GroupAccessDeniedError) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: "insufficient_group",
+            message: `Caller is not a member of the "${error.requiredGroup}" group.`,
+          }),
+        );
+        return false;
+      }
+      writeProtocolError(res, 401, "Invalid OIDC token");
+      return false;
+    }
+  };
+
   return (req, res) => {
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
 
@@ -377,14 +428,26 @@ export function createStreamableHttpRequestHandler(
       }
     }
 
-    if (requireBearerAuth && pathname === "/mcp") {
-      void authorize(req, res).then((authorized) => {
+    if (oidcVerifier !== undefined && pathname === "/mcp") {
+      void authorizeOidc(req, res).then((authorized) => {
         if (!authorized) return;
-        dispatchMcp(req, res, pathname);
+        dispatchOrBearerGate();
       });
       return;
     }
-    dispatchMcp(req, res, pathname);
+
+    dispatchOrBearerGate();
+
+    function dispatchOrBearerGate(): void {
+      if (requireBearerAuth && pathname === "/mcp") {
+        void authorize(req, res).then((authorized) => {
+          if (!authorized) return;
+          dispatchMcp(req, res, pathname);
+        });
+        return;
+      }
+      dispatchMcp(req, res, pathname);
+    }
   };
 
   function dispatchMcp(req: IncomingMessage, res: ServerResponse, pathname: string): void {
@@ -464,14 +527,23 @@ async function startHttp(
     process.env.OAUTH_HS256_KEY !== undefined
       ? (process.env.GENIE_OAUTH_ISSUER ?? `http://${normalizeListenHost(host)}:${port}`)
       : undefined;
+  // OIDC relying-party mode is opt-in: only engages when GENIE_OIDC_ISSUER +
+  // GENIE_OIDC_AUDIENCE are set (M5-04, DRO-276). Independent of oauthIssuer.
+  const oidcVerifier = await tryCreateOidcVerifier(process.env);
   const http = createHttpServer(
-    createStreamableHttpRequestHandler(serverFactory, { requireBearerAuth, oauthIssuer }),
+    createStreamableHttpRequestHandler(serverFactory, { requireBearerAuth, oauthIssuer, oidcVerifier }),
   );
 
   await new Promise<void>((resolve) => http.listen(port, host, resolve));
   process.stderr.write(`genie MCP server listening on ${formatHttpEndpoint(host, port)}\n`);
   if (oauthIssuer) {
     process.stderr.write(`genie MCP server: OAuth 2.0 + DCR enabled (issuer ${oauthIssuer})\n`);
+  }
+  if (oidcVerifier) {
+    process.stderr.write(
+      `genie MCP server: OIDC relying-party mode enabled (issuer ${oidcVerifier.issuer}, ` +
+        `required group "${oidcVerifier.requiredGroup}")\n`,
+    );
   }
 }
 

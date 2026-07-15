@@ -1754,6 +1754,51 @@ We will list reporters here with consent.
 6. **Post a public advisory** for any High+ that shipped to users — GitHub Advisory + configured social/support channels.
 7. **Postmortem** for any High+ that we shipped (§13).
 
+### 16.5 OIDC relying-party integration (M5-04 / DRO-276)
+
+genie's own OAuth server (`packages/server/src/auth/oauth/*`, M5-01/DRO-273)
+self-issues bearer JWTs for shared-install harnesses (`claude mcp add`,
+`codex mcp login`). **Separately**, genie can also act as an OIDC *relying
+party* against an adopter's own external Identity Provider — Keycloak, Okta,
+Auth0, Authentik, or any spec-compliant OIDC provider — enforcing
+group-based access on top of standard token validation. This is the path an
+operator running genie behind a corporate IdP uses instead of (or alongside)
+the self-issued OAuth server.
+
+**How it works** (`packages/server/src/auth/oidc/`):
+
+- `verifier.ts` — resolves the provider's `jwks_uri` via OIDC Discovery
+  (`${issuer}/.well-known/openid-configuration`), verifies incoming bearer
+  tokens' signature/`iss`/`aud`/expiry against the live JWKS (`jose`'s
+  `createRemoteJWKSet`, cached and auto-refreshed on unknown `kid`).
+- `group-policy.ts` — after signature verification succeeds, enforces that
+  the token's `groups` claim contains a required group (default
+  `genie-users`). A validly-signed token that fails this check gets HTTP 403
+  (distinct from HTTP 401 for signature/issuer/audience/expiry failures).
+
+**Configuration** (both required to activate; unset = feature off, existing
+bearer-token / self-issued OAuth paths unaffected):
+
+| Env var                      | Purpose                                                        |
+| ----------------------------- | --------------------------------------------------------------- |
+| `GENIE_OIDC_ISSUER`           | The external IdP's issuer URL.                                  |
+| `GENIE_OIDC_AUDIENCE`         | Expected `aud` claim — genie's registered client_id at the IdP. |
+| `GENIE_OIDC_REQUIRED_GROUP`   | Group required for access. Default `genie-users`.                |
+
+**Integration test** (`packages/e2e/test/m5-oidc.test.ts`, DRO-276): boots a
+real ephemeral `oidc-provider`-backed authorization server in a throwaway
+container (`packages/e2e/test/support/oidc-fixture.ts`), registers a client
+`genie-test`, and drives a REAL headless-Chromium auth-code + PKCE flow for
+two seeded users — one in `genie-users`, one not — asserting the resulting
+bearer tokens authorize (200) or are rejected (403) against genie's real HTTP
+transport. This is the reference template: an adopter bringing their own IdP
+follows the identical shape (issuer/audience/group-claim config), and this
+suite is the proof that genie's enforcement side of that contract works
+end-to-end. Runs in CI's dedicated `oidc` job (`.github/workflows/ci.yml`),
+gated behind Docker availability like the `gitea` conformance job; run it
+locally with `pnpm --filter @genie/e2e test:e2e:oidc` (skips cleanly without
+a container runtime; set `GENIE_REQUIRE_DOCKER=1` to fail loudly instead).
+
 ---
 
 ## 17. Maintenance windows
