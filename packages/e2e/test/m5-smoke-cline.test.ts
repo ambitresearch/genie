@@ -362,6 +362,20 @@ describe("M5-14 Cline harness smoke test", () => {
         const viewerBody = await viewerResponse.text();
         expect(viewerBody).toContain("cline smoke fixture");
       } finally {
+        // Explicitly terminate the MCP session (HTTP DELETE) BEFORE closing
+        // the client transport. `client.close()` alone only aborts the local
+        // fetch/SSE plumbing — it never notifies the server, so the
+        // server-side session (and this suite's `previewRegistry`, which
+        // booted a real Vite dev server for `kitsRoot`) would otherwise only
+        // get torn down on the session's idle timeout, long after this test
+        // (and its `afterEach`) has already deleted `kitsRoot`. That race is
+        // exactly what produced the reviewer-reported `ENOENT` from Vite's
+        // dependency scan still running against a since-deleted kit dir.
+        // `terminateSession` drives the server's DELETE handler, which runs
+        // `disposeSession` -> `disposeServer` -> `previewRegistry.closeAll()`
+        // -> the booted viewer's real `close()`, so the Vite server is fully
+        // shut down before we return here.
+        await transport.terminateSession().catch(() => undefined);
         await Promise.allSettled([client.close()]);
       }
     } finally {
