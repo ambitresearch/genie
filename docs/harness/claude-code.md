@@ -98,6 +98,66 @@ liveness checks. Mint the token once with `genie token create`, store only its
 hash server-side, and hand the plaintext to the secret manager the helper
 script reads from — it is shown exactly once at creation time.
 
+### Combined example: HTTP transport + top-level `apiKeyHelper`
+
+These two settings live at different scopes (see above) but commonly appear
+together in the same config file: `apiKeyHelper` for Claude Code's own model
+credential, `headersHelper` nested under the `genie` server entry for
+authenticating to genie's HTTP transport. One complete, valid config combining
+both:
+
+```json
+{
+  "apiKeyHelper": "/absolute/path/to/anthropic-api-key-helper.sh",
+  "mcpServers": {
+    "genie": {
+      "type": "http",
+      "url": "https://genie.example.internal/mcp",
+      "headersHelper": "/absolute/path/to/genie-headers-helper.sh"
+    }
+  }
+}
+```
+
+`anthropic-api-key-helper.sh` is any executable on `$PATH` (or referenced by
+absolute path, as above) that prints Claude Code's own model-API key/token —
+a bare string, not JSON — to stdout. A real, ready-to-use implementation
+ships in this repo at
+[`docs/harness/scripts/anthropic-api-key-helper.sh`](./scripts/anthropic-api-key-helper.sh)
+(already executable); copy it, adjust the credential source for your
+environment, and point `apiKeyHelper` at your copy:
+
+```bash
+#!/usr/bin/env bash
+# anthropic-api-key-helper.sh — prints Claude Code's own model-API credential
+# to stdout. Never echo the key anywhere else (logs, terminals); this script
+# should be the only place that reads it out of your secret store.
+#
+# Usage: save this file, then:
+#   chmod +x anthropic-api-key-helper.sh
+#   claude config set apiKeyHelper /absolute/path/to/anthropic-api-key-helper.sh
+# or reference it directly under the top-level "apiKeyHelper" field in
+# ~/.claude.json / a project .mcp.json (see the combined example above).
+set -euo pipefail
+
+# Prefer the OS keychain / secret manager over a plaintext env var when
+# available. Examples (pick the one that matches your environment):
+if command -v security >/dev/null 2>&1; then
+  # macOS Keychain
+  security find-generic-password -a "$USER" -s anthropic-api-key -w
+elif command -v op >/dev/null 2>&1; then
+  # 1Password CLI
+  op read "op://vault/anthropic-api-key/credential"
+elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  # Last resort: an environment variable set by a launcher, not committed
+  # anywhere.
+  printf '%s' "$ANTHROPIC_API_KEY"
+else
+  echo "anthropic-api-key-helper.sh: no credential source found" >&2
+  exit 1
+fi
+```
+
 genie now ships OAuth 2.0 + Dynamic Client Registration (M5-01, DRO-273 —
 landed): the server exposes `/.well-known/oauth-authorization-server` (RFC
 8414 metadata), `POST /register` (RFC 7591 DCR), `GET`/`POST /authorize`
