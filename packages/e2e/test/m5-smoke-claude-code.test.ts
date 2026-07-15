@@ -306,9 +306,19 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
         // Start a real genie HTTP server this process owns; the container
         // reaches it via the Docker host gateway (host.docker.internal, which
         // testcontainers' extra-host option makes resolvable from inside
-        // Linux containers too, not just Docker Desktop).
+        // Linux containers too, not just Docker Desktop). `previewLocality:
+        // "local"` overrides the transport-derived default (http ->
+        // "remote") so `preview` still boots the Vite viewer and returns a
+        // screenshot-able `viewerUrl` — the HTTP transport only controls
+        // whether the server auto-opens a browser on its OWN machine
+        // (it must not), not whether a viewer URL is produced at all. This
+        // process and the container both reach the *same* physical host, so
+        // "local" is the right locality even though `preview` is invoked
+        // through streamable HTTP.
         const http = createHttpServer(
-          createStreamableHttpRequestHandler(() => createGenieServer(roots)),
+          createStreamableHttpRequestHandler(() =>
+            createGenieServer({ ...roots, transportKind: "http", previewLocality: "local" }),
+          ),
         );
         await new Promise<void>((resolve) => http.listen(0, "0.0.0.0", resolve));
         const address = http.address();
