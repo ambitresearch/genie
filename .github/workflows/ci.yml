@@ -149,6 +149,60 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # ── Cursor harness smoke (M5-13 / DRO-285) ───────────────────────────────────
+  # The `check` matrix's `test` leg runs BEFORE `build`, so `packages/server/
+  # dist/cli.js` doesn't exist yet when that leg's vitest run reaches
+  # m5-smoke-cursor.test.ts — its own `hasBuiltServer` guard skips the whole
+  # file rather than fail on a missing binary, which is correct in that job but
+  # means nothing there ever actually builds-then-runs it. This job closes that
+  # gap: it builds the server first, then runs only this smoke file, so the
+  # real-stdio AC3/AC4 assertions execute for real in CI rather than skipping
+  # silently on every run. GENIE_LLM_* come from the same repo secrets as the
+  # m2-generation canary (never hardcoded — CLAUDE.md hard rule 5); when unset,
+  # the file's own hasLlmEnv gate still exercises the unconditional
+  # plan->write_files->preview leg, the fail-closed conjure check, and the
+  # AC4 tool-cap probe — only the optional live-generation leg skips.
+  cursor-smoke:
+    name: cursor harness smoke (built server)
+    runs-on: ${{ fromJSON(vars.RUNS_ON || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build server
+        run: pnpm --filter @genie/server build
+
+      - name: Run Cursor harness smoke test against the built server
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
+        run: pnpm test m5-smoke-cursor
+
+      - name: Upload Cursor smoke test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-cursor-smoke
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
   # ── Viewer accessibility audit (M4-09 / DRO-271) ─────────────────────────────
   # `packages/viewer/test/a11y.test.ts` — real headless Chromium + axe-core
   # against the actual static/{index.html,viewer.js,viewer.css} shell. Kept as

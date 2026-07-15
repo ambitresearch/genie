@@ -56,9 +56,9 @@ through ChatGPT's connector/app configuration. The M5 ChatGPT distribution work
 owns the production auth and smoke-tested connector instructions; do not paste
 the Cursor stdio snippet into ChatGPT.
 
-## Register a local server (Cursor / VS Code) — OAuth `auth` block
+## Register a remote (hosted) server — OAuth `auth` block
 
-For a hosted genie MCP endpoint, Cursor's `mcp.json` also accepts an `auth`
+For a hosted genie MCP endpoint (not the local `stdio` entry above), Cursor's `mcp.json` also accepts an `auth`
 block using Cursor's OAuth shape (static callback, per research §4). Cursor's
 own docs (`cursor.com/docs/context/mcp`) key this block `CLIENT_ID` /
 `CLIENT_SECRET` (uppercase, no `type` wrapper) — not `client_id`/`client_secret`:
@@ -71,7 +71,7 @@ own docs (`cursor.com/docs/context/mcp`) key this block `CLIENT_ID` /
       "auth": {
         "CLIENT_ID": "${env:GENIE_CURSOR_CLIENT_ID}",
         "CLIENT_SECRET": "${env:GENIE_CURSOR_CLIENT_SECRET}",
-        "scopes": ["genie:tools"]
+        "scopes": ["read", "write"]
       }
     }
   }
@@ -114,10 +114,11 @@ server-side half of that question, tested in
   that live server instance before it starts serving `tools/list`. It then
   asserts `tools/list` returns **every** one of them (real + dummy),
   unclipped, over that real stdio connection.
-- **Confirmed finding: genie / the MCP TypeScript SDK impose no server-side
-  cap.** `tools/list` is a plain unbounded response — nothing in genie's
-  registration path or the SDK's `tools/list` handler truncates it at 40 or
-  any other number.
+- **Confirmed finding: at 55 dummy tools (real + no-op) genie / the MCP
+  TypeScript SDK do not truncate the `tools/list` response at 40 or any lower
+  number.** This establishes only that the response is not truncated at the
+  scale tested — it does not establish an unbounded response or the absence
+  of some other, larger server-side limit that a bigger probe might reveal.
 - **Unverified / out of scope:** whether Cursor's own client still visibly
   limits the _displayed or auto-attached_ tool count today. If it does, that
   enforcement is entirely **client-side** inside Cursor itself — not

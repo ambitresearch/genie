@@ -143,8 +143,19 @@ async function main(): Promise<void> {
   // transport, so the harness smoke suites can probe `tools/list` over the
   // exact transport a harness config launches — not an in-memory stand-in.
   // Never set in production; intentionally undocumented outside test code.
+  const MAX_TEST_EXTRA_TOOLS = 200;
   const extraToolCount = Number(process.env.GENIE_TEST_EXTRA_TOOLS ?? "0");
-  if (Number.isFinite(extraToolCount) && extraToolCount > 0) {
+  if (
+    process.env.GENIE_TEST_EXTRA_TOOLS !== undefined &&
+    (!Number.isSafeInteger(extraToolCount) ||
+      extraToolCount < 0 ||
+      extraToolCount > MAX_TEST_EXTRA_TOOLS)
+  ) {
+    throw new Error(
+      `GENIE_TEST_EXTRA_TOOLS must be a safe integer in [0, ${MAX_TEST_EXTRA_TOOLS}], got: ${process.env.GENIE_TEST_EXTRA_TOOLS}`,
+    );
+  }
+  if (Number.isSafeInteger(extraToolCount) && extraToolCount > 0) {
     for (let i = 0; i < extraToolCount; i++) {
       server.registerTool(
         `dummy_tool_${i}`,

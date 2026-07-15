@@ -99,11 +99,23 @@ describe.skipIf(!hasBuiltServer)(
           // below still exercises `conjure` failing on the invalid
           // base-URL/key pair, not on a missing-env crash before boot).
           OAUTH_HS256_KEY: "cursor-smoke-test-not-a-real-secret",
+          // Deliberately leave GENIE_LLM_BASE_URL unset when no real endpoint
+          // is configured, so the fail-closed test below exercises the actual
+          // MissingLLMConfigError path (conjure.ts -> llm/client.ts
+          // createLLMClient) rather than a connection/retry failure against a
+          // fake dead port — a prior version pointed both vars at
+          // http://127.0.0.1:1/v1, which made `conjure` fail on a transport
+          // error instead of the advertised missing-config path (Copilot
+          // review). GENIE_LLM_API_KEY still needs a throwaway value here:
+          // it's in secrets.ts's *required-to-boot* list (unlike
+          // GENIE_LLM_BASE_URL, which boot-time validation doesn't check), so
+          // leaving it unset would crash the server before it even starts
+          // serving MCP, rather than exercising conjure's own fail-closed path.
           ...(hasLlmEnv
             ? {}
             : {
                 GENIE_LLM_API_KEY: "cursor-smoke-test-not-a-real-secret-key",
-                GENIE_LLM_BASE_URL: "http://127.0.0.1:1/v1",
+                GENIE_LLM_BASE_URL: "",
               }),
         },
       });
@@ -170,13 +182,28 @@ describe.skipIf(!hasBuiltServer)(
         const { tools } = await client.listTools();
         expect(tools.some((t) => t.name === "mcp__genie__conjure")).toBe(true);
 
+        const kitResult = (await client.callTool({
+          name: "mcp__genie__create_kit",
+          arguments: { name: "Cursor Smoke Fail-Closed Kit" },
+        })) as ToolResult;
+        expect(kitResult.isError, JSON.stringify(kitResult)).not.toBe(true);
+        const kitId = (payload(kitResult) as { kitId: string }).kitId;
+
         const result = (await client.callTool({
           name: "mcp__genie__conjure",
-          arguments: { prompt: "a button" },
+          arguments: {
+            kitId,
+            kit: "A minimal UI kit. Uses semantic HTML and plain CSS.",
+            prompt: "a button",
+          },
         })) as ToolResult;
-        // Missing LLM config must surface as a tool-level error, not a silent
-        // pass-through or a crash of the MCP connection itself.
+        // Missing LLM config must surface as a tool-level error identifying
+        // the missing configuration (MissingLLMConfigError), not a silent
+        // pass-through, a generic transport failure, or a crash of the MCP
+        // connection itself.
         expect(result.isError).toBe(true);
+        const errorText = result.content?.[0]?.text ?? "";
+        expect(errorText).toMatch(/GENIE_LLM_BASE_URL|GENIE_LLM_API_KEY|Missing.*LLM/i);
       });
 
       it.skipIf(!hasLlmEnv)(
