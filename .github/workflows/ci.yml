@@ -429,11 +429,6 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Build Claude Code smoke image (AC4/AC6)
-        run: |
-          docker build -t genie/claude-code-smoke:local \
-            packages/e2e/docker/claude-code-smoke
-
       - name: Run M5-09 Claude Code smoke
         # GENIE_REQUIRE_DOCKER makes the AC4/AC6 leg FAIL (not skip) if this
         # ubuntu-latest runner somehow lacks a daemon, matching the `gitea`
