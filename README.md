@@ -99,6 +99,32 @@ Auto-detects: a TTY on stdin → HTTP, piped JSON-RPC → stdio. Override with
 stdio and `remote` for HTTP; override it with `--preview-locality` or
 `GENIE_PREVIEW_LOCALITY` only when the MCP client can reach server-local URLs.
 
+### Docker
+
+A multi-arch (amd64/arm64) image is published to Docker Hub and GitHub
+Container Registry on every release, built from the repo-root `Dockerfile`
+(`node:22-alpine`, multi-stage, non-root UID 1000, < 200 MB runtime image).
+
+```bash
+docker run -p 8080:8080 \
+  -e GENIE_LLM_BASE_URL=https://your-llm-gateway/v1 \
+  -e GENIE_LLM_API_KEY=... \
+  -e OAUTH_HS256_KEY=... \
+  ghcr.io/roshangautam/genie:latest
+curl http://localhost:8080/health
+```
+
+See [`deploy/docker-compose.yml`](./deploy/docker-compose.yml) for a
+self-hoster reference compose file (kit-root volume + env examples included,
+commented out by default). Published images are signed with keyless
+[cosign](https://docs.sigstore.dev/cosign/); verify with:
+
+```bash
+cosign verify ghcr.io/roshangautam/genie:latest \
+  --certificate-identity-regexp='https://github.com/roshangautam/genie/.*' \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+```
+
 ## Repository layout
 
 ```

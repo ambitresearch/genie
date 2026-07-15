@@ -458,3 +458,57 @@ jobs:
           path: reports/codex-repl-transcript.jsonl
           if-no-files-found: ignore
           retention-days: 7
+
+  # ── Docker image build smoke test (M5-07 / DRO-279) ──────────────────────────
+  # Builds the runtime image for the host arch only (no push, no buildx
+  # multi-platform — that's exercised by the release workflow's real publish
+  # job) and asserts the ACs that are cheap to check in CI: size budget (AC2),
+  # non-root UID (AC3), and a live healthcheck against a running container
+  # (AC4). Gated the same way the Gitea leg is: GitHub-hosted ubuntu-latest
+  # guarantees a Docker daemon.
+  docker-build-smoke:
+    name: docker image build smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Run Docker image AC suite (AC2/AC3/AC4)
+        # GENIE_REQUIRE_DOCKER makes the suite FAIL (not skip) if no daemon is
+        # reachable — same discipline as the Gitea conformance leg — so a
+        # misconfigured runner can't turn this leg green-but-vacuous. This
+        # single job builds the image once (docker-image.test.ts's beforeAll)
+        # and asserts size, UID, and healthcheck against it, avoiding the
+        # duplicate manual `docker build` a parallel shell-only leg would need.
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_REQUIRE_DOCKER: "1"
+        run: pnpm --filter @genie/e2e test:e2e:docker
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-docker-image
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f genie-smoke || true
