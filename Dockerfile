@@ -46,11 +46,22 @@ RUN pnpm --filter @genie/server build
 # Stage a production-only install of @genie/server so the runtime stage never
 # needs pnpm's content-addressable store (whose reflinks/hardlinks don't
 # survive a plain `COPY` across build stages).
+#
+# The devDependencies are stripped with `node` BEFORE the install: they include
+# `@genie/viewer` as a `workspace:*` spec, which `npm install` cannot resolve
+# outside the pnpm workspace (it rejects the `workspace:` protocol outright,
+# even with `--omit=dev`). The runtime never needs @genie/viewer — only the
+# viewer's static/ bytes, already mirrored into dist/ui by the server build.
+#
+# `--omit=optional` is deliberately NOT passed: esbuild (a runtime dependency,
+# used by the preview bundler) ships its native binary as a platform-specific
+# OPTIONAL dependency, so omitting optionals would leave esbuild unable to load
+# at runtime.
 RUN mkdir -p /out && \
     cp -R packages/server/dist /out/dist && \
-    cp packages/server/package.json /out/package.json && \
+    node -e "const p=require('./packages/server/package.json');delete p.devDependencies;require('fs').writeFileSync('/out/package.json',JSON.stringify(p,null,2))" && \
     cd /out && \
-    npm install --omit=dev --omit=optional --ignore-scripts
+    npm install --omit=dev --ignore-scripts --no-audit --no-fund
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
