@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/mcpb/main/schemas/mcpb-manifest-v0.4.schema.json",
+  "manifest_version": "0.4",
+  "name": "genie",
+  "display_name": "genie",
+  "version": "1.2.0",
+  "description": "Harness-agnostic MCP server for AI UI-component generation — live preview + UI-kit browser, direct in Claude Desktop.",
+  "long_description": "genie generates and refines UI components against your own component library (\"UI kit\") without leaving the harness. This bundle runs genie's MCP server over stdio inside Claude Desktop. Configure an OpenAI-compatible LLM endpoint (base URL + API key) on first run — genie has no default endpoint and never bundles a key.",
+  "author": {
+    "name": "Roshan Gautam",
+    "url": "https://github.com/roshangautam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/roshangautam/genie"
+  },
+  "homepage": "https://github.com/roshangautam/genie",
+  "documentation": "https://github.com/roshangautam/genie#readme",
+  "support": "https://github.com/roshangautam/genie/issues",
+  "license": "MIT",
+  "server": {
+    "type": "node",
+    "entry_point": "server/dist/cli.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/dist/cli.js", "--transport", "stdio"],
+      "env": {
+        "GENIE_HOME": "${HOME}/.genie",
+        "GENIE_LLM_BASE_URL": "${user_config.llm_base_url}",
+        "GENIE_LLM_API_KEY": "${user_config.llm_api_key}"
+      }
+    }
+  },
+  "user_config": {
+    "llm_base_url": {
+      "type": "string",
+      "title": "LLM base URL",
+      "description": "Base URL of an OpenAI-compatible chat-completions endpoint used for component generation (e.g. https://api.openai.com/v1). genie ships with no default endpoint.",
+      "required": true
+    },
+    "llm_api_key": {
+      "type": "string",
+      "title": "LLM API key",
+      "description": "API key for the configured LLM endpoint. Stored by Claude Desktop's OS keychain integration, never written into this bundle.",
+      "required": true,
+      "sensitive": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin"],
+    "runtimes": {
+      "node": ">=22"
+    }
+  }
+}

@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "typecheck": "pnpm -r typecheck",
+    "bundle:mcpb": "node scripts/bundle-mcpb.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

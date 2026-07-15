@@ -15,6 +15,10 @@ export default tseslint.config(
       "**/node_modules/**",
       "docs/**",
       "packages/*/scripts/**",
+      // Root-level build/packaging CLI scripts (e.g. M5-05's
+      // scripts/bundle-mcpb.mjs) — same carve-out as the per-package scripts/
+      // above, just at the repo root instead of inside a workspace package.
+      "scripts/**",
       ".remember/**",
       ".claude/**",
       ".paperclip-runtime/**",

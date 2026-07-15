@@ -99,6 +99,28 @@ Auto-detects: a TTY on stdin → HTTP, piped JSON-RPC → stdio. Override with
 stdio and `remote` for HTTP; override it with `--preview-locality` or
 `GENIE_PREVIEW_LOCALITY` only when the MCP client can reach server-local URLs.
 
+### Claude Desktop (`.mcpb` bundle)
+
+Claude Desktop users can install genie without hand-editing a config file:
+
+1. Download `genie.mcpb` from the [latest release](../../releases/latest)
+   (attached to every GitHub Release — see `mcpb/manifest.json` and
+   `pnpm bundle:mcpb`).
+2. Double-click it. Claude Desktop opens its extension installer and prompts
+   for the required config values (`llm_base_url`, `llm_api_key`) on first
+   run — nothing is hardcoded into the bundle.
+3. genie now shows up as an installed extension; no manual
+   `claude_desktop_config.json` editing needed.
+
+To build the bundle locally: `pnpm bundle:mcpb` (builds `@genie/server`,
+stages a production-only deploy, and packs `dist/genie.mcpb` via
+`@anthropic-ai/mcpb`). See `mcpb/manifest.json` for the bundle manifest and
+`scripts/bundle-mcpb.mjs` for the packaging steps.
+
+> Prefer the JSON snippet instead? See `docs/harness/claude-desktop.md`
+> (tracked separately — M5-10) for the manual `claude_desktop_config.json`
+> path and debugging notes.
+
 ## Repository layout
 
 ```
