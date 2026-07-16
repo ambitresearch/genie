@@ -164,10 +164,11 @@ that Claude Desktop installed or loaded the bundle.
 The macOS review environment has a signed Claude Desktop installation
 available, but the required genie artifact does not exist on `main` or in any
 current GitHub Release. [M5-05](../github/issues/M5-05-mcpb-packaging.md) and
-PR #203 must first ship a bundle whose configuration includes every
+PR #203 must first ship a bundle. Its current candidate now includes every
 runtime-required secret plus explicit writable `GENIE_KITS_ROOT` and
-`GENIE_PROJECTS_ROOT` values. Until then, there is nothing valid to install and
-no truthful AC6 screenshot can be captured.
+`GENIE_PROJECTS_ROOT` values, but an unmerged candidate is not an installable
+release artifact. Until PR #203 lands and publishes `genie.mcpb`, there is
+nothing valid to install and no truthful AC6 screenshot can be captured.
 
 Once that blocker is removed, run this protocol:
 

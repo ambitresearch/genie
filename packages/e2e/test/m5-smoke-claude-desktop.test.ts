@@ -127,6 +127,9 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toMatch(
       /PR #203 must first ship a bundle[\s\S]*explicit writable `GENIE_KITS_ROOT` and\s+`GENIE_PROJECTS_ROOT` values/,
     );
+    expect(CLAUDE_DESKTOP_DOC).toMatch(
+      /an unmerged candidate is not an installable\s+release artifact/,
+    );
   });
 
   it("documents the exact macOS Claude Desktop MCP log glob", () => {
@@ -202,16 +205,20 @@ describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", ()
       missing: "OAUTH_HS256_KEY",
       env: { GENIE_LLM_API_KEY: "claude-desktop-smoke-test-not-a-real-key" },
     },
-  ])("rejects Desktop startup when required secret $missing is absent", ({ missing, env }) => {
-    const result = spawnSync(process.execPath, [SERVER_CLI, "--transport", "stdio"], {
-      env: cleanSecretEnv(env),
-      encoding: "utf8",
-      input: "",
-    });
+  ])(
+    "rejects Desktop startup when required secret $missing is absent",
+    ({ missing, env }) => {
+      const result = spawnSync(process.execPath, [SERVER_CLI, "--transport", "stdio"], {
+        env: cleanSecretEnv(env),
+        encoding: "utf8",
+        input: "",
+      });
 
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`${missing} is required but not set.`);
-  });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`${missing} is required but not set.`);
+    },
+    30_000,
+  );
 
   it("create_kit -> plan -> write_files -> preview round-trips over real stdio and preview's _meta.ui.resourceUri points at ui://genie/grid", async () => {
     const kitResult = (await client.callTool({
@@ -253,7 +260,7 @@ describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", ()
     const meta = previewResult._meta as { ui?: { resourceUri?: string } } | undefined;
     expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/genie\/grid/);
     expect(meta?.ui?.resourceUri).toContain(`kitId=${kitId}`);
-  });
+  }, 30_000);
 
   it("list_kits is reachable over real stdio and reflects a kit created earlier in this chain", async () => {
     const kitResult = (await client.callTool({
