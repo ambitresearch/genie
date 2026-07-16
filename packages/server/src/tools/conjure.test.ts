@@ -316,16 +316,23 @@ describe("AC6 — reference image as vision input", () => {
 
 // ── AC7 — refUrl fetch + 1 MB warn ────────────────────────────────────────────
 
+/** Stub DNS resolver that returns a single globally routable address for any
+ * hostname — used wherever `fetchImpl` is injected so tests run without a live
+ * network (the real resolver would be called otherwise). */
+const publicAddressLookup = async () => [{ address: "93.184.216.34", family: 4 as const }];
+
 describe("AC7 — reference URL fetch + inline", () => {
   it("fetches refUrl and inlines the body into the user message", async () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
-    const lookupAddresses = async () => [{ address: "93.184.216.34", family: 4 as const }];
     const fetchImpl = vi.fn(async () => ({
       ok: true,
       status: 200,
       text: async () => "<h1>Ref Page</h1>",
     }));
-    await conjure({ chat, fetchImpl, lookupAddresses }, args({ refUrl: "https://example.com/ref" }));
+    await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/ref" }),
+    );
     expect(fetchImpl).toHaveBeenCalledWith("https://example.com/ref");
     expect(JSON.stringify(chat.calls[0]!.messages[1]!.content)).toContain("<h1>Ref Page</h1>");
   });
@@ -333,9 +340,11 @@ describe("AC7 — reference URL fetch + inline", () => {
   it("warns and truncates when the fetched body exceeds 1 MB", async () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
     const big = "x".repeat(REF_URL_WARN_BYTES + 1000);
-    const lookupAddresses = async () => [{ address: "93.184.216.34", family: 4 as const }];
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => big }));
-    await conjure({ chat, fetchImpl, lookupAddresses }, args({ refUrl: "https://example.com/big" }));
+    await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/big" }),
+    );
     const warn = stderrLines().find((l) => l.event === "conjure.ref_url.oversize");
     expect(warn).toBeDefined();
     expect(warn?.bytes).toBeGreaterThan(REF_URL_WARN_BYTES);
@@ -346,10 +355,9 @@ describe("AC7 — reference URL fetch + inline", () => {
 
   it("skips a failed fetch (non-ok) and still generates", async () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
-    const lookupAddresses = async () => [{ address: "93.184.216.34", family: 4 as const }];
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 404, text: async () => "" }));
     const res = await conjure(
-      { chat, fetchImpl, lookupAddresses },
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
       args({ refUrl: "https://example.com/missing" }),
     );
     expect(res.componentName).toBe("Button");
@@ -482,7 +490,6 @@ describe("AC7 — reference URL fetch + inline", () => {
   // flagged in the first DNS-rebinding fix.
   it("follows a redirect to a public target and inlines its body", async () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
-    const lookupAddresses = async () => [{ address: "93.184.216.34", family: 4 as const }];
     const fetchImpl = vi.fn(async (url: string) => {
       if (url === "https://example.com/start") {
         return {
@@ -494,7 +501,10 @@ describe("AC7 — reference URL fetch + inline", () => {
       }
       return { ok: true, status: 200, text: async () => "<h1>Dest Page</h1>" };
     });
-    await conjure({ chat, fetchImpl, lookupAddresses }, args({ refUrl: "https://example.com/start" }));
+    await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/start" }),
+    );
     expect(fetchImpl).toHaveBeenCalledWith("https://example.com/start");
     expect(fetchImpl).toHaveBeenCalledWith("https://example.com/dest");
     expect(JSON.stringify(chat.calls[0]!.messages[1]!.content)).toContain("<h1>Dest Page</h1>");
@@ -502,7 +512,6 @@ describe("AC7 — reference URL fetch + inline", () => {
 
   it("rejects a redirect from a public URL to a private/loopback target instead of following it", async () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
-    const lookupAddresses = async () => [{ address: "93.184.216.34", family: 4 as const }];
     const fetchImpl = vi.fn(async (url: string) => {
       if (url === "https://example.com/start") {
         return {
@@ -515,7 +524,7 @@ describe("AC7 — reference URL fetch + inline", () => {
       throw new Error("must not fetch the redirect target — it is a private address");
     });
     const res = await conjure(
-      { chat, fetchImpl, lookupAddresses },
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
       args({ refUrl: "https://example.com/start" }),
     );
     // Generation still succeeds — a blocked reference degrades to "no reference", not a hard failure.
@@ -557,7 +566,6 @@ describe("AC7 — reference URL fetch + inline", () => {
 
   it("gives up after too many redirect hops rather than looping forever", async () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
-    const lookupAddresses = async () => [{ address: "93.184.216.34", family: 4 as const }];
     let hop = 0;
     const fetchImpl = vi.fn(async () => {
       hop += 1;
@@ -571,7 +579,7 @@ describe("AC7 — reference URL fetch + inline", () => {
       };
     });
     const res = await conjure(
-      { chat, fetchImpl, lookupAddresses },
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
       args({ refUrl: "https://example.com/hop0" }),
     );
     expect(res.componentName).toBe("Button");
