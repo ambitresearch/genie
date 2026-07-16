@@ -165,8 +165,9 @@ The macOS review environment has a signed Claude Desktop installation
 available, but the required genie artifact does not exist on `main` or in any
 current GitHub Release. [M5-05](../github/issues/M5-05-mcpb-packaging.md) and
 PR #203 must first ship a bundle whose configuration includes every
-runtime-required secret. Until then, there is nothing valid to install and no
-truthful AC6 screenshot can be captured.
+runtime-required secret plus explicit writable `GENIE_KITS_ROOT` and
+`GENIE_PROJECTS_ROOT` values. Until then, there is nothing valid to install and
+no truthful AC6 screenshot can be captured.
 
 Once that blocker is removed, run this protocol:
 

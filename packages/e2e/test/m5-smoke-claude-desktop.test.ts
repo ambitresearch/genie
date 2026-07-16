@@ -124,6 +124,9 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("/Users/you/.genie/kits");
     expect(CLAUDE_DESKTOP_DOC).toContain("C:\\\\Users\\\\you\\\\.genie\\\\kits");
     expect(CLAUDE_DESKTOP_DOC).toContain("/home/you/.genie/kits");
+    expect(CLAUDE_DESKTOP_DOC).toMatch(
+      /PR #203 must first ship a bundle[\s\S]*explicit writable `GENIE_KITS_ROOT` and\s+`GENIE_PROJECTS_ROOT` values/,
+    );
   });
 
   it("documents the exact macOS Claude Desktop MCP log glob", () => {
