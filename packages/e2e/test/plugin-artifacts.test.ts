@@ -79,6 +79,17 @@ describe("Claude plugin artifacts", () => {
     expect(ci).toContain(
       "group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}",
     );
+    for (const job of ["check", "gitea", "viewer-a11y", "viewer-e2e", "codex-smoke"]) {
+      expect(ci).toMatch(
+        new RegExp(
+          `^  ${job}:\\n(?:    .*\\n)*?    if: github\\.event_name != 'workflow_dispatch'$`,
+          "m",
+        ),
+      );
+    }
+    expect(ci).toMatch(
+      /^ {2}m5-smoke-claude-code:\n(?: {4}.*\n)*? {4}if: github\.event_name == 'workflow_dispatch'$/m,
+    );
   });
 
   it("documents portable Agent Skill installation for supported harnesses", () => {

@@ -17,6 +17,7 @@ concurrency:
 jobs:
   check:
     name: ${{ matrix.task }} (node ${{ matrix.node }})
+    if: github.event_name != 'workflow_dispatch'
     # Honor the RUNS_ON repo variable (set by runner-guard.yml) so CI offloads to
     # the self-hosted TrueNAS runner near the monthly quota; `["self-hosted"]`.
     runs-on: ${{ fromJSON(vars.RUNS_ON || '["ubuntu-latest"]') }}
@@ -98,6 +99,7 @@ jobs:
   #      this leg skip vacuously.
   gitea:
     name: gitea conformance (docker)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     # Image pull + DB migration + the walk; generous ceiling well under any
     # matrix leg's concurrency budget.
@@ -165,6 +167,7 @@ jobs:
   # nor paid API access, so there is no reason to gate it to push-only.
   viewer-a11y:
     name: viewer accessibility audit (axe-core)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -234,6 +237,7 @@ jobs:
   # on every PR (needs no daemon or paid API), like the a11y leg.
   viewer-e2e:
     name: viewer E2E gate (three vehicles)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -547,6 +551,7 @@ jobs:
   # stdio-chain legs are free and should run on every PR regardless of secrets.
   codex-smoke:
     name: codex CLI harness smoke (M5-11)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

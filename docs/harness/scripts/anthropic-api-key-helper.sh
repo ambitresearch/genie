@@ -5,8 +5,8 @@
 #
 # Usage:
 #   chmod +x anthropic-api-key-helper.sh
-#   reference it under the top-level "apiKeyHelper" field in ~/.claude.json
-#   or your Claude Code settings file — see docs/harness/claude-code.md's
+#   reference it under the top-level "apiKeyHelper" field in
+#   ~/.claude/settings.json — see docs/harness/claude-code.md's
 # "Combined setup: HTTP transport + top-level apiKeyHelper" section.
 set -euo pipefail
 
