@@ -38,7 +38,7 @@ COPY packages/viewer packages/viewer
 # @genie/viewer's static/ assets are mirrored into the server's dist/ui by
 # copy-viewer-assets.mjs (see packages/server/scripts) — build the viewer's
 # TS first only if the server build needs its typings; the runtime image never
-# depends on @genie/viewer at runtime (see docs/store/viewer-assets.ts), only
+# depends on @genie/viewer at runtime (see packages/server/src/store/viewer-assets.ts), only
 # on the copied static/ bytes.
 RUN pnpm --filter @genie/viewer build
 RUN pnpm --filter @genie/server build
@@ -57,7 +57,7 @@ RUN node -e "const fs=require('node:fs');const entry=require.resolve('ts-morph',
 # Source maps, declarations, package tests/examples/docs, and duplicate
 # TypeScript source are build-time/publisher payload, not runtime inputs.
 # Removing them from /out before the final COPY keeps the node:22-alpine image
-# below AC2's 200 MiB ceiling. Optional dependencies stay installed because
+# below AC2's 200,000,000-byte ceiling. Optional dependencies stay installed because
 # esbuild's native per-platform binary is one of them and is required by the
 # preview bundler at runtime.
 RUN pnpm --filter @genie/server deploy --prod --legacy /out && \

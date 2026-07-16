@@ -97,6 +97,13 @@ describe("Dockerfile (M5-07 static ACs)", () => {
     expect(dockerfile).not.toMatch(/\bnpm (?:ci|install)\b/);
   });
 
+  it("documents the strict decimal-byte budget and the real viewer asset source", () => {
+    expect(dockerfile).toContain("AC2's 200,000,000-byte ceiling");
+    expect(dockerfile).not.toContain("200 MiB");
+    expect(dockerfile).toContain("packages/server/src/store/viewer-assets.ts");
+    expect(dockerfile).not.toContain("docs/store/viewer-assets.ts");
+  });
+
   it("points persistent storage at the writable data volume", () => {
     expect(dockerfile).toMatch(/GENIE_HOME=\/data/);
     expect(dockerfile).toMatch(/GENIE_KITS_ROOT=\/data\/kits/);
