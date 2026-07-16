@@ -1,7 +1,7 @@
 /**
  * M5-11 (DRO-283) — Codex CLI harness smoke test.
  *
- * Verifies two independent claims from `docs/harness/codex.md`:
+ * Verifies three independent claims from `docs/harness/codex.md`:
  *
  *   1. The canonical `~/.codex/config.toml` HTTP snippet (AC1) is accepted
  *      VERBATIM by the real `codex` binary — `codex mcp add`/`codex mcp get
@@ -69,6 +69,16 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
 const REPO_ROOT = resolve(here, "../../..");
+// This runs on a LAN-connected self-hosted runner. The prompt asks only for
+// MCP calls, but the sandbox is the boundary if the model tries a shell command.
+const CODEX_EXEC_ARGS = [
+  "exec",
+  "--sandbox",
+  "read-only",
+  "--ephemeral",
+  "--skip-git-repo-check",
+  "--json",
+] as const;
 
 /** True if the real `codex` binary is on PATH (AC1/AC2/AC4 live checks). */
 function codexAvailable(): boolean {
@@ -80,7 +90,7 @@ const hasCodex = codexAvailable();
 const hasBuiltServer = spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`]).status === 0;
 
 describe("codex-smoke CI contract", () => {
-  it("uses the dedicated public gateway and requires the live endpoint leg", async () => {
+  it("uses the private-LAN gateway and requires the live endpoint leg", async () => {
     const workflow = await readFile(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
     const match = workflow.match(/\n {2}codex-smoke:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/);
     expect(match, "expected ci.yml to define the codex-smoke job").not.toBeNull();
@@ -100,6 +110,20 @@ describe("codex-smoke CI contract", () => {
     expect(job).toContain("npm install -g @openai/codex@0.144.5");
     expect(job).not.toContain("GENIE_CODEX_SMOKE_LLM_BASE_URL");
     expect(job).not.toContain("GENIE_CODEX_SMOKE_LLM_API_KEY");
+  });
+
+  it("keeps model-generated commands sandboxed on the private-LAN runner", () => {
+    const unsafeFlag = ["--dangerously", "bypass-approvals-and-sandbox"].join("-");
+
+    expect(CODEX_EXEC_ARGS).toEqual([
+      "exec",
+      "--sandbox",
+      "read-only",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--json",
+    ]);
+    expect(CODEX_EXEC_ARGS).not.toContain(unsafeFlag);
   });
 });
 
@@ -200,7 +224,7 @@ describe.skipIf(!hasCodex)("AC1/AC2/AC4 — codex mcp accepts the canonical geni
 // CLIENT transport (the harness side of the same wire protocol Codex speaks).
 
 const hasLlmEnv = Boolean(process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim());
-const smokeModel = process.env.GENIE_SMOKE_LLM_MODEL?.trim() || "gpt-5.6-sol";
+const smokeModel = process.env.GENIE_SMOKE_LLM_MODEL?.trim() || "gpt-5-mini";
 
 if (!hasLlmEnv) {
   console.info(
@@ -327,9 +351,8 @@ describe.skipIf(!hasBuiltServer)("AC6 — four-verb chain over real stdio (Codex
           kitId,
           kit: "<!-- empty kit context for smoke test -->",
           prompt: "A small rounded primary button that says Continue.",
-          // The server's DEFAULT_MODEL alias ("design-default") isn't a
-          // model this operator's endpoint recognizes; point at a concrete
-          // model this smoke test's configured endpoint actually serves.
+          // Keep the direct conjure call on the same explicit route Codex
+          // uses as its driving model below.
           model: smokeModel,
         },
       })) as { isError?: boolean; content?: { type: string; text: string }[]; structuredContent?: unknown };
@@ -449,10 +472,7 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
         // (the server rejects a missing directory with `InvalidLocalDir`);
         // reuse `kitsRoot`, which `beforeAll` already created, rather than
         // asking the model to invent+create a fresh temp directory itself.
-        // `model` must be a concrete model name the configured endpoint
-        // actually serves — genie's DEFAULT_MODEL alias ("design-default")
-        // is not recognized by this smoke test's endpoint (see the
-        // `conjure` stdio test above, which hits the same requirement).
+        // Keep conjure on the same explicit route as Codex's driving model.
         const conjureModel = smokeModel;
         const prompt = [
           "Using the genie MCP server's tools (mcp__genie__create_kit,",
@@ -472,13 +492,7 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
 
         const result = spawnSync(
           "codex",
-          [
-            "exec",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--skip-git-repo-check",
-            "--json",
-            prompt,
-          ],
+          [...CODEX_EXEC_ARGS, prompt],
           {
             cwd: REPO_ROOT,
             env: {

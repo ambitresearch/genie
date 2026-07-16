@@ -170,6 +170,11 @@ when that pair is absent. GitHub does not expose repository secrets to
 untrusted fork PRs, so fork contributions need a maintainer-run trusted branch
 before this gate can pass.
 
+The `codex exec` process uses Codex's read-only sandbox and an ephemeral
+session. This keeps model-generated shell commands from writing to the
+LAN-connected runner while still allowing the registered genie MCP tools to
+complete the smoke chain.
+
 A third leg drives the actual Codex REPL end-to-end: `codex exec` (Codex's own
 non-interactive entry point — the same binary an interactive session runs) is
 launched with genie registered exactly per the stdio snippet above via
