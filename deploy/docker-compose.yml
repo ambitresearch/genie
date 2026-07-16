@@ -25,10 +25,12 @@ services:
       # Required — configurable OpenAI-compatible LLM endpoint (D-H).
       GENIE_LLM_BASE_URL: ${GENIE_LLM_BASE_URL:?set GENIE_LLM_BASE_URL}
       GENIE_LLM_API_KEY: ${GENIE_LLM_API_KEY:?set GENIE_LLM_API_KEY}
-      # Required — HS256 signing key for OAuth-issued tokens (>=16 chars).
+      # Required — HS256 signing key for OAuth-issued tokens (>=32 chars).
       OAUTH_HS256_KEY: ${OAUTH_HS256_KEY:?set OAUTH_HS256_KEY}
       MCP_TRANSPORT: "http"
       GENIE_PREVIEW_LOCALITY: "remote"
+      # Uncomment when overriding the image's default kit storage path:
+      # GENIE_KITS_ROOT: /data/kits
       # Uncomment to require a static Bearer token on /mcp (see `genie token`):
       # GENIE_REQUIRE_BEARER_AUTH: "true"
       # Uncomment to point at a git-host-backed kit/project store instead of
@@ -41,8 +43,6 @@ services:
       # Uncomment to mount a UI kit from the host instead of the container's
       # default `.genie/kits`:
       # - ./my-ui-kit:/data/kits/my-ui-kit
-      # environment:
-      #   GENIE_KITS_ROOT: /data/kits
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s

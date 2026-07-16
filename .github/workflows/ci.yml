@@ -511,4 +511,4 @@ jobs:
 
       - name: Clean up
         if: always()
-        run: docker rm -f genie-smoke || true
+        run: docker rm -f genie-docker-image-test || true

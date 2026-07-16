@@ -43,25 +43,34 @@ COPY packages/viewer packages/viewer
 RUN pnpm --filter @genie/viewer build
 RUN pnpm --filter @genie/server build
 
-# Stage a production-only install of @genie/server so the runtime stage never
-# needs pnpm's content-addressable store (whose reflinks/hardlinks don't
-# survive a plain `COPY` across build stages).
+# Deploy the built server with production dependencies resolved from the frozen
+# workspace lockfile. `--legacy` is required because this workspace intentionally
+# does not use pnpm's injected-workspace-packages mode; the deployed runtime has
+# no workspace dependency after devDependencies are omitted.
 #
-# The devDependencies are stripped with `node` BEFORE the install: they include
-# `@genie/viewer` as a `workspace:*` spec, which `npm install` cannot resolve
-# outside the pnpm workspace (it rejects the `workspace:` protocol outright,
-# even with `--omit=dev`). The runtime never needs @genie/viewer — only the
-# viewer's static/ bytes, already mirrored into dist/ui by the server build.
-#
-# `--omit=optional` is deliberately NOT passed: esbuild (a runtime dependency,
-# used by the preview bundler) ships its native binary as a platform-specific
-# OPTIONAL dependency, so omitting optionals would leave esbuild unable to load
-# at runtime.
-RUN mkdir -p /out && \
-    cp -R packages/server/dist /out/dist && \
-    node -e "const p=require('./packages/server/package.json');delete p.devDependencies;require('fs').writeFileSync('/out/package.json',JSON.stringify(p,null,2))" && \
-    cd /out && \
-    npm install --omit=dev --ignore-scripts --no-audit --no-fund
+# Source maps, declarations, package tests/examples/docs, and duplicate
+# TypeScript source are build-time/publisher payload, not runtime inputs.
+# Removing them from /out before the final COPY keeps the node:22-alpine image
+# below AC2's 200 MiB ceiling. Optional dependencies stay installed because
+# esbuild's native per-platform binary is one of them and is required by the
+# preview bundler at runtime.
+RUN pnpm --filter @genie/server deploy --prod --legacy /out && \
+    find /out/node_modules -type f \
+      \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \
+         -o -iname '*.md' -o -iname '*.markdown' \) \
+      ! -iname 'license*' ! -iname 'licence*' ! -iname 'copying*' ! -iname 'notice*' \
+      -delete && \
+    find /out/node_modules -type d \
+      \( -name test -o -name tests -o -name __tests__ -o -name coverage \
+         -o -name benchmark -o -name benchmarks -o -name example -o -name examples \) \
+      -prune -exec rm -rf '{}' + && \
+    rm -rf \
+      /out/node_modules/.pnpm/openai@*/node_modules/openai/src \
+      /out/node_modules/.pnpm/zod@*/node_modules/zod/src \
+      /out/node_modules/.pnpm/@modelcontextprotocol+sdk@*/node_modules/@modelcontextprotocol/sdk/dist/cjs && \
+    rm -f \
+      /out/node_modules/.pnpm/@vue+compiler-sfc@*/node_modules/@vue/compiler-sfc/dist/compiler-sfc.esm-browser.js \
+      /out/node_modules/.pnpm/pngjs@*/node_modules/pngjs/browser.js
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
@@ -82,9 +91,11 @@ COPY --from=build --chown=node:node /out/package.json ./package.json
 
 ENV NODE_ENV=production \
     MCP_TRANSPORT=http \
-    GENIE_HOME=/data
+    GENIE_HOME=/data \
+    GENIE_KITS_ROOT=/data/kits \
+    GENIE_PROJECTS_ROOT=/data/projects
 
-RUN mkdir -p /data && chown -R node:node /data
+RUN mkdir -p /data/kits /data/projects && chown -R node:node /data
 VOLUME ["/data"]
 
 USER node

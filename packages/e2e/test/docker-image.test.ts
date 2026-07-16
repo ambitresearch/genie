@@ -29,9 +29,13 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "..", "..");
 const dockerfilePath = resolve(repoRoot, "Dockerfile");
 const composePath = resolve(repoRoot, "deploy", "docker-compose.yml");
+const ciPath = resolve(repoRoot, ".github", "workflows", "ci.yml");
+const releaseWorkflowPath = resolve(repoRoot, ".github", "workflows", "release-please.yml");
 
 const dockerfile = readFileSync(dockerfilePath, "utf-8");
 const compose = readFileSync(composePath, "utf-8");
+const ci = readFileSync(ciPath, "utf-8");
+const releaseWorkflow = readFileSync(releaseWorkflowPath, "utf-8");
 
 describe("Dockerfile (M5-07 static ACs)", () => {
   it("uses a node:22-alpine base for both build and runtime stages (AC1)", () => {
@@ -65,6 +69,17 @@ describe("Dockerfile (M5-07 static ACs)", () => {
     expect(dockerfile).toMatch(/EXPOSE 8080/);
   });
 
+  it("stages production dependencies from the frozen pnpm lockfile", () => {
+    expect(dockerfile).toMatch(/pnpm --filter @genie\/server deploy --prod --legacy \/out/);
+    expect(dockerfile).not.toMatch(/\bnpm (?:ci|install)\b/);
+  });
+
+  it("points kit and project storage at the writable data volume", () => {
+    expect(dockerfile).toMatch(/GENIE_HOME=\/data/);
+    expect(dockerfile).toMatch(/GENIE_KITS_ROOT=\/data\/kits/);
+    expect(dockerfile).toMatch(/GENIE_PROJECTS_ROOT=\/data\/projects/);
+  });
+
   it("never hardcodes a secret-shaped literal", () => {
     expect(dockerfile).not.toMatch(/sk-(ant|proj|litellm)-[A-Za-z0-9]/);
     expect(dockerfile).not.toMatch(/sk-[A-Za-z0-9]{20,}/);
@@ -84,9 +99,40 @@ describe("deploy/docker-compose.yml (AC6)", () => {
     expect(compose).toMatch(/#\s*- \.\/my-ui-kit:\/data\/kits\/my-ui-kit/);
   });
 
+  it("keeps the kit-root env example in the service environment mapping", () => {
+    const environmentIndex = compose.indexOf("    environment:");
+    const kitsRootIndex = compose.indexOf("# GENIE_KITS_ROOT: /data/kits");
+    const volumesIndex = compose.indexOf("    volumes:");
+
+    expect(environmentIndex).toBeGreaterThanOrEqual(0);
+    expect(kitsRootIndex).toBeGreaterThan(environmentIndex);
+    expect(kitsRootIndex).toBeLessThan(volumesIndex);
+    expect(compose).not.toMatch(/#\s*environment:/);
+  });
+
+  it("documents the OAuth signing key's real minimum length", () => {
+    expect(compose).toMatch(/HS256 signing key.*>=32 chars/);
+    expect(compose).not.toMatch(/HS256 signing key.*>=16 chars/);
+  });
+
   it("never hardcodes a secret — every credential is an interpolated env var", () => {
     expect(compose).not.toMatch(/sk-(ant|proj|litellm)-[A-Za-z0-9]/);
     expect(compose).not.toMatch(/sk-[A-Za-z0-9]{20,}/);
+  });
+});
+
+describe("Docker release and CI workflows", () => {
+  it("reads release-please outputs for the packages/server component", () => {
+    expect(releaseWorkflow).toContain(
+      "${{ steps.release.outputs['packages/server--release_created'] }}",
+    );
+    expect(releaseWorkflow).toContain("${{ steps.release.outputs['packages/server--tag_name'] }}");
+    expect(releaseWorkflow).toContain('version="${tag#server-v}"');
+  });
+
+  it("cleans up the container created by this suite", () => {
+    expect(ci).toMatch(/docker rm -f genie-docker-image-test/);
+    expect(ci).not.toMatch(/docker rm -f genie-smoke/);
   });
 });
 
@@ -134,12 +180,111 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
     const { stdout } = await execFileAsync("docker", [
       "run",
       "--rm",
-      imageTag,
+      "--entrypoint",
       "node",
+      imageTag,
       "-e",
       "process.stdout.write(String(process.getuid()))",
     ]);
     expect(stdout.trim()).toBe("1000");
+  });
+
+  it("provides writable persisted kit and project roots", async () => {
+    const { stdout } = await execFileAsync("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "node",
+      imageTag,
+      "-e",
+      [
+        'const fs = require("node:fs")',
+        "const roots = [process.env.GENIE_KITS_ROOT, process.env.GENIE_PROJECTS_ROOT]",
+        'if (roots.some((root) => !root)) throw new Error("missing persisted root")',
+        "for (const root of roots) {",
+        "  fs.mkdirSync(root, { recursive: true })",
+        '  fs.writeFileSync(`${root}/.write-test`, "ok")',
+        "}",
+        'process.stdout.write(roots.join(","))',
+      ].join(";"),
+    ]);
+    expect(stdout.trim()).toBe("/data/kits,/data/projects");
+  });
+
+  it("keeps esbuild's native runtime binary functional", async () => {
+    const { stdout } = await execFileAsync("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "node",
+      imageTag,
+      "-e",
+      [
+        'import("esbuild").then(async ({ transform }) => {',
+        '  const result = await transform("const answer: number = 42", { loader: "ts" })',
+        "  process.stdout.write(result.code)",
+        "})",
+      ].join(";"),
+    ]);
+    expect(stdout).toContain("const answer = 42;");
+  });
+
+  it("keeps production dependencies importable after image pruning", async () => {
+    const { stdout } = await execFileAsync("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "node",
+      imageTag,
+      "-e",
+      [
+        'Promise.all([import("pino"), import("openai"), import("zod")])',
+        '  .then(() => process.stdout.write("dependencies-ok"))',
+      ].join("\n"),
+    ]);
+    expect(stdout.trim()).toBe("dependencies-ok");
+  });
+
+  it("preserves dependency license files while pruning package docs", async () => {
+    const { stdout } = await execFileAsync("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "node",
+      imageTag,
+      "-e",
+      [
+        'const fs = require("node:fs")',
+        'const files = fs.readdirSync("node_modules/.pnpm", { recursive: true })',
+        'if (!fs.existsSync("node_modules/esbuild/LICENSE.md")) throw new Error("missing esbuild license")',
+        'if (!files.some((file) => String(file).includes("node_modules/jose/LICENSE.md"))) throw new Error("missing jose license")',
+        'process.stdout.write("licenses-ok")',
+      ].join(";"),
+    ]);
+    expect(stdout.trim()).toBe("licenses-ok");
+  });
+
+  it("bundles a React preview through the runtime adapter", async () => {
+    const { stdout } = await execFileAsync("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "node",
+      imageTag,
+      "-e",
+      [
+        'import("./dist/framework/react.js").then(async ({ ReactAdapter }) => {',
+        "  const output = await new ReactAdapter().renderPreview({",
+        '    componentName: "Button",',
+        '    group: "inputs",',
+        '    source: "export default function Button() { return <button>OK</button> }",',
+        "  })",
+        '  if (!output.content.includes("GenieComponent")) throw new Error("missing preview global")',
+        "  process.stdout.write(output.path)",
+        "})",
+      ].join("\n"),
+    ]);
+    expect(stdout.trim()).toBe("components/inputs/Button/Button.preview.js");
   });
 
   it("boots and reports healthy on /health (AC4)", async () => {
