@@ -161,9 +161,13 @@ real built server, not a stand-in for either:
    real stdio child process launched exactly the way Codex's `command`-keyed
    `mcp_servers` entry launches genie.
 
-CI runs both legs on every PR (`codex-smoke` job); the `conjure` step in leg 2
-additionally requires `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` and skips
-cleanly without them.
+CI runs both legs for every same-repository PR and push (`codex-smoke` job). It
+maps a dedicated public smoke-endpoint secret pair into
+`GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` and sets `GENIE_REQUIRE_LLM=1`, so
+`conjure` must run for real. Local runs still skip the paid endpoint cases
+visibly when that pair is absent. GitHub does not expose repository secrets to
+untrusted fork PRs, so fork contributions need a maintainer-run trusted branch
+before this gate can pass.
 
 A third leg drives the actual Codex REPL end-to-end: `codex exec` (Codex's own
 non-interactive entry point — the same binary an interactive session runs) is
@@ -174,9 +178,7 @@ full JSONL event transcript Codex emits is captured to
 transcript shows Codex's own model actually calling genie's tools. This leg
 reuses `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` as Codex's own driving-model
 provider (separate from genie's backend, but the same OpenAI-`responses`-API
-shape satisfies both), so it's gated on the same secrets as `conjure` and
-skips the same way without them. If Codex's own driving-model provider
-rejects the turn before any tool call is attempted — a third-party
-model-provider/tool-schema compatibility issue, not a genie MCP defect — the
-test skips with an attributed reason pointing at the captured transcript
-instead of failing the whole harness suite on an upstream provider bug.
+shape satisfies both), so it is gated on the same environment pair as
+`conjure`. In the required CI job, missing credentials, endpoint failures, and
+provider/tool-schema incompatibilities fail loudly and leave the captured
+transcript as evidence; the real-endpoint gate is never converted into a skip.
