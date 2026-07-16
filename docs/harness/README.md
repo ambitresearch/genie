@@ -55,8 +55,9 @@ These are orthogonal, so harnesses fall into a grid:
 
 The current CLI validates its known required secrets before starting any
 transport. `GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required at startup,
-including for read-only tool calls. `GENIE_LLM_BASE_URL` is also required when
-calling `conjure`, `refine`, or `conjure_screen`:
+including for read-only tool calls. `GENIE_LLM_BASE_URL` is required only for
+`conjure` and `refine`; the current `conjure_screen` implementation is an
+offline deterministic scaffold:
 
 - `GENIE_LLM_BASE_URL` — the endpoint (must end in `/v1`).
 - `GENIE_LLM_API_KEY` — its key (at least 16 characters).

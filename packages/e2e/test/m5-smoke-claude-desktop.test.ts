@@ -113,6 +113,7 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("Linux beta");
     expect(CLAUDE_DESKTOP_DOC).toContain("Ubuntu 22.04 LTS+");
     expect(CLAUDE_DESKTOP_DOC).toContain("Debian 12+");
+    expect(CLAUDE_DESKTOP_DOC).toContain("~/.config/Claude/claude_desktop_config.json");
     expect(CLAUDE_DESKTOP_DOC).not.toContain("Linux is not officially supported");
   });
 
@@ -126,6 +127,12 @@ describe("Claude Desktop guide contracts", () => {
     expect(HARNESS_OVERVIEW).toContain("[claude-desktop.md](./claude-desktop.md)");
     expect(HARNESS_OVERVIEW).toContain(
       "`GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required at startup",
+    );
+    expect(HARNESS_OVERVIEW).toMatch(
+      /`GENIE_LLM_BASE_URL` is required only for\s+`conjure` and `refine`/,
+    );
+    expect(HARNESS_OVERVIEW).toMatch(
+      /the current `conjure_screen` implementation is an\s+offline deterministic scaffold/,
     );
     expect(HARNESS_OVERVIEW).not.toMatch(/read tools work without\s+an LLM configured/i);
   });

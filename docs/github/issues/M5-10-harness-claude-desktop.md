@@ -10,8 +10,9 @@ estimate: "5h"
 
 Ship the Claude Desktop config snippet for
 `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) and
-`%APPDATA%\Claude\claude_desktop_config.json` (Windows). Smoke test via
-`.mcpb` install (M5-05).
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows), plus the Linux beta's
+`~/.config/Claude/claude_desktop_config.json` default. Smoke test via `.mcpb`
+install (M5-05).
 
 ## Context
 

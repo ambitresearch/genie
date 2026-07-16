@@ -30,6 +30,9 @@ Claude Desktop reads its MCP server list from a JSON config file:
 
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux:** `~/.config/Claude/claude_desktop_config.json` by default, or
+  `$XDG_CONFIG_HOME/Claude/claude_desktop_config.json` when `XDG_CONFIG_HOME`
+  is set
 
 Add genie under `mcpServers`:
 
