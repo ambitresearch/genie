@@ -20,17 +20,17 @@ install (M5-05).
 
 ## Acceptance Criteria
 
-- [ ] AC1 — `docs/harness/claude-desktop.md` includes the snippet (stdio
+- [x] AC1 — `docs/harness/claude-desktop.md` includes the snippet (stdio
       transport via `npx -y @genie/server`). The original bare `genie` name
       is occupied by an unrelated npm package; M5-06 owns publishing the
       scoped package.
-- [ ] AC2 — Documents current Linux beta support: Ubuntu 22.04 LTS+ or
+- [x] AC2 — Documents current Linux beta support: Ubuntu 22.04 LTS+ or
       Debian 12+ on x64/arm64. This supersedes the original non-support
       wording after Anthropic shipped its official Linux beta.
-- [ ] AC3 — Documents `~/Library/Logs/Claude/mcp*.log` for debugging.
-- [ ] AC4 — Documents the `mcp-remote` bridge pattern for users who want to
+- [x] AC3 — Documents `~/Library/Logs/Claude/mcp*.log` for debugging.
+- [x] AC4 — Documents the `mcp-remote` bridge pattern for users who want to
       reach a remote server from Desktop.
-- [ ] AC5 — `.mcpb` install is the recommended path; the JSON snippet is
+- [x] AC5 — `.mcpb` install is the recommended path; the JSON snippet is
       "if you prefer".
 - [ ] AC6 — Smoke test installs the `.mcpb`, opens Claude Desktop, fires
       `list_kits`, captures screenshot.
@@ -61,8 +61,8 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 ## Definition of Done
 
-- [ ] Tests added — smoke + screenshot.
-- [ ] Docs updated.
-- [ ] Manual verification.
+- [ ] Tests added — smoke passes; screenshot remains.
+- [x] Docs updated.
+- [x] Manual verification.
 - [ ] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.

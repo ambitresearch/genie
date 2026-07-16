@@ -17,13 +17,12 @@ The recommended way to register genie in Claude Desktop is the packaged
 `.mcpb` (MCP Bundle) installer: double-click the bundle, Claude Desktop
 installs and registers the server for you, and you never hand-edit JSON.
 
-> **Current status:** the genie `.mcpb` is not yet published. Packaging is
-> tracked by [M5-05](../github/issues/M5-05-mcpb-packaging.md) and its open
-> [PR #203](https://github.com/roshangautam/genie/pull/203). No current genie
-> GitHub Release contains a `.mcpb` asset. Once a release includes a verified
-> bundle, prefer it on macOS. The M5-05 v1 bundle is macOS-only; Windows and
-> Linux users must use the manual JSON configuration below until their
-> platforms are supported. On macOS, JSON remains the "if you prefer" path.
+> **Current status:** the verified M5-05 bundle landed in
+> [PR #203](https://github.com/roshangautam/genie/pull/203). Prefer the `.mcpb`
+> on macOS once it is attached to a GitHub Release. The M5-05 v1 bundle is
+> macOS-only; Windows and Linux users must use the manual JSON configuration
+> below until their platforms are supported. On macOS, JSON remains the "if
+> you prefer" path.
 
 ## If you prefer: manual JSON snippet
 
@@ -157,21 +156,16 @@ native custom-connector flow.
 
 ## AC6 smoke-test status
 
-AC6 is not complete. It requires a real `.mcpb` install in Claude Desktop, a
-`list_kits` call, and a non-secret screenshot of that result. A raw SDK client
-talking to the stdio server is supplemental transport coverage, not evidence
-that Claude Desktop installed or loaded the bundle.
+The real Claude Desktop leg was completed on macOS with Claude Desktop
+1.21459.3. The exact M5-05 artifact was installed into the separate
+`Claude-3p` profile, where no genie extension previously existed. Claude
+persisted `local.mcpb.roshan-gautam.genie` v1.2.0 with the artifact's exact
+SHA-256, saved all required configuration fields, and enabled the extension.
+A new chat discovered genie, invoked `list_kits`, and returned an empty kit
+list successfully. Sensitive configuration remained encrypted. The remaining
+AC6 evidence is a non-secret screenshot of the connected server and result.
 
-The macOS review environment has a signed Claude Desktop installation
-available, but the required genie artifact does not exist on `main` or in any
-current GitHub Release. [M5-05](../github/issues/M5-05-mcpb-packaging.md) and
-PR #203 must first ship a bundle. Its current candidate now includes every
-runtime-required secret plus explicit writable `GENIE_KITS_ROOT` and
-`GENIE_PROJECTS_ROOT` values, but an unmerged candidate is not an installable
-release artifact. Until PR #203 lands and publishes `genie.mcpb`, there is
-nothing valid to install and no truthful AC6 screenshot can be captured.
-
-Once that blocker is removed, run this protocol:
+Use this protocol to reproduce the verification on another profile or release:
 
 1. Download `genie.mcpb` from the relevant GitHub Release. Record its release
    tag and checksum with the test evidence.
@@ -189,11 +183,11 @@ Once that blocker is removed, run this protocol:
    API keys, file paths containing private data, and unrelated chats out of
    frame.
 7. Attach the screenshot and a one-line pass/fail note to M5-10 as the AC6
-   evidence artifact.
+   evidence artifact. The screenshot must not expose configuration values.
 
-`packages/e2e/test/m5-smoke-claude-desktop.test.ts` verifies the current
-bootstrap contract and exercises `list_kits` plus the component workflow over
-the same real stdio transport. It deliberately does not claim to satisfy AC6.
+`packages/e2e/test/m5-smoke-claude-desktop.test.ts` supplements that manual
+evidence by verifying the bootstrap contract and exercising `list_kits` plus
+the component workflow over the same real stdio transport.
 
 ## What you get here
 

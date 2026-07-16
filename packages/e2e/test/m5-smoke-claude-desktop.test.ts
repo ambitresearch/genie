@@ -86,7 +86,7 @@ describe("Claude Desktop guide contracts", () => {
     expect(genie.env.GENIE_HOME).toBe("/absolute/path/to/.genie");
     expect(genie.env.GENIE_KITS_ROOT).toBe("/absolute/path/to/.genie/kits");
     expect(genie.env.GENIE_PROJECTS_ROOT).toBe("/absolute/path/to/.genie/projects");
-    expect(CLAUDE_DESKTOP_DOC).toContain("not yet published");
+    expect(CLAUDE_DESKTOP_DOC).toContain("verified M5-05 bundle landed");
     expect(CLAUDE_DESKTOP_DOC).toContain("unrelated package");
   });
 
@@ -117,8 +117,9 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("Ubuntu 22.04 LTS+");
     expect(CLAUDE_DESKTOP_DOC).toContain("Debian 12+");
     expect(CLAUDE_DESKTOP_DOC).toContain("~/.config/Claude/claude_desktop_config.json");
-    expect(CLAUDE_DESKTOP_DOC).toContain("M5-05 v1 bundle is macOS-only");
-    expect(CLAUDE_DESKTOP_DOC).toContain("Linux users must use the manual JSON configuration");
+    expect(CLAUDE_DESKTOP_DOC).toContain("M5-05 v1 bundle is");
+    expect(CLAUDE_DESKTOP_DOC).toContain("macOS-only; Windows and Linux users");
+    expect(CLAUDE_DESKTOP_DOC).toMatch(/Linux users must use the manual JSON configuration/);
     expect(CLAUDE_DESKTOP_DOC).not.toContain("Linux is not officially supported");
   });
 
@@ -126,11 +127,9 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("/Users/you/.genie/kits");
     expect(CLAUDE_DESKTOP_DOC).toContain("C:\\\\Users\\\\you\\\\.genie\\\\kits");
     expect(CLAUDE_DESKTOP_DOC).toContain("/home/you/.genie/kits");
-    expect(CLAUDE_DESKTOP_DOC).toMatch(
-      /PR #203 must first ship a bundle[\s\S]*explicit writable `GENIE_KITS_ROOT` and\s+`GENIE_PROJECTS_ROOT` values/,
-    );
-    expect(CLAUDE_DESKTOP_DOC).toMatch(
-      /an unmerged candidate is not an installable\s+release artifact/,
+    expect(CLAUDE_DESKTOP_DOC).toContain('"GENIE_KITS_ROOT": "/absolute/path/to/.genie/kits"');
+    expect(CLAUDE_DESKTOP_DOC).toContain(
+      '"GENIE_PROJECTS_ROOT": "/absolute/path/to/.genie/projects"',
     );
   });
 
