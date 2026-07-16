@@ -7,24 +7,40 @@
  *      (base image, non-root user, healthcheck, exposed port) — the same
  *      "encode the AC as a test" discipline `litellm-config.test.ts` uses for
  *      a different reference file.
- *   2. A real `docker build` + container boot + `/health` check, gated behind
- *      {@link isDockerAvailable} exactly like `gitea-conformance.test.ts` —
- *      skipped locally/in this sandbox (no daemon), required to actually run
+ *   2. A real `docker build` + container boot + `/health` check, gated by the
+ *      same `docker info` CLI interface every test below uses — skipped when
+ *      the CLI/daemon is unavailable, required to actually run
  *      on CI's `docker-build-smoke` job (ci.yml), which sets
  *      `GENIE_REQUIRE_DOCKER=1` so a daemon-less runner fails loudly instead
  *      of skipping vacuously.
  */
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { isDockerAvailable } from "./support/gitea-fixture.js";
-
 const execFileAsync = promisify(execFile);
 const maxImageSizeBytes = 200_000_000;
+
+type DockerInfoRunner = (command: string, args: string[]) => Promise<unknown>;
+
+async function isDockerCliAvailable(
+  run: DockerInfoRunner = async (command, args) => {
+    await execFileAsync(command, args);
+  },
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  if (env.GENIE_SKIP_DOCKER_TESTS === "1") return false;
+  try {
+    await run("docker", ["info", "--format", "{{.ServerVersion}}"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "..", "..");
@@ -221,9 +237,10 @@ describe("Docker release and CI workflows", () => {
     expect(releaseWorkflow.slice(dockerHubJobStart)).toContain("DOCKERHUB_TOKEN");
   });
 
-  it("cleans up the container created by this suite", () => {
-    expect(ci).toMatch(/docker rm -f genie-docker-image-test/);
-    expect(ci).not.toMatch(/docker rm -f genie-smoke/);
+  it("scopes fallback cleanup to this run and removes anonymous volumes", () => {
+    expect(ci).toContain("label=com.genie.docker-image-test.run=${GITHUB_RUN_ID}");
+    expect(ci).toMatch(/xargs --no-run-if-empty docker rm -fv/);
+    expect(ci).not.toMatch(/docker rm -f genie-docker-image-test/);
   });
 
   it("builds both release platforms in PR CI before publishing", () => {
@@ -240,23 +257,58 @@ describe("Docker release and CI workflows", () => {
   });
 });
 
-const dockerAvailable = await isDockerAvailable();
+describe("Docker CLI availability probe", () => {
+  it("probes the exact CLI and daemon interface used by the suite", async () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const available = await isDockerCliAvailable(async (command, args) => {
+      calls.push({ command, args });
+    }, {});
+
+    expect(available).toBe(true);
+    expect(calls).toEqual([
+      { command: "docker", args: ["info", "--format", "{{.ServerVersion}}"] },
+    ]);
+  });
+
+  it("returns false when the Docker CLI or daemon is unavailable", async () => {
+    const available = await isDockerCliAvailable(async () => {
+      throw new Error("ENOENT");
+    }, {});
+    expect(available).toBe(false);
+  });
+
+  it("honors the explicit Docker-test opt-out without invoking the CLI", async () => {
+    let called = false;
+    const available = await isDockerCliAvailable(
+      async () => {
+        called = true;
+      },
+      { GENIE_SKIP_DOCKER_TESTS: "1" },
+    );
+    expect(available).toBe(false);
+    expect(called).toBe(false);
+  });
+});
+
+const dockerAvailable = await isDockerCliAvailable();
 if (!dockerAvailable) {
   console.warn(
-    "docker-image.test.ts: no container runtime reachable — skipping the real " +
+    "docker-image.test.ts: Docker CLI or daemon unavailable — skipping the real " +
       "build+boot suite. CI's docker-build-smoke job (ci.yml) exercises this for real.",
   );
 }
 if (!dockerAvailable && process.env.GENIE_REQUIRE_DOCKER === "1") {
   throw new Error(
-    "GENIE_REQUIRE_DOCKER=1 but no container runtime is reachable — the CI Docker " +
+    "GENIE_REQUIRE_DOCKER=1 but the Docker CLI or daemon is unavailable — the CI Docker " +
       "leg must not silently skip this suite.",
   );
 }
 
 describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () => {
   const imageTag = "genie:docker-image-test";
-  const containerName = "genie-docker-image-test";
+  const cleanupScope = process.env.GITHUB_RUN_ID ?? randomUUID();
+  const containerName = `genie-docker-image-test-${process.pid}-${randomUUID().slice(0, 8)}`;
+  const containerLabel = `com.genie.docker-image-test.run=${cleanupScope}`;
 
   beforeAll(async () => {
     await execFileAsync("docker", ["build", "-t", imageTag, repoRoot], {
@@ -265,7 +317,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
   }, 300_000);
 
   afterAll(async () => {
-    await execFileAsync("docker", ["rm", "-f", containerName]).catch(() => {});
+    await execFileAsync("docker", ["rm", "-fv", containerName]).catch(() => {});
   });
 
   it("produces a runtime image under 200 MB (AC2)", async () => {
@@ -470,6 +522,8 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
       "-d",
       "--name",
       containerName,
+      "--label",
+      containerLabel,
       "-p",
       "18081:8080",
       "-e",

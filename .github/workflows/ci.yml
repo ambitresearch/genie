@@ -526,4 +526,7 @@ jobs:
 
       - name: Clean up
         if: always()
-        run: docker rm -f genie-docker-image-test || true
+        run: |
+          docker ps -aq \
+            --filter "label=com.genie.docker-image-test.run=${GITHUB_RUN_ID}" \
+            | xargs --no-run-if-empty docker rm -fv
