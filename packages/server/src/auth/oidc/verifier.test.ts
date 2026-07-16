@@ -116,6 +116,23 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     );
   });
 
+  it("does not follow OIDC discovery redirects", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://attacker.example.test/.well-known/openid-configuration" },
+      }),
+    );
+
+    await expect(createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE })).rejects.toThrow(
+      `OIDC discovery failed: GET ${ISSUER}/.well-known/openid-configuration -> 302`,
+    );
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `${ISSUER}/.well-known/openid-configuration`,
+      expect.objectContaining({ redirect: "manual" }),
+    );
+  });
+
   it("rejects a plaintext non-loopback issuer before discovery", async () => {
     await expect(
       createOidcVerifier({

@@ -125,7 +125,7 @@ async function discoverJwksUri(
   const signal = AbortSignal.timeout(timeoutMs);
   let res: Response;
   try {
-    res = await fetch(discoveryUrl, { signal });
+    res = await fetch(discoveryUrl, { signal, redirect: "manual" });
   } catch (error) {
     if (signal.aborted) {
       throw new Error(`OIDC discovery timed out after ${timeoutMs} ms: GET ${discoveryUrl}`, {
