@@ -99,6 +99,17 @@ describe("createServer preview transport policy", () => {
     expect(preview.closeAll).not.toHaveBeenCalled();
   });
 
+  it("threads an injected viewer booter into preview registration", () => {
+    const viewerBooter = vi.fn();
+
+    createServer({ viewerBooter });
+
+    expect(preview.registerPreviewTool).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ booter: viewerBooter }),
+    );
+  });
+
   it("shares one lazily started card broker across preview and grid registration", async () => {
     const server = createServer({ transportKind: "stdio" });
     const previewOptions = preview.registerPreviewTool.mock.calls[0]?.[1] as {

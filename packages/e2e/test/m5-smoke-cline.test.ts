@@ -85,9 +85,35 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createToken } from "../../server/src/auth/bearer.js";
 import { compileManifest } from "../../server/src/manifest/index.js";
 import { createServer } from "../../server/src/server.js";
+import { DEFAULT_VIEWER_PORT, type ViewerBooter } from "../../server/src/tools/preview.js";
 import { createStreamableHttpRequestHandler } from "../../server/src/transport.js";
+import { bootViewer } from "../../viewer/src/index.js";
 
 const execFileAsync = promisify(execFile);
+
+function createSourceViewerBooter(): { booter: ViewerBooter; closeAll: () => Promise<void> } {
+  const closeViewers = new Set<() => Promise<void>>();
+  const booter: ViewerBooter = async ({ kitDir, port, open }) => {
+    const handle = await bootViewer(
+      { root: kitDir, port: port ?? DEFAULT_VIEWER_PORT, open: open ?? false },
+      {
+        stdout: (chunk) => process.stderr.write(chunk),
+        stderr: (chunk) => process.stderr.write(chunk),
+      },
+    );
+    let closing: Promise<void> | undefined;
+    const close = (): Promise<void> => {
+      closing ??= handle.close().finally(() => closeViewers.delete(close));
+      return closing;
+    };
+    closeViewers.add(close);
+    return { ...handle, close };
+  };
+  return {
+    booter,
+    closeAll: () => Promise.all([...closeViewers].map((close) => close())).then(() => undefined),
+  };
+}
 
 /**
  * One tiny on-disk kit — enough for conjure/plan/write_files/preview to have
@@ -232,6 +258,7 @@ describe("M5-14 Cline harness smoke test", () => {
     const llmStub = await startLlmStub();
     process.env["GENIE_LLM_BASE_URL"] = llmStub.baseURL;
     process.env["GENIE_LLM_API_KEY"] = "genie-smoke-llm-key";
+    const sourceViewer = createSourceViewerBooter();
 
     const http = createNodeHttpServer(
       createStreamableHttpRequestHandler(
@@ -243,6 +270,11 @@ describe("M5-14 Cline harness smoke test", () => {
             // "--preview-locality local / GENIE_PREVIEW_LOCALITY=local" note —
             // this is the scenario the doc promises a concrete viewerUrl for.
             previewLocality: "local",
+            // Test the real viewer without relying on ignored build output.
+            // A clean test job has viewer source + dependencies but no dist/;
+            // createServer's supported booter seam keeps that build order from
+            // changing preview's truthful production fallback behavior.
+            viewerBooter: sourceViewer.booter,
           }),
         { requireBearerAuth: true },
       ),
@@ -371,14 +403,17 @@ describe("M5-14 Cline harness smoke test", () => {
         // (and its `afterEach`) has already deleted `kitsRoot`. That race is
         // exactly what produced the reviewer-reported `ENOENT` from Vite's
         // dependency scan still running against a since-deleted kit dir.
-        // `terminateSession` drives the server's DELETE handler, which runs
-        // `disposeSession` -> `disposeServer` -> `previewRegistry.closeAll()`
-        // -> the booted viewer's real `close()`, so the Vite server is fully
-        // shut down before we return here.
+        // `terminateSession` drives the server's DELETE handler and starts the
+        // `disposeSession` -> `previewRegistry.closeAll()` chain. The outer
+        // finally explicitly awaits the same idempotent viewer close because
+        // the transport does not await asynchronous server disposers.
         await transport.terminateSession().catch(() => undefined);
         await Promise.allSettled([client.close()]);
       }
     } finally {
+      // HTTP session disposal starts asynchronously after DELETE. Await the
+      // same idempotent close promise here before afterEach removes kitsRoot.
+      await sourceViewer.closeAll();
       await new Promise<void>((resolveClose, reject) =>
         http.close((error) => (error ? reject(error) : resolveClose())),
       );
