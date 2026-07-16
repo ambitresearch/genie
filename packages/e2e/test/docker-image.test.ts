@@ -97,6 +97,10 @@ describe("Dockerfile (M5-07 static ACs)", () => {
     expect(dockerfile).not.toMatch(/\bnpm (?:ci|install)\b/);
   });
 
+  it("includes genie's MIT license in the distributed runtime image", () => {
+    expect(dockerfile).toMatch(/COPY --chown=node:node LICENSE \.\/LICENSE/);
+  });
+
   it("documents the strict decimal-byte budget and the real viewer asset source", () => {
     expect(dockerfile).toContain("AC2's 200,000,000-byte ceiling");
     expect(dockerfile).not.toContain("200 MiB");
@@ -479,6 +483,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
       [
         'const fs = require("node:fs")',
         'const files = fs.readdirSync("node_modules/.pnpm", { recursive: true })',
+        'if (!fs.readFileSync("LICENSE", "utf8").includes("MIT License")) throw new Error("missing genie license")',
         'if (!fs.existsSync("node_modules/esbuild/LICENSE.md")) throw new Error("missing esbuild license")',
         'if (!fs.existsSync("node_modules/ts-morph/LICENSE.@ts-morph-common")) throw new Error("missing bundled ts-morph license")',
         'if (!files.some((file) => String(file).includes("node_modules/jose/LICENSE.md"))) throw new Error("missing jose license")',

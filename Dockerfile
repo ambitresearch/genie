@@ -102,6 +102,7 @@ WORKDIR /app
 COPY --from=build --chown=node:node /out/dist ./dist
 COPY --from=build --chown=node:node /out/node_modules ./node_modules
 COPY --from=build --chown=node:node /out/package.json ./package.json
+COPY --chown=node:node LICENSE ./LICENSE
 
 ENV NODE_ENV=production \
     MCP_TRANSPORT=http \
