@@ -11,7 +11,7 @@
 # booted by testcontainers' GenericContainer, no host-side install required.
 #
 # NOTE: exact `@anthropic-ai/claude-code` CLI flags used by the test harness
-# (`claude -p ... --mcp-config ... --output-format stream-json --verbose`)
+# (`claude -p ... --setting-sources user --output-format stream-json --verbose`)
 # were verified against a locally available `claude` binary (2.x) at
 # authoring time — see the test file's header comment for details on what
 # could/couldn't be confirmed in this environment. `stream-json` (rather
@@ -40,9 +40,8 @@ ENV CI=1
 RUN chown node:node /workspace
 
 # The test harness mounts/bind-copies:
-#   /workspace/claude-config.json — combined `--settings` / `--mcp-config` JSON
-#                                    with top-level apiKeyHelper plus the HTTP
-#                                    genie server's headersHelper
+#   /workspace/.claude/settings.json — top-level apiKeyHelper
+#   /workspace/.claude.json          — HTTP genie server + headersHelper
 #   /workspace/*-helper.sh        — throwaway helper scripts referenced above
 #   /workspace/prompt.txt        — the non-interactive prompt to run
 # then starts this image idle and invokes the CLI through `container.exec`

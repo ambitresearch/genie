@@ -87,17 +87,22 @@ liveness checks. Mint the token once with `genie token create`, store only its
 hash server-side, and hand the plaintext to the secret manager the helper
 script reads from — it is shown exactly once at creation time.
 
-### Combined example: HTTP transport + top-level `apiKeyHelper`
+### Combined setup: HTTP transport + top-level `apiKeyHelper`
 
-These two settings live at different scopes (see above) but commonly appear
-together in the same config file: `apiKeyHelper` for Claude Code's own model
-credential, `headersHelper` nested under the `genie` server entry for
-authenticating to genie's HTTP transport. One complete, valid config combining
-both:
+These settings live at different scopes **and in different default files**.
+Put Claude Code's model credential helper in `~/.claude/settings.json`:
 
 ```json
 {
-  "apiKeyHelper": "/absolute/path/to/anthropic-api-key-helper.sh",
+  "apiKeyHelper": "/absolute/path/to/anthropic-api-key-helper.sh"
+}
+```
+
+Put the HTTP MCP server and its request-header helper in `~/.claude.json` (or
+the project's `.mcp.json`):
+
+```json
+{
   "mcpServers": {
     "genie": {
       "type": "http",
@@ -108,6 +113,11 @@ both:
 }
 ```
 
+Do not combine these blocks into `~/.claude.json`: Claude Code does not load
+`apiKeyHelper` from that file during normal startup. A single temporary file
+only works when explicitly supplied through both `--settings` and
+`--mcp-config`, which is not the default on-disk setup documented here.
+
 `anthropic-api-key-helper.sh` is any executable on `$PATH` (or referenced by
 absolute path, as above) that prints Claude Code's own model-API key/token —
 a bare string, not JSON — to stdout. A real, ready-to-use implementation
@@ -116,8 +126,7 @@ ships in this repo at
 (tracked as executable mode `100755`). Copy it, adjust the credential source
 for your environment, and point the top-level `apiKeyHelper` field at your
 copy. Claude Code has no `claude config set` shell subcommand; edit
-`~/.claude/settings.json` or use `/config` in an interactive session for
-settings outside the MCP JSON shown here.
+`~/.claude/settings.json` or use `/config` in an interactive session.
 
 genie now ships OAuth 2.0 + Dynamic Client Registration endpoints (M5-01,
 DRO-273): `/.well-known/oauth-authorization-server` (RFC 8414 metadata),

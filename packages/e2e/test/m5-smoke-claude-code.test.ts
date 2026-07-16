@@ -166,13 +166,12 @@ interface ClaudeDriverConfig {
   source: "dedicated" | "gateway";
 }
 
-function createClaudeCombinedConfig(
-  mcpUrl: string,
-  apiKeyHelper: string,
-  headersHelper: string,
-): Record<string, unknown> {
+function createClaudeSettings(apiKeyHelper: string): Record<string, unknown> {
+  return { apiKeyHelper };
+}
+
+function createClaudeMcpConfig(mcpUrl: string, headersHelper: string): Record<string, unknown> {
   return {
-    apiKeyHelper,
     mcpServers: {
       genie: {
         type: "http",
@@ -642,8 +641,8 @@ it("denies built-in Claude tools while allowing only the documented MCP wrappers
 
 const hasClaudeCli = spawnSync("claude", ["--version"], { stdio: "ignore" }).status === 0;
 
-describe.skipIf(!hasClaudeCli)("Claude Code accepts the documented combined helper config", () => {
-  it("executes top-level apiKeyHelper and per-server headersHelper in their real CLI scopes", async () => {
+describe.skipIf(!hasClaudeCli)("Claude Code accepts the documented default helper files", () => {
+  it("executes both helpers from their normal settings and MCP config files", async () => {
     const base = await mkdtemp(join(tmpdir(), "genie-claude-combined-config-"));
     const apiMarker = join(base, "api-key-helper.called");
     const headersMarker = join(base, "headers-helper.called");
@@ -753,7 +752,9 @@ describe.skipIf(!hasClaudeCli)("Claude Code accepts the documented combined help
       const apiPort = await listen(apiHttp);
       const apiHelper = join(base, "api-key-helper.sh");
       const headersHelper = join(base, "headers-helper.sh");
-      const combinedConfig = join(base, "claude-config.json");
+      const settingsDir = join(base, ".claude");
+      const settingsPath = join(settingsDir, "settings.json");
+      const mcpConfigPath = join(base, ".claude.json");
       await writeFile(
         apiHelper,
         '#!/bin/sh\nset -eu\n: > "$GENIE_API_HELPER_MARKER"\nprintf %s "$GENIE_CLAUDE_DRIVER_API_KEY"\n',
@@ -763,11 +764,11 @@ describe.skipIf(!hasClaudeCli)("Claude Code accepts the documented combined help
         '#!/bin/sh\nset -eu\n: > "$GENIE_HEADERS_HELPER_MARKER"\nprintf \'{"X-Genie-Smoke-Helper":"configured"}\'\n',
       );
       await Promise.all([chmod(apiHelper, 0o755), chmod(headersHelper, 0o755)]);
+      await mkdir(settingsDir, { recursive: true });
+      await writeFile(settingsPath, JSON.stringify(createClaudeSettings(apiHelper)));
       await writeFile(
-        combinedConfig,
-        JSON.stringify(
-          createClaudeCombinedConfig(`http://127.0.0.1:${mcpPort}/mcp`, apiHelper, headersHelper),
-        ),
+        mcpConfigPath,
+        JSON.stringify(createClaudeMcpConfig(`http://127.0.0.1:${mcpPort}/mcp`, headersHelper)),
       );
 
       const env: Record<string, string> = {
@@ -795,12 +796,8 @@ describe.skipIf(!hasClaudeCli)("Claude Code accepts the documented combined help
           [
             "-p",
             "Reply with one word.",
-            "--bare",
-            "--settings",
-            combinedConfig,
-            "--mcp-config",
-            combinedConfig,
-            "--strict-mcp-config",
+            "--setting-sources",
+            "user",
             "--output-format",
             "json",
             "--tools",
@@ -1226,11 +1223,8 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
 
         const apiKeyHelperPath = joinPath(base, "api-key-helper.sh");
         const headersHelperPath = joinPath(base, "headers-helper.sh");
-        const combinedConfig = createClaudeCombinedConfig(
-          `http://host.docker.internal:${port}/mcp`,
-          "/workspace/api-key-helper.sh",
-          "/workspace/headers-helper.sh",
-        );
+        const settingsPath = joinPath(base, "settings.json");
+        const mcpConfigPath = joinPath(base, "mcp-config.json");
         const dockerSmokeModel = smokeModel ?? "design-default";
         const prompt =
           "Create a kit named m5-docker-smoke, then ask genie to conjure a simple primary " +
@@ -1249,8 +1243,19 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
         );
         await Promise.all([chmod(apiKeyHelperPath, 0o755), chmod(headersHelperPath, 0o755)]);
         await writeFile(
-          joinPath(base, "claude-config.json"),
-          JSON.stringify(combinedConfig, null, 2),
+          settingsPath,
+          JSON.stringify(createClaudeSettings("/workspace/api-key-helper.sh"), null, 2),
+        );
+        await writeFile(
+          mcpConfigPath,
+          JSON.stringify(
+            createClaudeMcpConfig(
+              `http://host.docker.internal:${port}/mcp`,
+              "/workspace/headers-helper.sh",
+            ),
+            null,
+            2,
+          ),
         );
         await writeFile(joinPath(base, "prompt.txt"), prompt);
 
@@ -1269,8 +1274,12 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             .withExtraHosts([{ host: "host.docker.internal", ipAddress: "host-gateway" }])
             .withCopyFilesToContainer([
               {
-                source: joinPath(base, "claude-config.json"),
-                target: "/workspace/claude-config.json",
+                source: settingsPath,
+                target: "/workspace/.claude/settings.json",
+              },
+              {
+                source: mcpConfigPath,
+                target: "/workspace/.claude.json",
               },
               { source: apiKeyHelperPath, target: "/workspace/api-key-helper.sh", mode: 0o755 },
               {

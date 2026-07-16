@@ -64,6 +64,15 @@ describe("Claude plugin artifacts", () => {
     expect(claude).not.toContain("all automatically");
   });
 
+  it("documents apiKeyHelper and headersHelper in their default Claude Code files", () => {
+    const claude = readFileSync(resolve(ROOT, "docs/harness/claude-code.md"), "utf8");
+
+    expect(claude).toContain("`~/.claude/settings.json`");
+    expect(claude).toContain("`~/.claude.json`");
+    expect(claude).toContain("Do not combine these blocks into `~/.claude.json`");
+    expect(claude).not.toContain("together in the same config file");
+  });
+
   it("keeps manual paid smoke runs isolated from normal CI concurrency", () => {
     const ci = readFileSync(resolve(ROOT, ".github/workflows/ci.yml"), "utf8");
 
