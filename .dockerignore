@@ -3,6 +3,10 @@
 **/.env*
 !.env.example
 !**/.env.example
+.genie
+**/.genie
+.remember
+**/.remember
 node_modules
 **/node_modules
 **/dist

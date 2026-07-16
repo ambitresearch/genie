@@ -639,10 +639,9 @@ export class LocalFsKitStore implements KitStore {
     // above and is not yet visible to any other caller (the `.kit.json`
     // exclusive-write above is the only publication point `getKit`/`listKits`
     // key off), so plain per-file writes are safe here — no concurrent writer
-    // can be racing this directory. Best-effort: `loadViewerAssets` degrades
-    // to `[]` (never throws) when `@genie/viewer` can't be resolved, so a kit
-    // is still created even if the viewer package happens to be absent from
-    // this install.
+    // can be racing this directory. `loadViewerAssets` prefers the shell
+    // bundled into the server package and degrades to `[]` (never throws) only
+    // when neither that payload nor the optional viewer package is available.
     const viewerAssets = await loadViewerAssets();
     await Promise.all(viewerAssets.map((asset) => writeFile(join(dir, asset.path), asset.content)));
 

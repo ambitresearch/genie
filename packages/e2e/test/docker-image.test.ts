@@ -100,6 +100,10 @@ describe("Docker build context", () => {
       ".git",
       ".env*",
       "**/.env*",
+      ".genie",
+      "**/.genie",
+      ".remember",
+      "**/.remember",
       "node_modules",
       "**/node_modules",
       "**/dist",
@@ -229,6 +233,11 @@ describe("Docker release and CI workflows", () => {
     expect(ci).toMatch(/docker buildx build --platform linux\/arm64 --load/);
     expect(ci).toMatch(/test "\$size" -lt 200000000/);
   });
+
+  it("gives the emulated multi-arch gate enough time to finish", () => {
+    const dockerJob = ci.slice(ci.indexOf("  docker-build-smoke:"));
+    expect(dockerJob).toMatch(/timeout-minutes: 30/);
+  });
 });
 
 const dockerAvailable = await isDockerAvailable();
@@ -303,6 +312,39 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
       ].join(";"),
     ]);
     expect(stdout.trim()).toBe("/data/kits,/data/projects,/data/reports");
+  });
+
+  it("scaffolds viewer assets when create_kit runs without @genie/viewer", async () => {
+    const { stdout } = await execFileAsync("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "node",
+      imageTag,
+      "--input-type=module",
+      "-e",
+      [
+        'import { Client } from "@modelcontextprotocol/sdk/client/index.js";',
+        'import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";',
+        'import { existsSync, readdirSync } from "node:fs";',
+        'import { join } from "node:path";',
+        'import { createServer } from "./dist/server.js";',
+        'const root = "/data/kits";',
+        'const server = createServer({ kitsRoot: root, transportKind: "stdio" });',
+        'const client = new Client({ name: "docker-create-kit", version: "0" });',
+        "const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();",
+        "await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);",
+        'const result = await client.callTool({ name: "mcp__genie__create_kit", arguments: { name: "Docker Viewer Kit" } });',
+        'if (result.isError) throw new Error("create_kit failed");',
+        'const kitId = readdirSync(root).find((name) => !name.startsWith("."));',
+        'if (!kitId) throw new Error("create_kit wrote no kit");',
+        'const assets = ["index.html", "viewer.js", "viewer.css"];',
+        'if (assets.some((name) => !existsSync(join(root, kitId, name)))) throw new Error("viewer scaffold missing");',
+        'process.stdout.write("viewer-scaffold-ok");',
+        "await client.close();",
+      ].join("\n"),
+    ]);
+    expect(stdout.trim()).toBe("viewer-scaffold-ok");
   });
 
   it("keeps esbuild's native runtime binary functional", async () => {
