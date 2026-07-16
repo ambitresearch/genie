@@ -98,26 +98,27 @@ const hasCodex = codexAvailable();
 const hasBuiltServer = spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`]).status === 0;
 
 describe("codex-smoke CI contract", () => {
-  it("uses dedicated smoke credentials on the private-LAN runner and requires the live endpoint leg", async () => {
+  it("keeps PR checks secret-free and reserves the live endpoint for trusted pushes", async () => {
     const workflow = await readFile(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
-    const match = workflow.match(/\n {2}codex-smoke:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/);
-    expect(match, "expected ci.yml to define the codex-smoke job").not.toBeNull();
+    const smokeMatch = workflow.match(/\n {2}codex-smoke:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/);
+    const liveMatch = workflow.match(/\n {2}codex-live:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/);
+    expect(smokeMatch, "expected ci.yml to define the codex-smoke job").not.toBeNull();
+    expect(liveMatch, "expected ci.yml to define the codex-live job").not.toBeNull();
 
-    const job = match?.[1] ?? "";
-    expect(job).toContain(
-      "if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository",
-    );
-    // GitHub withholds Actions secrets from untrusted forks. Do not turn that
-    // missing-credential state into a required red job or expose secrets via
-    // pull_request_target; maintainers must rerun fork changes on a trusted branch.
-    expect(job).toContain("runs-on: [self-hosted, Linux, X64, genie]");
-    expect(job).toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}");
-    expect(job).toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}");
-    expect(job).toContain('GENIE_REQUIRE_LLM: "1"');
-    expect(job).toContain("GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}");
-    expect(job).toContain("npm install -g @openai/codex@0.144.5");
-    expect(job).not.toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}");
-    expect(job).not.toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}");
+    const smokeJob = smokeMatch?.[1] ?? "";
+    expect(smokeJob).toContain("runs-on: ubuntu-latest");
+    expect(smokeJob).toContain("npm install -g @openai/codex@0.144.5");
+    expect(smokeJob).not.toContain("secrets.");
+    expect(smokeJob).not.toContain("GENIE_REQUIRE_LLM");
+
+    const liveJob = liveMatch?.[1] ?? "";
+    expect(liveJob).toContain("if: github.event_name == 'push'");
+    expect(liveJob).toContain("runs-on: [self-hosted, Linux, X64, genie]");
+    expect(liveJob).toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}");
+    expect(liveJob).toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}");
+    expect(liveJob).toContain('GENIE_REQUIRE_LLM: "1"');
+    expect(liveJob).toContain("GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}");
+    expect(liveJob).toContain("npm install -g @openai/codex@0.144.5");
   });
 
   it("keeps model-generated commands sandboxed on the private-LAN runner", () => {
@@ -530,35 +531,37 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
 
         const reportsDir = join(REPO_ROOT, "reports");
         await mkdir(reportsDir, { recursive: true });
-        await writeFile(
-          join(reportsDir, "codex-repl-transcript.jsonl"),
-          `${result.stdout ?? ""}\n--- stderr ---\n${result.stderr ?? ""}\n`,
-        );
+        const stdout = result.stdout ?? "";
+        await writeFile(join(reportsDir, "codex-repl-transcript.jsonl"), stdout);
+        await writeFile(join(reportsDir, "codex-repl-stderr.log"), result.stderr ?? "");
 
-        const events = (result.stdout ?? "")
+        const events = stdout
           .split("\n")
-          .filter((line) => line.trim().startsWith("{"))
+          .filter((line) => line.trim())
           .map((line) => {
             try {
               return JSON.parse(line) as { type?: string; item?: Record<string, unknown> };
             } catch {
               return null;
             }
-          })
-          .filter((e): e is { type?: string; item?: Record<string, unknown> } => e !== null);
+          });
+        expect(events, "Codex --json output must remain valid JSONL").not.toContain(null);
+        const parsedEvents = events.filter(
+          (e): e is { type?: string; item?: Record<string, unknown> } => e !== null,
+        );
 
         // `item.completed` mcp_tool_call events against the genie server,
         // in the order Codex actually completed them (dedupe against the
         // `item.started` copy of the same item id — only the terminal
         // `item.completed` record carries `status`/`result`).
-        const genieToolCallsCompleted = events.filter(
+        const genieToolCallsCompleted = parsedEvents.filter(
           (e) =>
             e.type === "item.completed" &&
             e.item?.type === "mcp_tool_call" &&
             e.item?.server === "genie",
         );
 
-        const terminalFailure = events.find(
+        const terminalFailure = parsedEvents.find(
           (e) => e.type === "turn.failed" || (e.type === "error" && typeof e.item === "undefined"),
         );
         expect(
@@ -627,7 +630,7 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
         // this assertion proves Codex's own turn actually finished — not
         // merely that the process exited zero while the model gave up
         // partway through the chain.
-        const turnCompleted = events.some((e) => e.type === "turn.completed");
+        const turnCompleted = parsedEvents.some((e) => e.type === "turn.completed");
         expect(
           turnCompleted,
           `expected a turn.completed event (Codex's own turn must finish, not abort/fail) — ${transcriptHint}`,

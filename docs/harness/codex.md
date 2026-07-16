@@ -161,16 +161,14 @@ real built server, not a stand-in for either:
    real stdio child process launched exactly the way Codex's `command`-keyed
    `mcp_servers` entry launches genie.
 
-CI runs all three legs for every same-repository PR and push (`codex-smoke`
-job). It sets `GENIE_REQUIRE_LLM=1`, so `conjure` must run for real. The
-configured gateway is private-LAN-only, so this job uses the dedicated
-`self-hosted, Linux, X64, genie` runner and maps the dedicated
+CI splits the suite at the credential boundary. `codex-smoke` runs the real
+Codex parser and non-generation stdio checks for every PR on `ubuntu-latest`,
+without repository secrets. `codex-live` runs the complete suite only on a
+trusted push to `main`; it sets `GENIE_REQUIRE_LLM=1`, uses the dedicated
+`self-hosted, Linux, X64, genie` runner, and maps the model-scoped
 `GENIE_CODEX_SMOKE_LLM_*` repository secrets into the process's standard
-`GENIE_LLM_*` environment names. The smoke key is scoped to the configured
-Codex model; the M2/deployment key is unchanged. Local runs still skip the paid
-endpoint cases visibly when that pair is absent. GitHub does not expose
-repository secrets to untrusted fork PRs, so fork contributions need a
-maintainer-run trusted branch before this gate can pass.
+`GENIE_LLM_*` names. The M2/deployment key is unchanged. Local runs still skip
+the paid endpoint cases visibly when that environment pair is absent.
 
 The `codex exec` process uses Codex's read-only sandbox and an ephemeral
 session. Its MCP registration exposes and auto-approves only the five tools in
@@ -182,11 +180,12 @@ non-interactive entry point — the same binary an interactive session runs) is
 launched with genie registered exactly per the stdio snippet above via
 `codex mcp add`, and asked in plain language to run the four-verb chain. The
 full JSONL event transcript Codex emits is captured to
-`reports/codex-repl-transcript.jsonl` as evidence, and the test asserts the
-transcript shows Codex's own model actually calling genie's tools. This leg
+`reports/codex-repl-transcript.jsonl` as evidence; stderr is kept separately in
+`reports/codex-repl-stderr.log`. The test asserts the transcript remains valid
+JSONL and shows Codex's own model actually calling genie's tools. This leg
 reuses `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` as Codex's own driving-model
 provider (separate from genie's backend, but the same OpenAI-`responses`-API
 shape satisfies both), so it is gated on the same environment pair as
-`conjure`. In the required CI job, missing credentials, endpoint failures, and
-provider/tool-schema incompatibilities fail loudly and leave the captured
-transcript as evidence; the real-endpoint gate is never converted into a skip.
+`conjure`. In the push-only live canary, missing credentials, endpoint failures,
+and provider/tool-schema incompatibilities fail loudly and leave the captured
+transcript as evidence; the real-endpoint check is never converted into a skip.

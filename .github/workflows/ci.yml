@@ -391,7 +391,7 @@ jobs:
           retention-days: 7
 
   # ── Codex CLI harness smoke (M5-11 / DRO-283) ────────────────────────────────
-  # `packages/e2e/test/m5-smoke-codex.test.ts` — three independent live checks:
+  # `packages/e2e/test/m5-smoke-codex.test.ts` — three independent checks:
   #   (1) the real `codex` binary parses docs/harness/codex.md's canonical
   #       TOML snippet exactly as documented (no `type` key; transport
   #       inferred from `url` vs `command`; `bearer_token_env_var`;
@@ -401,15 +401,13 @@ jobs:
   #       `mcp_servers` entry launches it.
   #   (3) a real `codex exec` turn drives the ordered tool chain and records
   #       the JSONL transcript as evidence.
-  # The config-CLI and non-generation stdio checks are free. The `conjure` and
-  # real `codex exec` checks are a required live-endpoint gate here. The
-  # configured gateway is private-LAN-only, so this job uses the dedicated
-  # `genie` runner. A model-scoped smoke key keeps this harness independent
-  # from the M2/deployment key while reaching the same gateway.
+  # `codex-smoke` runs the credential-free checks for every PR on a GitHub-
+  # hosted runner. `codex-live` runs the complete fail-closed suite only after
+  # reviewed code reaches main, because it needs a scoped gateway credential
+  # and the private-LAN `genie` runner.
   codex-smoke:
     name: codex CLI harness smoke (M5-11)
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, X64, genie]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -443,10 +441,6 @@ jobs:
       - name: Run Codex CLI harness smoke (AC1, AC2, AC3 doc, AC4, AC6)
         env:
           VITEST_JUNIT: "1"
-          GENIE_REQUIRE_LLM: "1"
-          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}
-          GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}
-          GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}
         run: pnpm --filter @genie/e2e test:e2e:codex
 
       - name: Upload test report
@@ -458,11 +452,60 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Upload Codex REPL transcript (AC6)
+  codex-live:
+    name: codex CLI live canary (M5-11)
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, Linux, X64, genie]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build @genie/server
+        run: pnpm --filter @genie/server build
+
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex@0.144.5
+
+      - name: Run live Codex CLI harness canary (AC6)
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_REQUIRE_LLM: "1"
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}
+          GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}
+        run: pnpm --filter @genie/e2e test:e2e:codex
+
+      - name: Upload live test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-codex-live
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Codex REPL evidence (AC6)
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: codex-repl-transcript
-          path: reports/codex-repl-transcript.jsonl
+          path: |
+            reports/codex-repl-transcript.jsonl
+            reports/codex-repl-stderr.log
           if-no-files-found: ignore
           retention-days: 7
