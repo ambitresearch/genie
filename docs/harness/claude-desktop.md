@@ -87,7 +87,7 @@ log, all under:
 
 (`mcp.log` for Claude Desktop's own MCP client activity, and
 `mcp-server-genie.log` — or similar, named after the server key you chose in
-`mcpServers` — for genie's own stdout/stderr). Tail these when the server
+`mcpServers` — for genie's stderr output). Tail these when the server
 doesn't appear as connected in Claude Desktop's UI, or when a tool call
 fails silently:
 

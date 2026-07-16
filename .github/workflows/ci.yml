@@ -383,7 +383,7 @@ jobs:
           fi
           pnpm --filter @genie/server build
           GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE=1 \
-            pnpm --filter @genie/e2e test:e2e:claude-desktop
+            CI=false VITEST_JUNIT=0 pnpm --filter @genie/e2e test:e2e:claude-desktop
 
       # AC7 — the per-component `.html` samples + summary.json this suite
       # writes to reports/m2-generation/ (empty/absent when AC2 skipped the

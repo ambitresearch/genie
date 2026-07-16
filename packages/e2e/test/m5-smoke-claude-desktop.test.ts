@@ -24,6 +24,7 @@ const CLAUDE_DESKTOP_DOC = readFileSync(
   "utf8",
 );
 const HARNESS_OVERVIEW = readFileSync(resolve(here, "../../../docs/harness/README.md"), "utf8");
+const CI_WORKFLOW = readFileSync(resolve(here, "../../../.github/workflows/ci.yml"), "utf8");
 
 const hasBuiltServer =
   spawnSync(process.execPath, [
@@ -117,6 +118,8 @@ describe("Claude Desktop guide contracts", () => {
 
   it("documents the exact macOS Claude Desktop MCP log glob", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("~/Library/Logs/Claude/mcp*.log");
+    expect(CLAUDE_DESKTOP_DOC).toContain("for genie's stderr output");
+    expect(CLAUDE_DESKTOP_DOC).not.toContain("genie's own stdout/stderr");
   });
 
   it("keeps shared harness prerequisites consistent and links this guide", () => {
@@ -125,6 +128,12 @@ describe("Claude Desktop guide contracts", () => {
       "`GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required at startup",
     );
     expect(HARNESS_OVERVIEW).not.toMatch(/read tools work without\s+an LLM configured/i);
+  });
+
+  it("preserves the M2 JUnit report when the self-hosted canary runs this suite", () => {
+    expect(CI_WORKFLOW).toContain(
+      "CI=false VITEST_JUNIT=0 pnpm --filter @genie/e2e test:e2e:claude-desktop",
+    );
   });
 });
 
