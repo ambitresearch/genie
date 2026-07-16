@@ -64,6 +64,7 @@ export function resolveOidcConfig(env: NodeJS.ProcessEnv = process.env): OidcVer
 }
 
 interface OidcDiscoveryDocument {
+  issuer?: string;
   jwks_uri?: string;
   [key: string]: unknown;
 }
@@ -71,13 +72,18 @@ interface OidcDiscoveryDocument {
 /** Fetch `${issuer}/.well-known/openid-configuration` and return its
  *  `jwks_uri` using the RFC 8414 / OIDC Discovery 1.0 endpoint required by
  *  this integration. */
-async function discoverJwksUri(issuerUrl: string): Promise<string> {
-  const discoveryUrl = `${issuerUrl}/.well-known/openid-configuration`;
+async function discoverJwksUri(discoveryIssuer: string, expectedIssuer: string): Promise<string> {
+  const discoveryUrl = `${discoveryIssuer}/.well-known/openid-configuration`;
   const res = await fetch(discoveryUrl);
   if (!res.ok) {
     throw new Error(`OIDC discovery failed: GET ${discoveryUrl} -> ${res.status}`);
   }
   const doc = (await res.json()) as OidcDiscoveryDocument;
+  if (doc.issuer !== expectedIssuer) {
+    throw new Error(
+      `OIDC discovery issuer mismatch: expected ${expectedIssuer}, received ${String(doc.issuer)}.`,
+    );
+  }
   if (!doc.jwks_uri) {
     throw new Error(`OIDC discovery document at ${discoveryUrl} is missing jwks_uri.`);
   }
@@ -94,7 +100,7 @@ async function discoverJwksUri(issuerUrl: string): Promise<string> {
 export async function createOidcVerifier(config: OidcVerifierConfig): Promise<OidcVerifier> {
   const issuer = config.issuer;
   const discoveryIssuer = issuer.endsWith("/") ? issuer.slice(0, -1) : issuer;
-  const jwksUri = await discoverJwksUri(discoveryIssuer);
+  const jwksUri = await discoverJwksUri(discoveryIssuer, issuer);
   const jwks = createRemoteJWKSet(new URL(jwksUri));
   const requiredGroup = config.requiredGroup ?? REQUIRED_GROUP;
 

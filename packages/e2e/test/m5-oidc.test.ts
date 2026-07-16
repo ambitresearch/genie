@@ -85,6 +85,81 @@ function pkcePair(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
+function waitForAuthorizationCode(callbackPort: number, timeoutMs = 20_000): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const catcher = createNodeHttpServer((req, res) => {
+      const url = new URL(req.url ?? "/", `http://127.0.0.1:${callbackPort}`);
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("ok");
+      const code = url.searchParams.get("code");
+      if (code) settle(undefined, code);
+      else settle(new Error(`callback missing code: ${url.search}`));
+    });
+
+    const settle = (error?: Error, code?: string): void => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) clearTimeout(timeout);
+      const finish = (closeError?: Error): void => {
+        if (error !== undefined) reject(error);
+        else if (closeError !== undefined) reject(closeError);
+        else if (code !== undefined) resolve(code);
+        else reject(new Error("OAuth callback completed without an authorization code"));
+      };
+      if (catcher.listening) catcher.close(finish);
+      else finish();
+    };
+
+    catcher.once("error", settle);
+    catcher.listen(callbackPort, "127.0.0.1", () => {
+      timeout = setTimeout(
+        () => settle(new Error("timed out waiting for OAuth callback")),
+        timeoutMs,
+      );
+    });
+  });
+}
+
+async function unusedPort(): Promise<number> {
+  const server = createNodeHttpServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
+describe("OIDC callback catcher", () => {
+  it("releases its listener when the callback times out", async () => {
+    const port = await unusedPort();
+    await expect(waitForAuthorizationCode(port, 10)).rejects.toThrow(
+      "timed out waiting for OAuth callback",
+    );
+
+    const probe = createNodeHttpServer();
+    await new Promise<void>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(port, "127.0.0.1", resolve);
+    });
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+  });
+
+  it("rejects explicitly when its callback port is already occupied", async () => {
+    const occupied = createNodeHttpServer();
+    await new Promise<void>((resolve) => occupied.listen(0, "127.0.0.1", resolve));
+    const { port } = occupied.address() as AddressInfo;
+
+    try {
+      await expect(waitForAuthorizationCode(port, 100)).rejects.toMatchObject({
+        code: "EADDRINUSE",
+      });
+    } finally {
+      await new Promise<void>((resolve) => occupied.close(() => resolve()));
+    }
+  });
+});
+
 interface AccessTokenClaims {
   aud?: unknown;
   groups?: unknown;
@@ -151,23 +226,7 @@ async function runAuthCodeFlow(
     // Race the navigation (which ultimately 302s to our own callback catcher
     // and hangs there, since that tiny server never responds) against the
     // callback catcher's own promise, resolved below via a shared listener.
-    const codePromise = new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("timed out waiting for OAuth callback")),
-        20_000,
-      );
-      const catcher = createNodeHttpServer((req, res) => {
-        const url = new URL(req.url ?? "/", `http://127.0.0.1:${callbackPort}`);
-        res.writeHead(200, { "content-type": "text/plain" });
-        res.end("ok");
-        const code = url.searchParams.get("code");
-        clearTimeout(timeout);
-        catcher.close();
-        if (code) resolve(code);
-        else reject(new Error(`callback missing code: ${url.search}`));
-      });
-      catcher.listen(callbackPort);
-    });
+    const codePromise = waitForAuthorizationCode(callbackPort);
 
     await page.goto(authorizeUrl.toString());
     await page.fill('input[name="username"]', user.username);

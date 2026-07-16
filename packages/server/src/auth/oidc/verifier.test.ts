@@ -69,7 +69,7 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: unknown) => {
       const url = String(input);
       if (url === `${ISSUER}/.well-known/openid-configuration`) {
-        return new Response(JSON.stringify({ jwks_uri: `${ISSUER}/jwks` }), {
+        return new Response(JSON.stringify({ issuer: ISSUER, jwks_uri: `${ISSUER}/jwks` }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -117,13 +117,65 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     );
   });
 
+  it("fails startup when the discovery document issuer is not an exact match", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          issuer: "https://attacker.example.test",
+          jwks_uri: "https://attacker.example.test/jwks",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE })).rejects.toThrow(
+      `OIDC discovery issuer mismatch: expected ${ISSUER}, received https://attacker.example.test.`,
+    );
+  });
+
+  it("fails startup when the discovery document omits issuer", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ jwks_uri: `${ISSUER}/jwks` }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await expect(createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE })).rejects.toThrow(
+      `OIDC discovery issuer mismatch: expected ${ISSUER}, received undefined.`,
+    );
+  });
+
   it("preserves a trailing slash in the configured issuer when validating claims", async () => {
     const issuer = `${ISSUER}/`;
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ issuer, jwks_uri: `${ISSUER}/jwks` }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
     const verifier = await createOidcVerifier({ issuer, audience: AUDIENCE });
     const token = await signToken({ sub: "alice", groups: ["genie-users"] }, { issuer });
 
     await expect(verifier.verify(token)).resolves.toMatchObject({ sub: "alice" });
     expect(verifier.issuer).toBe(issuer);
+  });
+
+  it("enforces GENIE_OIDC_REQUIRED_GROUP from resolved environment config", async () => {
+    const verifier = await createOidcVerifier(
+      resolveOidcConfig({
+        GENIE_OIDC_ISSUER: ISSUER,
+        GENIE_OIDC_AUDIENCE: AUDIENCE,
+        GENIE_OIDC_REQUIRED_GROUP: "platform-team",
+      } as NodeJS.ProcessEnv),
+    );
+    const member = await signToken({ sub: "alice", groups: ["platform-team"] });
+    const defaultGroupOnly = await signToken({ sub: "bob", groups: ["genie-users"] });
+
+    await expect(verifier.verify(member)).resolves.toMatchObject({ sub: "alice" });
+    await expect(verifier.verify(defaultGroupOnly)).rejects.toMatchObject({
+      requiredGroup: "platform-team",
+    });
   });
 
   it("AC6 — rejects (throws GroupAccessDeniedError) a validly-signed token whose groups lack genie-users", async () => {
@@ -186,7 +238,7 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     fetchSpy.mockImplementation(async (input: unknown) => {
       const url = String(input);
       if (url === `${ISSUER}/.well-known/openid-configuration`) {
-        return new Response(JSON.stringify({ jwks_uri: `${ISSUER}/jwks` }), {
+        return new Response(JSON.stringify({ issuer: ISSUER, jwks_uri: `${ISSUER}/jwks` }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
