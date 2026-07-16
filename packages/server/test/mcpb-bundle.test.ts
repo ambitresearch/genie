@@ -57,7 +57,17 @@ describe("mcpb bundle manifest (AC1)", () => {
       GENIE_KITS_ROOT: "${HOME}/.genie/kits",
       GENIE_PROJECTS_ROOT: "${HOME}/.genie/projects",
       GENIE_REPORTS_DIR: "${HOME}/.genie/reports",
+      GENIE_LLM_BASE_URL: "${user_config.llm_base_url}",
+      GENIE_LLM_API_KEY: "${user_config.llm_api_key}",
       OAUTH_HS256_KEY: "${user_config.oauth_hs256_key}",
+    });
+    expect(manifest.user_config.llm_base_url).toMatchObject({
+      required: true,
+    });
+    expect(manifest.user_config.llm_base_url.sensitive).not.toBe(true);
+    expect(manifest.user_config.llm_api_key).toMatchObject({
+      required: true,
+      sensitive: true,
     });
     expect(manifest.user_config.oauth_hs256_key).toMatchObject({
       required: true,
