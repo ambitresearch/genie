@@ -92,6 +92,7 @@ describe("codex-smoke CI contract", () => {
     // GitHub withholds Actions secrets from untrusted forks. Do not turn that
     // missing-credential state into a required red job or expose secrets via
     // pull_request_target; maintainers must rerun fork changes on a trusted branch.
+    expect(job).toContain("runs-on: [self-hosted, Linux, X64, azure-docker]");
     expect(job).toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}");
     expect(job).toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}");
     expect(job).toContain('GENIE_REQUIRE_LLM: "1"');

@@ -401,12 +401,14 @@ jobs:
   #       `mcp_servers` entry launches it.
   # The config-CLI and non-generation stdio legs are free. The `conjure` and
   # real `codex exec` legs are a required live-endpoint gate here: dedicated
-  # public smoke secrets keep this GitHub-hosted job independent from the
-  # private-LAN GENIE_LLM_* pair used by the M2 main-branch canary above.
+  # dedicated smoke secrets keep this job independent from the private-LAN
+  # GENIE_LLM_* pair used by the M2 main-branch canary above. The configured
+  # gateway times out from GitHub-hosted runner IPs, so this live leg uses the
+  # repository's network-capable self-hosted runner.
   codex-smoke:
     name: codex CLI harness smoke (M5-11)
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, azure-docker]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
