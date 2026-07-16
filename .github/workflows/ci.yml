@@ -399,16 +399,16 @@ jobs:
   # The AC4/AC6 Claude-Code-CLI-in-Docker leg additionally needs a real
   # container runtime + GENIE_ANTHROPIC_SMOKE_API_KEY (Claude Code's own
   # model credential, distinct from genie's GENIE_LLM_* endpoint unless the
-  # configured gateway key is reused). It runs
-  # on the Docker-capable self-hosted runner because the configured generation
-  # gateway may be private-network-only; GENIE_REQUIRE_DOCKER keeps a runner
-  # without a reachable daemon from silently degrading to a skip.
+  # configured gateway key is reused). Dedicated smoke endpoint secrets keep
+  # this job independent from the private-LAN M2 gateway, so ubuntu-latest can
+  # provide a guaranteed Docker daemon and reach the configured public smoke
+  # gateway. GENIE_REQUIRE_DOCKER still makes any daemon regression loud.
   # `workflow_dispatch` only (never push/pull_request) keeps every normal CI
   # run free — this spends real model + LLM $ like m2-generation does.
   m5-smoke-claude-code:
     name: M5-09 Claude Code smoke (manual)
     if: github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, Linux, X64, azure-docker]
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -443,21 +443,21 @@ jobs:
 
       - name: Run M5-09 Claude Code smoke
         # GENIE_REQUIRE_DOCKER makes the AC4/AC6 leg FAIL (not skip) if the
-        # selected self-hosted runner lacks a daemon; this leg must never go
+        # selected GitHub-hosted runner lacks a daemon; this leg must never go
         # green-but-vacuous here.
         # The manual job exists to prove the paid smoke, so every prerequisite
         # is required. Missing secrets fail at suite import instead of allowing
         # an all-skipped test report to look successful. GENIE_SMOKE_MODEL must
         # name a structured-output model the configured gateway actually serves.
-        # The Claude driver can use a dedicated Anthropic credential or fall
-        # back to the same compatible gateway key used by genie.
+        # The dedicated secrets below point both genie and the Claude driver at
+        # the public smoke gateway; normal deployment secrets remain untouched.
         env:
           VITEST_JUNIT: "1"
           GENIE_REQUIRE_DOCKER: "1"
           GENIE_REQUIRE_LLM: "1"
-          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
-          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
-          GENIE_ANTHROPIC_SMOKE_API_KEY: ${{ secrets.GENIE_ANTHROPIC_SMOKE_API_KEY || secrets.GENIE_LLM_API_KEY }}
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CLAUDE_CODE_SMOKE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_CLAUDE_CODE_SMOKE_LLM_API_KEY }}
+          GENIE_ANTHROPIC_SMOKE_API_KEY: ${{ secrets.GENIE_ANTHROPIC_SMOKE_API_KEY }}
           GENIE_ANTHROPIC_SMOKE_BASE_URL: ${{ secrets.GENIE_ANTHROPIC_SMOKE_BASE_URL }}
           GENIE_SMOKE_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}
         run: pnpm test m5-smoke-claude-code
