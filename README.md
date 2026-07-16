@@ -101,7 +101,7 @@ stdio and `remote` for HTTP; override it with `--preview-locality` or
 
 ### Claude Desktop (`.mcpb` bundle)
 
-Claude Desktop users can install genie without hand-editing a config file:
+Claude Desktop users on macOS can install genie without hand-editing a config file:
 
 1. Download `genie.mcpb` from the [latest release](../../releases/latest)
    (attached to every GitHub Release — see `mcpb/manifest.json` and
