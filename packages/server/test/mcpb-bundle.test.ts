@@ -37,13 +37,13 @@ describe("mcpb bundle manifest (AC1)", () => {
     expect(manifest.name).toBe("genie");
     expect(manifest.version).toBe(serverPackage.version);
     expect(manifest.server?.type).toBe("node");
-    expect(manifest.server?.entry_point).toBeTruthy();
-    expect(manifest.server?.mcp_config?.command).toBeTruthy();
-    expect(Array.isArray(manifest.server?.mcp_config?.args)).toBe(true);
-    // stdio is implied by genie's own default transport when piped, and the
-    // manifest must invoke the server with an explicit `--transport stdio`
-    // flag so Claude Desktop's own process pipe negotiates correctly.
-    expect(manifest.server.mcp_config.args.join(" ")).toContain("stdio");
+    expect(manifest.server?.entry_point).toBe("server/dist/cli.js");
+    expect(manifest.server?.mcp_config?.command).toBe("node");
+    expect(manifest.server?.mcp_config?.args).toEqual([
+      "${__dirname}/server/dist/cli.js",
+      "--transport",
+      "stdio",
+    ]);
 
     // Env-var requirements (implementation notes: GENIE_LLM_API_KEY etc.)
     // must be surfaced as `user_config` so Claude Desktop prompts for them —
@@ -56,6 +56,7 @@ describe("mcpb bundle manifest (AC1)", () => {
       GENIE_HOME: "${HOME}/.genie",
       GENIE_KITS_ROOT: "${HOME}/.genie/kits",
       GENIE_PROJECTS_ROOT: "${HOME}/.genie/projects",
+      GENIE_REPORTS_DIR: "${HOME}/.genie/reports",
       OAUTH_HS256_KEY: "${user_config.oauth_hs256_key}",
     });
     expect(manifest.user_config.oauth_hs256_key).toMatchObject({
@@ -90,6 +91,9 @@ describe("mcpb bundle manifest (AC1)", () => {
     expect(script).toContain('"--config.inject-workspace-packages=true"');
     expect(script).toContain('"--config.node-linker=hoisted"');
     expect(script).toContain('"--config.package-import-method=copy"');
+    expect(script).toContain('"--os",\n  "darwin"');
+    expect(script).toContain('"--cpu",\n  "arm64"');
+    expect(script).toContain('"--cpu",\n  "x64"');
     expect(script).toContain('run("pnpm", ["exec", "mcpb", "pack"');
     expect(script).not.toContain('run("npm", ["install"');
     expect(script).not.toContain('run("npx"');
@@ -137,6 +141,8 @@ describe("mcpb bundle output (AC2/AC3/AC4)", () => {
           "server/dist/ui/viewer-static/viewer.css",
           "server/dist/ui/viewer-static/viewer.js",
           "server/node_modules/@modelcontextprotocol/sdk/package.json",
+          "server/node_modules/@esbuild/darwin-arm64/bin/esbuild",
+          "server/node_modules/@esbuild/darwin-x64/bin/esbuild",
         ];
         for (const path of requiredFiles) {
           expect(existsSync(join(unpackDir, path)), `missing ${path}`).toBe(true);
@@ -146,6 +152,8 @@ describe("mcpb bundle output (AC2/AC3/AC4)", () => {
           "server/node_modules/@genie/viewer/package.json",
           "server/node_modules/jsdom/package.json",
           "server/node_modules/playwright/package.json",
+          "server/node_modules/esbuild/bin/esbuild",
+          "server/node_modules/.bin/esbuild",
         ];
         for (const path of excludedDevDependencies) {
           expect(existsSync(join(unpackDir, path)), `unexpected ${path}`).toBe(false);
@@ -157,25 +165,51 @@ describe("mcpb bundle output (AC2/AC3/AC4)", () => {
         );
         expect(packedManifest.version).toBe(packedServerPackage.version);
 
-        const cli = spawnSync(
+        for (const [path, cpuType] of [
+          ["server/node_modules/@esbuild/darwin-arm64/bin/esbuild", 0x0100000c],
+          ["server/node_modules/@esbuild/darwin-x64/bin/esbuild", 0x01000007],
+        ] as const) {
+          const binaryPath = join(unpackDir, path);
+          const binary = readFileSync(binaryPath);
+          expect(binary.readUInt32LE(0), `${path} must be a 64-bit Mach-O`).toBe(0xfeedfacf);
+          expect(binary.readUInt32LE(4), `${path} has the wrong CPU type`).toBe(cpuType);
+          expect(statSync(binaryPath).mode & 0o111, `${path} must be executable`).toBeGreaterThan(
+            0,
+          );
+        }
+
+        const esbuild = spawnSync(
           "node",
-          [join(unpackDir, "server", "dist", "cli.js"), "--transport", "stdio"],
-          {
-            cwd: unpackDir,
-            input: "",
-            encoding: "utf8",
-            timeout: 30_000,
-            env: {
-              ...process.env,
-              GENIE_HOME: join(unpackDir, ".genie"),
-              GENIE_KITS_ROOT: join(unpackDir, ".genie", "kits"),
-              GENIE_PROJECTS_ROOT: join(unpackDir, ".genie", "projects"),
-              GENIE_LLM_BASE_URL: "https://example.invalid/v1",
-              GENIE_LLM_API_KEY: "mcpb-smoke-not-a-real-key",
-              OAUTH_HS256_KEY: "mcpb-smoke-not-a-real-signing-key",
-            },
-          },
+          [
+            "--input-type=module",
+            "--eval",
+            'import esbuild from "./node_modules/esbuild/lib/main.js"; ' +
+              'await esbuild.build({ stdin: { contents: "export default 1" }, write: false });',
+          ],
+          { cwd: join(unpackDir, "server"), encoding: "utf8", timeout: 30_000 },
         );
+        expect(esbuild.error).toBeUndefined();
+        expect(esbuild.status, esbuild.stderr).toBe(0);
+
+        const manifestArgs = packedManifest.server.mcp_config.args.map((arg: string) =>
+          arg.replaceAll("${__dirname}", unpackDir),
+        );
+
+        const cli = spawnSync(packedManifest.server.mcp_config.command, manifestArgs, {
+          cwd: unpackDir,
+          input: "",
+          encoding: "utf8",
+          timeout: 30_000,
+          env: {
+            ...process.env,
+            GENIE_HOME: join(unpackDir, ".genie"),
+            GENIE_KITS_ROOT: join(unpackDir, ".genie", "kits"),
+            GENIE_PROJECTS_ROOT: join(unpackDir, ".genie", "projects"),
+            GENIE_LLM_BASE_URL: "https://example.invalid/v1",
+            GENIE_LLM_API_KEY: "mcpb-smoke-not-a-real-key",
+            OAUTH_HS256_KEY: "mcpb-smoke-not-a-real-signing-key",
+          },
+        });
         expect(cli.error).toBeUndefined();
         expect(cli.status, cli.stderr).toBe(0);
         expect(cli.stderr).not.toContain("Secret validation failed");

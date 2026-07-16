@@ -11,7 +11,8 @@
  * Steps:
  *   1. `pnpm --filter @genie/server build` (idempotent if already built).
  *   2. Use `pnpm deploy --prod` to stage the server and its production-only
- *      runtime dependencies from the committed workspace lockfile. A hoisted
+ *      runtime dependencies from the committed workspace lockfile, including
+ *      esbuild binaries for both supported Darwin architectures. A hoisted
  *      linker keeps the self-contained archive below the 30 MB budget.
  *   3. Stage the root `mcpb/manifest.json` alongside it.
  *   4. Run the lockfile-pinned MCPB CLI with `pnpm exec`.
@@ -50,7 +51,20 @@ run("pnpm", [
   "--config.inject-workspace-packages=true",
   "--config.node-linker=hoisted",
   "--config.package-import-method=copy",
+  "--os",
+  "darwin",
+  "--cpu",
+  "arm64",
+  "--cpu",
+  "x64",
 ]);
+
+// pnpm copies the host esbuild binary into esbuild/bin as well as installing
+// both requested @esbuild packages. The module resolves @esbuild/<platform>
+// directly at runtime, so remove the redundant binary and its now-broken CLI
+// shim to retain one binary per Darwin architecture within the size budget.
+rmSync(join(deployDir, "node_modules", "esbuild", "bin", "esbuild"), { force: true });
+rmSync(join(deployDir, "node_modules", ".bin", "esbuild"), { force: true });
 
 // 3. Copy the manifest in alongside the deployed server tree.
 cpSync(join(repoRoot, "mcpb", "manifest.json"), join(stageDir, "manifest.json"));
