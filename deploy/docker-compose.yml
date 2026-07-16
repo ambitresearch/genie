@@ -27,16 +27,14 @@ services:
       GENIE_LLM_API_KEY: ${GENIE_LLM_API_KEY:?set GENIE_LLM_API_KEY}
       # Required — HS256 signing key for OAuth-issued tokens (>=32 chars).
       OAUTH_HS256_KEY: ${OAUTH_HS256_KEY:?set OAUTH_HS256_KEY}
+      # Required — externally reachable public origin used in OAuth metadata.
+      GENIE_OAUTH_ISSUER: ${GENIE_OAUTH_ISSUER:?set GENIE_OAUTH_ISSUER}
       MCP_TRANSPORT: "http"
       GENIE_PREVIEW_LOCALITY: "remote"
       # Uncomment when overriding the image's default kit storage path:
       # GENIE_KITS_ROOT: /data/kits
       # Uncomment to require a static Bearer token on /mcp (see `genie token`):
       # GENIE_REQUIRE_BEARER_AUTH: "true"
-      # Uncomment to point at a git-host-backed kit/project store instead of
-      # the default LocalFs store:
-      # GENIE_GIT_BASE_URL: "http://gitea:3000"
-      # GENIE_GIT_TOKEN: ${GENIE_GIT_TOKEN}
     volumes:
       # Persisted server state (auth tokens, plans, reports) — GENIE_HOME.
       - genie-home:/data

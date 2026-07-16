@@ -93,9 +93,10 @@ ENV NODE_ENV=production \
     MCP_TRANSPORT=http \
     GENIE_HOME=/data \
     GENIE_KITS_ROOT=/data/kits \
-    GENIE_PROJECTS_ROOT=/data/projects
+    GENIE_PROJECTS_ROOT=/data/projects \
+    GENIE_REPORTS_DIR=/data/reports
 
-RUN mkdir -p /data/kits /data/projects && chown -R node:node /data
+RUN mkdir -p /data/kits /data/projects /data/reports && chown -R node:node /data
 VOLUME ["/data"]
 
 USER node

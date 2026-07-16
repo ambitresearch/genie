@@ -76,10 +76,11 @@ describe("Dockerfile (M5-07 static ACs)", () => {
     expect(dockerfile).not.toMatch(/\bnpm (?:ci|install)\b/);
   });
 
-  it("points kit and project storage at the writable data volume", () => {
+  it("points persistent storage at the writable data volume", () => {
     expect(dockerfile).toMatch(/GENIE_HOME=\/data/);
     expect(dockerfile).toMatch(/GENIE_KITS_ROOT=\/data\/kits/);
     expect(dockerfile).toMatch(/GENIE_PROJECTS_ROOT=\/data\/projects/);
+    expect(dockerfile).toMatch(/GENIE_REPORTS_DIR=\/data\/reports/);
   });
 
   it("never hardcodes a secret-shaped literal", () => {
@@ -93,6 +94,7 @@ describe("Docker build context", () => {
     for (const pattern of [
       ".git",
       ".env*",
+      "**/.env*",
       "node_modules",
       "**/node_modules",
       "**/dist",
@@ -104,6 +106,7 @@ describe("Docker build context", () => {
       expect(dockerignore.split("\n")).toContain(pattern);
     }
     expect(dockerignore.split("\n")).toContain("!.env.example");
+    expect(dockerignore.split("\n")).toContain("!**/.env.example");
   });
 });
 
@@ -139,6 +142,17 @@ describe("deploy/docker-compose.yml (AC6)", () => {
   it("documents the OAuth signing key's real minimum length", () => {
     expect(compose).toMatch(/HS256 signing key.*>=32 chars/);
     expect(compose).not.toMatch(/HS256 signing key.*>=16 chars/);
+  });
+
+  it("requires an externally reachable OAuth issuer", () => {
+    expect(compose).toMatch(
+      /GENIE_OAUTH_ISSUER: \$\{GENIE_OAUTH_ISSUER:\?set GENIE_OAUTH_ISSUER\}/,
+    );
+  });
+
+  it("does not document unsupported CLI git-store selection variables", () => {
+    expect(compose).not.toMatch(/GENIE_GIT_BASE_URL/);
+    expect(compose).not.toMatch(/GENIE_GIT_TOKEN/);
   });
 
   it("never hardcodes a secret — every credential is an interpolated env var", () => {
@@ -232,7 +246,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
     expect(stdout.trim()).toBe("1000");
   });
 
-  it("provides writable persisted kit and project roots", async () => {
+  it("provides writable persisted kit, project, and report roots", async () => {
     const { stdout } = await execFileAsync("docker", [
       "run",
       "--rm",
@@ -242,7 +256,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
       "-e",
       [
         'const fs = require("node:fs")',
-        "const roots = [process.env.GENIE_KITS_ROOT, process.env.GENIE_PROJECTS_ROOT]",
+        "const roots = [process.env.GENIE_KITS_ROOT, process.env.GENIE_PROJECTS_ROOT, process.env.GENIE_REPORTS_DIR]",
         'if (roots.some((root) => !root)) throw new Error("missing persisted root")',
         "for (const root of roots) {",
         "  fs.mkdirSync(root, { recursive: true })",
@@ -251,7 +265,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
         'process.stdout.write(roots.join(","))',
       ].join(";"),
     ]);
-    expect(stdout.trim()).toBe("/data/kits,/data/projects");
+    expect(stdout.trim()).toBe("/data/kits,/data/projects,/data/reports");
   });
 
   it("keeps esbuild's native runtime binary functional", async () => {
