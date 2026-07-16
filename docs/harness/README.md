@@ -5,8 +5,8 @@ genie is an MCP server. Every harness that speaks MCP can call its 20 tools —
 depends on two independent harness capabilities:
 
 - **Agent Skills** — does the harness load a bundled `SKILL.md`? Claude,
-  Cursor, Codex, and GitHub Copilot support the open Agent Skills format, with
-  different install directories. The Skill teaches the
+  Cursor, Codex, GitHub Copilot, and Continue CLI support the open Agent Skills
+  format, with different install directories. The Skill teaches the
   `conjure → plan → write_files → preview` workflow so a plain-English request
   ("build me a button and show me") just works. Tool descriptions remain the
   fallback when a host or session does not load the Skill.
@@ -24,7 +24,8 @@ These are orthogonal, so harnesses fall into a grid:
 | ChatGPT remote connector          |           yes           |         no          | inline grid + tool descriptions                                            |
 | Codex CLI                         |         **no**          |       **yes**       | Skill + **server-opened browser tab** + descriptions                       |
 | GitHub Copilot (host-dependent)   |  capability-dependent   |       **yes**       | Skill + inline grid when negotiated; local fallback browser + descriptions |
-| Continue.dev                      |         **no**          |         no           | tool descriptions only; agent mode required; explicit `type` + `${{ secrets.NAME }}` |
+| Continue IDE                      |           yes           |       **yes**       | Skill + inline MCP App + descriptions                                      |
+| Continue CLI (`cn`)               |         **no**          |       **yes**       | Skill + text fallback; headless `cn -p`; `${{ secrets.NAME }}`             |
 
 **Takeaways:**
 
@@ -41,9 +42,13 @@ These are orthogonal, so harnesses fall into a grid:
   `--preview-locality local` (or `GENIE_PREVIEW_LOCALITY=local`). Remote HTTP
   hosts require the inline MCP App plus `GENIE_PREVIEWS_BASE_URL`. Disable local
   stdio auto-open with `GENIE_PREVIEW_NO_OPEN=1`.
-- On **Continue.dev**, MCP tools only load in agent mode, there is no Agent
-  Skills loader, and the config schema requires an explicit `type` key plus
-  `${{ secrets.NAME }}` interpolation — see [continue.md](./continue.md).
+- On **Continue.dev**, MCP tools only load in agent mode, not chat/autocomplete,
+  and config secrets use `${{ secrets.NAME }}` interpolation. Current Continue
+  IDE builds include an MCP App renderer; the `cn` CLI remains text-only.
+  Continue CLI loads Skills from
+  `.continue/skills`, `.claude/skills`, and `~/.continue/skills`. Current
+  Continue infers transport when `type` is omitted; genie's snippets keep it
+  explicit for readability — see [continue.md](./continue.md).
 
 ## Guidance delivery channels
 

@@ -1,275 +1,588 @@
 /**
- * M5-15 (DRO-287) — Continue.dev harness smoke test.
+ * M5-15 (DRO-287) - Continue.dev harness smoke test.
  *
- * Continue diverges from every other harness genie documents in two ways:
- * it is the only harness that REQUIRES an explicit `type: stdio | sse |
- * streamable-http` discriminator (every other harness infers transport from
- * which keys are present), and it interpolates secrets via `${{
- * secrets.NAME }}` rather than a `headers`/`auth` config key or an
- * env-var-name reference. There is no scriptable "drive a real Continue
- * agent-mode session" entry point analogous to `codex exec` — Continue has
- * no such CLI surface — so this suite proves what IS independently
- * testable:
+ * AC1/AC3/AC4 parse the canonical config and pin its documented behavior.
+ * AC2's original "type is required" premise is stale: Continue CLI 1.5.47
+ * accepts command- and URL-keyed entries without it. The snippets still set an
+ * explicit type for clarity, while this suite asserts the honest optionality.
  *
- *   AC1 — the canonical YAML snippet in docs/harness/continue.md parses to
- *         the documented shape: `type: streamable-http`, secrets expressed
- *         as the literal `${{ secrets.NAME }}` placeholder, no `headers`/
- *         `auth` top-level key.
- *   AC2 — asserted structurally: `type` is REQUIRED in both the stdio and
- *         streamable-http snippets (unlike Codex/Claude/Cursor, which infer
- *         it) — this suite parses both documented snippets and asserts
- *         `type` is present and correctly discriminates `stdio` vs
- *         `streamable-http`.
- *   AC3 — the streamable-http snippet's `Authorization` header value is
- *         literally the unresolved `${{ secrets.GENIE_TOKEN }}` placeholder,
- *         never a real credential — asserted both in the doc's snippet and
- *         against a resolver stub that proves genie never needs to see the
- *         resolved value (Continue resolves it, not the MCP server).
- *   AC4 — documented in continue.md: MCP only works in agent mode. Not
- *         independently testable without a live Continue session (there is
- *         no scriptable non-agent-mode entry point to assert against); this
- *         is a `(doc)`-only AC, same treatment codex.md gives its
- *         non-testable claims.
- *   AC5 — the four-verb chain runs over a real stdio child process, launched
- *         exactly the way Continue's `type: stdio` entry launches genie, and
- *         every result is asserted to carry NO `ui://` resource pointer
- *         (`_meta.ui.resourceUri` absent) — i.e., plain text/JSON output,
- *         matching "Continue never negotiates MCP Apps" from continue.md.
+ * AC5 runs the published `cn -p` agent, not a generic MCP client. Continue
+ * loads a temp config containing genie's documented stdio registration and a
+ * deterministic local OpenAI-compatible model. That model issues the complete
+ * create_kit -> conjure -> plan -> write_files -> preview sequence through
+ * Continue's own agent loop. Genie's conjure call uses a separate local model
+ * response, and its generated file is carried unchanged into plan/write_files.
+ * The final response quotes preview's plain-text fallback; no Continue IDE
+ * rendering claim is made because `cn` is a separate, headless surface whose
+ * MCP client initializes with no UI capability.
  */
-import { readFile } from "node:fs/promises";
-import { mkdtemp, rm } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
+import { createServer, type Server } from "node:http";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import yaml from "yaml";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(here, "../../..");
 const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
+const CONTINUE_CLI = resolve(here, "../node_modules/@continuedev/cli/dist/cn.js");
 const DOC_PATH = resolve(here, "../../../docs/harness/continue.md");
 
 const hasBuiltServer =
   spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`])
     .status === 0;
+const hasContinueCli =
+  spawnSync("node", [CONTINUE_CLI, "--version"], { encoding: "utf8" }).stdout.trim() === "1.5.47";
 
-const hasLlmEnv = Boolean(
-  process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim(),
-);
-
-interface ToolResult {
-  isError?: boolean;
-  structuredContent?: unknown;
-  content?: { type: string; text: string }[];
-  _meta?: Record<string, unknown>;
+if (process.env.GENIE_REQUIRE_CONTINUE === "1" && !hasBuiltServer) {
+  throw new Error(
+    "GENIE_REQUIRE_CONTINUE=1 but packages/server/dist/cli.js is missing; " +
+      "test:e2e:continue must build @genie/viewer and @genie/server before Vitest.",
+  );
+}
+if (process.env.GENIE_REQUIRE_CONTINUE === "1" && !hasContinueCli) {
+  throw new Error(
+    "GENIE_REQUIRE_CONTINUE=1 but @continuedev/cli@1.5.47 is unavailable; " +
+      "install dependencies before running the Continue smoke.",
+  );
 }
 
-function payload(result: ToolResult): unknown {
-  if (result.structuredContent !== undefined) return result.structuredContent;
-  const text = result.content?.[0]?.text ?? "";
-  return text ? JSON.parse(text) : undefined;
+interface ContinueConfig {
+  name: string;
+  version: string;
+  schema: string;
+  mcpServers: Array<{
+    name: string;
+    type?: "stdio" | "sse" | "streamable-http";
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    url?: string;
+    requestOptions?: { headers?: Record<string, string> };
+  }>;
 }
 
-/** Extract fenced ```yaml blocks from the markdown doc, in document order. */
+interface ChatMessage {
+  role?: string;
+  content?: unknown;
+  tool_calls?: Array<{ function?: { name?: string; arguments?: string } }>;
+  tool_call_id?: string;
+}
+
+interface ChatRequest {
+  messages?: ChatMessage[];
+  tools?: Array<{ function?: { name?: string } }>;
+}
+
+interface RecordedRequest {
+  body: ChatRequest;
+  toolNames: string[];
+}
+
+/** Extract fenced yaml blocks from the markdown doc, in document order. */
 function extractYamlBlocks(markdown: string): string[] {
-  const blocks: string[] = [];
-  const re = /```yaml\n([\s\S]*?)```/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(markdown))) {
-    blocks.push(m[1] ?? "");
-  }
-  return blocks;
+  return [...markdown.matchAll(/```yaml\n([\s\S]*?)```/g)].map((match) => match[1] ?? "");
 }
 
-describe("AC1/AC2/AC3 — continue.md's canonical YAML snippets parse to the documented shape", () => {
+function findToolResult(messages: ChatMessage[], callId: string): string {
+  const result = messages.find(
+    (message) => message.role === "tool" && message.tool_call_id === callId,
+  );
+  if (typeof result?.content !== "string") {
+    throw new Error(`Continue did not return a tool result for ${callId}`);
+  }
+  return result.content;
+}
+
+function parseMcpContent(content: string): unknown {
+  const parts = JSON.parse(content) as Array<{ type?: string; text?: string }>;
+  const text = parts.find((part) => part.type === "text")?.text;
+  if (!text) throw new Error(`Expected MCP text content, got ${content}`);
+  return JSON.parse(text);
+}
+
+function sendSse(
+  response: import("node:http").ServerResponse,
+  delta: Record<string, unknown>,
+): void {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`);
+  response.end("data: [DONE]\n\n");
+}
+
+function sendChatCompletion(response: import("node:http").ServerResponse, content: string): void {
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(
+    JSON.stringify({
+      id: "chatcmpl-continue-smoke",
+      object: "chat.completion",
+      created: 1_700_000_000,
+      model: "continue-smoke-model",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          message: { role: "assistant", content },
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    }),
+  );
+}
+
+function toolCallDelta(id: string, name: string, args: Record<string, unknown>) {
+  return {
+    tool_calls: [
+      {
+        index: 0,
+        id,
+        type: "function",
+        function: { name, arguments: JSON.stringify(args) },
+      },
+    ],
+  };
+}
+
+async function listen(server: Server): Promise<number> {
+  return await new Promise((resolvePort, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Failed to bind deterministic Continue model server"));
+        return;
+      }
+      resolvePort(address.port);
+    });
+  });
+}
+
+async function close(server: Server): Promise<void> {
+  await new Promise<void>((resolveClose, reject) => {
+    server.close((error) => (error ? reject(error) : resolveClose()));
+    server.closeAllConnections?.();
+  });
+}
+
+async function runContinue(args: string[], env: NodeJS.ProcessEnv) {
+  return await new Promise<{
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+  }>((resolveRun, reject) => {
+    const child = spawn("node", [CONTINUE_CLI, ...args], {
+      cwd: REPO_ROOT,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 180_000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", (status, signal) => {
+      clearTimeout(timeout);
+      resolveRun({ status, signal, stdout, stderr });
+    });
+  });
+}
+
+describe("AC1/AC2/AC3/AC4 - Continue's documented configuration", () => {
   let markdown: string;
-  let blocks: string[];
+  let configs: ContinueConfig[];
 
   beforeAll(async () => {
     markdown = await readFile(DOC_PATH, "utf8");
-    blocks = extractYamlBlocks(markdown);
+    configs = extractYamlBlocks(markdown).map((block) => yaml.parse(block) as ContinueConfig);
   });
 
-  it("doc contains at least the streamable-http and stdio snippets", () => {
-    expect(blocks.length).toBeGreaterThanOrEqual(2);
+  it("keeps explicit transport types in the canonical HTTP and stdio snippets", () => {
+    const http = configs.find((config) => config.mcpServers[0]?.url)?.mcpServers[0];
+    const stdio = configs.find((config) => config.mcpServers[0]?.command)?.mcpServers[0];
+
+    expect(http).toMatchObject({
+      name: "genie",
+      type: "streamable-http",
+      url: "https://genie.<operator-domain>/mcp",
+    });
+    expect(http?.requestOptions?.headers?.Authorization).toBe("Bearer ${{ secrets.GENIE_TOKEN }}");
+    expect(stdio).toMatchObject({
+      name: "genie",
+      type: "stdio",
+      command: "node",
+      args: ["/absolute/path/to/genie/packages/server/dist/cli.js", "--transport", "stdio"],
+    });
+    expect(stdio?.env?.GENIE_LLM_API_KEY).toBe("${{ secrets.GENIE_LLM_API_KEY }}");
   });
 
-  it("AC1/AC2 — the streamable-http snippet requires an explicit `type: streamable-http` key", () => {
-    const httpBlock = blocks.find((b) => b.includes("streamable-http"));
-    expect(httpBlock, "expected a streamable-http snippet in continue.md").toBeTruthy();
-    const parsed = yaml.parse(httpBlock as string) as {
-      name: string;
-      version: string;
-      schema: string;
-      mcpServers: {
-        name: string;
-        type?: string;
-        url?: string;
-        requestOptions?: { headers?: Record<string, string> };
-        headers?: unknown;
-        auth?: unknown;
-      }[];
-    };
-    expect(parsed.mcpServers).toHaveLength(1);
-    const server = parsed.mcpServers[0];
-    if (!server) throw new Error("expected mcpServers[0]");
-    // AC2 — unlike Codex/Cursor/Claude, `type` is REQUIRED, not inferred.
-    expect(server.type).toBe("streamable-http");
-    expect(server.url).toBe("https://genie.<operator-domain>/mcp");
-    // No top-level `headers`/`auth` key — Continue has neither.
-    expect(server.headers).toBeUndefined();
-    expect(server.auth).toBeUndefined();
-    // AC3 — secret is the literal, unresolved `${{ secrets.NAME }}` placeholder.
-    expect(server.requestOptions?.headers?.Authorization).toBe(
-      "Bearer ${{ secrets.GENIE_TOKEN }}",
-    );
+  it("states that type is optional in current Continue and MCP is agent-mode only", () => {
+    expect(markdown).toMatch(/`type` is optional/i);
+    expect(markdown).not.toMatch(/type.{0,40}(required|mandatory)/i);
+    expect(markdown).toMatch(/MCP can only be used in agent mode/i);
   });
 
-  it("AC2 — the stdio snippet requires an explicit `type: stdio` key (same rule, different value)", () => {
-    const stdioBlock = blocks.find((b) => b.includes("type: stdio"));
-    expect(stdioBlock, "expected a stdio snippet in continue.md").toBeTruthy();
-    const parsed = yaml.parse(stdioBlock as string) as {
-      mcpServers: { type?: string; command?: string; env?: Record<string, string> }[];
-    };
-    const server = parsed.mcpServers[0];
-    if (!server) throw new Error("expected mcpServers[0]");
-    expect(server.type).toBe("stdio");
-    expect(server.command).toBe("node");
-    // AC3 — env secrets also expressed via `${{ secrets.NAME }}`, never hardcoded.
-    expect(server.env?.GENIE_LLM_API_KEY).toBe("${{ secrets.GENIE_LLM_API_KEY }}");
+  it("documents Continue CLI's current Agent Skills install path", () => {
+    expect(markdown).toContain("~/.continue/skills/genie");
+    expect(markdown).not.toMatch(/no (documented )?Agent Skills loader/i);
   });
 
-  it("AC4 — the doc explicitly warns MCP only works in agent mode", () => {
-    expect(markdown).toMatch(/only (calls|works).{0,40}agent mode/i);
+  it("distinguishes Continue IDE's MCP App renderer from text-only cn", () => {
+    expect(markdown).toMatch(/Continue IDE.{0,80}MCP App renderer/is);
+    expect(markdown).toMatch(/published Continue CLI 1\.5\.47.{0,160}without the MCP Apps UI/is);
   });
 });
 
-// ── AC5 — four-verb chain over real stdio, asserting text-only output ─────
-//
-// Launches `node dist/cli.js --transport stdio` as a real child process —
-// the exact command Continue's `type: stdio` mcpServers entry launches —
-// and drives conjure → plan → write_files → preview, asserting no result
-// carries a `ui://` resource pointer (Continue never negotiates MCP Apps).
-
-describe.skipIf(!hasBuiltServer)(
-  "AC5 — four-verb chain over real stdio (Continue's transport), text output only",
+describe.skipIf(!hasBuiltServer || !hasContinueCli)(
+  "AC5 - real Continue CLI headless agent smoke",
   () => {
-    let client: Client;
+    let tempRoot: string;
+    let continueHome: string;
     let kitsRoot: string;
+    let configPath: string;
+    let configWithoutTypePath: string;
+    let modelServer: Server;
+    let modelPort: number;
+    let requests: RecordedRequest[];
+    let expectedFile: string;
+    let expectedFilePath: string;
+    let observedPreviewText: string;
 
     beforeAll(async () => {
-      kitsRoot = await mkdtemp(join(tmpdir(), "genie-continue-smoke-kits-"));
-      const transport = new StdioClientTransport({
-        command: "node",
-        args: [SERVER_CLI, "--transport", "stdio"],
-        env: {
-          ...(process.env as Record<string, string>),
-          GENIE_KITS_ROOT: kitsRoot,
-          OAUTH_HS256_KEY: "continue-smoke-test-not-a-real-secret",
-          ...(hasLlmEnv
-            ? {}
-            : {
-                GENIE_LLM_API_KEY: "continue-smoke-test-not-a-real-secret-key",
-                GENIE_LLM_BASE_URL: "http://127.0.0.1:1/v1",
+      tempRoot = await mkdtemp(join(tmpdir(), "genie-continue-smoke-"));
+      continueHome = join(tempRoot, "continue-home");
+      kitsRoot = join(tempRoot, "kits");
+      configPath = join(tempRoot, "continue.yaml");
+      configWithoutTypePath = join(tempRoot, "continue-without-type.yaml");
+      expectedFilePath = "components/actions/Button/Button.html";
+      expectedFile =
+        '<!-- @genie group="actions" viewport="320x140" -->\n' +
+        "<!doctype html><button>Continue smoke</button>";
+      observedPreviewText = "";
+      requests = [];
+      await mkdir(continueHome, { recursive: true });
+      await mkdir(kitsRoot, { recursive: true });
+
+      modelServer = createServer((request, response) => {
+        let raw = "";
+        request.setEncoding("utf8");
+        request.on("data", (chunk: string) => {
+          raw += chunk;
+        });
+        request.on("end", () => {
+          if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+            response.writeHead(404).end();
+            return;
+          }
+
+          const body = JSON.parse(raw) as ChatRequest;
+          const messages = body.messages ?? [];
+          const toolNames = (body.tools ?? [])
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => Boolean(name));
+          requests.push({ body, toolNames });
+
+          const isTypeProbe = messages.some(
+            (message) =>
+              message.role === "user" &&
+              typeof message.content === "string" &&
+              message.content.includes("CONTINUE_TYPE_OPTIONAL_PROBE"),
+          );
+          if (isTypeProbe) {
+            sendSse(response, { content: "CONTINUE_TYPE_OPTIONAL_OK" });
+            return;
+          }
+
+          // Genie's own conjure request has response_format but no tools.
+          if (toolNames.length === 0) {
+            sendChatCompletion(
+              response,
+              JSON.stringify({
+                componentName: "Button",
+                group: "actions",
+                files: [{ path: expectedFilePath, content: expectedFile, mimeType: "text/html" }],
+                manifestEntry: {
+                  viewport: { width: 320, height: 140 },
+                  subtitle: "Continue smoke",
+                },
               }),
-        },
+            );
+            return;
+          }
+
+          const lastToolCall = [...messages]
+            .reverse()
+            .find((message) => message.role === "assistant" && message.tool_calls?.length)
+            ?.tool_calls?.[0];
+          const lastTool = lastToolCall?.function?.name;
+          const lastCallId = lastToolCall ? messages.at(-1)?.tool_call_id : undefined;
+
+          if (!lastTool) {
+            sendSse(
+              response,
+              toolCallDelta("continue-create", "mcp__genie__create_kit", {
+                name: "Continue Agent Smoke",
+              }),
+            );
+            return;
+          }
+
+          if (lastTool === "mcp__genie__create_kit" && lastCallId === "continue-create") {
+            const { kitId } = parseMcpContent(findToolResult(messages, "continue-create")) as {
+              kitId: string;
+            };
+            sendSse(
+              response,
+              toolCallDelta("continue-conjure", "mcp__genie__conjure", {
+                kitId,
+                kit: "Minimal semantic HTML UI kit.",
+                prompt: "A button that says Continue smoke.",
+                model: "continue-smoke-model",
+              }),
+            );
+            return;
+          }
+
+          if (lastTool === "mcp__genie__conjure" && lastCallId === "continue-conjure") {
+            const conjured = parseMcpContent(findToolResult(messages, "continue-conjure")) as {
+              files: Array<{ path: string; content: string; mimeType: string; encoding: string }>;
+            };
+            expect(conjured.files).toEqual([
+              {
+                path: expectedFilePath,
+                content: expectedFile,
+                mimeType: "text/html",
+                encoding: "utf-8",
+              },
+            ]);
+            const createArgs = JSON.parse(
+              messages.find((message) =>
+                message.tool_calls?.some(
+                  (call) => call.function?.name === "mcp__genie__create_kit",
+                ),
+              )?.tool_calls?.[0]?.function?.arguments ?? "{}",
+            ) as { name?: string };
+            expect(createArgs.name).toBe("Continue Agent Smoke");
+            const create = parseMcpContent(findToolResult(messages, "continue-create")) as {
+              kitId: string;
+            };
+            sendSse(
+              response,
+              toolCallDelta("continue-plan", "mcp__genie__plan", {
+                kitId: create.kitId,
+                writes: conjured.files.map((file) => file.path),
+                deletes: [],
+                localDir: join(kitsRoot, create.kitId),
+              }),
+            );
+            return;
+          }
+
+          if (lastTool === "mcp__genie__plan" && lastCallId === "continue-plan") {
+            const { planId } = parseMcpContent(findToolResult(messages, "continue-plan")) as {
+              planId: string;
+            };
+            const conjured = parseMcpContent(findToolResult(messages, "continue-conjure")) as {
+              files: Array<{ path: string; content: string; mimeType: string; encoding: string }>;
+            };
+            sendSse(
+              response,
+              toolCallDelta("continue-write", "mcp__genie__write_files", {
+                planId,
+                files: conjured.files.map(({ path, content, mimeType, encoding }) => ({
+                  path,
+                  data: content,
+                  mimeType,
+                  encoding,
+                })),
+              }),
+            );
+            return;
+          }
+
+          if (lastTool === "mcp__genie__write_files" && lastCallId === "continue-write") {
+            const create = parseMcpContent(findToolResult(messages, "continue-create")) as {
+              kitId: string;
+            };
+            sendSse(
+              response,
+              toolCallDelta("continue-preview", "mcp__genie__preview", {
+                kitId: create.kitId,
+              }),
+            );
+            return;
+          }
+
+          if (lastTool === "mcp__genie__preview" && lastCallId === "continue-preview") {
+            const previewParts = JSON.parse(findToolResult(messages, "continue-preview")) as Array<{
+              type?: string;
+              text?: string;
+            }>;
+            const previewText = previewParts.find((part) => part.type === "text")?.text;
+            if (!previewText) throw new Error("Continue did not receive preview's text content");
+            expect(previewParts).toEqual([{ type: "text", text: previewText }]);
+            observedPreviewText = previewText;
+            sendSse(response, { content: `CONTINUE_SMOKE_COMPLETE\n${previewText}` });
+            return;
+          }
+
+          response.writeHead(500).end(`Unexpected Continue tool state: ${lastTool}`);
+        });
       });
-      client = new Client({ name: "continue-smoke", version: "0" });
-      await client.connect(transport);
+      modelPort = await listen(modelServer);
+
+      const markdown = await readFile(DOC_PATH, "utf8");
+      const snippets = extractYamlBlocks(markdown).map(
+        (block) => yaml.parse(block) as ContinueConfig,
+      );
+      const documentedStdio = snippets.find((config) => config.mcpServers[0]?.command)
+        ?.mcpServers[0];
+      if (!documentedStdio) throw new Error("Missing documented Continue stdio snippet");
+
+      const config = {
+        name: "genie-continue-smoke",
+        version: "1.0.0",
+        schema: "v1",
+        models: [
+          {
+            name: "deterministic-continue-agent",
+            provider: "openai",
+            model: "continue-smoke-model",
+            apiKey: "continue-smoke-not-a-real-key",
+            apiBase: `http://127.0.0.1:${modelPort}/v1`,
+            roles: ["chat"],
+            capabilities: ["tool_use"],
+            defaultCompletionOptions: { contextLength: 200000, maxTokens: 4096 },
+          },
+        ],
+        mcpServers: [
+          {
+            ...documentedStdio,
+            args: [SERVER_CLI, "--transport", "stdio"],
+            env: {
+              GENIE_KITS_ROOT: kitsRoot,
+              GENIE_HOME: join(tempRoot, "genie-home"),
+              GENIE_LLM_BASE_URL: `http://127.0.0.1:${modelPort}/v1`,
+              GENIE_LLM_API_KEY: "continue-smoke-not-a-real-key",
+              OAUTH_HS256_KEY: "continue-smoke-not-a-real-oauth-key",
+              GENIE_PREVIEW_NO_OPEN: "1",
+            },
+          },
+        ],
+      };
+      await writeFile(configPath, yaml.stringify(config));
+      const withoutType = structuredClone(config);
+      delete withoutType.mcpServers[0]?.type;
+      await writeFile(configWithoutTypePath, yaml.stringify(withoutType));
     }, 30_000);
 
     afterAll(async () => {
-      await client?.close();
-      await rm(kitsRoot, { recursive: true, force: true });
+      if (modelServer) await close(modelServer);
+      if (tempRoot) {
+        await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      }
     });
 
-    it("advertises the four chain verbs over real stdio", async () => {
-      const { tools } = await client.listTools();
-      const names = new Set(tools.map((t) => t.name));
+    it("cn -p infers stdio from command when the optional type key is omitted", async () => {
+      const requestStart = requests.length;
+      const result = await runContinue(
+        [
+          "-p",
+          "--config",
+          configWithoutTypePath,
+          "CONTINUE_TYPE_OPTIONAL_PROBE: reply with the requested marker.",
+        ],
+        {
+          ...process.env,
+          HOME: tempRoot,
+          CONTINUE_GLOBAL_DIR: continueHome,
+          CONTINUE_METRICS_ENABLED: "0",
+          FORCE_NO_TTY: "true",
+          CI: "true",
+          GENIE_LLM_API_KEY: undefined,
+          GENIE_LLM_BASE_URL: undefined,
+        },
+      );
+
+      expect(result.status, `signal=${result.signal}\n${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("CONTINUE_TYPE_OPTIONAL_OK");
+      const probeRequest = requests
+        .slice(requestStart)
+        .find((request) => request.toolNames.includes("mcp__genie__conjure"));
+      expect(probeRequest, "Continue did not load genie's tools without type").toBeDefined();
+    });
+
+    it("cn -p loads genie, executes generated output through plan/write_files/preview, and returns text", async () => {
+      const result = await runContinue(
+        [
+          "-p",
+          "--config",
+          configPath,
+          "--allow",
+          "*",
+          "Use the genie tools to create, conjure, plan, write, and preview a button.",
+        ],
+        {
+          ...process.env,
+          HOME: tempRoot,
+          CONTINUE_GLOBAL_DIR: continueHome,
+          CONTINUE_METRICS_ENABLED: "0",
+          FORCE_NO_TTY: "true",
+          CI: "true",
+          GENIE_LLM_API_KEY: undefined,
+          GENIE_LLM_BASE_URL: undefined,
+        },
+      );
+
+      expect(result.status, `signal=${result.signal}\n${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("CONTINUE_SMOKE_COMPLETE");
+      expect(observedPreviewText).toMatch(/Preview (ready|running|unavailable)/);
+      expect(observedPreviewText).not.toContain("ui://");
+      expect(result.stdout).toContain(observedPreviewText);
+
+      const agentRequests = requests.filter((request) => request.toolNames.length > 0);
+      const advertised = new Set(agentRequests.flatMap((request) => request.toolNames));
       for (const verb of [
         "mcp__genie__conjure",
         "mcp__genie__plan",
         "mcp__genie__write_files",
         "mcp__genie__preview",
       ]) {
-        expect(names, `expected ${verb} to be registered over stdio`).toContain(verb);
+        expect(advertised, `Continue did not expose ${verb} to its model`).toContain(verb);
       }
-    });
 
-    it("plan -> write_files -> preview round-trips over real stdio with NO ui:// resource pointer (text output only, AC5)", async () => {
-      const create = (await client.callTool({
-        name: "mcp__genie__create_kit",
-        arguments: { name: "Continue Smoke Kit" },
-      })) as ToolResult;
-      expect(create.isError, JSON.stringify(create)).not.toBe(true);
-      const { kitId } = payload(create) as { kitId: string };
-      expect(kitId).toMatch(/^[a-z0-9-]{3,64}$/);
+      const completedCalls = (agentRequests.at(-1)?.body.messages ?? [])
+        .flatMap((message) => message.tool_calls ?? [])
+        .map((call) => call.function?.name)
+        .filter((name): name is string => Boolean(name));
+      expect(completedCalls).toEqual([
+        "mcp__genie__create_kit",
+        "mcp__genie__conjure",
+        "mcp__genie__plan",
+        "mcp__genie__write_files",
+        "mcp__genie__preview",
+      ]);
 
-      const kitDir = join(kitsRoot, kitId);
-      const plan = (await client.callTool({
-        name: "mcp__genie__plan",
-        arguments: { kitId, writes: ["components/**/*.html"], deletes: [], localDir: kitDir },
-      })) as ToolResult;
-      expect(plan.isError, JSON.stringify(plan)).not.toBe(true);
-      const { planId } = payload(plan) as { planId: string };
-      expect(plan._meta?.ui).toBeUndefined();
-
-      const write = (await client.callTool({
-        name: "mcp__genie__write_files",
-        arguments: {
-          planId,
-          files: [{ path: "components/Button.html", data: "<button>Continue smoke</button>" }],
-        },
-      })) as ToolResult;
-      expect(write.isError, JSON.stringify(write)).not.toBe(true);
-      expect(payload(write)).toMatchObject({ writtenPaths: ["components/Button.html"] });
-
-      const preview = (await client.callTool({
-        name: "mcp__genie__preview",
-        arguments: { kitId },
-      })) as ToolResult;
-      expect(preview.isError, JSON.stringify(preview)).not.toBe(true);
-      // AC5 — genie's `preview` is capability-based, not harness-name-based
-      // (per docs/harness/README.md): since this connection never declares
-      // an MCP Apps UI capability, the server prepares the "omitted/hybrid"
-      // result — `_meta.ui.resourceUri` is present at the protocol level as
-      // a route Continue COULD mount if it ever gained Apps support, but
-      // Continue's own client has no `ui://` renderer today, so nothing
-      // consumes it; what Continue's UI actually shows the user is the
-      // plain text/JSON `content` payload below. This test asserts that
-      // payload exists and is plain text/JSON (no rendering assertion is
-      // possible without a live Continue client) — it does not assert
-      // resourceUri is absent, since genie always emits it hybrid-style
-      // regardless of which harness is asking.
-      expect(preview.content?.length ?? 0).toBeGreaterThan(0);
-      expect(preview.content?.[0]?.type).toBe("text");
-    });
-
-    it.skipIf(!hasLlmEnv)(
-      "conjure generates a component over real stdio when an LLM endpoint is configured, with no ui:// pointer",
-      async () => {
-        const create = (await client.callTool({
-          name: "mcp__genie__create_kit",
-          arguments: { name: "Continue Smoke Conjure Kit" },
-        })) as ToolResult;
-        expect(create.isError, JSON.stringify(create)).not.toBe(true);
-        const { kitId } = payload(create) as { kitId: string };
-
-        const conjure = (await client.callTool({
-          name: "mcp__genie__conjure",
-          arguments: {
-            kitId,
-            kit: "<!-- empty kit context for smoke test -->",
-            prompt: "A small rounded primary button that says Continue.",
-            model: process.env.GENIE_SMOKE_LLM_MODEL ?? "gpt-5.2",
-          },
-        })) as ToolResult;
-        expect(conjure.isError, JSON.stringify(conjure)).not.toBe(true);
-        expect(conjure.content?.[0]?.type).toBe("text");
-      },
-      60_000,
-    );
+      const kitDirs = await readdir(kitsRoot);
+      expect(kitDirs).toHaveLength(1);
+      const writtenPath = join(kitsRoot, kitDirs[0]!, expectedFilePath);
+      await access(writtenPath);
+      expect(await readFile(writtenPath, "utf8")).toBe(expectedFile);
+    }, 190_000);
   },
 );

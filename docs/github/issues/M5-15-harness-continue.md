@@ -8,15 +8,15 @@ estimate: "5h"
 
 ## Summary
 Ship the Continue.dev config snippet for `.continue/mcpServers/`. Continue
-is the only harness that REQUIRES the explicit `type` discriminator
-(`stdio | sse | streamable-http`) and uses `${{ secrets.NAME }}`
-interpolation. MCP only works in agent mode.
+accepts an optional explicit `type` discriminator (`stdio | sse |
+streamable-http`) and uses `${{ secrets.NAME }}` interpolation. MCP only works
+in agent mode; Continue CLI exposes that loop through scriptable `cn -p`.
 
 ## Context
-- Research report §4 Continue row: "**Requires explicit `type: stdio | sse |
-  streamable-http`** — only harness that mandates the discriminator.
-  Secrets interpolated as `${{ secrets.NAME }}`. No `headers`/`auth` keys.
-  MCP usable only in **agent mode**."
+- The original research report's explicit-`type` requirement is stale. Current
+  Continue makes `type` optional and infers stdio from `command`; remote entries
+  try Streamable HTTP and then SSE. Secrets use `${{ secrets.NAME }}` and MCP is
+  usable only in **agent mode**.
 
 ## Acceptance Criteria
 - [ ] AC1 — `docs/harness/continue.md` includes the canonical YAML
@@ -33,12 +33,13 @@ interpolation. MCP only works in agent mode.
             headers:
               Authorization: Bearer ${{ secrets.GENIE_TOKEN }}
       ```
-- [ ] AC2 — Warns this is the only harness requiring an explicit `type`.
+- [ ] AC2 — Corrects the stale requirement: current Continue accepts optional
+      `type`; the canonical snippets keep it explicit for readability.
 - [ ] AC3 — Documents secret interpolation via Continue's `${{ secrets.NAME
       }}` syntax.
 - [ ] AC4 — Warns MCP only works in agent mode (not chat / autocomplete).
-- [ ] AC5 — Smoke test runs the four-verb chain in agent mode; asserts text
-      output (no `ui://` rendering).
+- [ ] AC5 — Smoke test runs the four-verb chain through headless agent-mode
+      `cn -p`; asserts its text output (no `ui://` rendering in that CLI surface).
 
 ## Implementation Notes
 - File: `docs/harness/continue.md`,

@@ -1,26 +1,30 @@
 # genie in Continue.dev
 
-Continue speaks MCP over the same protocol every other harness uses, but it
-diverges from every other harness genie documents in two ways worth calling
-out up front:
+Continue speaks MCP over stdio, SSE, and Streamable HTTP. Two configuration
+details are worth calling out:
 
-- **Continue is the only harness that REQUIRES an explicit `type` key.**
-  Every other harness genie documents (Claude Code, Cursor, Codex, Copilot)
-  infers the transport from which keys are present (`command` vs `url`).
-  Continue does not infer — you must write `type: stdio | sse |
-  streamable-http` yourself, or Continue rejects (or silently misconfigures)
-  the server entry.
-- **Continue interpolates secrets as `${{ secrets.NAME }}`**, not a
-  `headers`/`auth` config key or a bare environment-variable reference like
-  Codex's `bearer_token_env_var`. There is no `headers`/`auth` key in
-  Continue's `mcpServers` schema at all — authenticated headers are written
-  inline with the `${{ secrets.NAME }}` placeholder, which Continue resolves
-  from its own secrets store at connection time.
+- **`type` is optional in current Continue.** Continue's official stdio
+  quick-start omits it, and the schema shipped with Continue CLI 1.5.47 marks
+  `type` optional for both command- and URL-keyed servers. The snippets below
+  keep `type` explicit because it makes the intended transport unambiguous to a
+  reader. If omitted, a `command` entry selects stdio; a URL entry tries
+  Streamable HTTP and then falls back to SSE.
+- **Continue interpolates secrets as `${{ secrets.NAME }}`.** For remote MCP
+  authentication, put the resulting header under `requestOptions.headers`.
+  Continue resolves the placeholder from its secrets sources at config-load
+  time; never put a literal token in the YAML.
+
+Behavior and version were rechecked against the published
+`@continuedev/cli@1.5.47`, Continue's
+[CLI documentation](https://docs.continue.dev/cli), and its current
+[`mcpServerSchema`](https://github.com/continuedev/continue/blob/main/packages/config-yaml/src/schemas/mcp/index.ts)
+on 2026-07-15.
 
 ## Register the server
 
-Continue reads `.continue/mcpServers/` (project-level) or the equivalent
-user-level config. This is the canonical snippet for a deployed genie
+Continue reads a full config passed to `cn --config`, the user-level
+`~/.continue/config.yaml`, or standalone project blocks under
+`.continue/mcpServers/`. This is the canonical block for a deployed genie
 instance:
 
 ```yaml
@@ -36,17 +40,10 @@ mcpServers:
         Authorization: Bearer ${{ secrets.GENIE_TOKEN }}
 ```
 
-Two things the research report flags explicitly:
-
-- **`type: streamable-http` is mandatory.** Leaving it out is not "inferred as
-  streamable-http by default" the way Codex or Claude Code would — Continue
-  is the only harness in this doc set that requires you to write the
-  discriminator (`stdio`, `sse`, or `streamable-http`) yourself.
-- **Secrets never go in the YAML as literal values.** `${{ secrets.GENIE_TOKEN
-  }}` is Continue's own interpolation syntax — it resolves `GENIE_TOKEN` from
-  Continue's secrets store (configured separately, outside this file) at
-  connection time. Never hardcode a bearer token into the `requestOptions
-  .headers` block.
+`type: streamable-http` is explicit here to document intent, not because the
+current schema demands it. `${{ secrets.GENIE_TOKEN }}` resolves from
+Continue's secret sources, including a matching environment variable for local
+CLI use. Never hardcode a bearer token in `requestOptions.headers`.
 
 ### Local stdio (a checked-out genie build)
 
@@ -67,53 +64,79 @@ mcpServers:
       GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
 ```
 
-`type: stdio` is required here too — same rule, different value. The base URL
-must end in `/v1`. Never hardcode secrets directly in the YAML; route them
-through `${{ secrets.NAME }}`.
+The explicit `type: stdio` is likewise optional. The LLM base URL must end in
+`/v1`; route both values through Continue secrets rather than literal YAML
+values. The genie server also requires `OAUTH_HS256_KEY` at startup; provide it
+through the process environment or add another `${{ secrets.NAME }}` entry.
 
 ## MCP only works in agent mode
 
-**Continue only calls MCP tools when the session is in agent mode.** In
-Continue's chat mode and in autocomplete, the `mcpServers` entry above is
-inert — genie's tools are not offered to the model and `conjure → plan →
-write_files → preview` is not reachable. Switch the Continue session to agent
-mode before asking it to use genie.
+**MCP can only be used in agent mode.** Continue chat mode and autocomplete do
+not offer MCP tools to the model. In the IDE, switch the session to agent mode
+before asking it to run `conjure → plan → write_files → preview`.
+
+Continue CLI 1.5.47 provides the same agent loop in scriptable headless form:
+
+```bash
+cn -p --config ./continue.yaml --allow "*" \
+  "Use genie to build a button and preview it"
+```
+
+`cn -p` exits after the agent turn. Headless tools that need approval are
+otherwise excluded, so automation must grant the intended MCP tools with
+`--allow` (use narrower names than `"*"` outside an isolated smoke test).
 
 ## Using it in Continue
 
-Ask for a component in an agent-mode Continue session. Continue has no Agent
-Skills loader in the sense Claude Code, Cursor, Codex, and Copilot do, so
-genie's guidance in Continue comes entirely from tool descriptions — there is
-no bundled `SKILL.md` install path documented for Continue today. Because
-Continue does not negotiate the MCP Apps `ui://` capability, `preview` returns
-plain text/JSON tool output (component metadata plus a viewer URL/`file://`
-fallback), not an inline card grid. Open the returned viewer URL manually to
-see the rendered components.
+### Install the Agent Skill
+
+Continue CLI 1.5.47 loads Agent Skills from project-level `.continue/skills`
+and `.claude/skills`, plus the user-level `~/.continue/skills` directory. For a
+user-level install:
+
+```bash
+mkdir -p ~/.continue/skills
+cp -R packages/plugin/skills/genie ~/.continue/skills/genie
+```
+
+For a project-only install, copy the same directory to
+`.continue/skills/genie`. The Skill teaches the four-verb workflow; tool
+descriptions remain the fallback when it is not installed.
+
+### Preview behavior differs by surface
+
+Current Continue IDE source includes an MCP App renderer and consumes the
+tool-level `_meta.ui.resourceUri` that genie advertises in `tools/list`, so the
+IDE can render the inline grid. The published Continue CLI 1.5.47 is different:
+`cn` initializes its MCP client without the MCP Apps UI capability and passes
+only the MCP result's model-visible `content` into the agent loop. That text
+contains the viewer URL or `file://` fallback, not a `ui://` pointer. `cn` does
+not mount an inline grid; open the returned URL to view the generated component.
 
 ## Smoke-testing a genie/Continue registration
 
-`packages/e2e/test/m5-smoke-continue.test.ts` is the automated check for this
-document. Continue's own CLI does not expose a scriptable way to drive an
-agent-mode chat turn the way `codex exec` or a Cursor session does, so this
-suite proves the two things that ARE independently testable:
+`packages/e2e/test/m5-smoke-continue.test.ts` runs the published Continue CLI,
+not a generic MCP SDK stand-in. The test:
 
-1. **The canonical YAML snippets above parse to the exact documented shape** —
-   `type: streamable-http` / `type: stdio` present and required, secrets
-   expressed via the literal `${{ secrets.NAME }}` placeholder (never resolved
-   or hardcoded), and no `headers`/`auth` top-level key.
-2. **The four-verb chain (`conjure → plan → write_files → preview`) runs over
-   a real stdio child process**, launched exactly the way Continue's
-   `type: stdio` `mcpServers` entry launches genie, and asserts every tool
-   result surfaces plain **text output** the harness can render without any
-   `ui://` support (AC5). Genie's `preview` stays capability-based (per
-   `docs/harness/README.md`) rather than branching on harness identity, so
-   the protocol-level result still carries `_meta.ui.resourceUri` as a route
-   Continue could mount if it ever negotiated MCP Apps — but since Continue's
-   client has no `ui://` renderer today, that pointer goes unused and the
-   plain text/JSON `content` (plus the viewer URL/`file://` fallback) is what
-   the user actually sees, matching the "Continue never negotiates MCP Apps"
-   claim above.
+1. Parses the canonical YAML blocks above and checks their explicit transport
+   values and unresolved `${{ secrets.NAME }}` placeholders.
+2. Starts `@continuedev/cli@1.5.47` as `cn -p` with a temporary config derived
+   from the stdio block above. Continue itself loads the config, starts genie's
+   built server, exposes its MCP tools, and invokes them through its headless
+   agent loop.
+3. Uses a deterministic loopback OpenAI-compatible model seam for both the
+   Continue agent and genie's `conjure` call. It verifies one contiguous
+   `conjure → plan → write_files → preview` flow: the generated file paths and
+   bytes feed `plan` and `write_files`, the file lands on disk unchanged, and
+   Continue CLI prints preview's plain-text result.
 
-`conjure` additionally requires `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` and
-skips cleanly without them, same as every other harness's smoke suite in this
-repo.
+The deterministic leg needs no external model credentials and does not skip in
+the dedicated command. Run it from a clean checkout with:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm --filter @genie/e2e test:e2e:continue
+```
+
+That command builds `@genie/viewer` and `@genie/server` first and fails if
+either the built server or the pinned Continue CLI is unavailable.
