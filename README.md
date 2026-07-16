@@ -106,7 +106,7 @@ Container Registry on every release, built from the repo-root `Dockerfile`
 (`node:22-alpine`, multi-stage, non-root UID 1000, < 200 MB runtime image).
 
 ```bash
-docker run -p 8080:8080 \
+docker run -d --name genie -p 8080:8080 \
   -e GENIE_LLM_BASE_URL=https://your-llm-gateway/v1 \
   -e GENIE_LLM_API_KEY=... \
   -e OAUTH_HS256_KEY="$(openssl rand -hex 32)" \

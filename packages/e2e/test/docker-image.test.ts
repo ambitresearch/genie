@@ -30,6 +30,7 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "..", "..");
 const dockerfilePath = resolve(repoRoot, "Dockerfile");
 const dockerignorePath = resolve(repoRoot, ".dockerignore");
+const envExamplePath = resolve(repoRoot, ".env.example");
 const composePath = resolve(repoRoot, "deploy", "docker-compose.yml");
 const readmePath = resolve(repoRoot, "README.md");
 const ciPath = resolve(repoRoot, ".github", "workflows", "ci.yml");
@@ -37,6 +38,7 @@ const releaseWorkflowPath = resolve(repoRoot, ".github", "workflows", "release-p
 
 const dockerfile = readFileSync(dockerfilePath, "utf-8");
 const dockerignore = existsSync(dockerignorePath) ? readFileSync(dockerignorePath, "utf-8") : "";
+const envExample = readFileSync(envExamplePath, "utf-8");
 const compose = readFileSync(composePath, "utf-8");
 const readme = readFileSync(readmePath, "utf-8");
 const ci = readFileSync(ciPath, "utf-8");
@@ -154,13 +156,23 @@ describe("deploy/docker-compose.yml (AC6)", () => {
   });
 
   it("documents an executable local OAuth quickstart", () => {
+    expect(readme).toMatch(/docker run -d .*--name genie/);
     expect(readme).toContain('-e OAUTH_HS256_KEY="$(openssl rand -hex 32)"');
     expect(readme).toContain("-e GENIE_OAUTH_ISSUER=http://localhost:8080");
+  });
+
+  it("keeps the Compose env template aligned with required OAuth config", () => {
+    expect(envExample).toContain("Must be at least 32 characters");
+    expect(envExample).toMatch(/^GENIE_OAUTH_ISSUER=http:\/\/localhost:8080$/m);
   });
 
   it("does not document unsupported CLI git-store selection variables", () => {
     expect(compose).not.toMatch(/GENIE_GIT_BASE_URL/);
     expect(compose).not.toMatch(/GENIE_GIT_TOKEN/);
+  });
+
+  it("does not combine incompatible OAuth and static bearer modes", () => {
+    expect(compose).not.toMatch(/GENIE_REQUIRE_BEARER_AUTH/);
   });
 
   it("never hardcodes a secret — every credential is an interpolated env var", () => {

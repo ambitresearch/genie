@@ -8,7 +8,7 @@
 # (docs/plan/04-tech-design-rfc.md §"GitHostKitStore").
 #
 # Quickstart:
-#   cp .env.example .env   # fill in GENIE_LLM_BASE_URL / GENIE_LLM_API_KEY / OAUTH_HS256_KEY
+#   cp .env.example .env   # fill in the required LLM + OAuth values
 #   docker compose -f deploy/docker-compose.yml up -d
 
 services:
@@ -33,8 +33,6 @@ services:
       GENIE_PREVIEW_LOCALITY: "remote"
       # Uncomment when overriding the image's default kit storage path:
       # GENIE_KITS_ROOT: /data/kits
-      # Uncomment to require a static Bearer token on /mcp (see `genie token`):
-      # GENIE_REQUIRE_BEARER_AUTH: "true"
     volumes:
       # Persisted server state (auth tokens, plans, reports) — GENIE_HOME.
       - genie-home:/data
