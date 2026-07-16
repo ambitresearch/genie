@@ -16,10 +16,9 @@
  *     `/.well-known/openid-configuration` + JWKS endpoint).
  *   - GENIE_OIDC_AUDIENCE — the `aud` claim genie's tokens must carry
  *     (typically the OAuth client_id registered with the provider).
- * Both must be set for OIDC RP mode to activate; `createOidcVerifier` throws
- * {@link MissingOidcConfigError} otherwise so callers can no-op cleanly (see
- * `tryCreateOidcVerifier`), exactly as `tryCreateOAuthRouter` does for the
- * self-issued OAuth path.
+ * Both must be non-empty for OIDC RP mode to activate. When neither variable
+ * is present the feature is disabled; a partial or empty configuration is a
+ * startup error so an intended auth gate cannot fail open.
  */
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import type { OidcClaims } from "./group-policy.js";
@@ -50,9 +49,8 @@ export interface OidcVerifier {
   verify(token: string): Promise<OidcClaims>;
 }
 
-/** Read {@link OidcVerifierConfig} from env. Missing/empty issuer or audience
- *  means OIDC RP mode is not configured (not an error by itself — the caller
- *  decides via {@link tryCreateOidcVerifier} vs {@link createOidcVerifier}). */
+/** Read {@link OidcVerifierConfig} from env. A missing or empty issuer or
+ *  audience is invalid once either OIDC variable is present. */
 export function resolveOidcConfig(env: NodeJS.ProcessEnv = process.env): OidcVerifierConfig {
   const issuer = env.GENIE_OIDC_ISSUER;
   const audience = env.GENIE_OIDC_AUDIENCE;
@@ -94,19 +92,21 @@ async function discoverJwksUri(issuerUrl: string): Promise<string> {
  * needed here).
  */
 export async function createOidcVerifier(config: OidcVerifierConfig): Promise<OidcVerifier> {
-  const issuerUrl = config.issuer.endsWith("/") ? config.issuer.slice(0, -1) : config.issuer;
-  const jwksUri = await discoverJwksUri(issuerUrl);
+  const issuer = config.issuer;
+  const discoveryIssuer = issuer.endsWith("/") ? issuer.slice(0, -1) : issuer;
+  const jwksUri = await discoverJwksUri(discoveryIssuer);
   const jwks = createRemoteJWKSet(new URL(jwksUri));
   const requiredGroup = config.requiredGroup ?? REQUIRED_GROUP;
 
   return {
-    issuer: issuerUrl,
+    issuer,
     audience: config.audience,
     requiredGroup,
     async verify(token: string): Promise<OidcClaims> {
       const { payload } = await jwtVerify(token, jwks, {
-        issuer: issuerUrl,
+        issuer,
         audience: config.audience,
+        requiredClaims: ["exp"],
       });
       const claims = payload as OidcClaims;
       enforceGroupAccess(claims, requiredGroup);
@@ -115,17 +115,14 @@ export async function createOidcVerifier(config: OidcVerifierConfig): Promise<Oi
   };
 }
 
-/** Same as {@link createOidcVerifier}, but returns `undefined` (feature
- *  disabled) instead of throwing when OIDC RP mode isn't configured — the
- *  same "opt-in, never crash a caller that hasn't set this up" contract
- *  `tryCreateOAuthRouter` gives the self-issued OAuth path. */
+/** Same as {@link createOidcVerifier}, but returns `undefined` only when both
+ *  OIDC variables are absent. Partial or explicitly empty configuration is a
+ *  startup error. */
 export async function tryCreateOidcVerifier(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<OidcVerifier | undefined> {
-  try {
-    return await createOidcVerifier(resolveOidcConfig(env));
-  } catch (error) {
-    if (error instanceof MissingOidcConfigError) return undefined;
-    throw error;
+  if (env.GENIE_OIDC_ISSUER === undefined && env.GENIE_OIDC_AUDIENCE === undefined) {
+    return undefined;
   }
+  return createOidcVerifier(resolveOidcConfig(env));
 }

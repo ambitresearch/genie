@@ -32,15 +32,17 @@
  * reachable, and `GENIE_REQUIRE_DOCKER=1` (set by this suite's dedicated CI
  * job) makes a vacuous skip fail loudly instead.
  *
- * ── Host networking (Linux-only) ─────────────────────────────────────────────
- * The fixture container runs in `network_mode: host` (see oidc-fixture.ts's
- * doc comment for why) — this suite therefore only runs on Linux CI/dev
- * hosts, consistent with the repo's `ubuntu-latest`-pinned Docker-backed jobs
- * (the `gitea` job carries the same implicit assumption).
+ * ── Container networking ─────────────────────────────────────────────────────
+ * The fixture reserves an ephemeral host port, binds the provider container
+ * to it, and bakes that exact URL into issuer/discovery/token claims. This
+ * keeps strict issuer matching while working on Linux CI and Docker Desktop.
  */
 import { createServer as createNodeHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createHash, randomBytes } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright";
 
@@ -52,6 +54,7 @@ import {
   isDockerAvailable,
   startOidcProvider,
   OIDC_CLIENT_ID,
+  OIDC_REQUIRED_GROUP,
   OIDC_TEST_USERS,
   type OidcFixture,
 } from "./support/oidc-fixture.js";
@@ -82,6 +85,45 @@ function pkcePair(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
+interface AccessTokenClaims {
+  aud?: unknown;
+  groups?: unknown;
+  sub?: unknown;
+}
+
+function decodeAccessTokenClaims(token: string): AccessTokenClaims {
+  const segments = token.split(".");
+  if (segments.length !== 3) {
+    throw new Error("OIDC fixture issued an opaque access token; expected a signed JWT");
+  }
+  const payload = segments[1];
+  if (payload === undefined) throw new Error("OIDC fixture JWT is missing its payload segment");
+  return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as AccessTokenClaims;
+}
+
+interface JsonRpcToolResponse {
+  error?: unknown;
+  result?: {
+    isError?: boolean;
+    content?: Array<{ type?: string; text?: string }>;
+    structuredContent?: { kits?: unknown };
+  };
+}
+
+async function readJsonRpcToolResponse(response: Response): Promise<JsonRpcToolResponse> {
+  const text = await response.text();
+  if (response.headers.get("content-type")?.includes("application/json")) {
+    return JSON.parse(text) as JsonRpcToolResponse;
+  }
+  const messages = text
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => JSON.parse(line.slice("data:".length).trim()) as JsonRpcToolResponse);
+  const message = messages.at(-1);
+  if (message === undefined) throw new Error(`MCP response contained no JSON-RPC message: ${text}`);
+  return message;
+}
+
 /**
  * Drive a full authorization_code + PKCE flow against the real provider with
  * a real headless browser: navigate to /auth, fill the fixture's login form,
@@ -103,13 +145,17 @@ async function runAuthCodeFlow(
     authorizeUrl.searchParams.set("redirect_uri", oidc.redirectUri);
     authorizeUrl.searchParams.set("code_challenge", challenge);
     authorizeUrl.searchParams.set("code_challenge_method", "S256");
+    authorizeUrl.searchParams.set("resource", oidc.resource);
     authorizeUrl.searchParams.set("state", "genie-e2e-state");
 
     // Race the navigation (which ultimately 302s to our own callback catcher
     // and hangs there, since that tiny server never responds) against the
     // callback catcher's own promise, resolved below via a shared listener.
     const codePromise = new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("timed out waiting for OAuth callback")), 20_000);
+      const timeout = setTimeout(
+        () => reject(new Error("timed out waiting for OAuth callback")),
+        20_000,
+      );
       const catcher = createNodeHttpServer((req, res) => {
         const url = new URL(req.url ?? "/", `http://127.0.0.1:${callbackPort}`);
         res.writeHead(200, { "content-type": "text/plain" });
@@ -151,6 +197,7 @@ async function exchangeCodeForToken(
       redirect_uri: oidc.redirectUri,
       client_id: OIDC_CLIENT_ID,
       code_verifier: verifier,
+      resource: oidc.resource,
     }),
   });
   if (!res.ok) {
@@ -168,10 +215,12 @@ describe.skipIf(!dockerAvailable)("M5-04 — OIDC provider integration (DRO-276)
   let browser: Browser;
   let genieBaseUrl: string;
   let closeGenie: () => Promise<void>;
+  let testRoot: string;
 
   beforeAll(async () => {
     oidc = await startOidcProvider(`http://127.0.0.1:${CALLBACK_PORT}/callback`);
     browser = await chromium.launch();
+    testRoot = await mkdtemp(join(tmpdir(), "genie-oidc-e2e-"));
 
     // AC5/AC6 — genie's real HTTP transport, gated by a real OidcVerifier
     // pointed at the just-booted provider. Same createStreamableHttpRequestHandler
@@ -180,7 +229,14 @@ describe.skipIf(!dockerAvailable)("M5-04 — OIDC provider integration (DRO-276)
       issuer: oidc.issuer,
       audience: OIDC_CLIENT_ID,
     });
-    const handler = createStreamableHttpRequestHandler(() => createGenieServer(), { oidcVerifier });
+    const handler = createStreamableHttpRequestHandler(
+      () =>
+        createGenieServer({
+          kitsRoot: join(testRoot, "kits"),
+          projectsRoot: join(testRoot, "projects"),
+        }),
+      { oidcVerifier },
+    );
     const genieHttp = createNodeHttpServer(handler);
     await new Promise<void>((resolve) => genieHttp.listen(0, "127.0.0.1", resolve));
     const { port } = genieHttp.address() as AddressInfo;
@@ -192,103 +248,114 @@ describe.skipIf(!dockerAvailable)("M5-04 — OIDC provider integration (DRO-276)
     await browser?.close();
     await closeGenie?.();
     await oidc?.stop();
+    if (testRoot) await rm(testRoot, { recursive: true, force: true });
   });
 
-  it(
-    "AC4/AC5 — a real PKCE auth-code flow for a genie-users member authorizes mcp__genie__list_kits",
-    async () => {
-      const { verifier, challenge } = pkcePair();
-      const code = await runAuthCodeFlow(
-        browser,
-        oidc,
-        OIDC_TEST_USERS.authorized,
-        challenge,
-        CALLBACK_PORT,
-      );
-      const accessToken = await exchangeCodeForToken(oidc, code, verifier);
-      expect(accessToken).toBeTruthy();
+  it("AC4/AC5 — a real PKCE auth-code flow for a genie-users member authorizes mcp__genie__list_kits", async () => {
+    const { verifier, challenge } = pkcePair();
+    const code = await runAuthCodeFlow(
+      browser,
+      oidc,
+      OIDC_TEST_USERS.authorized,
+      challenge,
+      CALLBACK_PORT,
+    );
+    const accessToken = await exchangeCodeForToken(oidc, code, verifier);
+    expect(accessToken).toBeTruthy();
+    const claims = decodeAccessTokenClaims(accessToken);
+    expect(claims).toMatchObject({ sub: OIDC_TEST_USERS.authorized.username, aud: OIDC_CLIENT_ID });
+    expect(claims.groups).toEqual(expect.arrayContaining([OIDC_REQUIRED_GROUP]));
 
-      // Drive one real MCP JSON-RPC round trip (initialize -> tools/call
-      // list_kits) using the same Streamable HTTP transport a harness uses,
-      // authenticated with the token this run's PKCE flow produced.
-      const initRes = await fetch(`${genieBaseUrl}/mcp`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          authorization: `Bearer ${accessToken}`,
+    // Drive one real MCP JSON-RPC round trip (initialize -> tools/call
+    // list_kits) using the same Streamable HTTP transport a harness uses,
+    // authenticated with the token this run's PKCE flow produced.
+    const initRes = await fetch(`${genieBaseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "genie-e2e-oidc", version: "0.0.0" },
         },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: {
-            protocolVersion: "2024-11-05",
-            capabilities: {},
-            clientInfo: { name: "genie-e2e-oidc", version: "0.0.0" },
-          },
-        }),
-      });
-      expect(initRes.status).toBe(200);
-      const sessionId = initRes.headers.get("mcp-session-id");
-      expect(sessionId).toBeTruthy();
+      }),
+    });
+    expect(initRes.status).toBe(200);
+    const sessionId = initRes.headers.get("mcp-session-id");
+    expect(sessionId).toBeTruthy();
 
-      const listKitsRes = await fetch(`${genieBaseUrl}/mcp`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          authorization: `Bearer ${accessToken}`,
-          "mcp-session-id": sessionId ?? "",
+    const listKitsRes = await fetch(`${genieBaseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${accessToken}`,
+        "mcp-session-id": sessionId ?? "",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "mcp__genie__list_kits", arguments: {} },
+      }),
+    });
+    expect(listKitsRes.status).toBe(200);
+    const rpc = await readJsonRpcToolResponse(listKitsRes);
+    expect(rpc.error).toBeUndefined();
+    expect(rpc.result?.isError).not.toBe(true);
+    const kits = rpc.result?.structuredContent?.kits;
+    expect(kits).toEqual([]);
+    const textResult = rpc.result?.content?.find((part) => part.type === "text")?.text;
+    expect(textResult).toBeDefined();
+    expect(JSON.parse(textResult ?? "null")).toEqual([]);
+  }, 30_000);
+
+  it("AC6 — a real PKCE auth-code flow for a NON-genie-users user is rejected with HTTP 403", async () => {
+    const { verifier, challenge } = pkcePair();
+    const code = await runAuthCodeFlow(
+      browser,
+      oidc,
+      OIDC_TEST_USERS.unauthorized,
+      challenge,
+      CALLBACK_PORT,
+    );
+    const accessToken = await exchangeCodeForToken(oidc, code, verifier);
+    expect(accessToken).toBeTruthy();
+    const claims = decodeAccessTokenClaims(accessToken);
+    expect(claims).toMatchObject({
+      sub: OIDC_TEST_USERS.unauthorized.username,
+      aud: OIDC_CLIENT_ID,
+    });
+    expect(claims.groups).toEqual(expect.any(Array));
+    expect(claims.groups).not.toEqual(expect.arrayContaining([OIDC_REQUIRED_GROUP]));
+
+    const res = await fetch(`${genieBaseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "genie-e2e-oidc", version: "0.0.0" },
         },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 2,
-          method: "tools/call",
-          params: { name: "mcp__genie__list_kits", arguments: {} },
-        }),
-      });
-      expect(listKitsRes.status).toBe(200);
-    },
-    30_000,
-  );
-
-  it(
-    "AC6 — a real PKCE auth-code flow for a NON-genie-users user is rejected with HTTP 403",
-    async () => {
-      const { verifier, challenge } = pkcePair();
-      const code = await runAuthCodeFlow(
-        browser,
-        oidc,
-        OIDC_TEST_USERS.unauthorized,
-        challenge,
-        CALLBACK_PORT,
-      );
-      const accessToken = await exchangeCodeForToken(oidc, code, verifier);
-      expect(accessToken).toBeTruthy();
-
-      const res = await fetch(`${genieBaseUrl}/mcp`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: {
-            protocolVersion: "2024-11-05",
-            capabilities: {},
-            clientInfo: { name: "genie-e2e-oidc", version: "0.0.0" },
-          },
-        }),
-      });
-      expect(res.status).toBe(403);
-    },
-    30_000,
-  );
+      }),
+    });
+    expect(res.status).toBe(403);
+  }, 30_000);
 
   it("AC7 — the whole walk (container boot + two full PKCE flows) completes well under 3 minutes", () => {
     expect(Date.now() - suiteStartedAt).toBeLessThan(3 * 60_000);

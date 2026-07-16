@@ -31,6 +31,7 @@ const USERS = {
 };
 
 const issuer = process.env.OIDC_ISSUER || `http://127.0.0.1:${PORT}`;
+const resource = `${issuer}/mcp`;
 
 const configuration = {
   clients: [
@@ -57,6 +58,20 @@ const configuration = {
     // provider's own attack surface minimal (AC-scope: this test proves ONE
     // provider path, not a general OIDC conformance suite).
     revocation: { enabled: false },
+    resourceIndicators: {
+      enabled: true,
+      getResourceServerInfo(_ctx, resourceIndicator) {
+        if (resourceIndicator !== resource) throw new Error("unexpected resource indicator");
+        return {
+          scope: "openid profile groups",
+          audience: "genie-test",
+          accessTokenFormat: "jwt",
+        };
+      },
+    },
+  },
+  extraTokenClaims(_ctx, token) {
+    return { groups: USERS[token.accountId]?.groups ?? [] };
   },
   findAccount(ctx, sub) {
     const record = USERS[sub];
@@ -105,13 +120,18 @@ const app = createServer(async (req, res) => {
     }
     if (prompt.name === "consent") {
       const grant = new provider.Grant({
-        accountId: prompt.details.accountId ?? (await provider.interactionDetails(req, res)).session?.accountId,
+        accountId:
+          prompt.details.accountId ??
+          (await provider.interactionDetails(req, res)).session?.accountId,
         clientId: "genie-test",
       });
       grant.addOIDCScope("openid profile groups");
+      grant.addResourceScope(resource, "openid profile groups");
       const grantId = await grant.save();
       const result = { consent: { grantId } };
-      const redirectTo = await provider.interactionResult(req, res, result, { mergeWithLastSubmission: true });
+      const redirectTo = await provider.interactionResult(req, res, result, {
+        mergeWithLastSubmission: true,
+      });
       res.writeHead(302, { location: redirectTo });
       res.end();
       return;
@@ -121,7 +141,6 @@ const app = createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && req.url?.match(/^\/interaction\/[^/]+\/login$/)) {
-    const uid = req.url.split("/interaction/")[1].split("/login")[0];
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
@@ -148,6 +167,5 @@ const app = createServer(async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
   console.log(`oidc-fixture listening on ${PORT}, issuer ${issuer}`);
 });

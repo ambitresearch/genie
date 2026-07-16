@@ -17,6 +17,7 @@
  */
 
 import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
+import { createServer } from "node:net";
 
 const OIDC_HTTP_PORT = 9944;
 export const OIDC_CLIENT_ID = "genie-test";
@@ -34,6 +35,8 @@ export interface OidcFixture {
   issuer: string;
   /** Redirect URI the fixture's sole client is registered under. */
   redirectUri: string;
+  /** RFC 8707 resource identifier used to request a JWT access token. */
+  resource: string;
   container: StartedTestContainer;
   stop: () => Promise<void>;
 }
@@ -69,17 +72,12 @@ export async function isDockerAvailable(): Promise<boolean> {
 }
 
 /**
- * Boot the ephemeral OIDC provider. Runs the container in **host network
- * mode** (Linux-only — matches this repo's CI runners, ubuntu-latest) rather
- * than testcontainers' usual random-port mapping: `oidc-provider` fixes its
- * `issuer` string at construction time, before the container starts, so the
- * issuer origin must be known in advance — host networking makes the
- * container's port 9944 identically reachable at `127.0.0.1:9944` on the
- * host, avoiding a chicken-and-egg between "the mapped port" (only known
- * after `start()`) and "the issuer the provider process must bake into every
- * token/discovery document it issues" (needed at construction, i.e. before
- * `start()`). `redirectUri` is passed straight through as the client's
- * registered callback.
+ * Boot the ephemeral OIDC provider. `oidc-provider` fixes its issuer before
+ * the container starts, so reserve a free host port first and bind container
+ * port 9944 to that exact port. The same issuer is then reachable from the
+ * test process on Linux and Docker Desktop, without a fixed-port collision or
+ * Linux-only host networking. `redirectUri` is passed straight through as
+ * the client's registered callback.
  *
  * @param redirectUri the OAuth redirect_uri the test's own callback catcher
  *   listens on (e.g. `http://127.0.0.1:4180/callback`).
@@ -90,14 +88,16 @@ export async function startOidcProvider(
   redirectUri: string,
   startupTimeoutMs = 60_000,
 ): Promise<OidcFixture> {
-  const issuer = `http://127.0.0.1:${OIDC_HTTP_PORT}`;
+  const hostPort = await reserveHostPort();
+  const issuer = `http://127.0.0.1:${hostPort}`;
+  const resource = `${issuer}/mcp`;
 
   const container = await GenericContainer.fromDockerfile(
     `${import.meta.dirname}/oidc-provider-image`,
   ).build();
 
   const started = await container
-    .withNetworkMode("host")
+    .withExposedPorts({ container: OIDC_HTTP_PORT, host: hostPort })
     .withEnvironment({
       OIDC_REDIRECT_URI: redirectUri,
       OIDC_ISSUER: issuer,
@@ -110,5 +110,22 @@ export async function startOidcProvider(
     await started.stop();
   };
 
-  return { issuer, redirectUri, container: started, stop };
+  return { issuer, redirectUri, resource, container: started, stop };
+}
+
+async function reserveHostPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    server.close();
+    throw new Error("failed to reserve a TCP port for the OIDC fixture");
+  }
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
+  return address.port;
 }

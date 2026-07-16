@@ -1776,8 +1776,10 @@ the self-issued OAuth server.
   `genie-users`). A validly-signed token that fails this check gets HTTP 403
   (distinct from HTTP 401 for signature/issuer/audience/expiry failures).
 
-**Configuration** (both required to activate; unset = feature off, existing
-bearer-token / self-issued OAuth paths unaffected):
+**Configuration** (both required to activate; both absent = feature off; a
+partial or empty configuration fails startup rather than silently disabling
+authentication). Existing static bearer-token and self-issued OAuth paths remain
+alternative credential sources when co-configured:
 
 | Env var                      | Purpose                                                        |
 | ----------------------------- | --------------------------------------------------------------- |
@@ -1789,8 +1791,10 @@ bearer-token / self-issued OAuth paths unaffected):
 real ephemeral `oidc-provider`-backed authorization server in a throwaway
 container (`packages/e2e/test/support/oidc-fixture.ts`), registers a client
 `genie-test`, and drives a REAL headless-Chromium auth-code + PKCE flow for
-two seeded users — one in `genie-users`, one not — asserting the resulting
-bearer tokens authorize (200) or are rejected (403) against genie's real HTTP
+two seeded users — one in `genie-users`, one not. Its RFC 8707 resource-server
+configuration emits signed JWT access tokens carrying `aud=genie-test` and the
+account's `groups`; the test asserts those claims before proving a real
+`list_kits` result (200) or group-policy rejection (403) against genie's HTTP
 transport. This is the reference template: an adopter bringing their own IdP
 follows the identical shape (issuer/audience/group-claim config), and this
 suite is the proof that genie's enforcement side of that contract works
