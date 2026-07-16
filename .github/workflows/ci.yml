@@ -450,7 +450,7 @@ jobs:
           retention-days: 7
 
   # ── Codex CLI harness smoke (M5-11 / DRO-283) ────────────────────────────────
-  # `packages/e2e/test/m5-smoke-codex.test.ts` — two independent live checks:
+  # `packages/e2e/test/m5-smoke-codex.test.ts` — three independent checks:
   #   (1) the real `codex` binary parses docs/harness/codex.md's canonical
   #       TOML snippet exactly as documented (no `type` key; transport
   #       inferred from `url` vs `command`; `bearer_token_env_var`;
@@ -458,11 +458,12 @@ jobs:
   #   (2) the four-verb chain runs over real stdio against genie's own built
   #       server binary, launched the same way Codex's `command`-keyed
   #       `mcp_servers` entry launches it.
-  # Neither leg needs a paid model call except the optional `conjure` case,
-  # which is gated on GENIE_LLM_BASE_URL/GENIE_LLM_API_KEY exactly like the M2
-  # canary above — unset secrets skip that one test (not the whole file), a
-  # difference from m2-generation.test.ts intentional here: the config-CLI and
-  # stdio-chain legs are free and should run on every PR regardless of secrets.
+  #   (3) a real `codex exec` turn drives the ordered tool chain and records
+  #       the JSONL transcript as evidence.
+  # `codex-smoke` runs the credential-free checks for every PR on a GitHub-
+  # hosted runner. `codex-live` runs the complete fail-closed suite only after
+  # reviewed code reaches main, because it needs a scoped gateway credential
+  # and the private-LAN `genie` runner.
   codex-smoke:
     name: codex CLI harness smoke (M5-11)
     runs-on: ubuntu-latest
@@ -491,13 +492,14 @@ jobs:
       - name: Install Codex CLI
         # Public npm package; no auth needed just to exercise `codex mcp
         # add`/`get` (config-file parsing) — no model call happens in that leg.
-        run: npm install -g @openai/codex
+        # Pin the harness under test so an upstream release cannot silently
+        # change its config or transcript protocol between otherwise-identical
+        # PR runs; upgrades should be deliberate and re-proven by this suite.
+        run: npm install -g @openai/codex@0.144.5
 
       - name: Run Codex CLI harness smoke (AC1, AC2, AC3 doc, AC4, AC6)
         env:
           VITEST_JUNIT: "1"
-          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
-          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
         run: pnpm --filter @genie/e2e test:e2e:codex
 
       - name: Upload test report
@@ -509,11 +511,60 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Upload Codex REPL transcript (AC6)
+  codex-live:
+    name: codex CLI live canary (M5-11)
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, Linux, X64, genie]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build @genie/server
+        run: pnpm --filter @genie/server build
+
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex@0.144.5
+
+      - name: Run live Codex CLI harness canary (AC6)
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_REQUIRE_LLM: "1"
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}
+          GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}
+        run: pnpm --filter @genie/e2e test:e2e:codex
+
+      - name: Upload live test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-codex-live
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Codex REPL evidence (AC6)
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: codex-repl-transcript
-          path: reports/codex-repl-transcript.jsonl
+          path: |
+            reports/codex-repl-transcript.jsonl
+            reports/codex-repl-stderr.log
           if-no-files-found: ignore
           retention-days: 7
