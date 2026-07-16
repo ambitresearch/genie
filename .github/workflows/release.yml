@@ -1,0 +1,323 @@
+name: Release
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+# Default to read-only for every job (GitHub's recommended hardening —
+# https://docs.github.com/actions/security-guides/automatic-token-authentication#modifying-the-permissions-for-the-github_token).
+# `publish-dry-run` runs install/build steps driven by PR-controlled source
+# (package.json scripts, lockfile, etc.) on every `pull_request` event, so it
+# must NOT inherit write access to contents/PRs. Only the `release-please`
+# job (which needs to push a release PR + tags) is granted write permissions,
+# scoped on that job itself below.
+permissions:
+  contents: read
+
+jobs:
+  # ── Dry-run publish test (M5-06 DoD: "dry-run publish on a non-prod tag") ──
+  # Runs on every PR and every successful main CI completion. It never touches
+  # the real registry (no registry-url/NODE_AUTH_TOKEN configured, and
+  # `--dry-run` never contacts npm for the publish itself). Exercises the exact
+  # command shape (`--provenance --access public`) the real publish jobs run.
+  publish-dry-run:
+    name: publish dry-run (non-prod, ${{ matrix.package }})
+    if: github.event_name == 'pull_request' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: ["@genie/server", "@genie/viewer"]
+        include:
+          - package: "@genie/server"
+            dir: packages/server
+          - package: "@genie/viewer"
+            dir: packages/viewer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `workflow_run` otherwise checks out whichever commit is currently
+          # at main, not necessarily the commit that completed CI.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build ${{ matrix.package }}
+        run: pnpm --filter ${{ matrix.package }} build
+
+      - name: npm publish --dry-run (${{ matrix.package }})
+        working-directory: ${{ matrix.dir }}
+        # No registry-url/NODE_AUTH_TOKEN is configured for this job — the
+        # dry run never authenticates against, or contacts, the real
+        # registry for the publish step (npm still resolves metadata from
+        # the default registry, which is fine unauthenticated). Provenance
+        # attestation itself is skipped in --dry-run mode by npm; the live
+        # gate below separately requires a public source repository.
+        # Regression guard: npm's publish-time manifest normalization can
+        # silently rewrite/strip fields (e.g. it removed a `./`-prefixed
+        # `bin` target in the past — see DRO-278 review) while still
+        # exiting 0. Capture output and fail closed on any "auto-corrected"
+        # notice so a future manifest regression breaks CI instead of
+        # publishing a corrected-but-unintended package.
+        run: |
+          set -o pipefail
+          npm publish --dry-run --provenance --access public 2>&1 | tee publish-dry-run.log
+          if grep -qi "auto-corrected" publish-dry-run.log; then
+            echo "::error::npm reported package.json auto-corrections during publish --dry-run. This means the published manifest would differ from the source manifest (e.g. an invalid bin/script field was silently dropped). Fix the manifest so no auto-correction is needed." >&2
+            exit 1
+          fi
+
+  release-please:
+    needs: publish-dry-run
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      # release-please-action@v4 exposes one `releases_created`/`tag_name` pair
+      # per configured package (`packages/server`, `packages/viewer`) via the
+      # `--<path>--` output suffix documented in its README. Downstream jobs
+      # below read these per-package flags rather than the aggregate output so
+      # a server-only (or viewer-only) release doesn't publish the other
+      # package with a stale/unbumped version.
+      server_released: ${{ steps.release.outputs['packages/server--release_created'] }}
+      server_tag: ${{ steps.release.outputs['packages/server--tag_name'] }}
+      server_sha: ${{ steps.release.outputs['packages/server--sha'] }}
+      viewer_released: ${{ steps.release.outputs['packages/viewer--release_created'] }}
+      viewer_tag: ${{ steps.release.outputs['packages/viewer--tag_name'] }}
+      viewer_sha: ${{ steps.release.outputs['packages/viewer--sha'] }}
+      tested_sha: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Select the CI-tested release attempt
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          current_sha=$(gh api "repos/${{ github.repository }}/commits/${DEFAULT_BRANCH}" --jq '.sha')
+          pending_release_pr=$(gh api "repos/${{ github.repository }}/commits/${TESTED_SHA}/pulls" \
+            --jq '[.[] | select(.merged_at != null and (.head.ref | startswith("release-please--")))][0].number // empty')
+
+          if [ -n "$pending_release_pr" ]; then
+            visibility=$(gh api "repos/${{ github.repository }}" --jq '.visibility')
+            if [ "$visibility" != "public" ]; then
+              echo "::error::npm provenance requires a public source repository; ${GITHUB_REPOSITORY} is currently '$visibility'. Make the repository public, then rerun CI for $TESTED_SHA."
+              exit 1
+            fi
+            if [ -z "$NPM_TOKEN" ]; then
+              echo "::error::The NPM_TOKEN repository secret is not configured. Add a publish-scoped npm token, then rerun CI for $TESTED_SHA."
+              exit 1
+            fi
+            echo "create_release=true" >> "$GITHUB_OUTPUT"
+            echo "update_pr=false" >> "$GITHUB_OUTPUT"
+          elif [ "$current_sha" != "$TESTED_SHA" ]; then
+            echo "A newer main commit ($current_sha) arrived after CI completed for $TESTED_SHA; its CI completion will update the release PR."
+            echo "create_release=false" >> "$GITHUB_OUTPUT"
+            echo "update_pr=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            echo "create_release=false" >> "$GITHUB_OUTPUT"
+            echo "update_pr=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the CI-gated GitHub release
+        uses: googleapis/release-please-action@v4
+        if: steps.head.outputs.create_release == 'true'
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-pull-request: true
+
+      - name: Open or update the release PR
+        uses: googleapis/release-please-action@v4
+        if: steps.head.outputs.update_pr == 'true'
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          skip-github-release: true
+
+  # The workflow starts only after CI completes successfully. Verify
+  # release-please tagged that exact tested commit, then enforce npm's
+  # release target before either production publish can run. Public-repository
+  # provenance and npm-token prerequisites are checked before release-please
+  # creates any GitHub release or tag, preserving a safe manual rerun path.
+  verify-release:
+    name: verify release SHA matches CI-tested commit
+    needs: release-please
+    if: needs.release-please.outputs.server_released == 'true' || needs.release-please.outputs.viewer_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify release target
+        env:
+          TESTED_SHA: ${{ needs.release-please.outputs.tested_sha }}
+          SERVER_RELEASED: ${{ needs.release-please.outputs.server_released }}
+          SERVER_SHA: ${{ needs.release-please.outputs.server_sha }}
+          VIEWER_RELEASED: ${{ needs.release-please.outputs.viewer_released }}
+          VIEWER_SHA: ${{ needs.release-please.outputs.viewer_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$SERVER_RELEASED" = "true" ] && [ "$SERVER_SHA" != "$TESTED_SHA" ]; then
+            echo "::error::@genie/server release targets $SERVER_SHA, but CI succeeded for $TESTED_SHA."
+            exit 1
+          fi
+          if [ "$VIEWER_RELEASED" = "true" ] && [ "$VIEWER_SHA" != "$TESTED_SHA" ]; then
+            echo "::error::@genie/viewer release targets $VIEWER_SHA, but CI succeeded for $TESTED_SHA."
+            exit 1
+          fi
+
+          echo "Release targets CI-tested commit $TESTED_SHA."
+
+  # ── npm publish (DRO-278 / M5-06) ────────────────────────────────────────────
+  # If one package fails after the release is created, use Actions' "Re-run
+  # failed jobs" operation. It retains this successful job's outputs and only
+  # retries the failed package path, avoiding a duplicate publish of its sibling.
+  # AC1 (reconciled — see docs/github/issues/M5-06-npm-publish.md): tags are
+  # `server-vX.Y.Z` / `viewer-vX.Y.Z`
+  # (`include-component-in-tag: true`), not a bare `v*`. Each publish job is
+  # gated on release-please's own per-package `release_created` output.
+  publish-server:
+    name: publish @genie/server (npm)
+    needs: [publish-dry-run, release-please, verify-release]
+    if: needs.release-please.outputs.server_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC — required for `--provenance` (AC2)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.server_tag }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+          always-auth: true
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build @genie/server
+        run: pnpm --filter @genie/server build
+
+      - name: Publish @genie/server (public, provenance)
+        working-directory: packages/server
+        # AC3 — NODE_AUTH_TOKEN sourced from the NPM_TOKEN repo secret; npm's
+        # own tooling reads this env var during `npm publish` when a registry
+        # requires auth (set above via setup-node's registry-url).
+        # AC4 — `publishConfig.access: public` in packages/server/package.json
+        # publishes the scoped `@genie/server` package publicly (the root
+        # `genie` name is already registered by an unrelated npm package —
+        # documented fallback recorded on M0-04 / CLAUDE.md).
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+  publish-viewer:
+    name: publish @genie/viewer (npm)
+    needs: [publish-dry-run, release-please, verify-release]
+    if: needs.release-please.outputs.viewer_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC — required for `--provenance` (AC2)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.viewer_tag }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+          always-auth: true
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build @genie/viewer
+        run: pnpm --filter @genie/viewer build
+
+      - name: Publish @genie/viewer (public, provenance)
+        working-directory: packages/viewer
+        # AC5 — `@genie/viewer` publishes scoped + public via the same
+        # publishConfig pattern as the server package above.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+  # M5-05 / DRO-277 AC6 — attach the macOS Claude Desktop bundle to every
+  # server GitHub Release. Build from the release tag so the bundle version
+  # and server payload are byte-for-byte aligned with the released package.
+  publish-mcpb:
+    name: publish genie.mcpb (GitHub Release)
+    needs: [publish-dry-run, release-please, verify-release]
+    if: needs.release-please.outputs.server_released == 'true'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.server_tag }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Claude Desktop bundle
+        run: pnpm bundle:mcpb
+
+      - name: Attach bundle to the server release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-please.outputs.server_tag }}
+          files: dist/genie.mcpb

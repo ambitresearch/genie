@@ -11,6 +11,9 @@
           "jsonpath": "$.version"
         }
       ]
+    },
+    "packages/viewer": {
+      "package-name": "@genie/viewer"
     }
   },
   "include-component-in-tag": true,
