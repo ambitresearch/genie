@@ -1167,100 +1167,102 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
 
         const base = await mkdtemp(joinPath(osTmpdir(), "genie-m5-docker-smoke-"));
         const viewerClosers = new Set<TrackedViewerClose>();
-        const roots = {
-          projectsRoot: joinPath(base, "projects"),
-          kitsRoot: joinPath(base, "kits"),
-          reportsDir: joinPath(base, "reports"),
-        };
-        await mkdirp(roots.kitsRoot, { recursive: true });
-
-        // Start a real genie HTTP server this process owns; the container
-        // reaches it via the Docker host gateway (host.docker.internal, which
-        // testcontainers' extra-host option makes resolvable from inside
-        // Linux containers too, not just Docker Desktop). `previewLocality:
-        // "local"` overrides the transport-derived default (http ->
-        // "remote") so `preview` still boots the Vite viewer and returns a
-        // screenshot-able `viewerUrl` — the HTTP transport only controls
-        // whether the server auto-opens a browser on its OWN machine
-        // (it must not), not whether a viewer URL is produced at all. This
-        // process and the container both reach the *same* physical host, so
-        // "local" is the right locality even though `preview` is invoked
-        // through streamable HTTP.
         const sessionServers = new Set<ReturnType<typeof createGenieServer>>();
-        const mcpHandler = createStreamableHttpRequestHandler(() => {
-          const sessionServer = createGenieServer({
-            ...roots,
-            transportKind: "http",
-            previewLocality: "local",
-            previewBooter: createDockerPreviewBooter(createViteServer, (trackedClose) =>
-              viewerClosers.add(trackedClose),
-            ),
-          });
-          sessionServers.add(sessionServer);
-          return sessionServer;
-        });
-        const http = createHttpServer((req, res) => {
-          const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-          if (pathname === "/health") {
-            res.writeHead(200, { "content-type": "application/json" });
-            res.end(JSON.stringify({ status: "ok", server: "genie" }));
-            return;
-          }
-          if (pathname !== "/mcp") {
-            res.writeHead(404).end();
-            return;
-          }
-          if (req.headers["x-genie-smoke-helper"] !== "configured") {
-            res.writeHead(401).end();
-            return;
-          }
-          mcpHandler(req, res);
-        });
-        await new Promise<void>((resolve) => http.listen(0, "0.0.0.0", resolve));
-        const address = http.address();
-        const port = typeof address === "object" && address ? address.port : 0;
-        expect(port).toBeGreaterThan(0);
-
-        const apiKeyHelperPath = joinPath(base, "api-key-helper.sh");
-        const headersHelperPath = joinPath(base, "headers-helper.sh");
-        const settingsPath = joinPath(base, "settings.json");
-        const mcpConfigPath = joinPath(base, "mcp-config.json");
-        const dockerSmokeModel = smokeModel ?? "design-default";
-        const prompt =
-          "Create a kit named m5-docker-smoke, then ask genie to conjure a simple primary " +
-          "Button component with a label prop (kit description: clay accent #c87c5e, 8px " +
-          `radius, Inter type scale) using model ${JSON.stringify(dockerSmokeModel)}, write the ` +
-          "returned files, open the preview, and " +
-          "validate the kit. Use the mcp__genie__* tools directly.";
-
-        await writeFile(
-          apiKeyHelperPath,
-          '#!/bin/sh\nset -eu\n: > /workspace/api-key-helper.called\nprintf %s "$GENIE_CLAUDE_DRIVER_API_KEY"\n',
-        );
-        await writeFile(
-          headersHelperPath,
-          '#!/bin/sh\nset -eu\n: > /workspace/headers-helper.called\nprintf \'{"X-Genie-Smoke-Helper":"configured"}\'\n',
-        );
-        await Promise.all([chmod(apiKeyHelperPath, 0o755), chmod(headersHelperPath, 0o755)]);
-        await writeFile(
-          settingsPath,
-          JSON.stringify(createClaudeSettings("/workspace/api-key-helper.sh"), null, 2),
-        );
-        await writeFile(
-          mcpConfigPath,
-          JSON.stringify(
-            createClaudeMcpConfig(
-              `http://host.docker.internal:${port}/mcp`,
-              "/workspace/headers-helper.sh",
-            ),
-            null,
-            2,
-          ),
-        );
-        await writeFile(joinPath(base, "prompt.txt"), prompt);
-
+        let http: NodeHttpServer | undefined;
         let container: Awaited<ReturnType<GenericContainerType["start"]>> | undefined;
         try {
+          const roots = {
+            projectsRoot: joinPath(base, "projects"),
+            kitsRoot: joinPath(base, "kits"),
+            reportsDir: joinPath(base, "reports"),
+          };
+          await mkdirp(roots.kitsRoot, { recursive: true });
+
+          // Start a real genie HTTP server this process owns; the container
+          // reaches it via the Docker host gateway (host.docker.internal, which
+          // testcontainers' extra-host option makes resolvable from inside
+          // Linux containers too, not just Docker Desktop). `previewLocality:
+          // "local"` overrides the transport-derived default (http ->
+          // "remote") so `preview` still boots the Vite viewer and returns a
+          // screenshot-able `viewerUrl` — the HTTP transport only controls
+          // whether the server auto-opens a browser on its OWN machine
+          // (it must not), not whether a viewer URL is produced at all. This
+          // process and the container both reach the *same* physical host, so
+          // "local" is the right locality even though `preview` is invoked
+          // through streamable HTTP.
+          const mcpHandler = createStreamableHttpRequestHandler(() => {
+            const sessionServer = createGenieServer({
+              ...roots,
+              transportKind: "http",
+              previewLocality: "local",
+              previewBooter: createDockerPreviewBooter(createViteServer, (trackedClose) =>
+                viewerClosers.add(trackedClose),
+              ),
+            });
+            sessionServers.add(sessionServer);
+            return sessionServer;
+          });
+          const smokeHttp = createHttpServer((req, res) => {
+            const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+            if (pathname === "/health") {
+              res.writeHead(200, { "content-type": "application/json" });
+              res.end(JSON.stringify({ status: "ok", server: "genie" }));
+              return;
+            }
+            if (pathname !== "/mcp") {
+              res.writeHead(404).end();
+              return;
+            }
+            if (req.headers["x-genie-smoke-helper"] !== "configured") {
+              res.writeHead(401).end();
+              return;
+            }
+            mcpHandler(req, res);
+          });
+          http = smokeHttp;
+          await new Promise<void>((resolve) => smokeHttp.listen(0, "0.0.0.0", resolve));
+          const address = smokeHttp.address();
+          const port = typeof address === "object" && address ? address.port : 0;
+          expect(port).toBeGreaterThan(0);
+
+          const apiKeyHelperPath = joinPath(base, "api-key-helper.sh");
+          const headersHelperPath = joinPath(base, "headers-helper.sh");
+          const settingsPath = joinPath(base, "settings.json");
+          const mcpConfigPath = joinPath(base, "mcp-config.json");
+          const dockerSmokeModel = smokeModel ?? "design-default";
+          const prompt =
+            "Create a kit named m5-docker-smoke, then ask genie to conjure a simple primary " +
+            "Button component with a label prop (kit description: clay accent #c87c5e, 8px " +
+            `radius, Inter type scale) using model ${JSON.stringify(dockerSmokeModel)}, write the ` +
+            "returned files, open the preview, and " +
+            "validate the kit. Use the mcp__genie__* tools directly.";
+
+          await writeFile(
+            apiKeyHelperPath,
+            '#!/bin/sh\nset -eu\n: > /workspace/api-key-helper.called\nprintf %s "$GENIE_CLAUDE_DRIVER_API_KEY"\n',
+          );
+          await writeFile(
+            headersHelperPath,
+            '#!/bin/sh\nset -eu\n: > /workspace/headers-helper.called\nprintf \'{"X-Genie-Smoke-Helper":"configured"}\'\n',
+          );
+          await Promise.all([chmod(apiKeyHelperPath, 0o755), chmod(headersHelperPath, 0o755)]);
+          await writeFile(
+            settingsPath,
+            JSON.stringify(createClaudeSettings("/workspace/api-key-helper.sh"), null, 2),
+          );
+          await writeFile(
+            mcpConfigPath,
+            JSON.stringify(
+              createClaudeMcpConfig(
+                `http://host.docker.internal:${port}/mcp`,
+                "/workspace/headers-helper.sh",
+              ),
+              null,
+              2,
+            ),
+          );
+          await writeFile(joinPath(base, "prompt.txt"), prompt);
+
           // Build packages/e2e/docker/claude-code-smoke/Dockerfile fresh each
           // run (mirrors gitea-fixture.ts's convention of a throwaway image
           // rather than assuming a prebuilt tag is available).
@@ -1441,8 +1443,8 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             ]);
           } finally {
             for (const { forceClose } of viewerClosers) forceClose();
-            http.closeAllConnections();
-            await closeHttpServer(http);
+            http?.closeAllConnections();
+            if (http !== undefined) await closeHttpServer(http);
             await rmDir(base, { recursive: true, force: true });
           }
         }

@@ -12,7 +12,7 @@
 #
 # NOTE: exact `@anthropic-ai/claude-code` CLI flags used by the test harness
 # (`claude -p ... --setting-sources user --output-format stream-json --verbose`)
-# were verified against a locally available `claude` binary (2.x) at
+# were verified against Claude Code 2.1.210 at
 # authoring time — see the test file's header comment for details on what
 # could/couldn't be confirmed in this environment. `stream-json` (rather
 # than the collapsed `json` mode) is required so the test can assert each
@@ -27,7 +27,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code@2.1.210
 
 WORKDIR /workspace
 
