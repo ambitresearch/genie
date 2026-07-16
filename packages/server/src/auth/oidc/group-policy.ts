@@ -10,10 +10,9 @@
  *
  * The concrete rule (AC6 of DRO-276): callers whose token does not carry the
  * `genie-users` group in its `groups` claim are rejected with HTTP 403. This
- * is intentionally provider-agnostic — it operates on a decoded claims object,
- * not on any specific IdP's token format, so it is reusable regardless of
- * which OIDC provider an adopter points genie at (the M5-04 issue's stated
- * purpose: "acts as the template for adopters who bring their own provider").
+ * policy is provider-independent once an IdP has mapped membership into the
+ * supported `groups` claim; token-format and discovery prerequisites remain
+ * enforced by `verifier.ts`.
  */
 
 /** Claims shape this policy cares about. Extra claims are ignored. */
@@ -50,7 +49,10 @@ function normalizeGroups(value: unknown): string[] {
  * Returns true if `claims` asserts membership in `requiredGroup` (defaults to
  * {@link REQUIRED_GROUP}).
  */
-export function hasRequiredGroup(claims: OidcClaims, requiredGroup: string = REQUIRED_GROUP): boolean {
+export function hasRequiredGroup(
+  claims: OidcClaims,
+  requiredGroup: string = REQUIRED_GROUP,
+): boolean {
   return normalizeGroups(claims.groups).includes(requiredGroup);
 }
 
@@ -58,7 +60,10 @@ export function hasRequiredGroup(claims: OidcClaims, requiredGroup: string = REQ
  * Enforce group membership. Throws {@link GroupAccessDeniedError} (callers map
  * this to HTTP 403) when `claims` does not carry `requiredGroup`.
  */
-export function enforceGroupAccess(claims: OidcClaims, requiredGroup: string = REQUIRED_GROUP): void {
+export function enforceGroupAccess(
+  claims: OidcClaims,
+  requiredGroup: string = REQUIRED_GROUP,
+): void {
   if (!hasRequiredGroup(claims, requiredGroup)) {
     throw new GroupAccessDeniedError(requiredGroup);
   }

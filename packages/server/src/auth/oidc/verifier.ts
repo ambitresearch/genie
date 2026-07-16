@@ -5,17 +5,18 @@
  * module lets genie ALSO act as an OIDC *relying party* against an adopter's
  * own external Identity Provider (Keycloak, Okta, Auth0, Authentik, etc.),
  * validating a bearer token that IdP issued rather than one genie minted
- * itself. Verification is standards-based (RS256 JWT signed by the IdP,
- * verified against its published JWKS, `iss`/`aud`/`exp` all checked) so any
- * spec-compliant OIDC provider works, not just the one this issue's
- * integration test happens to spin up.
+ * itself. The provider must expose OIDC discovery/JWKS, issue signed JWT
+ * access tokens for the genie resource/API, and map group membership into a
+ * `groups` claim. Opaque access tokens are not supported. Verification
+ * checks the signature plus exact `iss`, configured `aud`, and required `exp`
+ * before enforcing group membership.
  *
  * Configuration is opt-in via env, mirroring `resolveOAuthSigningKey`'s
  * "refuse to run without it" posture for `../oauth/config.ts`:
  *   - GENIE_OIDC_ISSUER   — the provider's issuer URL (used to derive its
  *     `/.well-known/openid-configuration` + JWKS endpoint).
- *   - GENIE_OIDC_AUDIENCE — the `aud` claim genie's tokens must carry
- *     (typically the OAuth client_id registered with the provider).
+ *   - GENIE_OIDC_AUDIENCE — the resource/API identifier expected in the
+ *     access token's `aud` claim.
  * Both must be non-empty for OIDC RP mode to activate. When neither variable
  * is present the feature is disabled; a partial or empty configuration is a
  * startup error so an intended auth gate cannot fail open.
@@ -29,7 +30,7 @@ export class MissingOidcConfigError extends Error {}
 export interface OidcVerifierConfig {
   /** Provider issuer URL, e.g. `http://localhost:9944`. */
   issuer: string;
-  /** Expected `aud` claim (the registered client_id). */
+  /** Expected access-token `aud` claim for the genie resource/API. */
   audience: string;
   /** Group required for access (AC6). Defaults to `genie-users`. */
   requiredGroup?: string;
@@ -68,9 +69,8 @@ interface OidcDiscoveryDocument {
 }
 
 /** Fetch `${issuer}/.well-known/openid-configuration` and return its
- *  `jwks_uri` — the RFC 8414 / OIDC Discovery 1.0 standard path every
- *  spec-compliant provider (Keycloak, Okta, Auth0, Authentik, node-oidc-
- *  provider, ...) serves, so this is provider-agnostic by construction. */
+ *  `jwks_uri` using the RFC 8414 / OIDC Discovery 1.0 endpoint required by
+ *  this integration. */
 async function discoverJwksUri(issuerUrl: string): Promise<string> {
   const discoveryUrl = `${issuerUrl}/.well-known/openid-configuration`;
   const res = await fetch(discoveryUrl);

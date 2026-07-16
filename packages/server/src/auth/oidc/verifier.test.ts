@@ -96,6 +96,27 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     expect(claims.sub).toBe("alice");
   });
 
+  it("fails startup with the discovery status when the provider returns non-2xx", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response("unavailable", { status: 503 }));
+
+    await expect(createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE })).rejects.toThrow(
+      `OIDC discovery failed: GET ${ISSUER}/.well-known/openid-configuration -> 503`,
+    );
+  });
+
+  it("fails startup when the discovery document omits jwks_uri", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ issuer: ISSUER }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await expect(createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE })).rejects.toThrow(
+      `OIDC discovery document at ${ISSUER}/.well-known/openid-configuration is missing jwks_uri.`,
+    );
+  });
+
   it("preserves a trailing slash in the configured issuer when validating claims", async () => {
     const issuer = `${ISSUER}/`;
     const verifier = await createOidcVerifier({ issuer, audience: AUDIENCE });
@@ -116,7 +137,7 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     const verifier = await createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE });
     const wrongAudienceToken = await signToken(
       { sub: "alice", groups: ["genie-users"] },
-      { audience: "some-other-client" },
+      { audience: "some-other-api" },
     );
 
     await expect(verifier.verify(wrongAudienceToken)).rejects.toThrow();

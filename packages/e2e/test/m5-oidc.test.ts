@@ -6,9 +6,9 @@
  * provider (a real `oidc-provider`-backed authorization server, booted in a
  * throwaway container — see `./support/oidc-fixture.ts`), driving the actual
  * auth-code + PKCE flow with a real headless Playwright browser. This is the
- * template the issue asks for: an adopter following the same shape (their
- * own IdP issuer + audience + `groups` claim convention) gets the identical
- * genie-side enforcement this test proves.
+ * template the issue asks for: an adopter whose IdP issues JWT access tokens
+ * with the configured issuer, resource audience, and mapped `groups` claim
+ * gets the identical genie-side enforcement this test proves.
  *
  * ── What each AC maps to ─────────────────────────────────────────────────────
  *   AC1 — this file: packages/e2e/test/m5-oidc.test.ts.                    ✅

@@ -1759,16 +1759,17 @@ We will list reporters here with consent.
 genie's own OAuth server (`packages/server/src/auth/oauth/*`, M5-01/DRO-273)
 self-issues bearer JWTs for shared-install harnesses (`claude mcp add`,
 `codex mcp login`). **Separately**, genie can also act as an OIDC *relying
-party* against an adopter's own external Identity Provider — Keycloak, Okta,
-Auth0, Authentik, or any spec-compliant OIDC provider — enforcing
-group-based access on top of standard token validation. This is the path an
-operator running genie behind a corporate IdP uses instead of (or alongside)
-the self-issued OAuth server.
+party* against an adopter's own external Identity Provider, such as Keycloak,
+Okta, Auth0, or Authentik. The provider must expose OIDC discovery/JWKS, issue
+signed JWT access tokens for the genie resource/API, and map membership into a
+`groups` claim. Opaque access tokens and providers without that claim
+mapping are not supported. This is the path an operator running genie behind a
+corporate IdP uses instead of (or alongside) the self-issued OAuth server.
 
 **How it works** (`packages/server/src/auth/oidc/`):
 
 - `verifier.ts` — resolves the provider's `jwks_uri` via OIDC Discovery
-  (`${issuer}/.well-known/openid-configuration`), verifies incoming bearer
+  (`${issuer}/.well-known/openid-configuration`), verifies incoming JWT access
   tokens' signature/`iss`/`aud`/expiry against the live JWKS (`jose`'s
   `createRemoteJWKSet`, cached and auto-refreshed on unknown `kid`).
 - `group-policy.ts` — after signature verification succeeds, enforces that
@@ -1783,9 +1784,9 @@ alternative credential sources when co-configured:
 
 | Env var                      | Purpose                                                        |
 | ----------------------------- | --------------------------------------------------------------- |
-| `GENIE_OIDC_ISSUER`           | The external IdP's issuer URL.                                  |
-| `GENIE_OIDC_AUDIENCE`         | Expected `aud` claim — genie's registered client_id at the IdP. |
-| `GENIE_OIDC_REQUIRED_GROUP`   | Group required for access. Default `genie-users`.                |
+| `GENIE_OIDC_ISSUER`           | The external IdP's issuer URL.                                           |
+| `GENIE_OIDC_AUDIENCE`         | Expected access-token `aud` for the genie resource/API.                  |
+| `GENIE_OIDC_REQUIRED_GROUP`   | Group required in the mapped `groups` claim. Default `genie-users`.      |
 
 **Integration test** (`packages/e2e/test/m5-oidc.test.ts`, DRO-276): boots a
 real ephemeral `oidc-provider`-backed authorization server in a throwaway
@@ -1795,10 +1796,13 @@ two seeded users — one in `genie-users`, one not. Its RFC 8707 resource-server
 configuration emits signed JWT access tokens carrying `aud=genie-test` and the
 account's `groups`; the test asserts those claims before proving a real
 `list_kits` result (200) or group-policy rejection (403) against genie's HTTP
-transport. This is the reference template: an adopter bringing their own IdP
-follows the identical shape (issuer/audience/group-claim config), and this
-suite is the proof that genie's enforcement side of that contract works
-end-to-end. Runs in CI's dedicated `oidc` job (`.github/workflows/ci.yml`),
+transport. The fixture deliberately reuses `genie-test` as both its OAuth
+client ID and resource audience; real providers commonly use a separate API
+audience, which is the value operators must configure in
+`GENIE_OIDC_AUDIENCE`. This is the reference template for the required
+issuer/JWT-audience/group-claim shape, and proves genie's enforcement side of
+that contract end-to-end. Runs in CI's dedicated `oidc` job
+(`.github/workflows/ci.yml`),
 gated behind Docker availability like the `gitea` conformance job; run it
 locally with `pnpm --filter @genie/e2e test:e2e:oidc` (skips cleanly without
 a container runtime; set `GENIE_REQUIRE_DOCKER=1` to fail loudly instead).
