@@ -90,9 +90,11 @@ otherwise excluded, so automation must grant the intended MCP tools with
 
 ### Install the Agent Skill
 
-Continue CLI 1.5.47 loads Agent Skills from project-level `.continue/skills`
-and `.claude/skills`, plus the user-level `~/.continue/skills` directory. For a
-user-level install:
+Continue's current CLI and IDE code both load Agent Skills. `cn@1.5.47` scans
+project-level `.continue/skills` and `.claude/skills`, plus the user-level
+`~/.continue/skills` directory. The IDE's `read_skill` tool uses the parallel
+`core/config/markdown/loadMarkdownSkills.ts` loader during config loading. For
+a user-level install:
 
 ```bash
 mkdir -p ~/.continue/skills
@@ -105,9 +107,10 @@ descriptions remain the fallback when it is not installed.
 
 ### Preview behavior differs by surface
 
-Current Continue IDE source includes an MCP App renderer and consumes the
-tool-level `_meta.ui.resourceUri` that genie advertises in `tools/list`, so the
-IDE can render the inline grid. The published Continue CLI 1.5.47 is different:
+Current Continue IDE source includes both the `read_skill` loader and an MCP App
+renderer. It consumes the tool-level `_meta.ui.resourceUri` that genie
+advertises in `tools/list`, so the IDE can render the inline grid. The published
+Continue CLI 1.5.47 is different only on rendering:
 `cn` initializes its MCP client without the MCP Apps UI capability and passes
 only the MCP result's model-visible `content` into the agent loop. That text
 contains the viewer URL or `file://` fallback, not a `ui://` pointer. `cn` does

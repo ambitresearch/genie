@@ -237,14 +237,15 @@ describe("AC1/AC2/AC3/AC4 - Continue's documented configuration", () => {
     expect(markdown).toMatch(/MCP can only be used in agent mode/i);
   });
 
-  it("documents Continue CLI's current Agent Skills install path", () => {
+  it("documents current Continue CLI and IDE Agent Skills support", () => {
     expect(markdown).toContain("~/.continue/skills/genie");
+    expect(markdown).toContain("core/config/markdown/loadMarkdownSkills.ts");
     expect(markdown).not.toMatch(/no (documented )?Agent Skills loader/i);
   });
 
   it("distinguishes Continue IDE's MCP App renderer from text-only cn", () => {
-    expect(markdown).toMatch(/Continue IDE.{0,80}MCP App renderer/is);
-    expect(markdown).toMatch(/published Continue CLI 1\.5\.47.{0,160}without the MCP Apps UI/is);
+    expect(markdown).toMatch(/Current Continue IDE source.{0,180}MCP App\s+renderer/is);
+    expect(markdown).toMatch(/published\s+Continue CLI 1\.5\.47.{0,160}without the MCP Apps UI/is);
   });
 });
 
