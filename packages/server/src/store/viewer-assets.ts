@@ -21,7 +21,7 @@
  * kit creation fail.
  */
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** One viewer static asset's kit-relative destination path + file bytes. */
@@ -38,12 +38,9 @@ export interface ViewerAsset {
  */
 const VIEWER_STATIC_FILES = ["index.html", "viewer.js", "viewer.css"] as const;
 
-const BUNDLED_STATIC_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "ui",
-  "viewer-static",
-);
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const BUNDLED_STATIC_DIR = join(MODULE_DIR, "..", "ui", "viewer-static");
+const IS_PACKAGED_BUILD = basename(join(MODULE_DIR, "..")) === "dist";
 
 /**
  * Structured stderr log — never stdout (see `preview.ts`'s identical rule: on
@@ -94,7 +91,15 @@ function resolveViewerPackageStaticDir(): string | undefined {
 export async function loadViewerAssets(): Promise<ViewerAsset[]> {
   try {
     return await readViewerAssets(BUNDLED_STATIC_DIR);
-  } catch {
+  } catch (error) {
+    if (IS_PACKAGED_BUILD) {
+      logStderr({
+        event: "create_kit.viewer_assets.read_failed",
+        source: "bundled-server",
+        staticDir: BUNDLED_STATIC_DIR,
+        error: String(error),
+      });
+    }
     // Source/tsx development has no dist/ui payload; use the workspace package.
   }
 
@@ -106,6 +111,8 @@ export async function loadViewerAssets(): Promise<ViewerAsset[]> {
   } catch (error) {
     logStderr({
       event: "create_kit.viewer_assets.read_failed",
+      source: "optional-viewer-package",
+      staticDir,
       error: String(error),
     });
     return [];

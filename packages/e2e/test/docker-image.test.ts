@@ -406,6 +406,34 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
     expect(stdout.trim()).toBe("viewer-scaffold-ok");
   });
 
+  it("diagnoses a missing packaged viewer shell before degrading", async () => {
+    const { stderr, stdout } = await execFileAsync("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "sh",
+      imageTag,
+      "-c",
+      [
+        "mv /app/dist/ui/viewer-static /tmp/viewer-static",
+        `node --input-type=module -e 'import("./dist/store/viewer-assets.js").then(async ({ loadViewerAssets }) => process.stdout.write(String((await loadViewerAssets()).length)))'`,
+      ].join(" && "),
+    ]);
+
+    const events = stderr
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(stdout.trim()).toBe("0");
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: "create_kit.viewer_assets.read_failed",
+        source: "bundled-server",
+        staticDir: "/app/dist/ui/viewer-static",
+      }),
+    );
+  });
+
   it("keeps esbuild's native runtime binary functional", async () => {
     const { stdout } = await execFileAsync("docker", [
       "run",
