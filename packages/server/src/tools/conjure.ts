@@ -273,7 +273,13 @@ export async function fetchWithPinnedAddress(
       redirect: "manual",
       dispatcher: pinnedAgent,
       signal: AbortSignal.timeout(timeoutMs),
+      headers: { "accept-encoding": "identity" },
     });
+    const contentEncoding = response.headers.get("content-encoding")?.trim().toLowerCase();
+    if (contentEncoding && contentEncoding !== "identity") {
+      await response.body?.cancel();
+      throw new Error("Encoded reference responses are not supported");
+    }
     const isRedirect = response.status >= 300 && response.status < 400;
     if (isRedirect || !response.ok) {
       await response.body?.cancel();

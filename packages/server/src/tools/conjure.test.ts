@@ -11,6 +11,7 @@
  */
 import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { gzipSync } from "node:zlib";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -471,7 +472,10 @@ describe("AC7 — reference URL fetch + inline", () => {
   });
 
   it("pins the production socket address without resolving the URL hostname", async () => {
-    const server = createHttpServer((_req, response) => response.end("pinned response"));
+    const server = createHttpServer((_req, response) => {
+      response.setHeader("content-encoding", "identity");
+      response.end("pinned response");
+    });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const { port } = server.address() as AddressInfo;
 
@@ -507,6 +511,32 @@ describe("AC7 — reference URL fetch + inline", () => {
       expect(Buffer.byteLength(await response.text(), "utf-8")).toBeLessThanOrEqual(
         REF_URL_WARN_BYTES,
       );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("requests identity encoding and rejects an encoded production response", async () => {
+    let acceptEncoding: string | undefined;
+    const compressed = gzipSync("must not be decoded");
+    const server = createHttpServer((request, response) => {
+      acceptEncoding = request.headers["accept-encoding"];
+      response.writeHead(200, {
+        "content-encoding": "gzip",
+        "content-length": compressed.byteLength,
+      });
+      response.end(compressed);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      await expect(
+        fetchWithPinnedAddress(`http://does-not-resolve.invalid:${port}/encoded`, "127.0.0.1", 4),
+      ).rejects.toThrow("Encoded reference responses are not supported");
+      expect(acceptEncoding).toBe("identity");
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
