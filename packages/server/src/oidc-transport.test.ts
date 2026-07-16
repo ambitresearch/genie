@@ -108,7 +108,7 @@ describe("OIDC relying-party gate (DRO-276)", () => {
       body: "{}",
     });
     expect(res.status).toBe(401);
-    expect(res.headers.get("www-authenticate")).toBe("Bearer");
+    expect(res.headers.get("www-authenticate")).toBe('Bearer error="invalid_token"');
   });
 
   it("AC6 — 403s a /mcp request whose token is valid but lacks the required group", async () => {

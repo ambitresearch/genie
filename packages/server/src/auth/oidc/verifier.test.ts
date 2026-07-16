@@ -70,7 +70,7 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
         .setProtectedHeader({ alg: "RS256", kid: "test-key-1", typ: options.typ ?? "at+jwt" })
         .setIssuer(options.issuer ?? ISSUER)
         .setAudience(options.audience ?? AUDIENCE);
-      if (options.omitRequiredClaim !== "iat") jwt.setIssuedAt();
+      if (options.omitRequiredClaim !== "iat" && !("iat" in payload)) jwt.setIssuedAt();
       if (!options.omitExpiration) jwt.setExpirationTime("5m");
       return jwt.sign(privateKey);
     };
@@ -288,6 +288,22 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
       await expect(verifier.verify(token)).rejects.toThrow();
     },
   );
+
+  it.each([
+    ["sub", 42],
+    ["client_id", 42],
+    ["iat", "now"],
+    ["jti", 42],
+  ] as const)("rejects an RFC 9068 access token with invalid %s type", async (claim, value) => {
+    const verifier = await createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE });
+    const token = await signToken({
+      sub: "alice",
+      groups: ["genie-users"],
+      [claim]: value,
+    });
+
+    await expect(verifier.verify(token)).rejects.toThrow();
+  });
 
   it("rejects an expired token signed by the correct key", async () => {
     const { publicKey, privateKey } = await generateKeyPair("RS256");

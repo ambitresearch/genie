@@ -74,6 +74,14 @@ interface OidcDiscoveryDocument {
 
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 10_000;
 
+function enforceAccessTokenClaimTypes(claims: OidcClaims): void {
+  for (const claim of ["sub", "client_id", "jti"] as const) {
+    if (typeof claims[claim] !== "string") {
+      throw new Error(`OIDC access token claim "${claim}" must be a string.`);
+    }
+  }
+}
+
 /** Fetch `${issuer}/.well-known/openid-configuration` and return its
  *  `jwks_uri` using the RFC 8414 / OIDC Discovery 1.0 endpoint required by
  *  this integration. */
@@ -140,6 +148,7 @@ export async function createOidcVerifier(config: OidcVerifierConfig): Promise<Oi
         requiredClaims: ["exp", "sub", "client_id", "iat", "jti"],
       });
       const claims = payload as OidcClaims;
+      enforceAccessTokenClaimTypes(claims);
       enforceGroupAccess(claims, requiredGroup);
       return claims;
     },

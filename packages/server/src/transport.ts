@@ -405,13 +405,18 @@ export function createStreamableHttpRequestHandler(
       return false;
     }
 
-    writeUnauthorized(res, "Invalid bearer token");
+    writeUnauthorized(res, "Invalid bearer token", "invalid_token");
     return false;
   };
 
-  const writeUnauthorized = (res: ServerResponse, message: string): void => {
+  const writeUnauthorized = (
+    res: ServerResponse,
+    message: string,
+    error?: "invalid_token",
+  ): void => {
     if (oauthRouter === undefined) {
-      writeProtocolError(res, 401, message, { "www-authenticate": "Bearer" });
+      const challenge = error === undefined ? "Bearer" : `Bearer error="${error}"`;
+      writeProtocolError(res, 401, message, { "www-authenticate": challenge });
       return;
     }
     res.writeHead(401, {

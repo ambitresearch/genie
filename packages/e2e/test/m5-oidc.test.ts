@@ -333,6 +333,9 @@ async function exchangeCodeForToken(
     throw new Error(`token exchange failed: ${res.status} ${await res.text()}`);
   }
   const body = (await res.json()) as { access_token: string; id_token: string };
+  if (typeof body.access_token !== "string" || typeof body.id_token !== "string") {
+    throw new Error("token exchange response is missing access_token or id_token");
+  }
   return { accessToken: body.access_token, idToken: body.id_token };
 }
 
@@ -391,6 +394,7 @@ describe.skipIf(!dockerAvailable)("M5-04 — OIDC provider integration (DRO-276)
     );
     const { accessToken, idToken } = await exchangeCodeForToken(oidc, code, verifier);
     expect(accessToken).toBeTruthy();
+    expect(idToken).toBeTruthy();
     expect(decodeAccessTokenHeader(accessToken)).toMatchObject({ typ: "at+jwt" });
     const claims = decodeAccessTokenClaims(accessToken);
     expect(claims).toMatchObject({
