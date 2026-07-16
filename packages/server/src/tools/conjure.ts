@@ -123,6 +123,7 @@ export const DEFAULT_MODEL = "design-default";
 /** `refUrl` bodies larger than this are warned about (AC7) and truncated before
  * inlining, so a giant page can't blow the request's token budget. */
 export const REF_URL_WARN_BYTES = 1024 * 1024; // 1 MB
+const REF_URL_FETCH_TIMEOUT_MS = 30_000;
 
 /**
  * SSRF guard for `refUrl` (Copilot review): `conjure` fetches this URL
@@ -249,12 +250,13 @@ export async function fetchWithPinnedAddress(
   url: string,
   address: string,
   family: 4 | 6,
-): Promise<{
-  status: number;
-  ok: boolean;
-  headers: { get(name: string): string | null };
-  text(): Promise<string>;
-}> {
+  timeoutMs = REF_URL_FETCH_TIMEOUT_MS,
+): Promise<
+  ReferenceFetchResponse & {
+    bodyTruncated: boolean;
+    observedBodyBytes: number;
+  }
+> {
   const pinnedAgent = new Agent({
     connect: {
       lookup: (_hostname, options, callback) => {
@@ -267,12 +269,54 @@ export async function fetchWithPinnedAddress(
     },
   });
   try {
-    const response = await undiciFetch(url, { redirect: "manual", dispatcher: pinnedAgent });
-    const body = await response.text();
+    const response = await undiciFetch(url, {
+      redirect: "manual",
+      dispatcher: pinnedAgent,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const isRedirect = response.status >= 300 && response.status < 400;
+    if (isRedirect || !response.ok) {
+      await response.body?.cancel();
+      return {
+        status: response.status,
+        ok: response.ok,
+        headers: response.headers,
+        bodyTruncated: false,
+        observedBodyBytes: 0,
+        text: async () => "",
+      };
+    }
+
+    const reader = response.body?.getReader();
+    const chunks: Buffer[] = [];
+    let observedBodyBytes = 0;
+    let bodyTruncated = false;
+    if (reader) {
+      try {
+        while (observedBodyBytes <= REF_URL_WARN_BYTES) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const remaining = REF_URL_WARN_BYTES + 1 - observedBodyBytes;
+          chunks.push(Buffer.from(value.subarray(0, remaining)));
+          observedBodyBytes += Math.min(value.byteLength, remaining);
+          if (value.byteLength > remaining || observedBodyBytes > REF_URL_WARN_BYTES) {
+            bodyTruncated = true;
+            await reader.cancel();
+            break;
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    const body = truncateUtf8Buffer(Buffer.concat(chunks), REF_URL_WARN_BYTES);
     return {
       status: response.status,
       ok: response.ok,
       headers: response.headers,
+      bodyTruncated,
+      observedBodyBytes,
       text: async () => body,
     };
   } finally {
@@ -299,7 +343,7 @@ async function safeFetchFollowingRedirects(
   fetchPinnedAddress: PinnedFetchFn,
   startUrl: string,
   lookupAddresses: AddressLookup,
-): Promise<{ ok: boolean; status: number; text(): Promise<string> } | undefined> {
+): Promise<ReferenceFetchResponse | undefined> {
   let currentUrl = startUrl;
   for (let hop = 0; hop <= MAX_REF_URL_REDIRECTS; hop++) {
     if (!isSafeRefUrl(currentUrl)) {
@@ -401,12 +445,15 @@ export interface ConjureResult extends Record<string, unknown> {
  * `headers` is optional so existing test doubles that only stub `{ ok, status, text }`
  * keep compiling; the redirect-following logic treats a missing `headers` on a
  * 3xx response as "no Location to follow" and stops rather than throwing. */
-export type FetchFn = (url: string) => Promise<{
+export interface ReferenceFetchResponse {
   ok: boolean;
   status: number;
   headers?: { get(name: string): string | null };
+  bodyTruncated?: boolean;
+  observedBodyBytes?: number;
   text(): Promise<string>;
-}>;
+}
+export type FetchFn = (url: string) => Promise<ReferenceFetchResponse>;
 export type PinnedFetchFn = typeof fetchWithPinnedAddress;
 
 export interface ConjureDeps {
@@ -446,8 +493,11 @@ export class ConjureError extends Error {
  * guaranteed ≤ `maxBytes`.
  */
 export function truncateUtf8(text: string, maxBytes: number): string {
-  const buf = Buffer.from(text, "utf-8");
-  if (buf.length <= maxBytes) return text;
+  return truncateUtf8Buffer(Buffer.from(text, "utf-8"), maxBytes);
+}
+
+function truncateUtf8Buffer(buf: Buffer, maxBytes: number): string {
+  if (buf.length <= maxBytes) return buf.toString("utf-8");
   let end = maxBytes;
   // A UTF-8 continuation byte matches 0b10xxxxxx (0x80–0xBF); back up off any
   // partial sequence at the cut so we never split a codepoint.
@@ -485,8 +535,8 @@ async function fetchReference(
       return undefined;
     }
     const body = await res.text();
-    const bytes = Buffer.byteLength(body, "utf-8");
-    if (bytes > REF_URL_WARN_BYTES) {
+    const bytes = res.observedBodyBytes ?? Buffer.byteLength(body, "utf-8");
+    if (res.bodyTruncated || bytes > REF_URL_WARN_BYTES) {
       logStderr({ event: "conjure.ref_url.oversize", refUrl, bytes, capBytes: REF_URL_WARN_BYTES });
       return (
         truncateUtf8(body, REF_URL_WARN_BYTES) + "\n<!-- …reference truncated by genie (>1 MB) -->"

@@ -157,7 +157,7 @@ describe("AC2 — input", () => {
     }));
     await expect(
       conjure(
-        { chat, fetchImpl },
+        { chat, fetchImpl, lookupAddresses: publicAddressLookup },
         args({
           group: "actions",
           refUrl: "https://example.com/ref",
@@ -166,6 +166,7 @@ describe("AC2 — input", () => {
         }),
       ),
     ).resolves.toBeDefined();
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.com/ref");
   });
 
   it("rejects a missing kit (required)", async () => {
@@ -371,7 +372,11 @@ describe("AC7 — reference URL fetch + inline", () => {
     // the cap plus only the small fixed message preamble/marker.
     const multibyte = "€".repeat(REF_URL_WARN_BYTES); // 3 bytes each → ~3 MB
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => multibyte }));
-    await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/utf8" }));
+    await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/utf8" }),
+    );
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.com/utf8");
     const sent = chat.calls[0]!.messages[1]!.content as string;
     // The whole message (preamble + capped reference + marker) stays within the
     // cap plus a small fixed overhead — i.e. the 3 MB body was truncated, not
@@ -455,6 +460,79 @@ describe("AC7 — reference URL fetch + inline", () => {
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("pinned response");
     } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("caps a production response body before buffering it", async () => {
+    const body = "x".repeat(REF_URL_WARN_BYTES + 8192);
+    const server = createHttpServer((_req, response) => response.end(body));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      const response = await fetchWithPinnedAddress(
+        `http://does-not-resolve.invalid:${port}/oversize`,
+        "127.0.0.1",
+        4,
+      );
+      expect(response.bodyTruncated).toBe(true);
+      expect(response.observedBodyBytes).toBe(REF_URL_WARN_BYTES + 1);
+      expect(Buffer.byteLength(await response.text(), "utf-8")).toBeLessThanOrEqual(
+        REF_URL_WARN_BYTES,
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("aborts a production response whose body stalls", async () => {
+    const server = createHttpServer((_req, response) => {
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.flushHeaders();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      await expect(
+        fetchWithPinnedAddress(`http://does-not-resolve.invalid:${port}/stall`, "127.0.0.1", 4, 50),
+      ).rejects.toThrow();
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("cancels redirect and non-ok production bodies without waiting for EOF", async () => {
+    const server = createHttpServer((request, response) => {
+      const status = request.url === "/redirect" ? 302 : 500;
+      response.writeHead(status, status === 302 ? { location: "/destination" } : undefined);
+      response.flushHeaders();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      for (const path of ["redirect", "error"]) {
+        const response = await fetchWithPinnedAddress(
+          `http://does-not-resolve.invalid:${port}/${path}`,
+          "127.0.0.1",
+          4,
+          500,
+        );
+        expect(response.status).toBe(path === "redirect" ? 302 : 500);
+        expect(response.observedBodyBytes).toBe(0);
+        expect(await response.text()).toBe("");
+      }
+    } finally {
+      server.closeAllConnections();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
@@ -584,8 +662,8 @@ describe("AC7 — reference URL fetch + inline", () => {
     );
     expect(res.componentName).toBe("Button");
     expect(stderrLines().some((l) => l.event === "conjure.ref_url.skip")).toBe(true);
-    // Bounded: MAX_REF_URL_REDIRECTS (5) + the initial request, not unbounded.
-    expect(fetchImpl.mock.calls.length).toBeLessThanOrEqual(7);
+    // Exactly MAX_REF_URL_REDIRECTS (5) plus the initial request.
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
   });
 });
 
