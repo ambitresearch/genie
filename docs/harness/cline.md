@@ -144,9 +144,11 @@ probed against an installed Cursor extension on 2026-07-16:
   `*_TOOL_NAME` exports), not the bare verb names; Cline matches
   `autoApprove` entries against the exact tool name from `tools/list`, so bare
   names like `"list_components"` never match and silently auto-approve
-  nothing. Limit this list to read-only, side-effect-free verbs — `conjure`,
-  `refine`, and `write_files` mutate project state and should stay outside
-  `autoApprove` so Cline still asks for confirmation.
+  nothing. This conservative baseline includes read-only listing plus
+  non-destructive `preview`; preview may persist the derived manifest and boot
+  a viewer, but does not change authored component files. Keep `conjure` and
+  `refine` outside the list because they incur model cost, and keep
+  `write_files` outside because it mutates the UI kit.
   This per-tool list is consumed by the Cline IDE extension. Cline CLI 3.0.42
   currently has only a run-level `--auto-approve` switch; it preserves this
   field on disk but does not enforce selective per-server approval.
