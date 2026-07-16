@@ -1,7 +1,7 @@
 /**
  * M5-11 (DRO-283) — Codex CLI harness smoke test.
  *
- * Verifies two independent claims from `docs/harness/codex.md`:
+ * Verifies three independent claims from `docs/harness/codex.md`:
  *
  *   1. The canonical `~/.codex/config.toml` HTTP snippet (AC1) is accepted
  *      VERBATIM by the real `codex` binary — `codex mcp add`/`codex mcp get
@@ -35,12 +35,10 @@
  * driving model). This suite reuses `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY`
  * as that provider when set (an OpenAI-`responses`-API-compatible endpoint
  * satisfies both roles), so operators who already configure the `conjure`
- * secrets get this leg for free; it skips cleanly — not silently dropped,
- * `describe.skipIf` renders as a visible skipped suite in the report —
- * without them, the same pattern `conjure` uses one section up. This keeps
- * the leg from being gated on a model backend genie has no relationship to
- * and can't control the availability of, while still running it live in any
- * environment (local or CI) that has real credentials configured.
+ * secrets get this leg for free. Local runs without them skip visibly via
+ * `describe.skipIf`; the dedicated CI job sets `GENIE_REQUIRE_LLM=1`, so a
+ * missing or unreachable configured endpoint fails instead of silently
+ * weakening AC6 into a green-but-vacuous check.
  *
  * ── AC coverage ──────────────────────────────────────────────────────────
  *   AC1 — canonical TOML snippet lives in docs/harness/codex.md; asserted
@@ -60,7 +58,7 @@
  *         as `conjure` above).                                    ✅ (protocol) / ✅ (REPL, gated)
  */
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +69,24 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
 const REPO_ROOT = resolve(here, "../../..");
+// This runs on a LAN-connected self-hosted runner. The prompt asks only for
+// MCP calls, but the sandbox is the boundary if the model tries a shell command.
+const CODEX_EXEC_ARGS = [
+  "exec",
+  "--sandbox",
+  "read-only",
+  "--ephemeral",
+  "--skip-git-repo-check",
+  "--json",
+] as const;
+const CODEX_REPL_TOOLS = [
+  "mcp__genie__create_kit",
+  "mcp__genie__conjure",
+  "mcp__genie__plan",
+  "mcp__genie__write_files",
+  "mcp__genie__preview",
+] as const;
+const CODEX_REPL_APPROVAL_MODE = "approve";
 
 /** True if the real `codex` binary is on PATH (AC1/AC2/AC4 live checks). */
 function codexAvailable(): boolean {
@@ -80,6 +96,53 @@ function codexAvailable(): boolean {
 
 const hasCodex = codexAvailable();
 const hasBuiltServer = spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`]).status === 0;
+
+describe("codex-smoke CI contract", () => {
+  it("keeps PR checks secret-free and reserves the live endpoint for trusted pushes", async () => {
+    const workflow = await readFile(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
+    const smokeMatch = workflow.match(/\n {2}codex-smoke:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/);
+    const liveMatch = workflow.match(/\n {2}codex-live:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/);
+    expect(smokeMatch, "expected ci.yml to define the codex-smoke job").not.toBeNull();
+    expect(liveMatch, "expected ci.yml to define the codex-live job").not.toBeNull();
+
+    const smokeJob = smokeMatch?.[1] ?? "";
+    expect(smokeJob).toContain("runs-on: ubuntu-latest");
+    expect(smokeJob).toContain("npm install -g @openai/codex@0.144.5");
+    expect(smokeJob).not.toContain("secrets.");
+    expect(smokeJob).not.toContain("GENIE_REQUIRE_LLM");
+
+    const liveJob = liveMatch?.[1] ?? "";
+    expect(liveJob).toContain("if: github.event_name == 'push'");
+    expect(liveJob).toContain("runs-on: [self-hosted, Linux, X64, genie]");
+    expect(liveJob).toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}");
+    expect(liveJob).toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}");
+    expect(liveJob).toContain('GENIE_REQUIRE_LLM: "1"');
+    expect(liveJob).toContain("GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}");
+    expect(liveJob).toContain("npm install -g @openai/codex@0.144.5");
+  });
+
+  it("keeps model-generated commands sandboxed on the private-LAN runner", () => {
+    const unsafeFlag = ["--dangerously", "bypass-approvals-and-sandbox"].join("-");
+
+    expect(CODEX_EXEC_ARGS).toEqual([
+      "exec",
+      "--sandbox",
+      "read-only",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--json",
+    ]);
+    expect(CODEX_EXEC_ARGS).not.toContain(unsafeFlag);
+    expect(CODEX_REPL_TOOLS).toEqual([
+      "mcp__genie__create_kit",
+      "mcp__genie__conjure",
+      "mcp__genie__plan",
+      "mcp__genie__write_files",
+      "mcp__genie__preview",
+    ]);
+    expect(CODEX_REPL_APPROVAL_MODE).toBe("approve");
+  });
+});
 
 // ── 1. Real `codex mcp` CLI accepts the canonical snippet verbatim ─────────
 
@@ -178,6 +241,21 @@ describe.skipIf(!hasCodex)("AC1/AC2/AC4 — codex mcp accepts the canonical geni
 // CLIENT transport (the harness side of the same wire protocol Codex speaks).
 
 const hasLlmEnv = Boolean(process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim());
+const smokeModel = process.env.GENIE_SMOKE_LLM_MODEL?.trim() || "gpt-5.6-sol";
+
+if (!hasLlmEnv) {
+  console.info(
+    "[m5-smoke-codex] GENIE_LLM_BASE_URL and/or GENIE_LLM_API_KEY is not set — " +
+      "skipping the real-endpoint conjure and codex exec legs. Set both to run them live.",
+  );
+}
+
+if (!hasLlmEnv && process.env.GENIE_REQUIRE_LLM === "1") {
+  throw new Error(
+    "GENIE_REQUIRE_LLM=1 but GENIE_LLM_BASE_URL and/or GENIE_LLM_API_KEY is " +
+      "missing/empty — the codex-smoke CI job must run the real endpoint legs, not skip them.",
+  );
+}
 
 describe.skipIf(!hasBuiltServer)("AC6 — four-verb chain over real stdio (Codex's own transport)", () => {
   let client: Client;
@@ -191,6 +269,7 @@ describe.skipIf(!hasBuiltServer)("AC6 — four-verb chain over real stdio (Codex
       env: {
         ...(process.env as Record<string, string>),
         GENIE_KITS_ROOT: kitsRoot,
+        GENIE_HOME: kitsRoot,
         // Required secret validation (packages/server/src/config/secrets.ts) —
         // unrelated to the MCP surface this smoke test exercises; throwaway
         // values (≥16 chars, per MIN_SECRET_LENGTH) satisfy the boot-time
@@ -289,10 +368,9 @@ describe.skipIf(!hasBuiltServer)("AC6 — four-verb chain over real stdio (Codex
           kitId,
           kit: "<!-- empty kit context for smoke test -->",
           prompt: "A small rounded primary button that says Continue.",
-          // The server's DEFAULT_MODEL alias ("design-default") isn't a
-          // model this operator's endpoint recognizes; point at a concrete
-          // model this smoke test's configured endpoint actually serves.
-          model: process.env.GENIE_SMOKE_LLM_MODEL ?? "gpt-5.2",
+          // Keep the direct conjure call on the same explicit route Codex
+          // uses as its driving model below.
+          model: smokeModel,
         },
       })) as { isError?: boolean; content?: { type: string; text: string }[]; structuredContent?: unknown };
       expect(conjure.isError, JSON.stringify(conjure)).toBeFalsy();
@@ -333,7 +411,7 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
         join(codexHome, "config.toml"),
         [
           `model_provider = "genie_smoke"`,
-          `model = ${JSON.stringify(process.env.GENIE_SMOKE_LLM_MODEL ?? "gpt-5.2")}`,
+          `model = ${JSON.stringify(smokeModel)}`,
           "",
           `[model_providers.genie_smoke]`,
           `name = "genie_smoke"`,
@@ -362,11 +440,9 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
           "--env",
           `GENIE_KITS_ROOT=${kitsRoot}`,
           "--env",
+          `GENIE_HOME=${kitsRoot}`,
+          "--env",
           "OAUTH_HS256_KEY=codex-repl-smoke-test-not-a-real-secret",
-          "--env",
-          `GENIE_LLM_API_KEY=${process.env.GENIE_LLM_API_KEY}`,
-          "--env",
-          `GENIE_LLM_BASE_URL=${process.env.GENIE_LLM_BASE_URL}`,
           "--env",
           "GENIE_PREVIEW_NO_OPEN=1",
           "--",
@@ -378,6 +454,19 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
         { env: codexEnv, encoding: "utf8" },
       );
       expect(add.status, add.stderr).toBe(0);
+
+      const configPath = join(codexHome, "config.toml");
+      const config = await readFile(configPath, "utf8");
+      await writeFile(
+        configPath,
+        config.replace(
+          "[mcp_servers.genie]",
+          "[mcp_servers.genie]\n" +
+            'env_vars = ["GENIE_LLM_BASE_URL", "GENIE_LLM_API_KEY"]\n' +
+            `enabled_tools = ${JSON.stringify(CODEX_REPL_TOOLS)}\n` +
+            `default_tools_approval_mode = ${JSON.stringify(CODEX_REPL_APPROVAL_MODE)}`,
+        ),
+      );
     }, 30_000);
 
     afterAll(async () => {
@@ -385,18 +474,28 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
       await rm(kitsRoot, { recursive: true, force: true });
     });
 
+    it("keeps gateway credentials in inherited environment instead of Codex config", async () => {
+      const config = await readFile(join(codexHome, "config.toml"), "utf8");
+      const apiKey = process.env.GENIE_LLM_API_KEY?.trim();
+      const persistsGatewayCredential = Boolean(apiKey && config.includes(apiKey));
+      expect(
+        persistsGatewayCredential,
+        "gateway credential values must not be written to CODEX_HOME/config.toml",
+      ).toBe(false);
+      expect(config).toContain('env_vars = ["GENIE_LLM_BASE_URL", "GENIE_LLM_API_KEY"]');
+      expect(config).toContain(`enabled_tools = ${JSON.stringify(CODEX_REPL_TOOLS)}`);
+      expect(config).toContain('default_tools_approval_mode = "approve"');
+    });
+
     it(
       "codex exec drives create_kit -> conjure -> plan -> write_files -> preview via genie's real MCP tools, transcript captured to reports/",
-      async ({ skip }) => {
+      async () => {
         // `localDir` must already exist on disk before `plan` is called
         // (the server rejects a missing directory with `InvalidLocalDir`);
         // reuse `kitsRoot`, which `beforeAll` already created, rather than
         // asking the model to invent+create a fresh temp directory itself.
-        // `model` must be a concrete model name the configured endpoint
-        // actually serves — genie's DEFAULT_MODEL alias ("design-default")
-        // is not recognized by this smoke test's endpoint (see the
-        // `conjure` stdio test above, which hits the same requirement).
-        const conjureModel = process.env.GENIE_SMOKE_LLM_MODEL ?? "gpt-5.2";
+        // Keep conjure on the same explicit route as Codex's driving model.
+        const conjureModel = smokeModel;
         const prompt = [
           "Using the genie MCP server's tools (mcp__genie__create_kit,",
           "mcp__genie__conjure, mcp__genie__plan, mcp__genie__write_files,",
@@ -415,13 +514,7 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
 
         const result = spawnSync(
           "codex",
-          [
-            "exec",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--skip-git-repo-check",
-            "--json",
-            prompt,
-          ],
+          [...CODEX_EXEC_ARGS, prompt],
           {
             cwd: REPO_ROOT,
             env: {
@@ -438,56 +531,45 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
 
         const reportsDir = join(REPO_ROOT, "reports");
         await mkdir(reportsDir, { recursive: true });
-        await writeFile(
-          join(reportsDir, "codex-repl-transcript.jsonl"),
-          `${result.stdout ?? ""}\n--- stderr ---\n${result.stderr ?? ""}\n`,
-        );
+        const stdout = result.stdout ?? "";
+        await writeFile(join(reportsDir, "codex-repl-transcript.jsonl"), stdout);
+        await writeFile(join(reportsDir, "codex-repl-stderr.log"), result.stderr ?? "");
 
-        const events = (result.stdout ?? "")
+        const events = stdout
           .split("\n")
-          .filter((line) => line.trim().startsWith("{"))
+          .filter((line) => line.trim())
           .map((line) => {
             try {
               return JSON.parse(line) as { type?: string; item?: Record<string, unknown> };
             } catch {
               return null;
             }
-          })
-          .filter((e): e is { type?: string; item?: Record<string, unknown> } => e !== null);
+          });
+        expect(events, "Codex --json output must remain valid JSONL").not.toContain(null);
+        const parsedEvents = events.filter(
+          (e): e is { type?: string; item?: Record<string, unknown> } => e !== null,
+        );
 
         // `item.completed` mcp_tool_call events against the genie server,
         // in the order Codex actually completed them (dedupe against the
         // `item.started` copy of the same item id — only the terminal
         // `item.completed` record carries `status`/`result`).
-        const genieToolCallsCompleted = events.filter(
+        const genieToolCallsCompleted = parsedEvents.filter(
           (e) =>
             e.type === "item.completed" &&
             e.item?.type === "mcp_tool_call" &&
             e.item?.server === "genie",
         );
 
-        // Distinguish "Codex's OWN driving-model provider rejected the
-        // request" (a third-party model-provider/tool-schema compatibility
-        // issue entirely outside genie's control — the same class of
-        // instability this file's header already documents for the
-        // operator's configured endpoint) from "genie's MCP wiring didn't
-        // work" (a real regression this test must catch). `turn.failed`
-        // with no genie tool call ever attempted is the former; skip with a
-        // loud, attributed reason rather than failing the whole harness
-        // suite on an upstream provider's tool-calling bug. Any other
-        // outcome — zero genie tool calls with no such provider-level
-        // failure — is a real failure of this AC and must fail the test.
-        const providerRejectedRequest = events.some(
+        const terminalFailure = parsedEvents.find(
           (e) => e.type === "turn.failed" || (e.type === "error" && typeof e.item === "undefined"),
         );
-        if (genieToolCallsCompleted.length === 0 && providerRejectedRequest) {
-          skip(
-            "Codex's own driving-model provider rejected the turn before any tool call " +
-              "was attempted (see reports/codex-repl-transcript.jsonl) — a third-party " +
-              "model-provider/tool-schema compatibility issue, not a genie MCP defect.",
-          );
-          return;
-        }
+        expect(
+          genieToolCallsCompleted.length,
+          "expected Codex's configured driving-model endpoint to reach at least one genie " +
+            `tool call; terminal failure: ${JSON.stringify(terminalFailure)} — ` +
+            "see reports/codex-repl-transcript.jsonl",
+        ).toBeGreaterThan(0);
 
         // AC6 asks for the FULL four-verb chain, not "at least one genie
         // tool call succeeded" — a single successful create_kit call would
@@ -548,7 +630,7 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
         // this assertion proves Codex's own turn actually finished — not
         // merely that the process exited zero while the model gave up
         // partway through the chain.
-        const turnCompleted = events.some((e) => e.type === "turn.completed");
+        const turnCompleted = parsedEvents.some((e) => e.type === "turn.completed");
         expect(
           turnCompleted,
           `expected a turn.completed event (Codex's own turn must finish, not abort/fail) — ${transcriptHint}`,
