@@ -424,7 +424,6 @@ jobs:
       - name: Install dependencies
         run: |
           pnpm install --frozen-lockfile \
-            || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
       - name: Build @genie/server

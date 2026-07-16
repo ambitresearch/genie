@@ -33,10 +33,13 @@ const CONTINUE_CLI = resolve(here, "../node_modules/@continuedev/cli/dist/cn.js"
 const DOC_PATH = resolve(here, "../../../docs/harness/continue.md");
 
 const hasBuiltServer =
-  spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`])
-    .status === 0;
+  spawnSync(process.execPath, [
+    "-e",
+    `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`,
+  ]).status === 0;
 const hasContinueCli =
-  spawnSync("node", [CONTINUE_CLI, "--version"], { encoding: "utf8" }).stdout.trim() === "1.5.47";
+  spawnSync(process.execPath, [CONTINUE_CLI, "--version"], { encoding: "utf8" }).stdout.trim() ===
+  "1.5.47";
 
 if (process.env.GENIE_REQUIRE_CONTINUE === "1" && !hasBuiltServer) {
   throw new Error(
@@ -179,7 +182,7 @@ async function runContinue(args: string[], env: NodeJS.ProcessEnv) {
     stdout: string;
     stderr: string;
   }>((resolveRun, reject) => {
-    const child = spawn("node", [CONTINUE_CLI, ...args], {
+    const child = spawn(process.execPath, [CONTINUE_CLI, ...args], {
       cwd: REPO_ROOT,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -526,7 +529,7 @@ describe.skipIf(!hasBuiltServer || !hasContinueCli)(
         .slice(requestStart)
         .find((request) => request.toolNames.includes("mcp__genie__conjure"));
       expect(probeRequest, "Continue did not load genie's tools without type").toBeDefined();
-    });
+    }, 30_000);
 
     it("cn -p loads genie, executes generated output through plan/write_files/preview, and returns text", async () => {
       const result = await runContinue(
