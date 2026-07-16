@@ -154,6 +154,7 @@ describe("mcpb bundle output (AC2/AC3/AC4)", () => {
           "server/node_modules/playwright/package.json",
           "server/node_modules/esbuild/bin/esbuild",
           "server/node_modules/.bin/esbuild",
+          "server/node_modules/esbuild/node_modules/.bin/esbuild",
         ];
         for (const path of excludedDevDependencies) {
           expect(existsSync(join(unpackDir, path)), `unexpected ${path}`).toBe(false);

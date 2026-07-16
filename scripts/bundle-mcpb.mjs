@@ -65,6 +65,9 @@ run("pnpm", [
 // shim to retain one binary per Darwin architecture within the size budget.
 rmSync(join(deployDir, "node_modules", "esbuild", "bin", "esbuild"), { force: true });
 rmSync(join(deployDir, "node_modules", ".bin", "esbuild"), { force: true });
+rmSync(join(deployDir, "node_modules", "esbuild", "node_modules", ".bin", "esbuild"), {
+  force: true,
+});
 
 // 3. Copy the manifest in alongside the deployed server tree.
 cpSync(join(repoRoot, "mcpb", "manifest.json"), join(stageDir, "manifest.json"));
