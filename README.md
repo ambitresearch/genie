@@ -107,9 +107,9 @@ Claude Desktop users can install genie without hand-editing a config file:
    (attached to every GitHub Release — see `mcpb/manifest.json` and
    `pnpm bundle:mcpb`).
 2. Double-click it. Claude Desktop opens its extension installer and prompts
-   for the required config values (`llm_base_url`, `llm_api_key`, and a random
-   `oauth_hs256_key` of at least 32 characters) on first run — nothing is
-   hardcoded into the bundle.
+   for the required config values (`llm_base_url`, an `llm_api_key` of at
+   least 16 characters, and a random `oauth_hs256_key` of at least 32
+   characters) on first run — nothing is hardcoded into the bundle.
 3. genie now shows up as an installed extension; no manual
    `claude_desktop_config.json` editing needed.
 

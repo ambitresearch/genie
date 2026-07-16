@@ -43,15 +43,15 @@
     },
     "llm_api_key": {
       "type": "string",
-      "title": "LLM API key",
-      "description": "API key for the configured LLM endpoint. Stored by Claude Desktop's OS keychain integration, never written into this bundle.",
+      "title": "LLM API key (16+ characters)",
+      "description": "API key for the configured LLM endpoint; must be at least 16 characters. Stored by Claude Desktop's OS keychain integration, never written into this bundle.",
       "required": true,
       "sensitive": true
     },
     "oauth_hs256_key": {
       "type": "string",
-      "title": "OAuth signing key",
-      "description": "Random secret of at least 32 characters used to sign genie's OAuth tokens. Stored by Claude Desktop's OS keychain integration, never written into this bundle.",
+      "title": "OAuth signing key (32+ characters)",
+      "description": "Random secret; must be at least 32 characters to sign genie's OAuth tokens. Stored by Claude Desktop's OS keychain integration, never written into this bundle.",
       "required": true,
       "sensitive": true
     }

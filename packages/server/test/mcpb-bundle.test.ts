@@ -62,6 +62,12 @@ describe("mcpb bundle manifest (AC1)", () => {
       required: true,
       sensitive: true,
     });
+    expect(manifest.user_config.llm_api_key.title).toMatch(/16\+ characters/i);
+    expect(manifest.user_config.llm_api_key.description).toMatch(/at least 16 characters/i);
+    expect(manifest.user_config.oauth_hs256_key.title).toMatch(/32\+ characters/i);
+    expect(manifest.user_config.oauth_hs256_key.description).toMatch(/at least 32 characters/i);
+    // This package-scoped release config needs a leading slash: release-please
+    // otherwise resolves the path under packages/server instead of repo root.
     expect(releaseConfig.packages["packages/server"]["extra-files"]).toContainEqual({
       type: "json",
       path: "/mcpb/manifest.json",
