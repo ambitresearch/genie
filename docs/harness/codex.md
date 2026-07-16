@@ -164,11 +164,13 @@ real built server, not a stand-in for either:
 CI runs all three legs for every same-repository PR and push (`codex-smoke`
 job). It sets `GENIE_REQUIRE_LLM=1`, so `conjure` must run for real. The
 configured gateway is private-LAN-only, so this job uses the dedicated
-`self-hosted, Linux, X64, genie` runner and the same `GENIE_LLM_*` secret pair
-as the proven M2 canary. Local runs still skip the paid endpoint cases visibly
-when that pair is absent. GitHub does not expose repository secrets to
-untrusted fork PRs, so fork contributions need a maintainer-run trusted branch
-before this gate can pass.
+`self-hosted, Linux, X64, genie` runner and maps the dedicated
+`GENIE_CODEX_SMOKE_LLM_*` repository secrets into the process's standard
+`GENIE_LLM_*` environment names. The smoke key is scoped to the configured
+Codex model; the M2/deployment key is unchanged. Local runs still skip the paid
+endpoint cases visibly when that pair is absent. GitHub does not expose
+repository secrets to untrusted fork PRs, so fork contributions need a
+maintainer-run trusted branch before this gate can pass.
 
 The `codex exec` process uses Codex's read-only sandbox and an ephemeral
 session. This keeps model-generated shell commands from writing to the

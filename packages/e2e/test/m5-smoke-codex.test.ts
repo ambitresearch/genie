@@ -90,7 +90,7 @@ const hasCodex = codexAvailable();
 const hasBuiltServer = spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`]).status === 0;
 
 describe("codex-smoke CI contract", () => {
-  it("uses the private-LAN gateway and requires the live endpoint leg", async () => {
+  it("uses dedicated smoke credentials on the private-LAN runner and requires the live endpoint leg", async () => {
     const workflow = await readFile(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
     const match = workflow.match(/\n {2}codex-smoke:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/);
     expect(match, "expected ci.yml to define the codex-smoke job").not.toBeNull();
@@ -103,13 +103,13 @@ describe("codex-smoke CI contract", () => {
     // missing-credential state into a required red job or expose secrets via
     // pull_request_target; maintainers must rerun fork changes on a trusted branch.
     expect(job).toContain("runs-on: [self-hosted, Linux, X64, genie]");
-    expect(job).toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}");
-    expect(job).toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}");
+    expect(job).toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}");
+    expect(job).toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}");
     expect(job).toContain('GENIE_REQUIRE_LLM: "1"');
     expect(job).toContain("GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}");
     expect(job).toContain("npm install -g @openai/codex@0.144.5");
-    expect(job).not.toContain("GENIE_CODEX_SMOKE_LLM_BASE_URL");
-    expect(job).not.toContain("GENIE_CODEX_SMOKE_LLM_API_KEY");
+    expect(job).not.toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}");
+    expect(job).not.toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}");
   });
 
   it("keeps model-generated commands sandboxed on the private-LAN runner", () => {
@@ -224,7 +224,7 @@ describe.skipIf(!hasCodex)("AC1/AC2/AC4 — codex mcp accepts the canonical geni
 // CLIENT transport (the harness side of the same wire protocol Codex speaks).
 
 const hasLlmEnv = Boolean(process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim());
-const smokeModel = process.env.GENIE_SMOKE_LLM_MODEL?.trim() || "gpt-5-mini";
+const smokeModel = process.env.GENIE_SMOKE_LLM_MODEL?.trim() || "gpt-5.6-sol";
 
 if (!hasLlmEnv) {
   console.info(

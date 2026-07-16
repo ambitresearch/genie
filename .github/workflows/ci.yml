@@ -403,8 +403,9 @@ jobs:
   #       the JSONL transcript as evidence.
   # The config-CLI and non-generation stdio checks are free. The `conjure` and
   # real `codex exec` checks are a required live-endpoint gate here. The
-  # configured gateway is private-LAN-only, so this job uses the same dedicated
-  # `genie` runner and GENIE_LLM_* secrets as the proven M2 canary above.
+  # configured gateway is private-LAN-only, so this job uses the dedicated
+  # `genie` runner. A model-scoped smoke key keeps this harness independent
+  # from the M2/deployment key while reaching the same gateway.
   codex-smoke:
     name: codex CLI harness smoke (M5-11)
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
@@ -443,8 +444,8 @@ jobs:
         env:
           VITEST_JUNIT: "1"
           GENIE_REQUIRE_LLM: "1"
-          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
-          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}
           GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}
         run: pnpm --filter @genie/e2e test:e2e:codex
 
