@@ -53,18 +53,23 @@ These are orthogonal, so harnesses fall into a grid:
 
 ## Server prerequisites (all harnesses)
 
-The genie server needs an OpenAI-compatible LLM endpoint for `conjure` /
-`refine` / `conjure_screen`. Set these as environment on the server process —
-**never hardcode secrets** into a config file:
+The current CLI validates its known required secrets before starting any
+transport. `GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required at startup,
+including for read-only tool calls. `GENIE_LLM_BASE_URL` is also required when
+calling `conjure`, `refine`, or `conjure_screen`:
 
 - `GENIE_LLM_BASE_URL` — the endpoint (must end in `/v1`).
-- `GENIE_LLM_API_KEY` — its key.
+- `GENIE_LLM_API_KEY` — its key (at least 16 characters).
+- `OAUTH_HS256_KEY` — OAuth signing key (at least 32 characters).
 
-`ping`, `preview`, `validate`, and all the kit/project read tools work without
-an LLM configured.
+Prefer environment variables or an owner-only mounted secrets file. Claude
+Desktop's manual local-server configuration is the exception: it has no
+separate secret prompt, so required values go in its owner-readable
+`claude_desktop_config.json`. Treat that file as sensitive and never commit it.
 
 Per-harness registration snippets:
 [claude-code.md](./claude-code.md) ·
+[claude-desktop.md](./claude-desktop.md) ·
 [cursor.md](./cursor.md) ·
 [codex.md](./codex.md) ·
 [copilot.md](./copilot.md)

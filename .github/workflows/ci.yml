@@ -490,6 +490,8 @@ jobs:
       - name: Run Claude Desktop supplemental stdio smoke
         env:
           GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE: "1"
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
           VITEST_JUNIT: "1"
         run: pnpm --filter @genie/e2e test:e2e:claude-desktop
 

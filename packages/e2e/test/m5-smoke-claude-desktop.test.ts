@@ -23,6 +23,7 @@ const CLAUDE_DESKTOP_DOC = readFileSync(
   resolve(here, "../../../docs/harness/claude-desktop.md"),
   "utf8",
 );
+const HARNESS_OVERVIEW = readFileSync(resolve(here, "../../../docs/harness/README.md"), "utf8");
 
 const hasBuiltServer =
   spawnSync(process.execPath, [
@@ -114,6 +115,14 @@ describe("Claude Desktop guide contracts", () => {
 
   it("documents the exact macOS Claude Desktop MCP log glob", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("~/Library/Logs/Claude/mcp*.log");
+  });
+
+  it("keeps shared harness prerequisites consistent and links this guide", () => {
+    expect(HARNESS_OVERVIEW).toContain("[claude-desktop.md](./claude-desktop.md)");
+    expect(HARNESS_OVERVIEW).toContain(
+      "`GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required at startup",
+    );
+    expect(HARNESS_OVERVIEW).not.toMatch(/read tools work without\s+an LLM configured/i);
   });
 });
 
