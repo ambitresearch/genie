@@ -47,6 +47,7 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import ipaddr from "ipaddr.js";
 import { Agent, fetch as undiciFetch } from "undici";
 import { z } from "zod";
 
@@ -134,28 +135,34 @@ export const REF_URL_WARN_BYTES = 1024 * 1024; // 1 MB
  * and `http://169.254.169.254/…` (cloud metadata) holes at the tool boundary.
  * Exported so a future network-egress policy can reuse the exact same rule.
  */
-/** Shared IPv4-literal private/loopback/link-local/CGNAT range check (M6-03
- * follow-up): factored out of {@link isSafeRefUrl} so the exact same rule can
- * be applied to a *resolved* address in {@link isSafeResolvedAddress}, not
- * just to a literal IP typed directly into the URL. */
-function isPrivateIpv4(host: string): boolean {
-  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (!ipv4) return false;
-  const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
-  if (a === 127 || a === 10 || a === 0) return true; // loopback / private / this-host
-  if (a === 169 && b === 254) return true; // link-local incl. 169.254.169.254 metadata
-  if (a === 192 && b === 168) return true; // private
-  if (a === 172 && b >= 16 && b <= 31) return true; // private
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-  return false;
+type SafeAddress = { address: string; family: 4 | 6 };
+export type AddressLookup = (
+  hostname: string,
+) => Promise<readonly { address: string; family: number }[]>;
+
+const defaultAddressLookup: AddressLookup = (hostname) =>
+  dnsLookup(hostname, { all: true, verbatim: true });
+
+function parseIpLiteral(host: string): ipaddr.IPv4 | ipaddr.IPv6 | undefined {
+  const unbracketed = host.startsWith("[") ? host.replace(/^\[|\]$/g, "") : host;
+  try {
+    return ipaddr.process(unbracketed);
+  } catch {
+    return undefined;
+  }
 }
 
-/** Shared bare-IPv6 loopback/link-local/unique-local check, mirroring
- * {@link isPrivateIpv4} for the v6 literal forms accepted at either layer. */
-function isPrivateIpv6(inner: string): boolean {
-  return (
-    inner === "::1" || inner.startsWith("fe80:") || inner.startsWith("fc") || inner.startsWith("fd")
-  );
+/** Return a canonical address only for globally routable unicast IPs. Using a
+ * real IP parser avoids textual-prefix gaps such as IPv4-mapped loopback
+ * (`::ffff:127.0.0.1`), the full IPv6 link-local `/10`, and multicast or
+ * unspecified addresses. */
+function asSafeAddress(host: string): SafeAddress | undefined {
+  const parsed = parseIpLiteral(host);
+  if (parsed === undefined || parsed.range() !== "unicast") return undefined;
+  return {
+    address: parsed.toString(),
+    family: parsed.kind() === "ipv4" ? 4 : 6,
+  };
 }
 
 export function isSafeRefUrl(raw: string): boolean {
@@ -172,13 +179,9 @@ export function isSafeRefUrl(raw: string): boolean {
   if (host === "localhost" || host === "ip6-localhost" || host.endsWith(".localhost")) return false;
   if (host === "" || host === "[::1]" || host === "::1") return false;
 
-  // IPv4 literal → block loopback/private/link-local/CGNAT ranges.
-  if (isPrivateIpv4(host)) return false;
-  // Bare IPv6 loopback/link-local/unique-local.
-  if (host.startsWith("[")) {
-    const inner = host.replace(/^\[|\]$/g, "");
-    if (isPrivateIpv6(inner)) return false;
-  }
+  // Any literal must be globally routable unicast. Hostnames are resolved and
+  // subjected to the same rule immediately before the pinned connection.
+  if (parseIpLiteral(host) !== undefined && asSafeAddress(host) === undefined) return false;
   return true;
 }
 
@@ -197,25 +200,18 @@ export function isSafeRefUrl(raw: string): boolean {
  */
 async function resolveSafeAddress(
   hostname: string,
+  lookupAddresses: AddressLookup = defaultAddressLookup,
 ): Promise<{ address: string; family: 4 | 6 } | undefined> {
-  const host = hostname.toLowerCase();
-  // Already a literal — no DNS involved.
-  if (isPrivateIpv4(host)) return undefined;
-  const bracketed = host.startsWith("[") ? host.replace(/^\[|\]$/g, "") : undefined;
-  if (bracketed !== undefined && isPrivateIpv6(bracketed)) return undefined;
-  if (/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(host)) {
-    return { address: host, family: 4 };
-  }
-  if (bracketed !== undefined) {
-    return { address: bracketed, family: 6 };
-  }
+  const literal = parseIpLiteral(hostname);
+  if (literal !== undefined) return asSafeAddress(hostname);
+
   try {
-    const results = await dnsLookup(hostname, { all: true, verbatim: true });
-    for (const { address, family } of results) {
-      if (family === 4 && !isPrivateIpv4(address)) return { address, family: 4 };
-      if (family === 6 && !isPrivateIpv6(address.toLowerCase())) return { address, family: 6 };
+    const results = await lookupAddresses(hostname);
+    for (const { address } of results) {
+      const safe = asSafeAddress(address);
+      if (safe !== undefined) return safe;
     }
-    return undefined; // every resolved address was private/loopback/link-local.
+    return undefined;
   } catch {
     return undefined;
   }
@@ -226,8 +222,11 @@ async function resolveSafeAddress(
  * test surface / any external reuse (M6-03 follow-up). A hostname is "safe"
  * if at least one resolved address is not private/loopback/link-local.
  */
-export async function isSafeResolvedAddress(hostname: string): Promise<boolean> {
-  return (await resolveSafeAddress(hostname)) !== undefined;
+export async function isSafeResolvedAddress(
+  hostname: string,
+  lookupAddresses: AddressLookup = defaultAddressLookup,
+): Promise<boolean> {
+  return (await resolveSafeAddress(hostname, lookupAddresses)) !== undefined;
 }
 
 /**
@@ -246,7 +245,7 @@ export async function isSafeResolvedAddress(hostname: string): Promise<boolean> 
  * following it, so a public URL cannot use a redirect to smuggle a request to
  * a private target past the guard.
  */
-function fetchWithPinnedAddress(
+export async function fetchWithPinnedAddress(
   url: string,
   address: string,
   family: 4 | 6,
@@ -258,12 +257,27 @@ function fetchWithPinnedAddress(
 }> {
   const pinnedAgent = new Agent({
     connect: {
-      lookup: (_hostname, _opts, cb) => {
-        cb(null, address, family);
+      lookup: (_hostname, options, callback) => {
+        if (options.all) {
+          callback(null, [{ address, family }]);
+        } else {
+          callback(null, address, family);
+        }
       },
     },
   });
-  return undiciFetch(url, { redirect: "manual", dispatcher: pinnedAgent });
+  try {
+    const response = await undiciFetch(url, { redirect: "manual", dispatcher: pinnedAgent });
+    const body = await response.text();
+    return {
+      status: response.status,
+      ok: response.ok,
+      headers: response.headers,
+      text: async () => body,
+    };
+  } finally {
+    await pinnedAgent.close();
+  }
 }
 
 const MAX_REF_URL_REDIRECTS = 5;
@@ -281,8 +295,10 @@ const MAX_REF_URL_REDIRECTS = 5;
  * redirect handling.
  */
 async function safeFetchFollowingRedirects(
-  fetchImpl: FetchFn,
+  fetchImpl: FetchFn | undefined,
+  fetchPinnedAddress: PinnedFetchFn,
   startUrl: string,
+  lookupAddresses: AddressLookup,
 ): Promise<{ ok: boolean; status: number; text(): Promise<string> } | undefined> {
   let currentUrl = startUrl;
   for (let hop = 0; hop <= MAX_REF_URL_REDIRECTS; hop++) {
@@ -291,19 +307,14 @@ async function safeFetchFollowingRedirects(
       return undefined;
     }
     const hostname = new URL(currentUrl).hostname;
-    const resolved = await resolveSafeAddress(hostname);
+    const resolved = await resolveSafeAddress(hostname, lookupAddresses);
     if (!resolved) {
       logStderr({ event: "conjure.ref_url.ssrf_blocked", refUrl: currentUrl, startUrl, hop });
       return undefined;
     }
-    // The injected `fetchImpl` seam (tests) doesn't know about pinned
-    // addresses/dispatchers — only the real, production path does, so tests
-    // exercise the validation logic above without needing a live DNS/socket
-    // layer. Production always goes through `fetchWithPinnedAddress`.
-    const res =
-      fetchImpl === defaultFetch
-        ? await fetchWithPinnedAddress(currentUrl, resolved.address, resolved.family)
-        : await fetchImpl(currentUrl);
+    const res = fetchImpl
+      ? await fetchImpl(currentUrl)
+      : await fetchPinnedAddress(currentUrl, resolved.address, resolved.family);
 
     const status = res.status;
     if (status >= 300 && status < 400) {
@@ -396,10 +407,15 @@ export type FetchFn = (url: string) => Promise<{
   headers?: { get(name: string): string | null };
   text(): Promise<string>;
 }>;
+export type PinnedFetchFn = typeof fetchWithPinnedAddress;
 
 export interface ConjureDeps {
   chat?: ChatCompletionFn;
   fetchImpl?: FetchFn;
+  /** Pinned socket seam for deterministic production-path tests. */
+  fetchPinnedAddress?: PinnedFetchFn;
+  /** DNS seam for deterministic SSRF tests. Production uses `dns.lookup`. */
+  lookupAddresses?: AddressLookup;
   /** Prompt loader override (tests). Defaults to the real versioned loader (AC5). */
   loadSystemPrompt?: () => LoadedPrompt;
 }
@@ -446,13 +462,23 @@ export function truncateUtf8(text: string, maxBytes: number): string {
  * warned and skipped — generation proceeds without the reference rather than
  * dying on a flaky link.
  */
-async function fetchReference(fetchImpl: FetchFn, refUrl: string): Promise<string | undefined> {
+async function fetchReference(
+  fetchImpl: FetchFn | undefined,
+  fetchPinnedAddress: PinnedFetchFn,
+  refUrl: string,
+  lookupAddresses: AddressLookup,
+): Promise<string | undefined> {
   try {
     // Re-validate at fetch time against the *resolved* address, pin that exact
     // address into the connection, and re-validate every redirect hop the same
     // way (M6-03 follow-up — closes both the TOCTOU and redirect-bypass gaps
     // from the security-audit re-review). See `safeFetchFollowingRedirects`.
-    const res = await safeFetchFollowingRedirects(fetchImpl, refUrl);
+    const res = await safeFetchFollowingRedirects(
+      fetchImpl,
+      fetchPinnedAddress,
+      refUrl,
+      lookupAddresses,
+    );
     if (!res) return undefined;
     if (!res.ok) {
       logStderr({ event: "conjure.ref_url.skip", refUrl, status: res.status });
@@ -565,8 +591,6 @@ const defaultChatCompletion: ChatCompletionFn = async (input) => {
   return withRetry(createChatCompletion)(input);
 };
 
-const defaultFetch: FetchFn = (url) => fetch(url);
-
 // ── Core ──────────────────────────────────────────────────────────────────────
 
 /**
@@ -583,7 +607,9 @@ const defaultFetch: FetchFn = (url) => fetch(url);
 export async function conjure(deps: ConjureDeps, args: unknown): Promise<ConjureResult> {
   const parsed = conjureArgsSchema.parse(args);
   const chat = deps.chat ?? defaultChatCompletion;
-  const fetchImpl = deps.fetchImpl ?? defaultFetch;
+  const fetchImpl = deps.fetchImpl;
+  const fetchPinnedAddress = deps.fetchPinnedAddress ?? fetchWithPinnedAddress;
+  const lookupAddresses = deps.lookupAddresses ?? defaultAddressLookup;
   const systemPrompt = (
     deps.loadSystemPrompt ?? (() => loadPrompt(GENERATE_COMPONENT_SYSTEM_PROMPT_FILE))
   )();
@@ -598,7 +624,9 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
   const adapter = await getAdapter(parsed.framework);
   const frameworkDirective = adapter.promptDirective;
 
-  const referenceHtml = parsed.refUrl ? await fetchReference(fetchImpl, parsed.refUrl) : undefined;
+  const referenceHtml = parsed.refUrl
+    ? await fetchReference(fetchImpl, fetchPinnedAddress, parsed.refUrl, lookupAddresses)
+    : undefined;
 
   const { outcome, usage, attempts } = await runComponentGeneration({
     chat,

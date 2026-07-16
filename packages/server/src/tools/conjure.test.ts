@@ -22,6 +22,7 @@ import {
   DEFAULT_MODEL,
   REF_URL_WARN_BYTES,
   conjure,
+  fetchWithPinnedAddress,
   isSafeRefUrl,
   isSafeResolvedAddress,
   truncateUtf8,
@@ -399,6 +400,18 @@ describe("AC7 — reference URL fetch + inline", () => {
     expect(isSafeRefUrl("http://172.32.0.1/x")).toBe(true); // .32 is outside 16-31 private range
   });
 
+  it("rejects non-public IPv6 literals, including IPv4-mapped loopback", () => {
+    for (const bad of [
+      "http://[::]/",
+      "http://[::ffff:7f00:1]/",
+      "http://[fe90::1]/",
+      "http://[ff02::1]/",
+    ]) {
+      expect(isSafeRefUrl(bad), bad).toBe(false);
+    }
+    expect(isSafeRefUrl("https://[2606:4700:4700::1111]/")).toBe(true);
+  });
+
   it("isSafeResolvedAddress rejects a hostname that resolves to a private/loopback address (DNS-rebinding, M6-03 follow-up)", async () => {
     // `isSafeRefUrl` is a syntactic pre-filter on the hostname as typed and
     // cannot see this — a name that resolves to 127.0.0.1 passes it today.
@@ -407,10 +420,54 @@ describe("AC7 — reference URL fetch + inline", () => {
     expect(await isSafeResolvedAddress("127.0.0.1")).toBe(false);
     expect(await isSafeResolvedAddress("169.254.169.254")).toBe(false);
     expect(await isSafeResolvedAddress("[::1]")).toBe(false);
+    expect(await isSafeResolvedAddress("[::ffff:7f00:1]")).toBe(false);
   });
 
   it("isSafeResolvedAddress accepts a public literal without a DNS lookup", async () => {
     expect(await isSafeResolvedAddress("93.184.216.34")).toBe(true);
+  });
+
+  it("pins the production socket address without resolving the URL hostname", async () => {
+    const server = createHttpServer((_req, response) => response.end("pinned response"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      const response = await fetchWithPinnedAddress(
+        `http://does-not-resolve.invalid:${port}/reference`,
+        "127.0.0.1",
+        4,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("pinned response");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("passes the resolver's exact address into the default pinned-fetch path", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const lookupAddresses = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
+    const fetchPinnedAddress = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      text: async () => "<h1>Pinned Page</h1>",
+    }));
+
+    await conjure(
+      { chat, lookupAddresses, fetchPinnedAddress },
+      args({ refUrl: "https://pin-test.example/reference" }),
+    );
+
+    expect(fetchPinnedAddress).toHaveBeenCalledWith(
+      "https://pin-test.example/reference",
+      "93.184.216.34",
+      4,
+    );
+    expect(JSON.stringify(chat.calls[0]!.messages[1]!.content)).toContain("Pinned Page");
   });
 
   // M6-03 follow-up regression tests (post security-audit re-review): prove the
@@ -457,24 +514,34 @@ describe("AC7 — reference URL fetch + inline", () => {
     expect(stderrLines().some((l) => l.event === "conjure.ref_url.ssrf_blocked")).toBe(true);
   });
 
-  it("rejects a redirect from a public URL to a rebinding hostname (resolves to a private address)", async () => {
+  it("rejects a public-looking redirect hostname that resolves to a private address", async () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const lookupAddresses = vi.fn(async (hostname: string) =>
+      hostname === "rebind.example"
+        ? [{ address: "127.0.0.1", family: 4 }]
+        : [{ address: "93.184.216.34", family: 4 }],
+    );
     const fetchImpl = vi.fn(async (url: string) => {
       if (url === "https://example.com/start") {
         return {
           ok: false,
           status: 302,
           headers: {
-            get: (n: string) => (n === "location" ? "https://rebind.localhost/x" : null),
+            get: (n: string) => (n === "location" ? "https://rebind.example/x" : null),
           },
           text: async () => "",
         };
       }
-      throw new Error("must not fetch a hostname that fails isSafeRefUrl");
+      throw new Error("must not fetch a hostname that resolves to loopback");
     });
-    const res = await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/start" }));
+    const res = await conjure(
+      { chat, fetchImpl, lookupAddresses },
+      args({ refUrl: "https://example.com/start" }),
+    );
     expect(res.componentName).toBe("Button");
-    expect(fetchImpl).not.toHaveBeenCalledWith("https://rebind.localhost/x");
+    expect(isSafeRefUrl("https://rebind.example/x")).toBe(true);
+    expect(lookupAddresses).toHaveBeenCalledWith("rebind.example");
+    expect(fetchImpl).not.toHaveBeenCalledWith("https://rebind.example/x");
   });
 
   it("gives up after too many redirect hops rather than looping forever", async () => {
