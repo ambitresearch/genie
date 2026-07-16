@@ -649,7 +649,10 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
       await new Promise<void>((resolveListen) => model!.listen(0, "127.0.0.1", resolveListen));
       const modelPort = (model.address() as AddressInfo).port;
 
-      const env = { ...process.env, HOME: base, USERPROFILE: base };
+      const env = Object.fromEntries(
+        Object.entries(process.env).filter(([name]) => !name.startsWith("CLINE_")),
+      );
+      Object.assign(env, { HOME: base, USERPROFILE: base });
       const version = await execFileAsync(CLINE_BIN, ["--version"], { env });
       expect(version.stdout.trim()).toBe(CLINE_VERSION);
       await execFileAsync(
