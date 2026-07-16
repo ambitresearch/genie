@@ -116,6 +116,92 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     );
   });
 
+  it("rejects a plaintext non-loopback issuer before discovery", async () => {
+    await expect(
+      createOidcVerifier({
+        issuer: "http://idp.example.test",
+        audience: AUDIENCE,
+      }),
+    ).rejects.toThrow("OIDC issuer must use HTTPS unless it is a loopback development URL.");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not mistake a DNS name beginning with 127 for a loopback issuer", async () => {
+    await expect(
+      createOidcVerifier({
+        issuer: "http://127.example.test",
+        audience: AUDIENCE,
+      }),
+    ).rejects.toThrow("OIDC issuer must use HTTPS unless it is a loopback development URL.");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(["https://user:password@idp.example.test", "https://idp.example.test#fragment"])(
+    "rejects issuer URL credentials or fragments: %s",
+    async (issuer) => {
+      await expect(createOidcVerifier({ issuer, audience: AUDIENCE })).rejects.toThrow(
+        "OIDC issuer must not contain credentials or a fragment.",
+      );
+      expect(fetchSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a plaintext non-loopback jwks_uri from an HTTPS issuer", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          issuer: ISSUER,
+          jwks_uri: "http://keys.example.test/jwks",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE })).rejects.toThrow(
+      "OIDC jwks_uri must use HTTPS unless it is a loopback development URL.",
+    );
+  });
+
+  it("rejects a plaintext loopback jwks_uri from an HTTPS issuer", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          issuer: ISSUER,
+          jwks_uri: "http://127.0.0.1:9944/jwks",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE })).rejects.toThrow(
+      "OIDC jwks_uri must use HTTPS unless it is a loopback development URL.",
+    );
+  });
+
+  it("allows plaintext issuer and JWKS URLs on loopback for development", async () => {
+    const issuer = "http://127.0.0.1:9944";
+    fetchSpy.mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      if (url === `${issuer}/.well-known/openid-configuration`) {
+        return new Response(JSON.stringify({ issuer, jwks_uri: `${issuer}/jwks` }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url === `${issuer}/jwks`) {
+        return new Response(JSON.stringify({ keys: [publicJwk] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    const verifier = await createOidcVerifier({ issuer, audience: AUDIENCE });
+    const token = await signToken({ sub: "alice", groups: ["genie-users"] }, { issuer });
+
+    await expect(verifier.verify(token)).resolves.toMatchObject({ sub: "alice" });
+  });
+
   it("fails startup predictably when OIDC discovery stalls", async () => {
     fetchSpy.mockImplementationOnce(async (_input, init) => {
       if (init?.signal === undefined) throw new Error("missing discovery abort signal");

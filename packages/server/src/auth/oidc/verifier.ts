@@ -23,6 +23,7 @@
  * startup error so an intended auth gate cannot fail open.
  */
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { isIP } from "node:net";
 import type { OidcClaims } from "./group-policy.js";
 import { enforceGroupAccess, REQUIRED_GROUP } from "./group-policy.js";
 
@@ -74,6 +75,35 @@ interface OidcDiscoveryDocument {
 
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 10_000;
 
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    (isIP(normalized) === 4 && normalized.split(".")[0] === "127") ||
+    normalized === "::1" ||
+    normalized === "0:0:0:0:0:0:0:1" ||
+    normalized === "::ffff:127.0.0.1"
+  );
+}
+
+function requireSecureOidcUrl(
+  value: string,
+  label: "issuer" | "jwks_uri",
+  allowPlaintextLoopback: boolean,
+): URL {
+  const url = new URL(value);
+  if (url.username || url.password || url.hash) {
+    throw new Error(`OIDC ${label} must not contain credentials or a fragment.`);
+  }
+  const allowedDevelopmentUrl =
+    allowPlaintextLoopback && url.protocol === "http:" && isLoopbackHostname(url.hostname);
+  if (url.protocol !== "https:" && !allowedDevelopmentUrl) {
+    throw new Error(`OIDC ${label} must use HTTPS unless it is a loopback development URL.`);
+  }
+  return url;
+}
+
 function enforceAccessTokenClaimTypes(claims: OidcClaims): void {
   for (const claim of ["sub", "client_id", "jti"] as const) {
     if (typeof claims[claim] !== "string") {
@@ -89,6 +119,7 @@ async function discoverJwksUri(
   discoveryIssuer: string,
   expectedIssuer: string,
   timeoutMs: number,
+  allowPlaintextLoopback: boolean,
 ): Promise<string> {
   const discoveryUrl = `${discoveryIssuer}/.well-known/openid-configuration`;
   const signal = AbortSignal.timeout(timeoutMs);
@@ -115,6 +146,7 @@ async function discoverJwksUri(
   if (!doc.jwks_uri) {
     throw new Error(`OIDC discovery document at ${discoveryUrl} is missing jwks_uri.`);
   }
+  requireSecureOidcUrl(doc.jwks_uri, "jwks_uri", allowPlaintextLoopback);
   return doc.jwks_uri;
 }
 
@@ -127,12 +159,19 @@ async function discoverJwksUri(
  */
 export async function createOidcVerifier(config: OidcVerifierConfig): Promise<OidcVerifier> {
   const issuer = config.issuer;
+  const issuerUrl = requireSecureOidcUrl(issuer, "issuer", true);
+  const allowPlaintextLoopback = issuerUrl.protocol === "http:";
   const discoveryIssuer = issuer.endsWith("/") ? issuer.slice(0, -1) : issuer;
   const discoveryTimeoutMs = config.discoveryTimeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS;
   if (!Number.isFinite(discoveryTimeoutMs) || discoveryTimeoutMs <= 0) {
     throw new Error("discoveryTimeoutMs must be a positive finite number.");
   }
-  const jwksUri = await discoverJwksUri(discoveryIssuer, issuer, discoveryTimeoutMs);
+  const jwksUri = await discoverJwksUri(
+    discoveryIssuer,
+    issuer,
+    discoveryTimeoutMs,
+    allowPlaintextLoopback,
+  );
   const jwks = createRemoteJWKSet(new URL(jwksUri));
   const requiredGroup = config.requiredGroup ?? REQUIRED_GROUP;
 

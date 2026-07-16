@@ -1774,7 +1774,9 @@ uses instead of (or alongside) the self-issued OAuth server.
   tokens' `typ: at+jwt`/signature and mandatory RFC 9068 claims (`iss`, `aud`,
   `exp`, `sub`, `client_id`, `iat`, `jti`) against the live JWKS (`jose`'s
   `createRemoteJWKSet`, cached and auto-refreshed on unknown `kid`). Discovery
-  fails startup after a bounded 10-second timeout rather than hanging.
+  fails startup after a bounded 10-second timeout rather than hanging. Issuer
+  and JWKS URLs require HTTPS; plaintext is accepted only when both belong to
+  the same loopback development setup used by the integration fixture.
 - `group-policy.ts` — after signature verification succeeds, enforces that
   the token's `groups` claim contains a required group (default
   `genie-users`). A validly-signed token that fails this check gets HTTP 403
