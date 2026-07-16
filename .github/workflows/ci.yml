@@ -397,9 +397,10 @@ jobs:
   # prerequisite and fails if any required test is skipped.
   #
   # The AC4/AC6 Claude-Code-CLI-in-Docker leg additionally needs a real
-  # container runtime + GENIE_ANTHROPIC_SMOKE_API_KEY (Claude Code's own
-  # model credential, distinct from genie's GENIE_LLM_* endpoint unless the
-  # configured gateway key is reused). Dedicated smoke endpoint secrets keep
+  # container runtime plus a Claude driver credential. A dedicated
+  # GENIE_ANTHROPIC_SMOKE_API_KEY defaults to api.anthropic.com; only when that
+  # key is absent does the smoke intentionally reuse the GENIE_LLM_* gateway
+  # key and URL as a pair. Dedicated smoke endpoint secrets keep
   # this job independent from the private-LAN M2 gateway, so ubuntu-latest can
   # provide a guaranteed Docker daemon and reach the configured public smoke
   # gateway. GENIE_REQUIRE_DOCKER still makes any daemon regression loud.
@@ -449,8 +450,9 @@ jobs:
         # is required. Missing secrets fail at suite import instead of allowing
         # an all-skipped test report to look successful. GENIE_SMOKE_MODEL must
         # name a structured-output model the configured gateway actually serves.
-        # The dedicated secrets below point both genie and the Claude driver at
-        # the public smoke gateway; normal deployment secrets remain untouched.
+        # The driver uses the dedicated Anthropic key/base pair when present;
+        # otherwise it intentionally reuses the public smoke gateway key/base
+        # pair below. Normal deployment secrets remain untouched.
         env:
           VITEST_JUNIT: "1"
           GENIE_REQUIRE_DOCKER: "1"

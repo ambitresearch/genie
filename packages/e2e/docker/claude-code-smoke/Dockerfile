@@ -45,11 +45,12 @@ RUN chown node:node /workspace
 #                                   pointing at the in-process genie server on
 #                                   the host, reachable via host.docker.internal)
 #   /workspace/prompt.txt        — the non-interactive prompt to run
-# and invokes the CLI itself (see run-smoke.sh) so the exact prompt/config can
-# vary per test run without rebuilding the image.
+# then starts this image idle and invokes the CLI through `container.exec`
+# (see run-smoke.sh) so stdout and stderr remain separate and the exact
+# prompt/config can vary per test run without rebuilding the image.
 COPY run-smoke.sh /usr/local/bin/run-smoke.sh
 RUN chmod +x /usr/local/bin/run-smoke.sh
 
 USER node
 
-ENTRYPOINT ["/usr/local/bin/run-smoke.sh"]
+ENTRYPOINT ["tail", "-f", "/dev/null"]

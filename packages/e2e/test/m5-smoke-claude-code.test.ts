@@ -153,25 +153,57 @@ if (!dockerAvailable && process.env["GENIE_REQUIRE_DOCKER"] === "1") {
 // Distinct from GENIE_LLM_API_KEY (gate 1): that key is genie's *own*
 // OpenAI-compatible generation endpoint used by `conjure`; this key
 // (`GENIE_ANTHROPIC_SMOKE_API_KEY`) is what the containerized `claude` CLI
-// authenticates with to run its own agent loop. By default it calls Anthropic;
-// GENIE_ANTHROPIC_SMOKE_BASE_URL may point it at a compatible gateway. Without
-// the key the CLI cannot make any model calls, so this leg must also skip
-// (loudly) rather than fail with a confusing auth error.
-const hasAnthropicSmokeKey = Boolean(process.env["GENIE_ANTHROPIC_SMOKE_API_KEY"]?.trim());
-if (dockerAvailable && !hasAnthropicSmokeKey) {
+// authenticates with to run its own agent loop. A dedicated key defaults to
+// Anthropic and may use only its dedicated base-URL override. If no dedicated
+// key exists, the genie gateway key and URL may be intentionally reused as a
+// pair; never send a dedicated Anthropic key to GENIE_LLM_BASE_URL.
+interface ClaudeDriverConfig {
+  apiKey: string;
+  baseUrl: string;
+  source: "dedicated" | "gateway";
+}
+
+function resolveClaudeDriverConfig(
+  env: Record<string, string | undefined>,
+): ClaudeDriverConfig | undefined {
+  const dedicatedKey = env["GENIE_ANTHROPIC_SMOKE_API_KEY"]?.trim();
+  if (dedicatedKey) {
+    return {
+      apiKey: dedicatedKey,
+      baseUrl: env["GENIE_ANTHROPIC_SMOKE_BASE_URL"]?.trim() || "https://api.anthropic.com",
+      source: "dedicated",
+    };
+  }
+
+  const gatewayKey = env["GENIE_LLM_API_KEY"]?.trim();
+  const gatewayBaseUrl = env["GENIE_LLM_BASE_URL"]?.trim();
+  if (gatewayKey && gatewayBaseUrl) {
+    return {
+      apiKey: gatewayKey,
+      baseUrl: gatewayBaseUrl.replace(/\/v1\/?$/, ""),
+      source: "gateway",
+    };
+  }
+  return undefined;
+}
+
+const claudeDriverConfig = resolveClaudeDriverConfig(process.env);
+if (dockerAvailable && !claudeDriverConfig) {
   console.info(
-    "[m5-smoke-claude-code] GENIE_ANTHROPIC_SMOKE_API_KEY is not set — skipping the full " +
-      "Claude Code CLI-in-Docker leg even though Docker is available. Set it to a model " +
-      "credential (used only inside the throwaway container) to run this leg for real.",
+    "[m5-smoke-claude-code] no Claude driver credential is configured — skipping the full " +
+      "Claude Code CLI-in-Docker leg even though Docker is available. Set a dedicated " +
+      "GENIE_ANTHROPIC_SMOKE_API_KEY or configure the GENIE_LLM_* gateway pair for " +
+      "intentional reuse inside the throwaway container.",
   );
 }
-if (dockerAvailable && !hasAnthropicSmokeKey && process.env["GENIE_REQUIRE_DOCKER"] === "1") {
+if (dockerAvailable && !claudeDriverConfig && process.env["GENIE_REQUIRE_DOCKER"] === "1") {
   throw new Error(
-    "GENIE_REQUIRE_DOCKER=1 but GENIE_ANTHROPIC_SMOKE_API_KEY is missing/empty — the " +
-      "m5-smoke-claude-code CI job must run the real Claude-Code-in-Docker leg, not skip it.",
+    "GENIE_REQUIRE_DOCKER=1 but neither a dedicated GENIE_ANTHROPIC_SMOKE_API_KEY nor a " +
+      "complete GENIE_LLM_* gateway pair is configured — the m5-smoke-claude-code CI job " +
+      "must run the real Claude-Code-in-Docker leg, not skip it.",
   );
 }
-const runFullDockerLeg = dockerAvailable && hasAnthropicSmokeKey && hasLlmConfig;
+const runFullDockerLeg = dockerAvailable && Boolean(claudeDriverConfig) && hasLlmConfig;
 
 // ── Harness (mirrors m1-conformance.test.ts) ─────────────────────────────────
 
@@ -343,28 +375,186 @@ describe("Claude Code stream-json transcript parsing", () => {
   });
 });
 
-it("the executable apiKeyHelper falls through failed keychain clients to the env", async () => {
+describe("Claude driver credential selection", () => {
+  it("keeps a dedicated Anthropic key on api.anthropic.com by default", () => {
+    expect(
+      resolveClaudeDriverConfig({
+        GENIE_ANTHROPIC_SMOKE_API_KEY: "dedicated-token",
+        GENIE_LLM_API_KEY: "gateway-token",
+        GENIE_LLM_BASE_URL: "https://gateway.example/v1",
+      }),
+    ).toEqual({
+      apiKey: "dedicated-token",
+      baseUrl: "https://api.anthropic.com",
+      source: "dedicated",
+    });
+  });
+
+  it("treats blank dedicated base URLs as absent", () => {
+    expect(
+      resolveClaudeDriverConfig({
+        GENIE_ANTHROPIC_SMOKE_API_KEY: " dedicated-token ",
+        GENIE_ANTHROPIC_SMOKE_BASE_URL: "  ",
+        GENIE_LLM_API_KEY: "gateway-token",
+        GENIE_LLM_BASE_URL: "https://gateway.example/v1",
+      }),
+    ).toEqual({
+      apiKey: "dedicated-token",
+      baseUrl: "https://api.anthropic.com",
+      source: "dedicated",
+    });
+  });
+
+  it("uses the dedicated base URL only with the dedicated key", () => {
+    expect(
+      resolveClaudeDriverConfig({
+        GENIE_ANTHROPIC_SMOKE_API_KEY: "dedicated-token",
+        GENIE_ANTHROPIC_SMOKE_BASE_URL: " https://anthropic-gateway.example/ ",
+        GENIE_LLM_API_KEY: "gateway-token",
+        GENIE_LLM_BASE_URL: "https://genie-gateway.example/v1",
+      }),
+    ).toEqual({
+      apiKey: "dedicated-token",
+      baseUrl: "https://anthropic-gateway.example/",
+      source: "dedicated",
+    });
+  });
+
+  it("pairs the genie gateway URL only with an intentionally reused genie key", () => {
+    expect(
+      resolveClaudeDriverConfig({
+        GENIE_ANTHROPIC_SMOKE_API_KEY: "  ",
+        GENIE_ANTHROPIC_SMOKE_BASE_URL: "  ",
+        GENIE_LLM_API_KEY: " gateway-token ",
+        GENIE_LLM_BASE_URL: " https://gateway.example/v1/ ",
+      }),
+    ).toEqual({
+      apiKey: "gateway-token",
+      baseUrl: "https://gateway.example",
+      source: "gateway",
+    });
+  });
+
+  it("treats a blank gateway base URL as absent", () => {
+    expect(
+      resolveClaudeDriverConfig({
+        GENIE_ANTHROPIC_SMOKE_API_KEY: "",
+        GENIE_LLM_API_KEY: "gateway-token",
+        GENIE_LLM_BASE_URL: "  ",
+      }),
+    ).toBeUndefined();
+  });
+});
+
+async function runApiKeyHelper(options: {
+  security: string;
+  op: string;
+  anthropicApiKey?: string;
+}) {
   const binDir = await mkdtemp(join(tmpdir(), "genie-api-key-helper-bin-"));
   try {
-    for (const command of ["security", "op"]) {
+    for (const [command, body] of [
+      ["security", options.security],
+      ["op", options.op],
+    ] as const) {
       const stub = join(binDir, command);
-      await writeFile(stub, "#!/bin/sh\nexit 1\n");
+      await writeFile(stub, `#!/bin/sh\n${body}\n`);
       await chmod(stub, 0o755);
     }
 
-    const result = spawnSync(API_KEY_HELPER, [], {
+    const env = { ...process.env };
+    delete env["ANTHROPIC_API_KEY"];
+    if (options.anthropicApiKey !== undefined) {
+      env["ANTHROPIC_API_KEY"] = options.anthropicApiKey;
+    }
+    return spawnSync(API_KEY_HELPER, [], {
       encoding: "utf8",
       env: {
-        ...process.env,
-        ANTHROPIC_API_KEY: "env-fallback-token",
+        ...env,
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        USER: "genie-test-user",
       },
     });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("env-fallback-token");
   } finally {
     await rm(binDir, { recursive: true, force: true });
   }
+}
+
+describe("the executable apiKeyHelper", () => {
+  it("prefers a successful security lookup", async () => {
+    const result = await runApiKeyHelper({
+      security: "printf security-token",
+      op: "printf op-token",
+      anthropicApiKey: "env-token",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("security-token");
+  });
+
+  it("falls through a failed security lookup to op", async () => {
+    const result = await runApiKeyHelper({
+      security: "exit 1",
+      op: "printf op-token",
+      anthropicApiKey: "env-token",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("op-token");
+  });
+
+  it("discards output from a failed security lookup before falling through to op", async () => {
+    const result = await runApiKeyHelper({
+      security: "printf partial-token; exit 1",
+      op: "printf op-token",
+      anthropicApiKey: "env-token",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("op-token");
+  });
+
+  it("falls through failed keychain clients to the env", async () => {
+    const result = await runApiKeyHelper({
+      security: "exit 1",
+      op: "exit 1",
+      anthropicApiKey: "env-fallback-token",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("env-fallback-token");
+  });
+
+  it("discards output from a failed op lookup before falling through to the env", async () => {
+    const result = await runApiKeyHelper({
+      security: "exit 1",
+      op: "printf partial-token; exit 1",
+      anthropicApiKey: "env-fallback-token",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("env-fallback-token");
+  });
+
+  it("fails without printing a secret when no source succeeds", async () => {
+    const result = await runApiKeyHelper({ security: "exit 1", op: "exit 1" });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("no credential source found");
+  });
+
+  it("treats a whitespace-only environment credential as absent", async () => {
+    const result = await runApiKeyHelper({
+      security: "exit 1",
+      op: "exit 1",
+      anthropicApiKey: "  \t  ",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("no credential source found");
+  });
 });
 
 it("returns a reachable viewer URL for explicit local preview over HTTP", async () => {
@@ -559,8 +749,6 @@ describe.skipIf(!hasLlmConfig)(
 // `runFullDockerLeg` (Gate 2 + Gate 3 above: Docker reachable, a real model
 // credential for the containerized `claude` CLI, and a real genie LLM endpoint
 // for `conjure`).
-const anthropicSmokeKey = process.env["GENIE_ANTHROPIC_SMOKE_API_KEY"]?.trim();
-
 describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
   if (runFullDockerLeg) {
     it(
@@ -633,11 +821,8 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
           const builtImage = await GenericContainer.fromDockerfile(dockerfileDir).build();
           container = await builtImage
             .withEnvironment({
-              ANTHROPIC_BASE_URL:
-                process.env["GENIE_ANTHROPIC_SMOKE_BASE_URL"]?.trim() ??
-                process.env["GENIE_LLM_BASE_URL"]?.trim().replace(/\/v1\/?$/, "") ??
-                "https://api.anthropic.com",
-              ANTHROPIC_API_KEY: anthropicSmokeKey!,
+              ANTHROPIC_BASE_URL: claudeDriverConfig!.baseUrl,
+              ANTHROPIC_API_KEY: claudeDriverConfig!.apiKey,
             })
             .withExtraHosts([{ host: "host.docker.internal", ipAddress: "host-gateway" }])
             .withCopyFilesToContainer([
@@ -647,15 +832,17 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             .withStartupTimeout(120_000)
             .start();
 
-          const stream = await container.logs();
-          let stdout = "";
-          await new Promise<void>((resolve, reject) => {
-            stream.on("data", (chunk: Buffer) => {
-              stdout += chunk.toString("utf8");
-            });
-            stream.on("end", resolve);
-            stream.on("error", reject);
-          });
+          // PID 1 stays idle so `exec` can preserve stdout/stderr separately.
+          // Bound the child below Vitest's test timeout so a stuck model call
+          // returns control to this finally block and the container is stopped.
+          const cliResult = await container.exec(
+            ["timeout", "--signal=TERM", "--kill-after=5s", "150s", "/usr/local/bin/run-smoke.sh"],
+            { user: "node" },
+          );
+          const cliDiagnostics =
+            `Claude Code process exited ${cliResult.exitCode}\n` +
+            `stdout:\n${cliResult.stdout}\n\nstderr:\n${cliResult.stderr}`;
+          expect(cliResult.exitCode, cliDiagnostics).toBe(0);
 
           // `--output-format stream-json` (see run-smoke.sh) emits one JSON
           // object per line — the actual structured tool-call/tool-result
@@ -665,17 +852,25 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
           // their create_kit/plan prerequisites were genuinely invoked in
           // order by Claude's own agent loop AND that none came back as an
           // error. `--output-format json`'s summary cannot prove any of that.
-          const events = parseClaudeStream(stdout);
+          let events: ClaudeStreamEvent[];
+          try {
+            events = parseClaudeStream(cliResult.stdout);
+          } catch (error) {
+            throw new Error(
+              `${error instanceof Error ? error.message : String(error)}\n\n${cliDiagnostics}`,
+              { cause: error },
+            );
+          }
           expect(
             events.length,
-            `expected at least one stream-json event; raw output:\n${stdout}`,
+            `expected at least one stream-json event; ${cliDiagnostics}`,
           ).toBeGreaterThan(0);
 
           const { calledToolNames, toolResultsByName, terminalResult } =
             collectClaudeToolResults(events);
           expect(
             terminalResult?.["is_error"],
-            `expected Claude Code's terminal stream-json result to be non-error; raw output:\n${stdout}`,
+            `expected Claude Code's terminal stream-json result to be non-error; ${cliDiagnostics}`,
           ).toBe(false);
           const previewToolResult = toolResultsByName.get(
             claudeCodeToolName(PREVIEW_TOOL_NAME),
@@ -696,7 +891,7 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
               results && results.length > 0,
               `expected Claude Code's ${verb} wrapper for ${protocolVerbs[index]} to have a ` +
                 `tool_use/tool_result pair in the stream-json ` +
-                `output; raw output:\n${stdout}`,
+                `output; ${cliDiagnostics}`,
             ).toBe(true);
             for (const result of results ?? []) {
               expect(
@@ -754,7 +949,7 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
           await rmDir(base, { recursive: true, force: true });
         }
       },
-      180_000,
+      300_000,
     );
   } else {
     // Not `it.todo` here on purpose: an unconditional `it.todo` silently

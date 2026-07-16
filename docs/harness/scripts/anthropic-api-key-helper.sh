@@ -14,18 +14,26 @@ set -euo pipefail
 # credential can actually be retrieved. An installed client with no matching
 # item must fall through to the next source.
 credential=""
+is_nonblank() {
+  [[ "$1" =~ [^[:space:]] ]]
+}
+
 if command -v security >/dev/null 2>&1; then
   # macOS Keychain
-  credential=$(security find-generic-password -a "$USER" -s anthropic-api-key -w 2>/dev/null || true)
+  if candidate=$(security find-generic-password -a "$USER" -s anthropic-api-key -w 2>/dev/null); then
+    credential="$candidate"
+  fi
 fi
-if [ -z "$credential" ] && command -v op >/dev/null 2>&1; then
+if ! is_nonblank "$credential" && command -v op >/dev/null 2>&1; then
   # 1Password CLI
-  credential=$(op read "op://vault/anthropic-api-key/credential" 2>/dev/null || true)
+  if candidate=$(op read "op://vault/anthropic-api-key/credential" 2>/dev/null); then
+    credential="$candidate"
+  fi
 fi
 
-if [ -n "$credential" ]; then
+if is_nonblank "$credential"; then
   printf '%s' "$credential"
-elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+elif is_nonblank "${ANTHROPIC_API_KEY:-}"; then
   # Last resort: an environment variable set by a launcher, not committed
   # anywhere.
   printf '%s' "$ANTHROPIC_API_KEY"
