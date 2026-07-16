@@ -81,6 +81,9 @@ importers:
       esbuild:
         specifier: ^0.28.1
         version: 0.28.1
+      jose:
+        specifier: ^6.2.3
+        version: 6.2.3
       micromatch:
         specifier: ^4.0.8
         version: 4.0.8
