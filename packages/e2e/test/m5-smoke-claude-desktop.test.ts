@@ -83,6 +83,9 @@ describe("Claude Desktop guide contracts", () => {
     expect(genie.args).toEqual(["-y", "@genie/server", "--transport", "stdio"]);
     expect(genie.env.GENIE_LLM_API_KEY?.length).toBeGreaterThanOrEqual(16);
     expect(genie.env.OAUTH_HS256_KEY?.length).toBeGreaterThanOrEqual(32);
+    expect(genie.env.GENIE_HOME).toBe("/absolute/path/to/.genie");
+    expect(genie.env.GENIE_KITS_ROOT).toBe("/absolute/path/to/.genie/kits");
+    expect(genie.env.GENIE_PROJECTS_ROOT).toBe("/absolute/path/to/.genie/projects");
     expect(CLAUDE_DESKTOP_DOC).toContain("not yet published");
     expect(CLAUDE_DESKTOP_DOC).toContain("unrelated package");
   });
@@ -115,6 +118,12 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("Debian 12+");
     expect(CLAUDE_DESKTOP_DOC).toContain("~/.config/Claude/claude_desktop_config.json");
     expect(CLAUDE_DESKTOP_DOC).not.toContain("Linux is not officially supported");
+  });
+
+  it("provides writable absolute persistence-root examples for every supported platform", () => {
+    expect(CLAUDE_DESKTOP_DOC).toContain("/Users/you/.genie/kits");
+    expect(CLAUDE_DESKTOP_DOC).toContain("C:\\\\Users\\\\you\\\\.genie\\\\kits");
+    expect(CLAUDE_DESKTOP_DOC).toContain("/home/you/.genie/kits");
   });
 
   it("documents the exact macOS Claude Desktop MCP log glob", () => {

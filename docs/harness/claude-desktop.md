@@ -47,6 +47,9 @@ Add genie under `mcpServers`:
       "command": "npx",
       "args": ["-y", "@genie/server", "--transport", "stdio"],
       "env": {
+        "GENIE_HOME": "/absolute/path/to/.genie",
+        "GENIE_KITS_ROOT": "/absolute/path/to/.genie/kits",
+        "GENIE_PROJECTS_ROOT": "/absolute/path/to/.genie/projects",
         "GENIE_LLM_BASE_URL": "https://your-llm-endpoint.example.com/v1",
         "GENIE_LLM_API_KEY": "replace-with-your-llm-api-key",
         "OAUTH_HS256_KEY": "replace-with-at-least-32-random-characters"
@@ -55,6 +58,18 @@ Add genie under `mcpServers`:
   }
 }
 ```
+
+Replace all three `/absolute/path/to/.genie` persistence paths with writable,
+absolute paths for your account. Do not omit them: a GUI-launched process can
+inherit an unexpected or unwritable working directory. Examples:
+
+- **macOS:** `/Users/you/.genie`, `/Users/you/.genie/kits`, and
+  `/Users/you/.genie/projects`
+- **Windows JSON values:** `C:\\Users\\you\\.genie`,
+  `C:\\Users\\you\\.genie\\kits`, and
+  `C:\\Users\\you\\.genie\\projects`
+- **Linux:** `/home/you/.genie`, `/home/you/.genie/kits`, and
+  `/home/you/.genie/projects`
 
 The original M5-10 draft named the bare `genie` npm package, but that name is
 owned by an unrelated package. The current M5-06 publishing contract uses
