@@ -118,7 +118,8 @@ export async function createToken(options: CreateTokenOptions): Promise<{
   token: string;
   record: StoredToken;
 }> {
-  const scopes = options.scopes && options.scopes.length > 0 ? options.scopes : (["read"] as TokenScope[]);
+  const scopes =
+    options.scopes && options.scopes.length > 0 ? options.scopes : (["read"] as TokenScope[]);
   const token = generateToken();
   const record: StoredToken = {
     hash: sha256Hex(token),
