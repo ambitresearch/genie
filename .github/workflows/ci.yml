@@ -399,10 +399,12 @@ jobs:
   #   (2) the four-verb chain runs over real stdio against genie's own built
   #       server binary, launched the same way Codex's `command`-keyed
   #       `mcp_servers` entry launches it.
-  # The config-CLI and non-generation stdio legs are free. The `conjure` and
-  # real `codex exec` legs are a required live-endpoint gate here: dedicated
-  # dedicated smoke secrets keep this job independent from the private-LAN
-  # GENIE_LLM_* pair used by the M2 main-branch canary above. The configured
+  #   (3) a real `codex exec` turn drives the ordered tool chain and records
+  #       the JSONL transcript as evidence.
+  # The config-CLI and non-generation stdio checks are free. The `conjure` and
+  # real `codex exec` checks are a required live-endpoint gate here. Dedicated
+  # smoke secrets keep this job independent from the private-LAN GENIE_LLM_*
+  # pair used by the M2 main-branch canary above. The configured
   # gateway times out from GitHub-hosted runner IPs, so this live leg uses the
   # repository's network-capable self-hosted runner.
   codex-smoke:

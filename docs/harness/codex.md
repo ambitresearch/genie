@@ -161,7 +161,7 @@ real built server, not a stand-in for either:
    real stdio child process launched exactly the way Codex's `command`-keyed
    `mcp_servers` entry launches genie.
 
-CI runs both legs for every same-repository PR and push (`codex-smoke` job). It
+CI runs all three legs for every same-repository PR and push (`codex-smoke` job). It
 maps a dedicated public smoke-endpoint secret pair into
 `GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` and sets `GENIE_REQUIRE_LLM=1`, so
 `conjure` must run for real. The gateway times out from GitHub-hosted Actions,
