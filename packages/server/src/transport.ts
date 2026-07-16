@@ -395,7 +395,10 @@ export function createStreamableHttpRequestHandler(
     }
 
     if (groupDenied !== undefined) {
-      res.writeHead(403, { "content-type": "application/json" });
+      res.writeHead(403, {
+        "content-type": "application/json",
+        "www-authenticate": 'Bearer error="insufficient_scope"',
+      });
       res.end(
         JSON.stringify({
           error: "insufficient_group",

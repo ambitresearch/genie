@@ -127,6 +127,7 @@ describe("OIDC relying-party gate (DRO-276)", () => {
       body: "{}",
     });
     expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toBe('Bearer error="insufficient_scope"');
     const responseBody = await res.json();
     expect(responseBody.error).toBe("insufficient_group");
   });

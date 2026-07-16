@@ -73,7 +73,7 @@ const configuration = {
   extraTokenClaims(_ctx, token) {
     return { groups: USERS[token.accountId]?.groups ?? [] };
   },
-  findAccount(ctx, sub) {
+  findAccount(_ctx, sub) {
     const record = USERS[sub];
     if (!record) return undefined;
     return {
@@ -104,7 +104,7 @@ provider.proxy = true;
 const app = createServer(async (req, res) => {
   if (req.method === "GET" && req.url?.startsWith("/interaction/")) {
     const uid = req.url.split("/interaction/")[1].split("?")[0];
-    const { prompt } = await provider.interactionDetails(req, res);
+    const { prompt, session } = await provider.interactionDetails(req, res);
     if (prompt.name === "login") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       res.end(`
@@ -120,9 +120,7 @@ const app = createServer(async (req, res) => {
     }
     if (prompt.name === "consent") {
       const grant = new provider.Grant({
-        accountId:
-          prompt.details.accountId ??
-          (await provider.interactionDetails(req, res)).session?.accountId,
+        accountId: prompt.details.accountId ?? session?.accountId,
         clientId: "genie-test",
       });
       grant.addOIDCScope("openid profile groups");
