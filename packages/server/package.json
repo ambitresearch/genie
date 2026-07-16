@@ -34,6 +34,7 @@
     "chokidar": "^3.6.0",
     "diff": "^8.0.2",
     "esbuild": "^0.28.1",
+    "jose": "^6.2.3",
     "micromatch": "^4.0.8",
     "mime-types": "^3.0.2",
     "openai": "^6.45.0",

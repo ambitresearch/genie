@@ -285,3 +285,39 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
+
+  # M5-05 / DRO-277 AC6 — attach the macOS Claude Desktop bundle to every
+  # server GitHub Release. Build from the release tag so the bundle version
+  # and server payload are byte-for-byte aligned with the released package.
+  publish-mcpb:
+    name: publish genie.mcpb (GitHub Release)
+    needs: [publish-dry-run, release-please, verify-release]
+    if: needs.release-please.outputs.server_released == 'true'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.server_tag }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Claude Desktop bundle
+        run: pnpm bundle:mcpb
+
+      - name: Attach bundle to the server release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-please.outputs.server_tag }}
+          files: dist/genie.mcpb
