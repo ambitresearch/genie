@@ -119,23 +119,31 @@ copy. Claude Code has no `claude config set` shell subcommand; edit
 `~/.claude/settings.json` or use `/config` in an interactive session for
 settings outside the MCP JSON shown here.
 
-genie now ships OAuth 2.0 + Dynamic Client Registration (M5-01, DRO-273 —
-landed): the server exposes `/.well-known/oauth-authorization-server` (RFC
-8414 metadata), `POST /register` (RFC 7591 DCR), `GET`/`POST /authorize`
-(browser consent screen), and `POST /token`. With OAuth enabled server-side
-(set `OAUTH_HS256_KEY` — see the tech-design RFC), you can register genie
-without a `headersHelper` at all:
+genie now ships OAuth 2.0 + Dynamic Client Registration endpoints (M5-01,
+DRO-273): `/.well-known/oauth-authorization-server` (RFC 8414 metadata),
+`POST /register` (RFC 7591 DCR), `GET`/`POST /authorize` (browser consent),
+and `POST /token`. Compatibility clients that are configured directly with
+that authorization-server metadata can exercise the flow: fetch the metadata,
+register a redirect URI at `/register`, send the returned `client_id` through
+the PKCE consent flow at `/authorize`, then exchange the code at `/token`.
+`packages/server/src/oauth-transport.test.ts` is the executable reference for
+that compatibility flow.
+
+Claude Code's current remote-MCP OAuth discovery starts at RFC 9728
+`/.well-known/oauth-protected-resource/mcp` for a server whose resource URL is
+`/mcp`. genie does not expose that document yet, so the following command
+registers the server URL but does **not** currently complete an automatic
+DCR/consent flow:
 
 ```bash
 claude mcp add --transport http genie https://genie.example.internal/mcp
 ```
 
-Claude Code discovers the metadata document, performs Dynamic Client
-Registration against `/register`, opens a browser to `/authorize` for
-consent, and exchanges the resulting code at `/token` — all automatically.
-The static-Bearer-token + `headersHelper` pattern above remains supported for
-deployments that haven't enabled OAuth (`OAUTH_HS256_KEY` unset), or that
-prefer a pre-provisioned token over an interactive consent flow.
+Until protected-resource metadata and its `WWW-Authenticate` challenge land,
+the static-Bearer-token + `headersHelper` pattern above is the supported Claude
+Code setup. Keep the OAuth endpoints enabled with `OAUTH_HS256_KEY` only for
+manual testing or compatible clients that already know the authorization
+server; do not rely on the one-command Claude Code flow yet.
 
 ### Gotcha: `/login` (Claude Code OAuth) can silently bypass configured LLM routing
 

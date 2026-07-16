@@ -51,17 +51,19 @@ import { createServer as createNodeHttpServer, type Server as NodeHttpServer } f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { GenericContainer as GenericContainerType } from "testcontainers";
+import type { InlineConfig } from "vite";
 
 import { createServer } from "../../server/src/server.js";
 import { createStreamableHttpRequestHandler } from "../../server/src/transport.js";
 import { CONJURE_TOOL_NAME } from "../../server/src/tools/conjure.js";
-import { PREVIEW_TOOL_NAME } from "../../server/src/tools/preview.js";
+import { PREVIEW_TOOL_NAME, type ViewerBooter } from "../../server/src/tools/preview.js";
 import { WRITE_FILES_TOOL_NAME } from "../../server/src/tools/write_files.js";
+import { createViewerConfig } from "../../viewer/src/config.js";
 import { isDockerAvailable as isTestcontainersDockerAvailable } from "./support/gitea-fixture.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -185,6 +187,41 @@ function resolveClaudeDriverConfig(
     };
   }
   return undefined;
+}
+
+interface DockerPreviewServer {
+  httpServer: { address: () => string | { port: number } | null } | null;
+  listen: () => Promise<unknown>;
+  close: () => Promise<unknown>;
+}
+
+function createDockerPreviewBooter(
+  createViteServer: (config: InlineConfig) => Promise<DockerPreviewServer>,
+): ViewerBooter {
+  return async ({ kitDir, port }) => {
+    const config = createViewerConfig({ root: kitDir, port, host: "0.0.0.0" });
+    config.server = {
+      ...config.server,
+      allowedHosts: ["host.docker.internal"],
+    };
+    const server = await createViteServer({ ...config, clearScreen: false });
+    await server.listen();
+    const address = server.httpServer?.address();
+    if (typeof address !== "object" || address === null) {
+      await server.close();
+      throw new Error("Docker smoke viewer did not bind a TCP port");
+    }
+    const actualPort = address.port;
+
+    return {
+      url: `http://host.docker.internal:${actualPort}/`,
+      port: actualPort,
+      open: async () => {},
+      close: async () => {
+        await server.close();
+      },
+    };
+  };
 }
 
 const claudeDriverConfig = resolveClaudeDriverConfig(process.env);
@@ -444,6 +481,32 @@ describe("Claude driver credential selection", () => {
       }),
     ).toBeUndefined();
   });
+});
+
+it("binds the Docker smoke viewer on the host and advertises its container-reachable URL", async () => {
+  const listen = vi.fn(async () => {});
+  const close = vi.fn(async () => {});
+  let receivedConfig: InlineConfig | undefined;
+  const booter = createDockerPreviewBooter(async (config) => {
+    receivedConfig = config;
+    return {
+      httpServer: { address: () => ({ port: 5189 }) },
+      listen,
+      close,
+    };
+  });
+
+  const viewer = await booter({ kitDir: "/tmp/docker-preview-kit", port: 5173 });
+
+  expect(receivedConfig?.server).toMatchObject({
+    host: "0.0.0.0",
+    port: 5173,
+    allowedHosts: ["host.docker.internal"],
+  });
+  expect(listen).toHaveBeenCalledOnce();
+  expect(viewer.url).toBe("http://host.docker.internal:5189/");
+  await viewer.close();
+  expect(close).toHaveBeenCalledOnce();
 });
 
 async function runApiKeyHelper(options: {
@@ -761,6 +824,7 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
         const { GenericContainer } = await import("testcontainers");
         const { createServer: createGenieServer } = await import("../../server/src/server.js");
         const { createServer: createHttpServer } = await import("node:http");
+        const { createServer: createViteServer } = await import("vite");
 
         const base = await mkdtemp(joinPath(osTmpdir(), "genie-m5-docker-smoke-"));
         const roots = {
@@ -784,7 +848,12 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
         // through streamable HTTP.
         const http = createHttpServer(
           createStreamableHttpRequestHandler(() =>
-            createGenieServer({ ...roots, transportKind: "http", previewLocality: "local" }),
+            createGenieServer({
+              ...roots,
+              transportKind: "http",
+              previewLocality: "local",
+              previewBooter: createDockerPreviewBooter(createViteServer),
+            }),
           ),
         );
         await new Promise<void>((resolve) => http.listen(0, "0.0.0.0", resolve));
@@ -920,6 +989,20 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             `expected the preview tool_result to contain a viewer URL to screenshot; got: ` +
               `${JSON.stringify(previewToolResult)}`,
           ).toBeTruthy();
+          const containerPreviewResponse = await container.exec(
+            [
+              "node",
+              "-e",
+              "fetch(process.argv[1]).then(r => { console.log(r.status); process.exit(r.ok ? 0 : 1); }).catch(e => { console.error(e); process.exit(1); })",
+              previewUrl!,
+            ],
+            { user: "node" },
+          );
+          expect(
+            containerPreviewResponse.exitCode,
+            `preview URL was not reachable from Claude Code's container: ${previewUrl}\n` +
+              `stdout:\n${containerPreviewResponse.stdout}\n\nstderr:\n${containerPreviewResponse.stderr}`,
+          ).toBe(0);
           // The container reaches the host server via host.docker.internal,
           // but this test process (and its Playwright browser) runs on the
           // host, so rewrite that hostname to 127.0.0.1 for the screenshot.

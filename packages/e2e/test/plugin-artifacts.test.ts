@@ -55,6 +55,15 @@ describe("Claude plugin artifacts", () => {
     expect(claude).toContain("mkdir -p ~/.claude/skills ~/.claude/commands");
   });
 
+  it("does not promise automatic Claude Code OAuth before protected-resource discovery ships", () => {
+    const claude = readFileSync(resolve(ROOT, "docs/harness/claude-code.md"), "utf8");
+
+    expect(claude).toContain("`/.well-known/oauth-protected-resource/mcp`");
+    expect(claude).toMatch(/supported Claude\s+Code setup/);
+    expect(claude).not.toContain("Claude Code discovers the metadata document");
+    expect(claude).not.toContain("all automatically");
+  });
+
   it("documents portable Agent Skill installation for supported harnesses", () => {
     const cursor = readFileSync(resolve(ROOT, "docs/harness/cursor.md"), "utf8");
     const codex = readFileSync(resolve(ROOT, "docs/harness/codex.md"), "utf8");
