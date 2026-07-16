@@ -53,28 +53,21 @@
  *          `viewerUrl`/`fileUrl` a local-locality Cline session actually sees
  *          is present in `structuredContent`, matching `docs/harness/cline.md`.
  *
- * A second suite below (`registers with the real Cline CLI ...`) addresses
- * review feedback that an MCP-SDK client alone never launches or drives
- * Cline itself: it shells out to the REAL `cline` CLI (`npx cline@latest mcp
- * install`, no stub) and asserts Cline's own process writes a settings file
- * whose (nested-`transport`) shape round-trips to genie's documented flat
- * shape — i.e. `docs/harness/cline.md`'s snippet is what Cline itself
- * produces, not just what genie expects. This leg proves Cline's CONFIG
- * WRITE behavior only: `cline mcp install` only needs to persist the entry,
- * not open a connection, so it is pointed at an intentionally unreachable
- * port rather than the real genie HTTP server the suite above boots — the
- * suite above is what exercises a live, non-mocked genie server end to end.
- * Guarded on a live `npx cline@latest --version` probe (network/registry
- * reachability); unlike a bare early `return`, an unreachable registry marks
- * this test `ctx.skip()` (Vitest's runtime skip), so a run where the
- * real-CLI leg never executed is visibly reported as skipped, not silently
- * passed.
+ * A second suite below addresses the gap an MCP-SDK client cannot cover. It
+ * runs pinned Cline 3.0.42 itself against a local OpenAI-compatible model stub
+ * and the real Bearer-protected genie HTTP server. The model stub directs
+ * Cline through conjure -> plan -> write_files -> preview; Cline's JSON event
+ * transcript must contain those real tool calls in order, non-error results,
+ * and the remote preview fallback text. Platform binaries are pinned optional
+ * dependencies, so CI never reaches the registry during the test and never
+ * silently skips the harness leg.
  */
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createNodeHttpServer, type Server as NodeHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -83,13 +76,26 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createToken } from "../../server/src/auth/bearer.js";
+import type { ChatCompletionResult } from "../../server/src/llm/client.js";
 import { compileManifest } from "../../server/src/manifest/index.js";
 import { createServer } from "../../server/src/server.js";
+import type { ChatCompletionFn } from "../../server/src/tools/conjure.js";
 import { DEFAULT_VIEWER_PORT, type ViewerBooter } from "../../server/src/tools/preview.js";
 import { createStreamableHttpRequestHandler } from "../../server/src/transport.js";
 import { bootViewer } from "../../viewer/src/index.js";
 
 const execFileAsync = promisify(execFile);
+const CLINE_VERSION = "3.0.42";
+const CLINE_PLATFORM = process.platform === "win32" ? "windows" : process.platform;
+const requireFromHere = createRequire(import.meta.url);
+const clinePackageDir = dirname(
+  requireFromHere.resolve(`@cline/cli-${CLINE_PLATFORM}-${process.arch}/package.json`),
+);
+const CLINE_BIN = join(
+  clinePackageDir,
+  "bin",
+  process.platform === "win32" ? "cline.exe" : "cline",
+);
 
 function createSourceViewerBooter(): { booter: ViewerBooter; closeAll: () => Promise<void> } {
   const closeViewers = new Set<() => Promise<void>>();
@@ -170,8 +176,7 @@ function textOf(result: unknown): string {
 }
 
 function structuredOf(result: unknown): Record<string, unknown> | undefined {
-  return (result as { structuredContent?: Record<string, unknown> } | undefined)
-    ?.structuredContent;
+  return (result as { structuredContent?: Record<string, unknown> } | undefined)?.structuredContent;
 }
 
 /**
@@ -188,7 +193,8 @@ function startLlmStub(): Promise<{ baseURL: string; close: () => Promise<void> }
     files: [
       {
         path: "components/actions/Button/Button.html",
-        content: '<!-- @genie group="actions" viewport="240x120" name="Button" -->\n<button>Click me</button>',
+        content:
+          '<!-- @genie group="actions" viewport="240x120" name="Button" -->\n<button>Click me</button>',
         mimeType: "text/html",
       },
     ],
@@ -218,9 +224,10 @@ function startLlmStub(): Promise<{ baseURL: string; close: () => Promise<void> }
       const { port } = server.address() as AddressInfo;
       resolveListen({
         baseURL: `http://127.0.0.1:${port}/v1`,
-        close: () => new Promise<void>((resolveClose, reject) => {
-          server.close((error) => (error ? reject(error) : resolveClose()));
-        }),
+        close: () =>
+          new Promise<void>((resolveClose, reject) => {
+            server.close((error) => (error ? reject(error) : resolveClose()));
+          }),
       });
     });
   });
@@ -364,7 +371,9 @@ describe("M5-14 Cline harness smoke test", () => {
         });
         expect(written.isError).not.toBe(true);
         expect(JSON.parse(textOf(written))).toEqual(
-          expect.objectContaining({ writtenPaths: expect.arrayContaining(conjureResult.files.map((f) => f.path)) }),
+          expect.objectContaining({
+            writtenPaths: expect.arrayContaining(conjureResult.files.map((f) => f.path)),
+          }),
         );
 
         // Verb 4: preview. AC5c — the resource pointer is present in _meta even
@@ -375,10 +384,15 @@ describe("M5-14 Cline harness smoke test", () => {
         // structuredContent carries a CONCRETE viewerUrl/fileUrl — not just a
         // non-empty text string, which a "Remote preview unavailable" message
         // would also satisfy.
-        const preview = await client.callTool({ name: "mcp__genie__preview", arguments: { kitId } });
+        const preview = await client.callTool({
+          name: "mcp__genie__preview",
+          arguments: { kitId },
+        });
         expect(preview.isError).not.toBe(true);
         const meta = (preview as { _meta?: Record<string, unknown> })._meta;
-        expect(meta).toMatchObject({ ui: { resourceUri: expect.stringContaining("ui://genie/grid") } });
+        expect(meta).toMatchObject({
+          ui: { resourceUri: expect.stringContaining("ui://genie/grid") },
+        });
         const previewStructured = structuredOf(preview);
         expect(previewStructured?.["viewerUrl"]).toEqual(expect.stringMatching(/^https?:\/\//));
         expect(previewStructured?.["fileUrl"]).toEqual(expect.stringMatching(/^file:\/\//));
@@ -422,103 +436,264 @@ describe("M5-14 Cline harness smoke test", () => {
   });
 });
 
-/**
- * Real-CLI leg: shells out to the actual `cline` package (`npx cline@latest
- * mcp install`) rather than a stand-in MCP-SDK client, addressing the review
- * finding that the suite above never launches or drives Cline. Network- and
- * npx-dependent, so it uses Vitest's runtime `ctx.skip()` (not a bare early
- * `return`, which reports as passed) when the registry isn't reachable — CI
- * can un-skip by ensuring `npx cline@latest --version` resolves before this
- * file runs.
- */
+interface ClineJsonEvent {
+  type?: string;
+  event?: {
+    type?: string;
+    contentType?: string;
+    toolName?: string;
+    output?: { isError?: boolean; content?: Array<{ text?: string }> };
+  };
+  finishReason?: string;
+  text?: string;
+}
+
+function parseClineJson(stdout: string): ClineJsonEvent[] {
+  return stdout
+    .split(/\r?\n/)
+    .filter((line) => line.trim().startsWith("{"))
+    .map((line) => JSON.parse(line) as ClineJsonEvent);
+}
+
 describe("M5-14 Cline harness smoke test — real CLI", () => {
-  let clineHome: string;
-  let cliAvailable = false;
-
-  beforeEach(async () => {
-    clineHome = await mkdtemp(join(tmpdir(), "genie-cline-cli-home-"));
+  it("drives the four-verb chain through pinned Cline and surfaces preview text", async () => {
+    const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+    const clineConfig = join(base, ".cline", "data", "settings");
+    const kitsRoot = join(base, "kits");
+    const previousHome = process.env["GENIE_HOME"];
+    process.env["GENIE_HOME"] = join(base, "genie-home");
+    let mcp: NodeHttpServer | undefined;
+    let model: NodeHttpServer | undefined;
     try {
-      await execFileAsync("npx", ["--yes", "cline@latest", "--version"], {
-        env: { ...process.env, HOME: clineHome },
-        timeout: 60_000,
+      const kitId = await scaffoldFixtureKit(kitsRoot);
+      const { token } = await createToken({ sub: "cline-cli-smoke" });
+      const stubChat: ChatCompletionFn = async () =>
+        ({
+          id: "chatcmpl-cline-smoke",
+          object: "chat.completion",
+          created: 1_700_000_000,
+          model: "stub-model",
+          choices: [
+            {
+              index: 0,
+              finish_reason: "stop",
+              message: {
+                role: "assistant",
+                refusal: null,
+                content: JSON.stringify({
+                  componentName: "Button",
+                  group: "actions",
+                  files: [
+                    {
+                      path: "components/actions/Button/Button.html",
+                      content:
+                        '<!-- @genie group="actions" viewport="240x120" name="Button" -->\n' +
+                        "<button>Click me</button>",
+                      mimeType: "text/html",
+                    },
+                  ],
+                  manifestEntry: { viewport: { width: 240, height: 120 } },
+                }),
+              },
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }) as unknown as ChatCompletionResult;
+
+      const mcpHandler = createStreamableHttpRequestHandler(
+        () =>
+          createServer({
+            kitsRoot,
+            transportKind: "http",
+            previewLocality: "remote",
+            conjureDeps: { chat: stubChat },
+          }),
+        { requireBearerAuth: true },
+      );
+      mcp = createNodeHttpServer((req, res) => mcpHandler(req, res));
+      await new Promise<void>((resolveListen) => mcp!.listen(0, "127.0.0.1", resolveListen));
+      const mcpPort = (mcp.address() as AddressInfo).port;
+
+      let turn = 0;
+      const suffixes = ["conjure", "plan", "write_files", "preview"];
+      model = createNodeHttpServer((req, res) => {
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk: Buffer) => chunks.push(chunk));
+        req.on("end", () => {
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+            tools?: Array<{ function?: { name?: string } }>;
+            messages?: unknown[];
+          };
+          const names =
+            body.tools?.flatMap((tool) => (tool.function?.name ? [tool.function.name] : [])) ?? [];
+          const suffix = suffixes[turn];
+          const toolName = suffix && names.find((name) => name.endsWith(suffix));
+          let args: Record<string, unknown> | undefined;
+          if (suffix === "conjure") args = { kitId, kit: "minimal", prompt: "button" };
+          if (suffix === "plan") {
+            args = {
+              kitId,
+              writes: ["components/actions/Button/Button.html"],
+              localDir: kitsRoot,
+            };
+          }
+          if (suffix === "write_files") {
+            const history = JSON.stringify(body.messages ?? []);
+            const planId = history.match(/\\?"planId\\?"\s*:\s*\\?"([^"\\]+)/)?.[1];
+            args = {
+              planId,
+              files: [
+                {
+                  path: "components/actions/Button/Button.html",
+                  data:
+                    '<!-- @genie group="actions" viewport="240x120" name="Button" -->\n' +
+                    "<button>Click me</button>",
+                },
+              ],
+            };
+          }
+          if (suffix === "preview") args = { kitId };
+
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          const common = {
+            id: `chatcmpl-cline-${turn}`,
+            object: "chat.completion.chunk",
+            created: 1_700_000_000,
+            model: "cline-smoke",
+          };
+          if (toolName && args) {
+            res.write(
+              `data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: `call_${turn}`, type: "function", function: { name: toolName, arguments: JSON.stringify(args) } }] }, finish_reason: null }] })}\n\n`,
+            );
+            res.write(
+              `data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })}\n\n`,
+            );
+            turn += 1;
+          } else {
+            const messages = (body.messages ?? []) as Array<{
+              role?: string;
+              content?: unknown;
+            }>;
+            const lastToolMessage = [...messages]
+              .reverse()
+              .find((message) => message.role === "tool");
+            const toolResult =
+              typeof lastToolMessage?.content === "string"
+                ? (JSON.parse(lastToolMessage.content) as {
+                    content?: Array<{ text?: string }>;
+                  })
+                : undefined;
+            const previewText = toolResult?.content?.[0]?.text ?? "preview text missing";
+            const text = `Cline surfaced preview text: ${previewText}`;
+            res.write(
+              `data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: { role: "assistant", content: text }, finish_reason: null }] })}\n\n`,
+            );
+            res.write(
+              `data: ${JSON.stringify({ ...common, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })}\n\n`,
+            );
+          }
+          res.end("data: [DONE]\n\n");
+        });
       });
-      cliAvailable = true;
-    } catch {
-      cliAvailable = false;
-    }
-  }, 90_000);
+      await new Promise<void>((resolveListen) => model!.listen(0, "127.0.0.1", resolveListen));
+      const modelPort = (model.address() as AddressInfo).port;
 
-  afterEach(async () => {
-    // npm's on-disk cache under $HOME/.npm can still have in-flight writes
-    // racing this cleanup (background npm/npx helper processes can outlive
-    // the awaited execFileAsync call by a few hundred ms) — retry with
-    // backoff instead of failing the whole suite on an ENOTEMPTY/EBUSY from
-    // an unrelated cache directory. Widened from 3 attempts/250ms fixed delay
-    // (which still timed out under real registry I/O) to 6 attempts with
-    // exponential backoff, and the surrounding test timeout raised to match.
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      try {
-        await rm(clineHome, { recursive: true, force: true });
-        return;
-      } catch (error) {
-        lastError = error;
-        await new Promise((resolveWait) => setTimeout(resolveWait, 250 * 2 ** attempt));
+      const env = { ...process.env, HOME: base };
+      const version = await execFileAsync(CLINE_BIN, ["--version"], { env });
+      expect(version.stdout.trim()).toBe(CLINE_VERSION);
+      await execFileAsync(
+        CLINE_BIN,
+        [
+          "auth",
+          "--provider",
+          "openai-compatible",
+          "--apikey",
+          "not-a-real-key",
+          "--modelid",
+          "cline-smoke",
+          "--baseurl",
+          `http://127.0.0.1:${modelPort}/v1`,
+        ],
+        { env },
+      );
+      await execFileAsync(
+        CLINE_BIN,
+        [
+          "mcp",
+          "install",
+          "genie",
+          `http://127.0.0.1:${mcpPort}/mcp`,
+          "--transport",
+          "streamableHttp",
+          "--header",
+          `Authorization: Bearer ${token}`,
+          "--yes",
+          "--json",
+        ],
+        { env },
+      );
+
+      const result = await execFileAsync(
+        CLINE_BIN,
+        [
+          "--json",
+          "--timeout",
+          "60",
+          "--auto-approve",
+          "true",
+          "--system",
+          "Use the requested genie MCP tools in order and finish only after preview.",
+          "Run conjure, plan, write_files, and preview.",
+        ],
+        { cwd: base, env, timeout: 90_000, maxBuffer: 10_000_000 },
+      );
+      const events = parseClineJson(result.stdout);
+      const toolEvents = events.filter(
+        (event) => event.type === "agent_event" && event.event?.contentType === "tool",
+      );
+      const starts = toolEvents
+        .filter((event) => event.event?.type === "content_start")
+        .map((event) => event.event?.toolName);
+      expect(starts).toEqual(
+        suffixes.map((suffix) => expect.stringMatching(new RegExp(`${suffix}$`))),
+      );
+      for (const event of toolEvents.filter((entry) => entry.event?.type === "content_end")) {
+        expect(event.event?.output?.isError, JSON.stringify(event)).not.toBe(true);
       }
+      const previewResult = toolEvents.find(
+        (event) => event.event?.type === "content_end" && event.event.toolName?.endsWith("preview"),
+      );
+      expect(previewResult?.event?.output?.content?.[0]?.text).toContain(
+        "Remote preview unavailable",
+      );
+      expect(events.at(-1)).toMatchObject({
+        type: "run_result",
+        finishReason: "completed",
+        text: expect.stringContaining("Remote preview unavailable"),
+      });
+
+      const settingsPath = join(clineConfig, "cline_mcp_settings.json");
+      const written = JSON.parse(await readFile(settingsPath, "utf8")) as {
+        mcpServers?: Record<
+          string,
+          { transport?: { type?: string; url?: string; headers?: Record<string, string> } }
+        >;
+      };
+      expect(written.mcpServers?.["genie"]?.transport).toMatchObject({
+        type: "streamableHttp",
+        url: `http://127.0.0.1:${mcpPort}/mcp`,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } finally {
+      if (previousHome === undefined) delete process.env["GENIE_HOME"];
+      else process.env["GENIE_HOME"] = previousHome;
+      mcp?.closeAllConnections();
+      model?.closeAllConnections();
+      await Promise.allSettled([
+        new Promise<void>((resolveClose) => mcp?.close(() => resolveClose()) ?? resolveClose()),
+        new Promise<void>((resolveClose) => model?.close(() => resolveClose()) ?? resolveClose()),
+      ]);
+      await rm(base, { recursive: true, force: true });
     }
-    throw lastError;
-  }, 60_000);
-
-  it("registers with the real Cline CLI and writes a schema-valid streamableHttp entry", async (ctx) => {
-    if (!cliAvailable) {
-      // No network / npm registry reachable in this environment — record this
-      // as SKIPPED (not silently passed) so a CI run missing this coverage is
-      // visible in the report. The MCP-SDK suite above still covers the
-      // protocol contract regardless.
-      ctx.skip();
-      return;
-    }
-
-    const endpoint = "http://127.0.0.1:9/mcp"; // unreachable port; CLI only needs to WRITE config, not connect.
-    await execFileAsync(
-      "npx",
-      [
-        "--yes",
-        "cline@latest",
-        "mcp",
-        "install",
-        "genie",
-        endpoint,
-        "--transport",
-        "streamableHttp",
-        "--header",
-        "Authorization: Bearer genie_smoke_token",
-        "--yes",
-        "--json",
-      ],
-      { env: { ...process.env, HOME: clineHome }, timeout: 60_000 },
-    );
-
-    const settingsPath = join(clineHome, ".cline", "data", "settings", "cline_mcp_settings.json");
-    const written = JSON.parse(await readFile(settingsPath, "utf8")) as {
-      mcpServers?: Record<string, { transport?: { type?: string; url?: string; headers?: Record<string, string> } }>;
-    };
-
-    // Cline's CLI writes the NESTED transport shape (confirmed in
-    // docs/harness/cline.md's "Empirical findings" — a live install run);
-    // assert that's exactly what a real install produces, so the doc's claim
-    // is proven against Cline's own process, not just its source.
-    const genieEntry = written.mcpServers?.["genie"];
-    expect(genieEntry?.transport?.type).toBe("streamableHttp");
-    expect(genieEntry?.transport?.url).toBe(endpoint);
-    expect(genieEntry?.transport?.headers?.["Authorization"]).toBe("Bearer genie_smoke_token");
-
-    // Note: `cline mcp install` always writes the NESTED `transport` shape
-    // (confirmed above); it does not offer a headless path to prove the flat
-    // shape genie's snippet recommends round-trips too (`cline config`, the
-    // one command that reads settings back, requires an interactive TTY even
-    // with `--json` — confirmed live in this environment). The flat shape's
-    // acceptance is documented in `docs/harness/cline.md` from Cline's own
-    // settings-schema source, not an additional live probe in this file.
-  }, 90_000);
+  }, 120_000);
 });

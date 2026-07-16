@@ -6,16 +6,16 @@ Cline never renders it inline; the response Cline actually shows is plain
 text. What that text contains depends on **preview locality**, which genie
 resolves from the transport, not from the harness:
 
-- **Local stdio connection** (`--transport stdio`, or `--preview-locality
-  local` / `GENIE_PREVIEW_LOCALITY=local` over HTTP on the same machine as the
-  browser) — `preview` returns a `viewerUrl` and, if nothing can boot, a
+- **Local stdio connection.** Use `--transport stdio`. Same-machine HTTP can
+  opt in with `--preview-locality local` or `GENIE_PREVIEW_LOCALITY=local`.
+  `preview` returns a `viewerUrl` and, if nothing can boot, a
   `file://` fallback.
 - **Remote HTTP connection** (the default locality for HTTP, e.g. the
   `url`+`headers` registration below with no locality override) — there is
   **no** `viewerUrl`/`file://` fallback. `preview`'s text is either
   `"Preview ready in the inline MCP App."` (only reachable if the client
-  negotiated the UI extension, which Cline does not) or `"Remote preview
-  unavailable: …"`. A tools-only remote Cline session will only ever see the
+  negotiated the UI extension, which Cline does not) or a
+  `"Remote preview unavailable: …"` message. A tools-only remote Cline session sees the
   latter. Configure `GENIE_PREVIEWS_BASE_URL` server-side (inline MCP App path,
   irrelevant to Cline) or point Cline at a local stdio server instead if you
   need a browsable viewer URL.
@@ -23,8 +23,7 @@ resolves from the transport, not from the harness:
 Skill support carries the `conjure → plan → write_files → preview` workflow;
 without it, tool descriptions are the fallback guidance. See
 [Install the Agent Skill](#install-the-agent-skill-optional) below — current
-Cline (`cline@latest`, which resolved to `3.0.40` at probe time, confirmed
-2026-07-14) discovers portable `SKILL.md`
+Cline (`cline@3.0.42`, confirmed 2026-07-16) discovers portable `SKILL.md`
 packages via its own `skill` subcommand (`cline skill add <owner/repo> --skill
 <name> --agent cline`), which forwards to the open `skills` CLI and installs
 into the shared `.agents/skills` / `~/.agents/skills` convention the other
@@ -33,12 +32,12 @@ Cline ships frequent releases, so treat the exact version number as a
 point-in-time data point rather than a pin — re-check `cline --version`
 against your own install if these specifics matter.
 
-## Empirical findings (probed 2026-07-14)
+## Empirical findings (probed 2026-07-14 and 2026-07-16)
 
 The research report's open question (§8, item 12) flagged the `type` key and
-the settings-file path as unconfirmed. Both are now confirmed against a live
-`npx cline@latest` run in this change (CLI version resolved at probe time),
-not just Cline's published docs or source:
+the settings-file path as unconfirmed. The CLI behavior is confirmed against
+the pinned `cline@3.0.42` smoke, and the extension path was independently
+probed against an installed Cursor extension on 2026-07-16:
 
 - **The `type` key exists and matters.** This corrects the report's original
   "no `type` key" claim, accurate for an older release but not the current
@@ -47,11 +46,11 @@ not just Cline's published docs or source:
   flat, `url`-based entry silently falls back to the legacy `sse` transport**,
   not stdio-vs-http inference. Always set `type: "streamableHttp"` explicitly
   for genie's HTTP endpoint.
-- **The CLI writes a *nested* `transport` object, not the flat shape** — a
+- **The CLI writes a _nested_ `transport` object, not the flat shape** — a
   live run of:
 
   ```
-  npx cline@latest mcp install genie http://127.0.0.1:9/mcp \
+  npx cline@3.0.42 mcp install genie http://127.0.0.1:9/mcp \
     --transport streamableHttp \
     --header "Authorization: Bearer testtoken" --yes --json
   ```
@@ -72,17 +71,11 @@ not just Cline's published docs or source:
   }
   ```
 
-  Cline's settings loader accepts this nested form and flattens it
-  internally; the flat form (`type`/`url`/`headers` as siblings, used below)
-  is also accepted directly per Cline's own published schema and docs — this
-  flat-shape acceptance is a **desk-review claim**, not independently
-  re-verified via `cline mcp install` in this change (the CLI only ever
-  writes the nested shape; `cline config`, the one command that reads
-  settings back, requires an interactive TTY even with `--json` and so
-  couldn't be driven headlessly here — see `m5-smoke-cline.test.ts`'s
-  "real CLI" suite in-file note). Either shape works — pick the flat one for hand-edited
-  configs since it is shorter, but recognize the nested one if you inspect a
-  CLI-written file.
+  Cline's settings loader accepts this nested form and flattens it internally.
+  The pinned smoke uses this shape because it is the one Cline itself writes
+  and consumes. Use it for portable CLI/extension configuration rather than a
+  hand-edited compatibility form.
+
 - **Settings-file path — confirmed by the same live run above**: the CLI
   wrote to `~/.cline/data/settings/cline_mcp_settings.json` (`cline --help`
   independently confirms this as the `--config`/`--data-dir` default:
@@ -91,20 +84,20 @@ not just Cline's published docs or source:
   claim. `CLINE_MCP_SETTINGS_PATH`, `CLINE_DATA_DIR`, and `CLINE_DIR`
   environment variables override the path at increasing specificity, in that
   priority order, before the default applies.
-- **IDE-extension (VS Code/JetBrains) settings path — NOT independently
-  live-probed in this sandbox** (no VS Code/JetBrains host available here).
-  Cline's own documentation and current source describe the VS Code/JetBrains
-  extension sharing the identical `cline_mcp_settings.json` file the CLI
-  writes to above, migrating two legacy per-host locations
-  (`globalStorageUri`-relative `settings/cline_mcp_settings.json`, and
-  `Documents/Cline/MCP/cline_mcp_settings.json`) into it on first run so an
-  existing legacy config is not lost. This is a **desk-review claim** carried
-  over from source reading, not a live extension install in this change —
-  flagged explicitly per AC4's intent rather than presented as independently
-  verified. A follow-up with a real VS Code/JetBrains + Cline install would
-  upgrade this to fully empirical.
-- **Cline Skills discovery** — `cline skill add anthropics/skills --skill pdf
-  --agent cline --yes`, run live in this change from a project directory,
+- **IDE-extension path — independently live-probed 2026-07-16.** Cursor's
+  activated Cline extension `3.89.2` loaded its real settings file at
+  `<Cursor user-data>/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`.
+  Current Cline source migrates that per-host file (and the older
+  `Documents/Cline/MCP/cline_mcp_settings.json`) into the shared CLI path
+  `~/.cline/data/settings/cline_mcp_settings.json`; after migration, use the
+  shared path as the canonical file. This distinction matters for older
+  installed extensions that have not yet migrated.
+- **Cline Skills discovery** — the following command was run live from a
+  project directory:
+
+  `cline skill add anthropics/skills --skill pdf --agent cline --yes`
+
+  It
   installed into `.agents/skills/pdf/SKILL.md` (project-scoped; `-g`/--global
   installs to `~/.agents/skills` per the underlying `skills` CLI's Cline
   adapter, which detects Cline via `~/.cline` and reuses the shared
@@ -118,10 +111,12 @@ not just Cline's published docs or source:
 {
   "mcpServers": {
     "genie": {
-      "type": "streamableHttp",
-      "url": "https://genie.<operator-domain>/mcp",
-      "headers": {
-        "Authorization": "Bearer ${env:GENIE_TOKEN}"
+      "transport": {
+        "type": "streamableHttp",
+        "url": "https://genie.<operator-domain>/mcp",
+        "headers": {
+          "Authorization": "Bearer <paste-token-here>"
+        }
       },
       "disabled": false,
       "autoApprove": [
@@ -134,20 +129,15 @@ not just Cline's published docs or source:
 }
 ```
 
-- `type: "streamableHttp"` — required; do not omit (see above).
-- `headers.Authorization` — genie's static Bearer token fallback (M5-02,
-  DRO-274). Mint a token out-of-band with `genie token create --sub cline`
-  server-side. **Correction (post-review):** Cline's MCP settings loader does
-  expand `${env:VAR_NAME}` placeholders in header values at connect time,
-  resolving them from the process environment Cline itself runs in — this
-  corrects an earlier claim in this doc that no expansion occurred. Prefer
-  `"Authorization": "Bearer ${env:GENIE_TOKEN}"` and export `GENIE_TOKEN` in
-  the shell/environment Cline launches from, so the token itself never lands
-  in `cline_mcp_settings.json` on disk. If you must hand-edit a literal token
-  instead (e.g. an environment that can't set `GENIE_TOKEN` for Cline's
-  process), paste the plaintext value directly and keep the settings file out
-  of version control (it lives under `~/.cline`, not the repo) — either form
-  works, but the `${env:...}` form avoids ever writing the secret to disk.
+- `transport.type: "streamableHttp"` — required; do not omit (see above).
+- `transport.headers.Authorization` — genie's static Bearer token fallback
+  (M5-02, DRO-274). Mint a token server-side with
+  `genie token create --sub cline`. The CLI forwards header strings literally, so do **not**
+  use `${env:GENIE_TOKEN}` in a CLI-consumed config: it would send that text and
+  receive 401. The extension host can expand `${env:...}`, but the portable
+  configuration above uses a literal token because it works in both surfaces.
+  Keep this user-local settings file out of version control and rotate the
+  token if it is exposed.
 - `autoApprove` — uses genie's actual registered MCP tool names
   (`mcp__genie__list_components`, `mcp__genie__preview`,
   `mcp__genie__list_files` — see `packages/server/src/tools/*.ts`'s
@@ -181,11 +171,11 @@ For the VS Code/JetBrains extension, use the **MCP Servers** sidebar icon →
 **Configure** tab → **Configure MCP Servers**, which opens the same shared
 `cline_mcp_settings.json` in an editor tab (a **Remote Servers** tab in the
 same panel accepts name/URL/transport via form fields as an alternative to
-hand-editing JSON) — see the "NOT independently live-probed" caveat above.
+hand-editing JSON). See the versioned extension-path probe above.
 You can also register the server non-interactively with the CLI:
 
 ```
-npx cline@latest mcp install genie https://genie.<operator-domain>/mcp \
+npx cline@3.0.42 mcp install genie https://genie.<operator-domain>/mcp \
   --transport streamableHttp \
   --header "Authorization: Bearer <paste-token-here>" \
   --yes
@@ -194,7 +184,7 @@ npx cline@latest mcp install genie https://genie.<operator-domain>/mcp \
 ## Install the Agent Skill (optional)
 
 ```bash
-npx cline@latest skill add <owner/repo> --skill genie --agent cline --yes
+npx cline@3.0.42 skill add <owner/repo> --skill genie --agent cline --yes
 ```
 
 or, from a local checkout of this repo, install the portable Skill directly

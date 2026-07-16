@@ -23,5 +23,13 @@
     "playwright": "^1.61.1",
     "testcontainers": "^12.0.4",
     "vite": "^8.1.3"
+  },
+  "optionalDependencies": {
+    "@cline/cli-darwin-arm64": "3.0.42",
+    "@cline/cli-darwin-x64": "3.0.42",
+    "@cline/cli-linux-arm64": "3.0.42",
+    "@cline/cli-linux-x64": "3.0.42",
+    "@cline/cli-windows-arm64": "3.0.42",
+    "@cline/cli-windows-x64": "3.0.42"
   }
 }
