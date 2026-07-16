@@ -161,6 +161,22 @@ describe("deploy/docker-compose.yml (AC6)", () => {
     expect(readme).toContain("-e GENIE_OAUTH_ISSUER=http://localhost:8080");
   });
 
+  it("requires and forwards a real host LLM key in the Docker quickstart", () => {
+    expect(readme).toContain('test "${#GENIE_LLM_API_KEY}" -ge 16');
+    expect(readme).toMatch(/-e GENIE_LLM_API_KEY(?:\s|\\)/);
+    expect(readme).not.toMatch(/-e GENIE_LLM_API_KEY=(?:\.\.\.|<[^>]+>)/);
+  });
+
+  it("waits for Docker health before probing the quickstart endpoint", () => {
+    const healthWaitIndex = readme.indexOf(".State.Health.Status");
+    const healthProbeIndex = readme.indexOf("curl --fail http://localhost:8080/health");
+
+    expect(readme).toMatch(/seq 1 70/);
+    expect(readme).toContain('[ "$health_status" = healthy ] || { docker logs genie; exit 1; }');
+    expect(healthWaitIndex).toBeGreaterThanOrEqual(0);
+    expect(healthProbeIndex).toBeGreaterThan(healthWaitIndex);
+  });
+
   it("keeps the Compose env template aligned with required OAuth config", () => {
     expect(envExample).toContain("Must be at least 32 characters");
     expect(envExample).toMatch(/^GENIE_OAUTH_ISSUER=http:\/\/localhost:8080$/m);

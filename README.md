@@ -106,13 +106,25 @@ Container Registry on every release, built from the repo-root `Dockerfile`
 (`node:22-alpine`, multi-stage, non-root UID 1000, < 200 MB runtime image).
 
 ```bash
+test "${#GENIE_LLM_API_KEY}" -ge 16 || {
+  echo "Export a real GENIE_LLM_API_KEY (at least 16 characters) first." >&2
+  exit 1
+}
 docker run -d --name genie -p 8080:8080 \
   -e GENIE_LLM_BASE_URL=https://your-llm-gateway/v1 \
-  -e GENIE_LLM_API_KEY=... \
+  -e GENIE_LLM_API_KEY \
   -e OAUTH_HS256_KEY="$(openssl rand -hex 32)" \
   -e GENIE_OAUTH_ISSUER=http://localhost:8080 \
   ghcr.io/roshangautam/genie:latest
-curl http://localhost:8080/health
+health_status=
+for _ in $(seq 1 70); do
+  health_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' genie)"
+  [ "$health_status" = healthy ] && break
+  [ "$health_status" = unhealthy ] && break
+  sleep 1
+done
+[ "$health_status" = healthy ] || { docker logs genie; exit 1; }
+curl --fail http://localhost:8080/health
 ```
 
 See [`deploy/docker-compose.yml`](./deploy/docker-compose.yml) for a
