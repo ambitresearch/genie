@@ -16,15 +16,14 @@ The recommended way to register genie in Claude Desktop is the packaged
 `.mcpb` (MCP Bundle) installer: double-click the bundle, Claude Desktop
 installs and registers the server for you, and you never hand-edit JSON.
 
-> **Status:** the genie `.mcpb` bundle is built by
-> [M5-05](../github/issues) (`.mcpb` bundle packaging for Claude Desktop) and
-> published alongside Smithery/mcpb.dev listings by M5-08. If you land on
-> this page before that ships, use the manual JSON snippet below — it is
-> functionally identical, just requires you to edit the config file
-> yourself. Once the `.mcpb` is published, prefer it: the JSON snippet is
-> "if you prefer" to install manually.
+> **Current status:** the genie `.mcpb` is not yet published. Packaging is
+> tracked by [M5-05](../github/issues/M5-05-mcpb-packaging.md) and its open
+> [PR #203](https://github.com/roshangautam/genie/pull/203). No current genie
+> GitHub Release contains a `.mcpb` asset. Once a release includes a verified
+> bundle, prefer it; the JSON configuration below is the "if you prefer"
+> manual path.
 
-## If you prefer: manual JSON snippet (stdio via `npx -y genie`)
+## If you prefer: manual JSON snippet
 
 Claude Desktop reads its MCP server list from a JSON config file:
 
@@ -33,32 +32,45 @@ Claude Desktop reads its MCP server list from a JSON config file:
 
 Add genie under `mcpServers`:
 
+> **Publication gate:** `@genie/server` is the planned package name but is not
+> yet published. The snippet below is the post-M5-06 configuration. Use the
+> source-checkout form described immediately after it today.
+
 ```json
 {
   "mcpServers": {
     "genie": {
       "command": "npx",
-      "args": ["-y", "genie", "--transport", "stdio"],
+      "args": ["-y", "@genie/server", "--transport", "stdio"],
       "env": {
         "GENIE_LLM_BASE_URL": "https://your-llm-endpoint.example.com/v1",
-        "GENIE_LLM_API_KEY": "your-api-key"
+        "GENIE_LLM_API_KEY": "replace-with-your-llm-api-key",
+        "OAUTH_HS256_KEY": "replace-with-at-least-32-random-characters"
       }
     }
   }
 }
 ```
 
-`npx -y genie` fetches and runs the published `genie` CLI without a local
-checkout — the same package `.mcpb` packages up for you. If you're running
-against a local build instead of the published package, swap `command`/`args`
-for the Claude Code snippet's `node .../cli.js --transport stdio` form.
+The original M5-10 draft named the bare `genie` npm package, but that name is
+owned by an unrelated package. The current M5-06 publishing contract uses
+`@genie/server`. It is not yet published, so the `npx` command above is a
+post-M5-06 configuration and currently returns an npm 404. Do not substitute
+`npx -y genie`. For a source checkout today, build `@genie/server` and replace
+the snippet's command with `node` and its args with
+`["/absolute/path/to/genie/packages/server/dist/cli.js", "--transport", "stdio"]`.
 
-Provide `GENIE_LLM_BASE_URL` / `GENIE_LLM_API_KEY` directly in this file's
-`env` block if you want conjure/generation available — Claude Desktop has no
-separate secrets store, so treat this file itself as sensitive (`chmod 600`
-on macOS/Linux permissions models; avoid committing it to source control).
-`plan` / `write_files` / `preview` and the read tools work without an LLM
-configured.
+The current CLI calls `loadSecrets()` before it creates the stdio transport.
+`GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required before the server starts,
+including for `list_kits`; both must contain at least 16 characters. Use at
+least 32 random characters for the OAuth signing key, consistent with the
+OAuth runtime contract. `GENIE_LLM_BASE_URL` is also required when invoking
+generation tools such as `conjure`. Replace every placeholder before use; for
+example, generate a signing key with `openssl rand -hex 32`.
+
+Manual local-server configuration has no separate secret prompt. Treat
+`claude_desktop_config.json` as sensitive, keep it owner-readable only
+(`chmod 600` on macOS), and never commit it.
 
 Restart Claude Desktop after editing the config file for the new server to
 be picked up.
@@ -85,14 +97,26 @@ tail -f ~/Library/Logs/Claude/mcp*.log
 On Windows, the equivalent logs live under
 `%APPDATA%\Claude\logs\mcp*.log`.
 
-## Reaching a remote (hosted) genie server: the `mcp-remote` bridge
+## Reaching a remote (hosted) genie server
 
-Claude Desktop's `mcpServers` entries only launch local stdio commands — there
-is no native `url`/remote-HTTP entry the way some other harnesses support. To
-point Claude Desktop at a **remote, hosted** genie MCP endpoint instead of a
-local process, bridge through [`mcp-remote`](https://www.npmjs.com/package/mcp-remote),
-which Claude Desktop launches as its local stdio command and which then
-proxies to your remote server over Streamable HTTP:
+Claude now supports remote MCP servers natively through custom connectors. In
+Claude Desktop, open **Customize -> Connectors**, select **+**, choose **Add
+custom connector**, and enter the public genie Streamable HTTP URL. Team and
+Enterprise organizations require an Owner to add the connector first. See
+Anthropic's current
+[custom connector guide](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+
+Native remote connections originate from Anthropic's cloud, not from the
+Desktop process. The endpoint must therefore be publicly reachable from
+Anthropic's network; a host available only on localhost, a private LAN, or a
+VPN will not work through this path.
+
+### `mcp-remote` fallback for local-network reachability
+
+Use [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) as a fallback when
+custom connectors are unavailable for the account or the endpoint must be
+reached from the user's machine. Claude Desktop launches the bridge as a local
+stdio process, which then proxies to the remote server over Streamable HTTP:
 
 ```json
 {
@@ -107,49 +131,59 @@ proxies to your remote server over Streamable HTTP:
 
 `mcp-remote` handles the local stdio <-> remote Streamable HTTP translation
 and any OAuth flow your genie deployment requires (it will open a browser
-window for the authorization step the first time it connects). Use this
-pattern when you don't want to run genie locally at all — e.g. a team-shared
-genie deployment — rather than the local `npx -y genie` snippet above.
+window for the authorization step the first time it connects). This bridge is
+not required for a publicly reachable server configured through Claude's
+native custom-connector flow.
 
-## Manual smoke test (AC6)
+## AC6 smoke-test status
 
-Claude Desktop is a native GUI app with no scriptable automation surface, so
-the `.mcpb`-install → `list_kits` → screenshot leg of AC6 cannot be automated
-in CI — it requires a human tester on a real macOS machine with Claude
-Desktop installed. This is the exact protocol to run once
-[M5-05](../github/issues) (`.mcpb` bundle packaging) ships a `genie.mcpb`
-artifact:
+AC6 is not complete. It requires a real `.mcpb` install in Claude Desktop, a
+`list_kits` call, and a non-secret screenshot of that result. A raw SDK client
+talking to the stdio server is supplemental transport coverage, not evidence
+that Claude Desktop installed or loaded the bundle.
 
-1. Download the `genie.mcpb` artifact from the relevant GitHub Release (or
-   build it locally via `pnpm bundle:mcpb` once M5-05 lands).
+The macOS review environment has a signed Claude Desktop installation
+available, but the required genie artifact does not exist on `main` or in any
+current GitHub Release. [M5-05](../github/issues/M5-05-mcpb-packaging.md) and
+PR #203 must first ship a bundle whose configuration includes every
+runtime-required secret. Until then, there is nothing valid to install and no
+truthful AC6 screenshot can be captured.
+
+Once that blocker is removed, run this protocol:
+
+1. Download `genie.mcpb` from the relevant GitHub Release. Record its release
+   tag and checksum with the test evidence.
 2. Quit Claude Desktop if it's running. Double-click `genie.mcpb` — Claude
    Desktop should launch (if not already open) and show an install prompt
    for the "genie" MCP server. Confirm the install.
-3. If prompted for `GENIE_LLM_BASE_URL` / `GENIE_LLM_API_KEY`, either supply
-   real values or skip — `list_kits` and the other read tools work without
-   an LLM configured.
+3. Supply every required configuration value prompted by the bundle. Do not
+   expose those values in the screenshot.
 4. Open a new chat in Claude Desktop. Confirm "genie" appears as a connected
-   MCP server (Settings → Developer, or the 🔌/tools icon in the composer).
+   MCP server in the tools menu or Developer settings.
 5. Ask Claude to call `list_kits` (e.g. "list my genie UI kits"). Confirm it
    returns without error (empty list is fine on a fresh install).
 6. Capture a screenshot showing: the connected "genie" server in Claude
-   Desktop's UI, and the `list_kits` tool call + result in the chat.
-7. Attach the screenshot and a one-line pass/fail note to this issue (or the
-   tracking follow-up issue below) as the AC6 evidence artifact.
+   Desktop UI and the `list_kits` tool call plus result. Keep configuration,
+   API keys, file paths containing private data, and unrelated chats out of
+   frame.
+7. Attach the screenshot and a one-line pass/fail note to M5-10 as the AC6
+   evidence artifact.
 
-This protocol is the concrete, runnable replacement for AC6's automated
-claim — `packages/e2e/test/m5-smoke-claude-desktop.test.ts` covers everything
-verifiable from genie's side (the real stdio four-verb chain, incl.
-`list_kits`); this section is what closes the gap once a human has Claude
-Desktop + the `.mcpb` artifact in hand.
+`packages/e2e/test/m5-smoke-claude-desktop.test.ts` verifies the current
+bootstrap contract and exercises `list_kits` plus the component workflow over
+the same real stdio transport. It deliberately does not claim to satisfy AC6.
 
 ## What you get here
 
-- **Agent Skill** — Claude Desktop loads the same portable Skill Claude Code
-  does; see [claude-code.md](./claude-code.md) for the install paths (`.mcpb`
-  bundles it automatically once M5-05 ships).
-- **Inline grid** — Claude Desktop renders the `ui://genie/grid` card grid
-  in-panel, the same as Claude Code; no browser tab needed.
+- **MCP tools** — Claude can invoke genie's registered tools after the local
+  server or remote connector is configured.
+- **Agent Skill not bundled** — the current M5-05 bundle contract does not
+  currently include the Agent Skill under `packages/plugin/skills/genie`.
+  Claude Code's separate installation is documented in
+  [claude-code.md](./claude-code.md).
+- **Inline grid contract** — `preview` returns the `ui://genie/grid` MCP App
+  resource. Rendering it inside Claude Desktop still needs empirical harness
+  verification; this PR's stdio test does not prove the Desktop UI behavior.
 - **No project-local config** — unlike Claude Code's `.mcp.json`, Claude
   Desktop only reads the single user-level `claude_desktop_config.json`
   above; there is no per-project override.
