@@ -34,7 +34,9 @@ jobs:
   publish-mcpb:
     needs: release-please
     if: ${{ needs.release-please.outputs.server_release_created == 'true' }}
-    runs-on: ubuntu-latest
+    # The v1 manifest supports macOS only, and esbuild's production dependency
+    # is platform-specific. Build on macOS so the archive ships a Darwin binary.
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
@@ -50,4 +52,3 @@ jobs:
         with:
           tag_name: ${{ needs.release-please.outputs.server_tag_name }}
           files: dist/genie.mcpb
-

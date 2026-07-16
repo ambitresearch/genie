@@ -107,19 +107,17 @@ Claude Desktop users can install genie without hand-editing a config file:
    (attached to every GitHub Release — see `mcpb/manifest.json` and
    `pnpm bundle:mcpb`).
 2. Double-click it. Claude Desktop opens its extension installer and prompts
-   for the required config values (`llm_base_url`, `llm_api_key`) on first
-   run — nothing is hardcoded into the bundle.
+   for the required config values (`llm_base_url`, `llm_api_key`, and a random
+   `oauth_hs256_key` of at least 32 characters) on first run — nothing is
+   hardcoded into the bundle.
 3. genie now shows up as an installed extension; no manual
    `claude_desktop_config.json` editing needed.
 
 To build the bundle locally: `pnpm bundle:mcpb` (builds `@genie/server`,
 stages a production-only deploy, and packs `dist/genie.mcpb` via
 `@anthropic-ai/mcpb`). See `mcpb/manifest.json` for the bundle manifest and
-`scripts/bundle-mcpb.mjs` for the packaging steps.
-
-> Prefer the JSON snippet instead? See `docs/harness/claude-desktop.md`
-> (tracked separately — M5-10) for the manual `claude_desktop_config.json`
-> path and debugging notes.
+`scripts/bundle-mcpb.mjs` for the packaging steps. The manual JSON configuration
+and debugging guide will land separately in M5-10.
 
 ## Repository layout
 

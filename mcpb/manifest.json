@@ -26,8 +26,11 @@
       "args": ["${__dirname}/server/dist/cli.js", "--transport", "stdio"],
       "env": {
         "GENIE_HOME": "${HOME}/.genie",
+        "GENIE_KITS_ROOT": "${HOME}/.genie/kits",
+        "GENIE_PROJECTS_ROOT": "${HOME}/.genie/projects",
         "GENIE_LLM_BASE_URL": "${user_config.llm_base_url}",
-        "GENIE_LLM_API_KEY": "${user_config.llm_api_key}"
+        "GENIE_LLM_API_KEY": "${user_config.llm_api_key}",
+        "OAUTH_HS256_KEY": "${user_config.oauth_hs256_key}"
       }
     }
   },
@@ -42,6 +45,13 @@
       "type": "string",
       "title": "LLM API key",
       "description": "API key for the configured LLM endpoint. Stored by Claude Desktop's OS keychain integration, never written into this bundle.",
+      "required": true,
+      "sensitive": true
+    },
+    "oauth_hs256_key": {
+      "type": "string",
+      "title": "OAuth signing key",
+      "description": "Random secret of at least 32 characters used to sign genie's OAuth tokens. Stored by Claude Desktop's OS keychain integration, never written into this bundle.",
       "required": true,
       "sensitive": true
     }
