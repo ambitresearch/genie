@@ -384,6 +384,30 @@ describe("AC7 — reference URL fetch + inline", () => {
     expect(Buffer.byteLength(sent, "utf-8")).toBeLessThan(REF_URL_WARN_BYTES + 4096);
   });
 
+  it("caps malformed UTF-8 after decoding expands the pinned response", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const malformedByteCount = Math.floor(REF_URL_WARN_BYTES / 2);
+    const decodedBody = "\uFFFD".repeat(malformedByteCount);
+    const fetchPinnedAddress = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      bodyTruncated: false,
+      observedBodyBytes: malformedByteCount,
+      text: async () => decodedBody,
+    }));
+
+    await conjure(
+      { chat, fetchPinnedAddress, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/malformed-utf8" }),
+    );
+
+    const sent = chat.calls[0]!.messages[1]!.content as string;
+    expect(Buffer.byteLength(decodedBody, "utf-8")).toBeGreaterThan(REF_URL_WARN_BYTES);
+    expect(Buffer.byteLength(sent, "utf-8")).toBeLessThan(REF_URL_WARN_BYTES + 4096);
+    expect(sent).toContain("reference truncated by genie");
+  });
+
   it("truncateUtf8 caps by bytes on a codepoint boundary (no U+FFFD)", () => {
     const cap = 10;
     // 4 × "€" (3 bytes each) = 12 bytes; cap 10 must drop to 3 chars (9 bytes),

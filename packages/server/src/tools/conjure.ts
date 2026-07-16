@@ -535,7 +535,7 @@ async function fetchReference(
       return undefined;
     }
     const body = await res.text();
-    const bytes = res.observedBodyBytes ?? Buffer.byteLength(body, "utf-8");
+    const bytes = Math.max(res.observedBodyBytes ?? 0, Buffer.byteLength(body, "utf-8"));
     if (res.bodyTruncated || bytes > REF_URL_WARN_BYTES) {
       logStderr({ event: "conjure.ref_url.oversize", refUrl, bytes, capBytes: REF_URL_WARN_BYTES });
       return (

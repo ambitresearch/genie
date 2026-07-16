@@ -195,7 +195,7 @@ found by M6-03 re-audit`.
 Re-audit evidence after the final SSRF changes:
 
 ```text
-pnpm exec vitest run packages/server/src/tools/conjure.test.ts  # 50 passed
+pnpm exec vitest run packages/server/src/tools/conjure.test.ts  # 51 passed
 pnpm exec vitest run packages/server/src/ui/grid-resource.test.ts \
   packages/server/src/middleware/plan-guard.test.ts             # 74 passed
 pnpm --filter @genie/server typecheck                           # clean
