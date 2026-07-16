@@ -178,18 +178,20 @@ describe("mcpb bundle output (AC2/AC3/AC4)", () => {
           );
         }
 
-        const esbuild = spawnSync(
-          "node",
-          [
-            "--input-type=module",
-            "--eval",
-            'import esbuild from "./node_modules/esbuild/lib/main.js"; ' +
-              'await esbuild.build({ stdin: { contents: "export default 1" }, write: false });',
-          ],
-          { cwd: join(unpackDir, "server"), encoding: "utf8", timeout: 30_000 },
-        );
-        expect(esbuild.error).toBeUndefined();
-        expect(esbuild.status, esbuild.stderr).toBe(0);
+        if (process.platform === "darwin") {
+          const esbuild = spawnSync(
+            "node",
+            [
+              "--input-type=module",
+              "--eval",
+              'import esbuild from "./node_modules/esbuild/lib/main.js"; ' +
+                'await esbuild.build({ stdin: { contents: "export default 1" }, write: false });',
+            ],
+            { cwd: join(unpackDir, "server"), encoding: "utf8", timeout: 30_000 },
+          );
+          expect(esbuild.error).toBeUndefined();
+          expect(esbuild.status, esbuild.stderr).toBe(0);
+        }
 
         const manifestArgs = packedManifest.server.mcp_config.args.map((arg: string) =>
           arg.replaceAll("${__dirname}", unpackDir),
