@@ -42,6 +42,19 @@ export default tseslint.config(
     },
   },
   {
+    // The OIDC provider fixture is a standalone Node ESM entrypoint copied
+    // directly into its testcontainer image, outside TypeScript's Node globals.
+    files: ["packages/e2e/test/support/oidc-provider-image/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        Buffer: "readonly",
+        console: "readonly",
+        process: "readonly",
+        URLSearchParams: "readonly",
+      },
+    },
+  },
+  {
     // The viewer's `static/**` assets are browser-native scripts (M4-03 /
     // DRO-265): they ship verbatim to the Vite viewer and the `ui://genie/grid`
     // resource, so they run in a DOM, not Node. `viewer.js` is a CLASSIC
