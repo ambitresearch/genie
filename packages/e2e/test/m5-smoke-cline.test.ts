@@ -205,8 +205,8 @@ function structuredOf(result: unknown): Record<string, unknown> | undefined {
  * A minimal OpenAI-compatible chat-completions stub for `conjure`'s REAL
  * default seam (`defaultChatCompletion`, driven by `GENIE_LLM_BASE_URL` /
  * `GENIE_LLM_API_KEY` — see `conjure.test.ts`'s "production wiring" suite,
- * which this mirrors) — no `deps.chat` injection, since `createServer` wires
- * `registerConjureTool(server)` with no injectable seam.
+ * which this mirrors). This suite deliberately leaves `createServer`'s
+ * `conjureDeps` seam unset; the real-CLI suite below injects it separately.
  */
 function startLlmStub(): Promise<{ baseURL: string; close: () => Promise<void> }> {
   const componentBody = {
