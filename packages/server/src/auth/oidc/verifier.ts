@@ -93,8 +93,8 @@ function requireSecureOidcUrl(
   allowPlaintextLoopback: boolean,
 ): URL {
   const url = new URL(value);
-  if (url.username || url.password || url.hash) {
-    throw new Error(`OIDC ${label} must not contain credentials or a fragment.`);
+  if (url.username || url.password || url.hash || (label === "issuer" && url.search)) {
+    throw new Error(`OIDC ${label} must not contain credentials, a fragment, or an issuer query.`);
   }
   const allowedDevelopmentUrl =
     allowPlaintextLoopback && url.protocol === "http:" && isLoopbackHostname(url.hostname);

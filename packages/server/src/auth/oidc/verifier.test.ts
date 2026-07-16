@@ -153,15 +153,16 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it.each(["https://user:password@idp.example.test", "https://idp.example.test#fragment"])(
-    "rejects issuer URL credentials or fragments: %s",
-    async (issuer) => {
-      await expect(createOidcVerifier({ issuer, audience: AUDIENCE })).rejects.toThrow(
-        "OIDC issuer must not contain credentials or a fragment.",
-      );
-      expect(fetchSpy).not.toHaveBeenCalled();
-    },
-  );
+  it.each([
+    "https://user:password@idp.example.test",
+    "https://idp.example.test#fragment",
+    "https://idp.example.test/tenant?x=1",
+  ])("rejects issuer URL credentials or fragments: %s", async (issuer) => {
+    await expect(createOidcVerifier({ issuer, audience: AUDIENCE })).rejects.toThrow(
+      "OIDC issuer must not contain credentials, a fragment, or an issuer query.",
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 
   it("rejects a plaintext non-loopback jwks_uri from an HTTPS issuer", async () => {
     fetchSpy.mockResolvedValueOnce(
