@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/roshangautam/genie/actions/workflows/ci.yml/badge.svg)](https://github.com/roshangautam/genie/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](.nvmrc)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522.19.0-brightgreen.svg)](.nvmrc)
 
 </div>
 
@@ -32,7 +32,7 @@ _inside_ a coding harness — are genuinely useful. See [`docs/plan/02-brd.md`](
 
 ## Quickstart
 
-> Requires Node ≥ 22 (current Active LTS) and [pnpm](https://pnpm.io) (`corepack enable`).
+> Requires Node ≥ 22.19.0 and [pnpm](https://pnpm.io) (`corepack enable`).
 
 ```bash
 git clone https://github.com/roshangautam/genie.git
