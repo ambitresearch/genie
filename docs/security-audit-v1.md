@@ -177,7 +177,9 @@ The final fix:
 - requests identity encoding and rejects encoded responses before reading them;
 - applies one deadline across DNS resolution and every redirect/fetch hop;
 - manually validates every redirect with a five-redirect limit; and
-- uses Undici 7.x, compatible with the declared Node `>=22` engine.
+- uses Undici 7.x, compatible with the server's Node `>=22` engine; the root
+  workspace and private E2E package require Node `>=22.19.0` for
+  testcontainers' Undici 8 development dependency.
 
 No separate issue is needed because this P1 is fixed in PR #189.
 
