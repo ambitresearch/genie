@@ -36,7 +36,7 @@ attached to every GitHub Release.
   (`GENIE_LLM_API_KEY`, etc.).
 
 ## Out of Scope
-- Windows-specific smoke (defer to v2; v1 is macOS-tested).
+- Windows / Linux bundle verification (defer to v2; v1 is macOS-tested).
 
 ## Dependencies
 - Blocks: M5-10 (Claude Desktop smoke).
