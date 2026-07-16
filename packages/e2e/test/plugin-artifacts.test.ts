@@ -64,6 +64,14 @@ describe("Claude plugin artifacts", () => {
     expect(claude).not.toContain("all automatically");
   });
 
+  it("keeps manual paid smoke runs isolated from normal CI concurrency", () => {
+    const ci = readFileSync(resolve(ROOT, ".github/workflows/ci.yml"), "utf8");
+
+    expect(ci).toContain(
+      "group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}",
+    );
+  });
+
   it("documents portable Agent Skill installation for supported harnesses", () => {
     const cursor = readFileSync(resolve(ROOT, "docs/harness/cursor.md"), "utf8");
     const codex = readFileSync(resolve(ROOT, "docs/harness/codex.md"), "utf8");

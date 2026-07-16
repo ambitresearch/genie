@@ -35,15 +35,15 @@ WORKDIR /workspace
 ENV HOME=/workspace
 ENV CI=1
 
-# Claude Code refuses --dangerously-skip-permissions as root. The smoke image
-# is disposable, but the CLI still enforces that guard, so run as Node's
-# built-in unprivileged user and give it ownership of its HOME.
+# Keep the model driver unprivileged even though the smoke image is disposable;
+# its HOME only needs config/cache writes under /workspace.
 RUN chown node:node /workspace
 
 # The test harness mounts/bind-copies:
-#   /workspace/mcp-config.json   — generated `--mcp-config` JSON (HTTP transport
-#                                   pointing at the in-process genie server on
-#                                   the host, reachable via host.docker.internal)
+#   /workspace/claude-config.json — combined `--settings` / `--mcp-config` JSON
+#                                    with top-level apiKeyHelper plus the HTTP
+#                                    genie server's headersHelper
+#   /workspace/*-helper.sh        — throwaway helper scripts referenced above
 #   /workspace/prompt.txt        — the non-interactive prompt to run
 # then starts this image idle and invokes the CLI through `container.exec`
 # (see run-smoke.sh) so stdout and stderr remain separate and the exact

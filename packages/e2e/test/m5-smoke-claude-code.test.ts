@@ -45,8 +45,8 @@
  * dollars or fails on an unconfigured machine; it skips (with a breadcrumb)
  * rather than throwing when unset.
  */
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer as createNodeHttpServer, type Server as NodeHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -68,6 +68,7 @@ import { isDockerAvailable as isTestcontainersDockerAvailable } from "./support/
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_KEY_HELPER = join(HERE, "../../../docs/harness/scripts/anthropic-api-key-helper.sh");
+const RUN_SMOKE = join(HERE, "../docker/claude-code-smoke/run-smoke.sh");
 
 const VALIDATE_TOOL_NAME = "mcp__genie__validate";
 const CREATE_KIT_TOOL_NAME = "mcp__genie__create_kit";
@@ -165,6 +166,24 @@ interface ClaudeDriverConfig {
   source: "dedicated" | "gateway";
 }
 
+function createClaudeCombinedConfig(
+  mcpUrl: string,
+  apiKeyHelper: string,
+  headersHelper: string,
+): Record<string, unknown> {
+  return {
+    apiKeyHelper,
+    mcpServers: {
+      genie: {
+        type: "http",
+        url: mcpUrl,
+        timeout: 180_000,
+        headersHelper,
+      },
+    },
+  };
+}
+
 function resolveClaudeDriverConfig(
   env: Record<string, string | undefined>,
 ): ClaudeDriverConfig | undefined {
@@ -195,8 +214,14 @@ interface DockerPreviewServer {
   close: () => Promise<unknown>;
 }
 
+interface TrackedViewerClose {
+  close: () => Promise<void>;
+  forceClose: () => void;
+}
+
 function createDockerPreviewBooter(
   createViteServer: (config: InlineConfig) => Promise<DockerPreviewServer>,
+  trackClose?: (close: TrackedViewerClose) => void,
 ): ViewerBooter {
   return async ({ kitDir, port }) => {
     const config = createViewerConfig({ root: kitDir, port, host: "0.0.0.0" });
@@ -205,10 +230,33 @@ function createDockerPreviewBooter(
       allowedHosts: ["host.docker.internal"],
     };
     const server = await createViteServer({ ...config, clearScreen: false });
+    let closePromise: Promise<unknown> | undefined;
+    const close = async (): Promise<void> => {
+      if (closePromise === undefined) {
+        const pending = Promise.resolve().then(() => server.close());
+        closePromise = pending;
+        try {
+          await pending;
+        } catch (error) {
+          if (closePromise === pending) closePromise = undefined;
+          throw error;
+        }
+      } else {
+        await closePromise;
+      }
+    };
+    const forceClose = (): void => {
+      const httpServer = server.httpServer as
+        | (DockerPreviewServer["httpServer"] & { closeAllConnections?: () => void })
+        | null;
+      httpServer?.closeAllConnections?.();
+    };
+    trackClose?.({ close, forceClose });
+
     await server.listen();
     const address = server.httpServer?.address();
     if (typeof address !== "object" || address === null) {
-      await server.close();
+      await close();
       throw new Error("Docker smoke viewer did not bind a TCP port");
     }
     const actualPort = address.port;
@@ -217,11 +265,43 @@ function createDockerPreviewBooter(
       url: `http://host.docker.internal:${actualPort}/`,
       port: actualPort,
       open: async () => {},
-      close: async () => {
-        await server.close();
-      },
+      close,
     };
   };
+}
+
+async function closeWithTimeout(close: () => Promise<void>, timeoutMs = 10_000): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve().then(close),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Resource cleanup timed out after ${timeoutMs} ms`)),
+          timeoutMs,
+        );
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function closeWithOneRetry(closers: (() => Promise<void>)[]): Promise<void> {
+  const firstResults = await Promise.allSettled(closers.map((close) => closeWithTimeout(close)));
+  const failedClosers = closers.filter(
+    (_close, index) => firstResults[index]?.status === "rejected",
+  );
+  const retryResults = await Promise.allSettled(
+    failedClosers.map((close) => closeWithTimeout(close)),
+  );
+  const persistentFailures = retryResults
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => result.reason);
+  if (persistentFailures.length > 0) {
+    throw new AggregateError(persistentFailures, "Resource cleanup failed after one retry");
+  }
 }
 
 const claudeDriverConfig = resolveClaudeDriverConfig(process.env);
@@ -486,15 +566,19 @@ describe("Claude driver credential selection", () => {
 it("binds the Docker smoke viewer on the host and advertises its container-reachable URL", async () => {
   const listen = vi.fn(async () => {});
   const close = vi.fn(async () => {});
+  const trackedClosers: TrackedViewerClose[] = [];
   let receivedConfig: InlineConfig | undefined;
-  const booter = createDockerPreviewBooter(async (config) => {
-    receivedConfig = config;
-    return {
-      httpServer: { address: () => ({ port: 5189 }) },
-      listen,
-      close,
-    };
-  });
+  const booter = createDockerPreviewBooter(
+    async (config) => {
+      receivedConfig = config;
+      return {
+        httpServer: { address: () => ({ port: 5189 }) },
+        listen,
+        close,
+      };
+    },
+    (trackedClose) => trackedClosers.push(trackedClose),
+  );
 
   const viewer = await booter({ kitDir: "/tmp/docker-preview-kit", port: 5173 });
 
@@ -505,8 +589,266 @@ it("binds the Docker smoke viewer on the host and advertises its container-reach
   });
   expect(listen).toHaveBeenCalledOnce();
   expect(viewer.url).toBe("http://host.docker.internal:5189/");
+  expect(trackedClosers).toHaveLength(1);
+  await trackedClosers[0]!.close();
   await viewer.close();
   expect(close).toHaveBeenCalledOnce();
+});
+
+it("retries Docker smoke viewer cleanup after a failed close", async () => {
+  const close = vi.fn().mockRejectedValueOnce(new Error("transient close failure"));
+  close.mockResolvedValueOnce(undefined);
+  const booter = createDockerPreviewBooter(async () => ({
+    httpServer: { address: () => ({ port: 5189 }) },
+    listen: async () => {},
+    close,
+  }));
+  const viewer = await booter({ kitDir: "/tmp/docker-preview-kit", port: 5173 });
+
+  await expect(viewer.close()).rejects.toThrow("transient close failure");
+  await expect(viewer.close()).resolves.toBeUndefined();
+  expect(close).toHaveBeenCalledTimes(2);
+});
+
+it("waits for every cleanup retry and surfaces persistent failures", async () => {
+  const recovers = vi.fn().mockRejectedValueOnce(new Error("first attempt"));
+  recovers.mockResolvedValueOnce(undefined);
+  const persists = vi.fn().mockRejectedValue(new Error("still broken"));
+
+  await expect(closeWithOneRetry([recovers, persists])).rejects.toThrow(
+    "Resource cleanup failed after one retry",
+  );
+  expect(recovers).toHaveBeenCalledTimes(2);
+  expect(persists).toHaveBeenCalledTimes(2);
+});
+
+it("bounds hung cleanup attempts before surfacing the failure", async () => {
+  const hangs = vi.fn(() => new Promise<void>(() => {}));
+
+  await expect(closeWithTimeout(hangs, 5)).rejects.toThrow("timed out");
+  expect(hangs).toHaveBeenCalledOnce();
+});
+
+it("denies built-in Claude tools while allowing only the documented MCP wrappers", async () => {
+  const script = await import("node:fs/promises").then(({ readFile }) =>
+    readFile(RUN_SMOKE, "utf8"),
+  );
+
+  expect(script).toContain('--tools "mcp__genie__mcp__genie__conjure');
+  expect(script).toContain("--allowedTools");
+  expect(script).not.toMatch(/--tools\s+"[^\n]*(?:Bash|Read|Edit)/);
+  expect(script).not.toContain("--dangerously-skip-permissions");
+});
+
+const hasClaudeCli = spawnSync("claude", ["--version"], { stdio: "ignore" }).status === 0;
+
+describe.skipIf(!hasClaudeCli)("Claude Code accepts the documented combined helper config", () => {
+  it("executes top-level apiKeyHelper and per-server headersHelper in their real CLI scopes", async () => {
+    const base = await mkdtemp(join(tmpdir(), "genie-claude-combined-config-"));
+    const apiMarker = join(base, "api-key-helper.called");
+    const headersMarker = join(base, "headers-helper.called");
+    let mcpHeaderSeen = false;
+    let apiRequestSeen = false;
+    let apiKeySeen = false;
+    let mcpToolAdvertised = false;
+    const sessionServers = new Set<ReturnType<typeof createServer>>();
+
+    const mcpHandler = createStreamableHttpRequestHandler(() => {
+      const sessionServer = createServer({
+        projectsRoot: join(base, "projects"),
+        kitsRoot: join(base, "kits"),
+        reportsDir: join(base, "reports"),
+        transportKind: "http",
+      });
+      sessionServers.add(sessionServer);
+      return sessionServer;
+    });
+    const mcpHttp = createNodeHttpServer((req, res) => {
+      if (req.headers["x-genie-smoke-helper"] !== "configured") {
+        res.writeHead(401).end();
+        return;
+      }
+      mcpHeaderSeen = true;
+      mcpHandler(req, res);
+    });
+    const apiHttp = createNodeHttpServer((req, res) => {
+      apiRequestSeen = true;
+      apiKeySeen = req.headers["x-api-key"] === "not-a-real-api-key";
+      if (!apiKeySeen) {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            type: "error",
+            error: { type: "authentication_error", message: "missing helper key" },
+          }),
+        );
+        return;
+      }
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+          tools?: { name?: string }[];
+        };
+        mcpToolAdvertised = Boolean(body.tools?.some((tool) => tool.name === "mcp__genie__ping"));
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+        });
+        const events = [
+          [
+            "message_start",
+            {
+              type: "message_start",
+              message: {
+                id: "msg_genie_helper_smoke",
+                type: "message",
+                role: "assistant",
+                model: "claude-sonnet-4-5",
+                content: [],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 1, output_tokens: 0 },
+              },
+            },
+          ],
+          [
+            "content_block_start",
+            {
+              type: "content_block_start",
+              index: 0,
+              content_block: { type: "text", text: "" },
+            },
+          ],
+          [
+            "content_block_delta",
+            {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "text_delta", text: "ok" },
+            },
+          ],
+          ["content_block_stop", { type: "content_block_stop", index: 0 }],
+          [
+            "message_delta",
+            {
+              type: "message_delta",
+              delta: { stop_reason: "end_turn", stop_sequence: null },
+              usage: { output_tokens: 1 },
+            },
+          ],
+          ["message_stop", { type: "message_stop" }],
+        ] as const;
+        res.end(
+          events
+            .map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}`)
+            .join("\n\n") + "\n\n",
+        );
+      });
+    });
+
+    try {
+      await mkdir(join(base, "kits"), { recursive: true });
+      const mcpPort = await listen(mcpHttp);
+      const apiPort = await listen(apiHttp);
+      const apiHelper = join(base, "api-key-helper.sh");
+      const headersHelper = join(base, "headers-helper.sh");
+      const combinedConfig = join(base, "claude-config.json");
+      await writeFile(
+        apiHelper,
+        '#!/bin/sh\nset -eu\n: > "$GENIE_API_HELPER_MARKER"\nprintf %s "$GENIE_CLAUDE_DRIVER_API_KEY"\n',
+      );
+      await writeFile(
+        headersHelper,
+        '#!/bin/sh\nset -eu\n: > "$GENIE_HEADERS_HELPER_MARKER"\nprintf \'{"X-Genie-Smoke-Helper":"configured"}\'\n',
+      );
+      await Promise.all([chmod(apiHelper, 0o755), chmod(headersHelper, 0o755)]);
+      await writeFile(
+        combinedConfig,
+        JSON.stringify(
+          createClaudeCombinedConfig(`http://127.0.0.1:${mcpPort}/mcp`, apiHelper, headersHelper),
+        ),
+      );
+
+      const env: Record<string, string> = {
+        HOME: base,
+        PATH: process.env.PATH ?? "",
+        TMPDIR: process.env.TMPDIR ?? tmpdir(),
+        LANG: process.env.LANG ?? "C.UTF-8",
+        USER: "genie-test-user",
+        CI: "1",
+        NO_PROXY: "127.0.0.1,localhost",
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${apiPort}`,
+        GENIE_CLAUDE_DRIVER_API_KEY: "not-a-real-api-key",
+        GENIE_API_HELPER_MARKER: apiMarker,
+        GENIE_HEADERS_HELPER_MARKER: headersMarker,
+      };
+
+      const result = await new Promise<{
+        status: number | null;
+        timedOut: boolean;
+        stdout: string;
+        stderr: string;
+      }>((resolve, reject) => {
+        const child = spawn(
+          "claude",
+          [
+            "-p",
+            "Reply with one word.",
+            "--bare",
+            "--settings",
+            combinedConfig,
+            "--mcp-config",
+            combinedConfig,
+            "--strict-mcp-config",
+            "--output-format",
+            "json",
+            "--tools",
+            "mcp__genie__ping",
+            "--allowedTools",
+            "mcp__genie__ping",
+            "--no-session-persistence",
+          ],
+          { cwd: base, env, stdio: ["ignore", "pipe", "pipe"] },
+        );
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
+        child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+        let timedOut = false;
+        const timer = setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGKILL");
+        }, 20_000);
+        child.once("error", reject);
+        child.once("close", (status) => {
+          clearTimeout(timer);
+          resolve({ status, timedOut, stdout, stderr });
+        });
+      });
+
+      const diagnostics =
+        `Claude CLI status: ${result.status}, timed out: ${result.timedOut}\n` +
+        `stdout:\n${result.stdout}\n\nstderr:\n${result.stderr}`;
+      expect(result.timedOut, diagnostics).toBe(false);
+      expect(result.status, diagnostics).toBe(0);
+      await expect(access(apiMarker)).resolves.toBeUndefined();
+      await expect(access(headersMarker)).resolves.toBeUndefined();
+      expect(apiRequestSeen).toBe(true);
+      expect(apiKeySeen).toBe(true);
+      expect(mcpHeaderSeen).toBe(true);
+      expect(mcpToolAdvertised).toBe(true);
+    } finally {
+      try {
+        await closeWithOneRetry([...sessionServers].map((server) => () => server.close()));
+      } finally {
+        mcpHttp.closeAllConnections();
+        apiHttp.closeAllConnections();
+        await Promise.all([closeHttpServer(mcpHttp), closeHttpServer(apiHttp)]);
+        await rm(base, { recursive: true, force: true });
+      }
+    }
+  }, 30_000);
 });
 
 async function runApiKeyHelper(options: {
@@ -827,6 +1169,7 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
         const { createServer: createViteServer } = await import("vite");
 
         const base = await mkdtemp(joinPath(osTmpdir(), "genie-m5-docker-smoke-"));
+        const viewerClosers = new Set<TrackedViewerClose>();
         const roots = {
           projectsRoot: joinPath(base, "projects"),
           kitsRoot: joinPath(base, "kits"),
@@ -846,30 +1189,48 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
         // process and the container both reach the *same* physical host, so
         // "local" is the right locality even though `preview` is invoked
         // through streamable HTTP.
-        const http = createHttpServer(
-          createStreamableHttpRequestHandler(() =>
-            createGenieServer({
-              ...roots,
-              transportKind: "http",
-              previewLocality: "local",
-              previewBooter: createDockerPreviewBooter(createViteServer),
-            }),
-          ),
-        );
+        const sessionServers = new Set<ReturnType<typeof createGenieServer>>();
+        const mcpHandler = createStreamableHttpRequestHandler(() => {
+          const sessionServer = createGenieServer({
+            ...roots,
+            transportKind: "http",
+            previewLocality: "local",
+            previewBooter: createDockerPreviewBooter(createViteServer, (trackedClose) =>
+              viewerClosers.add(trackedClose),
+            ),
+          });
+          sessionServers.add(sessionServer);
+          return sessionServer;
+        });
+        const http = createHttpServer((req, res) => {
+          const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+          if (pathname === "/health") {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ status: "ok", server: "genie" }));
+            return;
+          }
+          if (pathname !== "/mcp") {
+            res.writeHead(404).end();
+            return;
+          }
+          if (req.headers["x-genie-smoke-helper"] !== "configured") {
+            res.writeHead(401).end();
+            return;
+          }
+          mcpHandler(req, res);
+        });
         await new Promise<void>((resolve) => http.listen(0, "0.0.0.0", resolve));
         const address = http.address();
         const port = typeof address === "object" && address ? address.port : 0;
         expect(port).toBeGreaterThan(0);
 
-        const mcpConfig = {
-          mcpServers: {
-            genie: {
-              type: "http",
-              url: `http://host.docker.internal:${port}/mcp`,
-              timeout: 180_000,
-            },
-          },
-        };
+        const apiKeyHelperPath = joinPath(base, "api-key-helper.sh");
+        const headersHelperPath = joinPath(base, "headers-helper.sh");
+        const combinedConfig = createClaudeCombinedConfig(
+          `http://host.docker.internal:${port}/mcp`,
+          "/workspace/api-key-helper.sh",
+          "/workspace/headers-helper.sh",
+        );
         const dockerSmokeModel = smokeModel ?? "design-default";
         const prompt =
           "Create a kit named m5-docker-smoke, then ask genie to conjure a simple primary " +
@@ -878,7 +1239,19 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
           "returned files, open the preview, and " +
           "validate the kit. Use the mcp__genie__* tools directly.";
 
-        await writeFile(joinPath(base, "mcp-config.json"), JSON.stringify(mcpConfig, null, 2));
+        await writeFile(
+          apiKeyHelperPath,
+          '#!/bin/sh\nset -eu\n: > /workspace/api-key-helper.called\nprintf %s "$GENIE_CLAUDE_DRIVER_API_KEY"\n',
+        );
+        await writeFile(
+          headersHelperPath,
+          '#!/bin/sh\nset -eu\n: > /workspace/headers-helper.called\nprintf \'{"X-Genie-Smoke-Helper":"configured"}\'\n',
+        );
+        await Promise.all([chmod(apiKeyHelperPath, 0o755), chmod(headersHelperPath, 0o755)]);
+        await writeFile(
+          joinPath(base, "claude-config.json"),
+          JSON.stringify(combinedConfig, null, 2),
+        );
         await writeFile(joinPath(base, "prompt.txt"), prompt);
 
         let container: Awaited<ReturnType<GenericContainerType["start"]>> | undefined;
@@ -891,11 +1264,20 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
           container = await builtImage
             .withEnvironment({
               ANTHROPIC_BASE_URL: claudeDriverConfig!.baseUrl,
-              ANTHROPIC_API_KEY: claudeDriverConfig!.apiKey,
+              GENIE_CLAUDE_DRIVER_API_KEY: claudeDriverConfig!.apiKey,
             })
             .withExtraHosts([{ host: "host.docker.internal", ipAddress: "host-gateway" }])
             .withCopyFilesToContainer([
-              { source: joinPath(base, "mcp-config.json"), target: "/workspace/mcp-config.json" },
+              {
+                source: joinPath(base, "claude-config.json"),
+                target: "/workspace/claude-config.json",
+              },
+              { source: apiKeyHelperPath, target: "/workspace/api-key-helper.sh", mode: 0o755 },
+              {
+                source: headersHelperPath,
+                target: "/workspace/headers-helper.sh",
+                mode: 0o755,
+              },
               { source: joinPath(base, "prompt.txt"), target: "/workspace/prompt.txt" },
             ])
             .withStartupTimeout(120_000)
@@ -912,6 +1294,15 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             `Claude Code process exited ${cliResult.exitCode}\n` +
             `stdout:\n${cliResult.stdout}\n\nstderr:\n${cliResult.stderr}`;
           expect(cliResult.exitCode, cliDiagnostics).toBe(0);
+          const helperMarkers = await container.exec([
+            "sh",
+            "-c",
+            "test -f /workspace/api-key-helper.called && test -f /workspace/headers-helper.called",
+          ]);
+          expect(
+            helperMarkers.exitCode,
+            `expected Claude Code to execute both documented helpers; ${cliDiagnostics}`,
+          ).toBe(0);
 
           // `--output-format stream-json` (see run-smoke.sh) emits one JSON
           // object per line — the actual structured tool-call/tool-result
@@ -1027,9 +1418,24 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             await browser.close();
           }
         } finally {
-          await container?.stop().catch(() => {});
-          await new Promise<void>((resolve) => http.close(() => resolve()));
-          await rmDir(base, { recursive: true, force: true });
+          const startedContainer = container;
+          const containerStop =
+            startedContainer === undefined
+              ? []
+              : // Testcontainers forwards this to Docker Engine's stop API (seconds).
+                [() => startedContainer.stop({ timeout: 5, remove: true }).then(() => {})];
+          try {
+            await closeWithOneRetry([
+              ...containerStop,
+              ...[...sessionServers].map((server) => () => server.close()),
+              ...[...viewerClosers].map(({ close }) => close),
+            ]);
+          } finally {
+            for (const { forceClose } of viewerClosers) forceClose();
+            http.closeAllConnections();
+            await closeHttpServer(http);
+            await rmDir(base, { recursive: true, force: true });
+          }
         }
       },
       300_000,
