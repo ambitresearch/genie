@@ -202,9 +202,14 @@ function sessionIdFrom(req: IncomingMessage): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function writeProtocolError(res: ServerResponse, status: number, message: string): void {
+function writeProtocolError(
+  res: ServerResponse,
+  status: number,
+  message: string,
+  headers: Record<string, string> = {},
+): void {
   if (res.headersSent) return;
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, { "content-type": "application/json", ...headers });
   res.end(
     JSON.stringify({
       jsonrpc: "2.0",
@@ -406,7 +411,7 @@ export function createStreamableHttpRequestHandler(
 
   const writeUnauthorized = (res: ServerResponse, message: string): void => {
     if (oauthRouter === undefined) {
-      writeProtocolError(res, 401, message);
+      writeProtocolError(res, 401, message, { "www-authenticate": "Bearer" });
       return;
     }
     res.writeHead(401, {

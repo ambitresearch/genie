@@ -104,6 +104,7 @@ async function startAuthorizationCodeCatcher(
   void promise.catch(() => undefined);
 
   let settled = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined = undefined;
   const catcher = createNodeHttpServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${callbackPort}`);
     res.writeHead(200, { "content-type": "text/plain" });
@@ -121,7 +122,7 @@ async function startAuthorizationCodeCatcher(
   const settle = async (error?: Error, code?: string): Promise<void> => {
     if (settled) return;
     settled = true;
-    clearTimeout(timeout);
+    if (timeout !== undefined) clearTimeout(timeout);
     try {
       await close();
     } catch (closeError) {
@@ -150,10 +151,12 @@ async function startAuthorizationCodeCatcher(
   catcher.once("error", (error) => {
     void settle(error);
   });
-  const timeout = setTimeout(
-    () => void settle(new Error("timed out waiting for OAuth callback")),
-    timeoutMs,
-  );
+  if (!settled) {
+    timeout = setTimeout(
+      () => void settle(new Error("timed out waiting for OAuth callback")),
+      timeoutMs,
+    );
+  }
 
   return {
     promise,
@@ -216,7 +219,10 @@ describe("OIDC callback catcher", () => {
 
 interface AccessTokenClaims {
   aud?: unknown;
+  client_id?: unknown;
   groups?: unknown;
+  iat?: unknown;
+  jti?: unknown;
   sub?: unknown;
 }
 
@@ -387,7 +393,13 @@ describe.skipIf(!dockerAvailable)("M5-04 — OIDC provider integration (DRO-276)
     expect(accessToken).toBeTruthy();
     expect(decodeAccessTokenHeader(accessToken)).toMatchObject({ typ: "at+jwt" });
     const claims = decodeAccessTokenClaims(accessToken);
-    expect(claims).toMatchObject({ sub: OIDC_TEST_USERS.authorized.username, aud: OIDC_CLIENT_ID });
+    expect(claims).toMatchObject({
+      sub: OIDC_TEST_USERS.authorized.username,
+      aud: OIDC_CLIENT_ID,
+      client_id: OIDC_CLIENT_ID,
+      iat: expect.any(Number),
+      jti: expect.any(String),
+    });
     expect(claims.groups).toEqual(expect.arrayContaining([OIDC_REQUIRED_GROUP]));
 
     // Drive one real MCP JSON-RPC round trip (initialize -> tools/call

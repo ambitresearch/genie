@@ -45,7 +45,13 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
   let publicJwk: Record<string, unknown>;
   let signToken: (
     claims: Record<string, unknown>,
-    options?: { issuer?: string; audience?: string; omitExpiration?: boolean; typ?: string },
+    options?: {
+      issuer?: string;
+      audience?: string;
+      omitExpiration?: boolean;
+      omitRequiredClaim?: "sub" | "client_id" | "iat" | "jti";
+      typ?: string;
+    },
   ) => Promise<string>;
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
@@ -54,11 +60,17 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     publicJwk = { ...(await exportJWK(publicKey)), alg: "RS256", use: "sig", kid: "test-key-1" };
 
     signToken = (claims, options = {}) => {
-      const jwt = new SignJWT(claims)
+      const payload: Record<string, unknown> = {
+        client_id: AUDIENCE,
+        jti: "test-token-id",
+        ...claims,
+      };
+      if (options.omitRequiredClaim !== undefined) delete payload[options.omitRequiredClaim];
+      const jwt = new SignJWT(payload)
         .setProtectedHeader({ alg: "RS256", kid: "test-key-1", typ: options.typ ?? "at+jwt" })
-        .setIssuedAt()
         .setIssuer(options.issuer ?? ISSUER)
         .setAudience(options.audience ?? AUDIENCE);
+      if (options.omitRequiredClaim !== "iat") jwt.setIssuedAt();
       if (!options.omitExpiration) jwt.setExpirationTime("5m");
       return jwt.sign(privateKey);
     };
@@ -103,6 +115,29 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
       `OIDC discovery failed: GET ${ISSUER}/.well-known/openid-configuration -> 503`,
     );
   });
+
+  it("fails startup predictably when OIDC discovery stalls", async () => {
+    fetchSpy.mockImplementationOnce(async (_input, init) => {
+      if (init?.signal === undefined) throw new Error("missing discovery abort signal");
+      return await new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      });
+    });
+    const config = { issuer: ISSUER, audience: AUDIENCE, discoveryTimeoutMs: 10 };
+
+    await expect(createOidcVerifier(config)).rejects.toThrow(
+      `OIDC discovery timed out after 10 ms: GET ${ISSUER}/.well-known/openid-configuration`,
+    );
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid discovery timeout %s",
+    async (discoveryTimeoutMs) => {
+      await expect(
+        createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE, discoveryTimeoutMs }),
+      ).rejects.toThrow("discoveryTimeoutMs must be a positive finite number.");
+    },
+  );
 
   it("fails startup when the discovery document omits jwks_uri", async () => {
     fetchSpy.mockResolvedValueOnce(
@@ -211,6 +246,8 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     const invalidSignatureToken = await new SignJWT({
       sub: "alice",
       groups: ["genie-users"],
+      client_id: AUDIENCE,
+      jti: "invalid-signature-token-id",
     })
       .setProtectedHeader({ alg: "RS256", kid: "test-key-1", typ: "at+jwt" })
       .setIssuedAt()
@@ -239,6 +276,19 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     await expect(verifier.verify(idToken)).rejects.toThrow();
   });
 
+  it.each(["sub", "client_id", "iat", "jti"] as const)(
+    "rejects an RFC 9068 access token missing mandatory %s",
+    async (claim) => {
+      const verifier = await createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE });
+      const token = await signToken(
+        { sub: "alice", groups: ["genie-users"] },
+        { omitRequiredClaim: claim },
+      );
+
+      await expect(verifier.verify(token)).rejects.toThrow();
+    },
+  );
+
   it("rejects an expired token signed by the correct key", async () => {
     const { publicKey, privateKey } = await generateKeyPair("RS256");
     const kid = "expired-key";
@@ -260,7 +310,12 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
       throw new Error(`unexpected fetch: ${url}`);
     });
     const verifier = await createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE });
-    const expired = await new SignJWT({ sub: "alice", groups: ["genie-users"] })
+    const expired = await new SignJWT({
+      sub: "alice",
+      groups: ["genie-users"],
+      client_id: AUDIENCE,
+      jti: "expired-token-id",
+    })
       .setProtectedHeader({ alg: "RS256", kid, typ: "at+jwt" })
       .setIssuedAt(Math.floor(Date.now() / 1000) - 3600)
       .setIssuer(ISSUER)

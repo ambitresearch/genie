@@ -9,8 +9,8 @@
  * access tokens for the genie resource/API using the RFC 9068 `typ: at+jwt`
  * discriminator, and map group membership into a `groups` claim. Opaque
  * access tokens and OIDC ID tokens are not supported. Verification checks the
- * signature plus exact `iss`, configured `aud`, required `exp`, and token type
- * before enforcing group membership.
+ * signature plus exact `iss`, configured `aud`, required RFC 9068 claims, and
+ * token type before enforcing group membership.
  *
  * Configuration is opt-in via env, mirroring `resolveOAuthSigningKey`'s
  * "refuse to run without it" posture for `../oauth/config.ts`:
@@ -35,6 +35,8 @@ export interface OidcVerifierConfig {
   audience: string;
   /** Group required for access (AC6). Defaults to `genie-users`. */
   requiredGroup?: string;
+  /** OIDC discovery request timeout. Defaults to 10 seconds. */
+  discoveryTimeoutMs?: number;
 }
 
 export interface OidcVerifier {
@@ -43,9 +45,9 @@ export interface OidcVerifier {
   readonly requiredGroup: string;
   /**
    * Verify `token`'s signature (against the provider's live JWKS), `typ:
-   * at+jwt`, `iss`, `aud`, and expiry, THEN enforce group membership (AC6).
-   * Returns the decoded claims on success. Throws on any failure — signature
-   * failure, token-type/`iss`/`aud` mismatch, expiry, or
+   * at+jwt`, `iss`, `aud`, and mandatory RFC 9068 claims, THEN enforce group
+   * membership (AC6). Returns the decoded claims on success. Throws on any
+   * failure — signature failure, token-type/`iss`/`aud` mismatch, expiry, or
    * {@link GroupAccessDeniedError} (403) for a valid-but-ungrouped token.
    */
   verify(token: string): Promise<OidcClaims>;
@@ -70,12 +72,29 @@ interface OidcDiscoveryDocument {
   [key: string]: unknown;
 }
 
+const DEFAULT_DISCOVERY_TIMEOUT_MS = 10_000;
+
 /** Fetch `${issuer}/.well-known/openid-configuration` and return its
  *  `jwks_uri` using the RFC 8414 / OIDC Discovery 1.0 endpoint required by
  *  this integration. */
-async function discoverJwksUri(discoveryIssuer: string, expectedIssuer: string): Promise<string> {
+async function discoverJwksUri(
+  discoveryIssuer: string,
+  expectedIssuer: string,
+  timeoutMs: number,
+): Promise<string> {
   const discoveryUrl = `${discoveryIssuer}/.well-known/openid-configuration`;
-  const res = await fetch(discoveryUrl);
+  const signal = AbortSignal.timeout(timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(discoveryUrl, { signal });
+  } catch (error) {
+    if (signal.aborted) {
+      throw new Error(`OIDC discovery timed out after ${timeoutMs} ms: GET ${discoveryUrl}`, {
+        cause: error,
+      });
+    }
+    throw error;
+  }
   if (!res.ok) {
     throw new Error(`OIDC discovery failed: GET ${discoveryUrl} -> ${res.status}`);
   }
@@ -101,7 +120,11 @@ async function discoverJwksUri(discoveryIssuer: string, expectedIssuer: string):
 export async function createOidcVerifier(config: OidcVerifierConfig): Promise<OidcVerifier> {
   const issuer = config.issuer;
   const discoveryIssuer = issuer.endsWith("/") ? issuer.slice(0, -1) : issuer;
-  const jwksUri = await discoverJwksUri(discoveryIssuer, issuer);
+  const discoveryTimeoutMs = config.discoveryTimeoutMs ?? DEFAULT_DISCOVERY_TIMEOUT_MS;
+  if (!Number.isFinite(discoveryTimeoutMs) || discoveryTimeoutMs <= 0) {
+    throw new Error("discoveryTimeoutMs must be a positive finite number.");
+  }
+  const jwksUri = await discoverJwksUri(discoveryIssuer, issuer, discoveryTimeoutMs);
   const jwks = createRemoteJWKSet(new URL(jwksUri));
   const requiredGroup = config.requiredGroup ?? REQUIRED_GROUP;
 
@@ -114,7 +137,7 @@ export async function createOidcVerifier(config: OidcVerifierConfig): Promise<Oi
         issuer,
         audience: config.audience,
         typ: "at+jwt",
-        requiredClaims: ["exp"],
+        requiredClaims: ["exp", "sub", "client_id", "iat", "jti"],
       });
       const claims = payload as OidcClaims;
       enforceGroupAccess(claims, requiredGroup);
