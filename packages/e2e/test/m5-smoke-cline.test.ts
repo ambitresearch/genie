@@ -652,7 +652,14 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
       const env = Object.fromEntries(
         Object.entries(process.env).filter(([name]) => !name.startsWith("CLINE_")),
       );
-      Object.assign(env, { HOME: base, USERPROFILE: base });
+      Object.assign(env, {
+        HOME: base,
+        USERPROFILE: base,
+        CLINE_TELEMETRY_DISABLED: "1",
+        CLINE_NO_AUTO_UPDATE: "1",
+        CLINE_DISABLE_CLINE_PASS_NOTICE: "1",
+        NO_UPDATE_NOTIFIER: "1",
+      });
       const version = await execFileAsync(CLINE_BIN, ["--version"], { env });
       expect(version.stdout.trim()).toBe(CLINE_VERSION);
       await execFileAsync(

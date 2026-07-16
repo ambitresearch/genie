@@ -8,17 +8,18 @@ resolves from the transport, not from the harness:
 
 - **Local stdio connection.** Use `--transport stdio`. Same-machine HTTP can
   opt in with `--preview-locality local` or `GENIE_PREVIEW_LOCALITY=local`.
-  `preview` returns a `viewerUrl` and, if nothing can boot, a
-  `file://` fallback.
+  `preview` always returns a `fileUrl`; it also returns a `viewerUrl` when the
+  local viewer boots successfully.
 - **Remote HTTP connection** (the default locality for HTTP, e.g. the
   `url`+`headers` registration below with no locality override) — there is
   **no** `viewerUrl`/`file://` fallback. `preview`'s text is either
   `"Preview ready in the inline MCP App."` (only reachable if the client
   negotiated the UI extension, which Cline does not) or a
-  `"Remote preview unavailable: …"` message. A tools-only remote Cline session sees the
-  latter. Configure `GENIE_PREVIEWS_BASE_URL` server-side (inline MCP App path,
-  irrelevant to Cline) or point Cline at a local stdio server instead if you
-  need a browsable viewer URL.
+  `"Remote preview unavailable: …"` message. With a valid
+  `GENIE_PREVIEWS_BASE_URL`, Cline can receive the first message even though it
+  cannot render that inline app; without a usable previews origin it receives
+  the second. Neither outcome is browsable in Cline. Point Cline at a local
+  stdio server if you need a viewer/file URL.
 
 Skill support carries the `conjure → plan → write_files → preview` workflow;
 without it, tool descriptions are the fallback guidance. See
@@ -156,9 +157,10 @@ probed against an installed Cursor extension on 2026-07-16:
   inactive without deleting the entry.
 
 This snippet registers a **remote** HTTP endpoint, so — per the locality
-section above — `preview` will return `"Remote preview unavailable: …"` text,
-not a browsable URL, in a plain Cline session. If you want a browsable
-`viewerUrl`/`file://` result from Cline, run genie over local stdio instead:
+section above — `preview` returns either `"Preview ready in the inline MCP
+App."` or `"Remote preview unavailable: …"`, depending on the server's
+previews-origin configuration. Neither is a browsable URL in Cline. If you
+want a browsable `viewerUrl`/`fileUrl`, run genie over local stdio instead:
 
 ```json
 {
@@ -210,8 +212,9 @@ Ask for a component in chat; the Skill (or tool-description fallback) runs the
 four-verb chain. Cline is tools-only: `preview`'s `_meta.ui.resourceUri` is
 present in the tool result but Cline does not consume it, so the response
 still shows the plain-text tool output described in the locality section
-above. Over the remote HTTP registration documented here, that text is a
-`"Remote preview unavailable: …"` message, not a clickable URL — see
+above. Over the remote HTTP registration documented here, that text is either
+`"Preview ready in the inline MCP App."` or `"Remote preview unavailable: …"`;
+neither is a clickable Cline preview — see
 [Register the server](#register-the-server-clinedatasettingscline_mcp_settingsjson)
 for the local-stdio alternative if you need a browsable viewer.
 
