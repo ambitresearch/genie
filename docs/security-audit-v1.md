@@ -174,6 +174,7 @@ The final fix:
 - handles Node's `{ all: true }` lookup callback contract;
 - streams at most 1 MB plus one overflow-detection byte, cancels redirect,
   non-OK, oversized, or stalled bodies, and closes each per-hop Agent;
+- applies one deadline across DNS resolution and every redirect/fetch hop;
 - manually validates every redirect with a five-redirect limit; and
 - uses Undici 7.x, compatible with the declared Node `>=22` engine.
 
@@ -195,7 +196,7 @@ found by M6-03 re-audit`.
 Re-audit evidence after the final SSRF changes:
 
 ```text
-pnpm exec vitest run packages/server/src/tools/conjure.test.ts  # 51 passed
+pnpm exec vitest run packages/server/src/tools/conjure.test.ts  # 53 passed
 pnpm exec vitest run packages/server/src/ui/grid-resource.test.ts \
   packages/server/src/middleware/plan-guard.test.ts             # 74 passed
 pnpm --filter @genie/server typecheck                           # clean

@@ -326,6 +326,26 @@ export async function fetchWithPinnedAddress(
 
 const MAX_REF_URL_REDIRECTS = 5;
 
+async function runBeforeDeadline<T>(
+  deadlineMs: number,
+  operation: (remainingMs: number) => Promise<T>,
+): Promise<T> {
+  const remainingMs = deadlineMs - Date.now();
+  if (remainingMs <= 0) throw new Error("Reference URL fetch timed out");
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation(remainingMs),
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("Reference URL fetch timed out")), remainingMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Fetch `refUrl`, following redirects manually and re-validating every hop
  * (M6-03 follow-up — closes both blocking gaps from the security-audit
@@ -343,7 +363,9 @@ async function safeFetchFollowingRedirects(
   fetchPinnedAddress: PinnedFetchFn,
   startUrl: string,
   lookupAddresses: AddressLookup,
+  timeoutMs: number,
 ): Promise<ReferenceFetchResponse | undefined> {
+  const deadlineMs = Date.now() + timeoutMs;
   let currentUrl = startUrl;
   for (let hop = 0; hop <= MAX_REF_URL_REDIRECTS; hop++) {
     if (!isSafeRefUrl(currentUrl)) {
@@ -351,14 +373,18 @@ async function safeFetchFollowingRedirects(
       return undefined;
     }
     const hostname = new URL(currentUrl).hostname;
-    const resolved = await resolveSafeAddress(hostname, lookupAddresses);
+    const resolved = await runBeforeDeadline(deadlineMs, () =>
+      resolveSafeAddress(hostname, lookupAddresses),
+    );
     if (!resolved) {
       logStderr({ event: "conjure.ref_url.ssrf_blocked", refUrl: currentUrl, startUrl, hop });
       return undefined;
     }
-    const res = fetchImpl
-      ? await fetchImpl(currentUrl)
-      : await fetchPinnedAddress(currentUrl, resolved.address, resolved.family);
+    const res = await runBeforeDeadline(deadlineMs, (remainingMs) =>
+      fetchImpl
+        ? fetchImpl(currentUrl)
+        : fetchPinnedAddress(currentUrl, resolved.address, resolved.family, remainingMs),
+    );
 
     const status = res.status;
     if (status >= 300 && status < 400) {
@@ -441,7 +467,8 @@ export interface ConjureResult extends Record<string, unknown> {
   usage: UsageInfo;
 }
 
-/** The URL-fetch seam (AC7). Defaults to the global `fetch`; injectable for tests.
+/** Injectable URL-fetch seam for tests (AC7). When omitted, production uses the
+ * DNS-validated, address-pinned Undici path rather than global `fetch`.
  * `headers` is optional so existing test doubles that only stub `{ ok, status, text }`
  * keep compiling; the redirect-following logic treats a missing `headers` on a
  * 3xx response as "no Location to follow" and stops rather than throwing. */
@@ -463,6 +490,8 @@ export interface ConjureDeps {
   fetchPinnedAddress?: PinnedFetchFn;
   /** DNS seam for deterministic SSRF tests. Production uses `dns.lookup`. */
   lookupAddresses?: AddressLookup;
+  /** Overall DNS + redirect/fetch deadline seam. Production defaults to 30 seconds. */
+  refUrlTimeoutMs?: number;
   /** Prompt loader override (tests). Defaults to the real versioned loader (AC5). */
   loadSystemPrompt?: () => LoadedPrompt;
 }
@@ -517,6 +546,7 @@ async function fetchReference(
   fetchPinnedAddress: PinnedFetchFn,
   refUrl: string,
   lookupAddresses: AddressLookup,
+  timeoutMs: number,
 ): Promise<string | undefined> {
   try {
     // Re-validate at fetch time against the *resolved* address, pin that exact
@@ -528,6 +558,7 @@ async function fetchReference(
       fetchPinnedAddress,
       refUrl,
       lookupAddresses,
+      timeoutMs,
     );
     if (!res) return undefined;
     if (!res.ok) {
@@ -660,6 +691,7 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
   const fetchImpl = deps.fetchImpl;
   const fetchPinnedAddress = deps.fetchPinnedAddress ?? fetchWithPinnedAddress;
   const lookupAddresses = deps.lookupAddresses ?? defaultAddressLookup;
+  const refUrlTimeoutMs = deps.refUrlTimeoutMs ?? REF_URL_FETCH_TIMEOUT_MS;
   const systemPrompt = (
     deps.loadSystemPrompt ?? (() => loadPrompt(GENERATE_COMPONENT_SYSTEM_PROMPT_FILE))
   )();
@@ -675,7 +707,13 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
   const frameworkDirective = adapter.promptDirective;
 
   const referenceHtml = parsed.refUrl
-    ? await fetchReference(fetchImpl, fetchPinnedAddress, parsed.refUrl, lookupAddresses)
+    ? await fetchReference(
+        fetchImpl,
+        fetchPinnedAddress,
+        parsed.refUrl,
+        lookupAddresses,
+        refUrlTimeoutMs,
+      )
     : undefined;
 
   const { outcome, usage, attempts } = await runComponentGeneration({

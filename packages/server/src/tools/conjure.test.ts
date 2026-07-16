@@ -534,6 +534,26 @@ describe("AC7 — reference URL fetch + inline", () => {
     }
   });
 
+  it("applies the reference deadline while DNS lookup stalls", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const lookupAddresses = vi.fn(() => new Promise<never>(() => undefined));
+    const fetchPinnedAddress = vi.fn(async () => {
+      throw new Error("must not fetch before DNS resolution completes");
+    });
+
+    const outcome = await Promise.race([
+      conjure(
+        { chat, lookupAddresses, fetchPinnedAddress, refUrlTimeoutMs: 20 },
+        args({ refUrl: "https://stalled-dns.example/reference" }),
+      ).then(() => "completed"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("still-waiting"), 200)),
+    ]);
+
+    expect(outcome).toBe("completed");
+    expect(fetchPinnedAddress).not.toHaveBeenCalled();
+    expect(chat.calls).toHaveLength(1);
+  });
+
   it("cancels redirect and non-ok production bodies without waiting for EOF", async () => {
     const server = createHttpServer((request, response) => {
       const status = request.url === "/redirect" ? 302 : 500;
@@ -582,8 +602,46 @@ describe("AC7 — reference URL fetch + inline", () => {
       "https://pin-test.example/reference",
       "93.184.216.34",
       4,
+      expect.any(Number),
     );
     expect(JSON.stringify(chat.calls[0]!.messages[1]!.content)).toContain("Pinned Page");
+  });
+
+  it("shares one deadline across DNS and redirect hops", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_001)
+      .mockReturnValueOnce(1_002)
+      .mockReturnValueOnce(1_050)
+      .mockReturnValueOnce(1_060);
+    const fetchPinnedAddress = vi.fn(async (url: string) =>
+      url.endsWith("/start")
+        ? {
+            ok: false,
+            status: 302,
+            headers: { get: () => "https://example.com/destination" },
+            text: async () => "",
+          }
+        : {
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            text: async () => "destination",
+          },
+    );
+
+    await conjure(
+      {
+        chat,
+        fetchPinnedAddress,
+        lookupAddresses: publicAddressLookup,
+        refUrlTimeoutMs: 100,
+      },
+      args({ refUrl: "https://example.com/start" }),
+    );
+
+    expect(fetchPinnedAddress.mock.calls.map((call) => call[3])).toEqual([98, 40]);
   });
 
   // M6-03 follow-up regression tests (post security-audit re-review): prove the
