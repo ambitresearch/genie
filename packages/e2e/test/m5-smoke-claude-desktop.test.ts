@@ -66,7 +66,9 @@ function cleanSecretEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 
 describe("Claude Desktop guide contracts", () => {
   it("uses the planned scoped package and supplies valid-length placeholders for every required startup secret", () => {
-    const snippet = CLAUDE_DESKTOP_DOC.match(/```json\n([\s\S]*?)\n```/)?.[1];
+    const snippet = [...CLAUDE_DESKTOP_DOC.matchAll(/```json\n([\s\S]*?)\n```/g)]
+      .map((match) => match[1])
+      .find((block) => block?.includes('"@genie/server"'));
     expect(snippet).toBeDefined();
 
     const config = JSON.parse(snippet ?? "{}") as {
@@ -128,12 +130,15 @@ describe("Claude Desktop guide contracts", () => {
 
 describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", () => {
   let client: Client;
-  let genieHome: string;
-  let kitsRoot: string;
+  let genieHome = "";
+  let kitsRoot = "";
+  const tempDirs: string[] = [];
 
   beforeAll(async () => {
     genieHome = await mkdtemp(join(tmpdir(), "genie-m5-claude-desktop-home-"));
+    tempDirs.push(genieHome);
     kitsRoot = await mkdtemp(join(tmpdir(), "genie-m5-claude-desktop-kits-"));
+    tempDirs.push(kitsRoot);
     const transport = new StdioClientTransport({
       command: "node",
       args: [SERVER_CLI, "--transport", "stdio"],
@@ -157,8 +162,7 @@ describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", ()
 
   afterAll(async () => {
     await client?.close();
-    await rm(genieHome, { recursive: true, force: true });
-    await rm(kitsRoot, { recursive: true, force: true });
+    await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
   it.each([
