@@ -63,11 +63,11 @@ the snippet's command with `node` and its args with
 
 The current CLI calls `loadSecrets()` before it creates the stdio transport.
 `GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required before the server starts,
-including for `list_kits`; both must contain at least 16 characters. Use at
-least 32 random characters for the OAuth signing key, consistent with the
-OAuth runtime contract. `GENIE_LLM_BASE_URL` is also required when invoking
-generation tools such as `conjure`. Replace every placeholder before use; for
-example, generate a signing key with `openssl rand -hex 32`.
+including for `list_kits`. `GENIE_LLM_API_KEY` must contain at least 16
+characters. `OAUTH_HS256_KEY` must contain at least 32 characters to enable
+OAuth. `GENIE_LLM_BASE_URL` is also required when invoking generation tools
+such as `conjure`. Replace every placeholder before use; for example, generate
+a signing key with `openssl rand -hex 32`.
 
 Manual local-server configuration has no separate secret prompt. Treat
 `claude_desktop_config.json` as sensitive, keep it owner-readable only

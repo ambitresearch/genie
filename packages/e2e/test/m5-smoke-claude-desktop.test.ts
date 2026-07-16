@@ -25,8 +25,10 @@ const CLAUDE_DESKTOP_DOC = readFileSync(
 );
 
 const hasBuiltServer =
-  spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`])
-    .status === 0;
+  spawnSync(process.execPath, [
+    "-e",
+    `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`,
+  ]).status === 0;
 const requireBuiltServer = process.env.GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE === "1";
 
 if (requireBuiltServer && !hasBuiltServer) {
@@ -85,6 +87,8 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain(
       "GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required before the server starts",
     );
+    expect(CLAUDE_DESKTOP_DOC).toMatch(/`GENIE_LLM_API_KEY` must contain at least 16\s+characters/);
+    expect(CLAUDE_DESKTOP_DOC).toMatch(/`OAUTH_HS256_KEY` must contain at least 32 characters/);
     expect(CLAUDE_DESKTOP_DOC).not.toMatch(/read tools work without an LLM configured/i);
   });
 
