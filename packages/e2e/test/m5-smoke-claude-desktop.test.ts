@@ -117,6 +117,8 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("Ubuntu 22.04 LTS+");
     expect(CLAUDE_DESKTOP_DOC).toContain("Debian 12+");
     expect(CLAUDE_DESKTOP_DOC).toContain("~/.config/Claude/claude_desktop_config.json");
+    expect(CLAUDE_DESKTOP_DOC).toContain("M5-05 v1 bundle is macOS-only");
+    expect(CLAUDE_DESKTOP_DOC).toContain("Linux users must use the manual JSON configuration");
     expect(CLAUDE_DESKTOP_DOC).not.toContain("Linux is not officially supported");
   });
 

@@ -21,8 +21,9 @@ installs and registers the server for you, and you never hand-edit JSON.
 > tracked by [M5-05](../github/issues/M5-05-mcpb-packaging.md) and its open
 > [PR #203](https://github.com/roshangautam/genie/pull/203). No current genie
 > GitHub Release contains a `.mcpb` asset. Once a release includes a verified
-> bundle, prefer it; the JSON configuration below is the "if you prefer"
-> manual path.
+> bundle, prefer it on macOS. The M5-05 v1 bundle is macOS-only; Windows and
+> Linux users must use the manual JSON configuration below until their
+> platforms are supported. On macOS, JSON remains the "if you prefer" path.
 
 ## If you prefer: manual JSON snippet
 
