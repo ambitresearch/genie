@@ -173,9 +173,9 @@ repository secrets to untrusted fork PRs, so fork contributions need a
 maintainer-run trusted branch before this gate can pass.
 
 The `codex exec` process uses Codex's read-only sandbox and an ephemeral
-session. This keeps model-generated shell commands from writing to the
-LAN-connected runner while still allowing the registered genie MCP tools to
-complete the smoke chain.
+session. Its MCP registration exposes and auto-approves only the five tools in
+the tested chain. This lets a headless run complete without granting
+model-generated shell commands write access to the LAN-connected runner.
 
 A third leg drives the actual Codex REPL end-to-end: `codex exec` (Codex's own
 non-interactive entry point — the same binary an interactive session runs) is

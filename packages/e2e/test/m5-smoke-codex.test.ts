@@ -79,6 +79,14 @@ const CODEX_EXEC_ARGS = [
   "--skip-git-repo-check",
   "--json",
 ] as const;
+const CODEX_REPL_TOOLS = [
+  "mcp__genie__create_kit",
+  "mcp__genie__conjure",
+  "mcp__genie__plan",
+  "mcp__genie__write_files",
+  "mcp__genie__preview",
+] as const;
+const CODEX_REPL_APPROVAL_MODE = "approve";
 
 /** True if the real `codex` binary is on PATH (AC1/AC2/AC4 live checks). */
 function codexAvailable(): boolean {
@@ -124,6 +132,14 @@ describe("codex-smoke CI contract", () => {
       "--json",
     ]);
     expect(CODEX_EXEC_ARGS).not.toContain(unsafeFlag);
+    expect(CODEX_REPL_TOOLS).toEqual([
+      "mcp__genie__create_kit",
+      "mcp__genie__conjure",
+      "mcp__genie__plan",
+      "mcp__genie__write_files",
+      "mcp__genie__preview",
+    ]);
+    expect(CODEX_REPL_APPROVAL_MODE).toBe("approve");
   });
 });
 
@@ -444,7 +460,10 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
         configPath,
         config.replace(
           "[mcp_servers.genie]",
-          '[mcp_servers.genie]\nenv_vars = ["GENIE_LLM_BASE_URL", "GENIE_LLM_API_KEY"]',
+          "[mcp_servers.genie]\n" +
+            'env_vars = ["GENIE_LLM_BASE_URL", "GENIE_LLM_API_KEY"]\n' +
+            `enabled_tools = ${JSON.stringify(CODEX_REPL_TOOLS)}\n` +
+            `default_tools_approval_mode = ${JSON.stringify(CODEX_REPL_APPROVAL_MODE)}`,
         ),
       );
     }, 30_000);
@@ -463,6 +482,8 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
         "gateway credential values must not be written to CODEX_HOME/config.toml",
       ).toBe(false);
       expect(config).toContain('env_vars = ["GENIE_LLM_BASE_URL", "GENIE_LLM_API_KEY"]');
+      expect(config).toContain(`enabled_tools = ${JSON.stringify(CODEX_REPL_TOOLS)}`);
+      expect(config).toContain('default_tools_approval_mode = "approve"');
     });
 
     it(
