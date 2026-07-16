@@ -109,7 +109,7 @@ Container Registry on every release, built from the repo-root `Dockerfile`
 docker run -p 8080:8080 \
   -e GENIE_LLM_BASE_URL=https://your-llm-gateway/v1 \
   -e GENIE_LLM_API_KEY=... \
-  -e OAUTH_HS256_KEY=... \
+  -e OAUTH_HS256_KEY="$(openssl rand -hex 32)" \
   -e GENIE_OAUTH_ISSUER=http://localhost:8080 \
   ghcr.io/roshangautam/genie:latest
 curl http://localhost:8080/health

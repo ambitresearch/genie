@@ -24,18 +24,21 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { isDockerAvailable } from "./support/gitea-fixture.js";
 
 const execFileAsync = promisify(execFile);
+const maxImageSizeBytes = 200_000_000;
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "..", "..");
 const dockerfilePath = resolve(repoRoot, "Dockerfile");
 const dockerignorePath = resolve(repoRoot, ".dockerignore");
 const composePath = resolve(repoRoot, "deploy", "docker-compose.yml");
+const readmePath = resolve(repoRoot, "README.md");
 const ciPath = resolve(repoRoot, ".github", "workflows", "ci.yml");
 const releaseWorkflowPath = resolve(repoRoot, ".github", "workflows", "release-please.yml");
 
 const dockerfile = readFileSync(dockerfilePath, "utf-8");
 const dockerignore = existsSync(dockerignorePath) ? readFileSync(dockerignorePath, "utf-8") : "";
 const compose = readFileSync(composePath, "utf-8");
+const readme = readFileSync(readmePath, "utf-8");
 const ci = readFileSync(ciPath, "utf-8");
 const releaseWorkflow = readFileSync(releaseWorkflowPath, "utf-8");
 
@@ -150,6 +153,11 @@ describe("deploy/docker-compose.yml (AC6)", () => {
     );
   });
 
+  it("documents an executable local OAuth quickstart", () => {
+    expect(readme).toContain('-e OAUTH_HS256_KEY="$(openssl rand -hex 32)"');
+    expect(readme).toContain("-e GENIE_OAUTH_ISSUER=http://localhost:8080");
+  });
+
   it("does not document unsupported CLI git-store selection variables", () => {
     expect(compose).not.toMatch(/GENIE_GIT_BASE_URL/);
     expect(compose).not.toMatch(/GENIE_GIT_TOKEN/);
@@ -190,6 +198,8 @@ describe("Docker release and CI workflows", () => {
     expect(ci).toMatch(/docker\/setup-qemu-action@v3/);
     expect(ci).toMatch(/docker\/setup-buildx-action@v3/);
     expect(ci).toMatch(/docker buildx build --platform linux\/amd64,linux\/arm64/);
+    expect(ci).toMatch(/docker buildx build --platform linux\/arm64 --load/);
+    expect(ci).toMatch(/test "\$size" -lt 200000000/);
   });
 });
 
@@ -229,8 +239,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
       "--format",
       "{{.Size}}",
     ]);
-    const sizeMb = Number(stdout.trim()) / 1024 / 1024;
-    expect(sizeMb).toBeLessThan(200);
+    expect(Number(stdout.trim())).toBeLessThan(maxImageSizeBytes);
   });
 
   it("runs as UID 1000, not root (AC3)", async () => {
@@ -314,6 +323,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
         'const fs = require("node:fs")',
         'const files = fs.readdirSync("node_modules/.pnpm", { recursive: true })',
         'if (!fs.existsSync("node_modules/esbuild/LICENSE.md")) throw new Error("missing esbuild license")',
+        'if (!fs.existsSync("node_modules/ts-morph/LICENSE.@ts-morph-common")) throw new Error("missing bundled ts-morph license")',
         'if (!files.some((file) => String(file).includes("node_modules/jose/LICENSE.md"))) throw new Error("missing jose license")',
         'process.stdout.write("licenses-ok")',
       ].join(";"),
@@ -342,6 +352,46 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
       ].join("\n"),
     ]);
     expect(stdout.trim()).toBe("components/inputs/Button/Button.preview.js");
+  });
+
+  it("keeps Vue, declaration extraction, and PNG runtime paths functional", async () => {
+    const { stdout } = await execFileAsync("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "node",
+      imageTag,
+      "-e",
+      [
+        "Promise.all([",
+        '  import("./dist/framework/react.js"),',
+        '  import("./dist/framework/vue.js"),',
+        '  import("pngjs"),',
+        "]).then(async ([{ ReactAdapter }, { VueAdapter }, { PNG }]) => {",
+        "  const react = new ReactAdapter()",
+        "  const vue = new VueAdapter()",
+        "  const reactDts = await react.extractDts({",
+        '    componentName: "Button", group: "inputs",',
+        '    source: "export interface ButtonProps { label: string }; export default function Button(_: ButtonProps) { return null }",',
+        "  })",
+        "  const vuePreview = await vue.renderPreview({",
+        '    componentName: "Card", group: "layout",',
+        '    source: "<template><article>OK</article></template>",',
+        "  })",
+        "  const vueDts = await vue.extractDts({",
+        '    componentName: "Badge", group: "data",',
+        '    source: `<script setup lang="ts">export interface BadgeProps { label: string }; defineProps<BadgeProps>()</script><template><span>{{ label }}</span></template>`,',
+        "  })",
+        "  const png = PNG.sync.read(PNG.sync.write(new PNG({ width: 1, height: 1 })))",
+        '  if (!reactDts.content.includes("ButtonProps")) throw new Error("React d.ts failed")',
+        '  if (!vuePreview.content.includes("GenieComponent")) throw new Error("Vue preview failed")',
+        '  if (!vueDts.content.includes("BadgeProps")) throw new Error("Vue d.ts failed")',
+        '  if (png.width !== 1 || png.height !== 1) throw new Error("PNG round-trip failed")',
+        '  process.stdout.write("framework-runtimes-ok")',
+        "})",
+      ].join("\n"),
+    ]);
+    expect(stdout.trim()).toBe("framework-runtimes-ok");
   });
 
   it("boots with a green Docker healthcheck and responds on /health (AC4)", async () => {

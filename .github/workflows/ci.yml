@@ -508,6 +508,13 @@ jobs:
           docker buildx build --platform linux/amd64,linux/arm64 \
             --output=type=oci,dest=/tmp/genie-multiarch.tar .
 
+      - name: Assert ARM64 image size (AC2)
+        run: |
+          docker buildx build --platform linux/arm64 --load \
+            -t genie:docker-image-test-arm64 .
+          size="$(docker image inspect genie:docker-image-test-arm64 --format '{{.Size}}')"
+          test "$size" -lt 200000000
+
       - name: Upload test report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

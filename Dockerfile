@@ -43,6 +43,12 @@ COPY packages/viewer packages/viewer
 RUN pnpm --filter @genie/viewer build
 RUN pnpm --filter @genie/server build
 
+# ts-morph publishes a large CommonJS graph containing a full TypeScript
+# compiler. Bundle only the two runtime exports used by the framework adapters
+# into one minified ESM module before pruning the original graph.
+RUN node -e "const fs=require('node:fs');const entry=require.resolve('ts-morph',{paths:['/repo/packages/server']});fs.writeFileSync('/tmp/ts-morph-entry.mjs','export { Project, ts } from '+JSON.stringify(entry)+';\n')" && \
+    node -e "const {build}=require(require.resolve('esbuild',{paths:['/repo/packages/server']}));build({entryPoints:['/tmp/ts-morph-entry.mjs'],bundle:true,platform:'node',format:'esm',target:'node22',outfile:'/tmp/ts-morph-runtime.mjs',minify:true,legalComments:'inline'})"
+
 # Deploy the built server with production dependencies resolved from the frozen
 # workspace lockfile. `--legacy` is required because this workspace intentionally
 # does not use pnpm's injected-workspace-packages mode; the deployed runtime has
@@ -55,6 +61,7 @@ RUN pnpm --filter @genie/server build
 # esbuild's native per-platform binary is one of them and is required by the
 # preview bundler at runtime.
 RUN pnpm --filter @genie/server deploy --prod --legacy /out && \
+    node -e "const fs=require('node:fs');const path=require('node:path');const root='/out/node_modules/.pnpm';const dir=fs.readdirSync(root).find((name)=>name.startsWith('ts-morph@'));const commonDir=fs.readdirSync(root).find((name)=>name.startsWith('@ts-morph+common@'));if(!dir||!commonDir)throw new Error('deployed ts-morph graph not found');const packageRoot=path.join(root,dir,'node_modules/ts-morph');fs.copyFileSync('/tmp/ts-morph-runtime.mjs',path.join(packageRoot,'dist/runtime.mjs'));fs.copyFileSync(path.join(root,commonDir,'node_modules/@ts-morph/common/LICENSE'),path.join(packageRoot,'LICENSE.@ts-morph-common'));const file=path.join(packageRoot,'package.json');const manifest=JSON.parse(fs.readFileSync(file,'utf8'));manifest.type='module';manifest.main='./dist/runtime.mjs';manifest.exports={'.':'./dist/runtime.mjs'};fs.writeFileSync(file,JSON.stringify(manifest))" && \
     find /out/node_modules -type f \
       \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \
          -o -iname '*.md' -o -iname '*.markdown' \) \
@@ -65,9 +72,16 @@ RUN pnpm --filter @genie/server deploy --prod --legacy /out && \
          -o -name benchmark -o -name benchmarks -o -name example -o -name examples \) \
       -prune -exec rm -rf '{}' + && \
     rm -rf \
+      /out/node_modules/.pnpm/@ts-morph+common@* \
       /out/node_modules/.pnpm/openai@*/node_modules/openai/src \
       /out/node_modules/.pnpm/zod@*/node_modules/zod/src \
+      /out/node_modules/.pnpm/parse5@*/node_modules/parse5/dist/cjs \
       /out/node_modules/.pnpm/@modelcontextprotocol+sdk@*/node_modules/@modelcontextprotocol/sdk/dist/cjs && \
+    rm -f /out/node_modules/.pnpm/ts-morph@*/node_modules/ts-morph/dist/ts-morph.js && \
+    find /out/node_modules/.pnpm/openai@*/node_modules/openai -type f -name '*.js' -delete && \
+    find /out/node_modules/.pnpm/zod@*/node_modules/zod -type f -name '*.cjs' -delete && \
+    find /out/node_modules/.pnpm -type f \
+      \( -name '*.ts' -o -name '*.flow' -o -name '*.tsbuildinfo' \) -delete && \
     rm -f \
       /out/node_modules/.pnpm/@vue+compiler-sfc@*/node_modules/@vue/compiler-sfc/dist/compiler-sfc.esm-browser.js \
       /out/node_modules/.pnpm/pngjs@*/node_modules/pngjs/browser.js
