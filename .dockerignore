@@ -7,6 +7,16 @@
 **/.genie
 .remember
 **/.remember
+*.local
+**/*.local
+shellprivatevars
+**/shellprivatevars
+.gstack
+**/.gstack
+.goals
+**/.goals
+.hallmark
+**/.hallmark
 node_modules
 **/node_modules
 **/dist

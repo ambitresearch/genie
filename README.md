@@ -134,7 +134,7 @@ commented out by default). Published images are signed with keyless
 
 ```bash
 cosign verify ghcr.io/roshangautam/genie:latest \
-  --certificate-identity-regexp='https://github.com/roshangautam/genie/.*' \
+  --certificate-identity='https://github.com/roshangautam/genie/.github/workflows/release-please.yml@refs/heads/main' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 ```
 

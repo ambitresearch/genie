@@ -131,6 +131,16 @@ describe("Docker build context", () => {
       "**/.genie",
       ".remember",
       "**/.remember",
+      "*.local",
+      "**/*.local",
+      "shellprivatevars",
+      "**/shellprivatevars",
+      ".gstack",
+      "**/.gstack",
+      ".goals",
+      "**/.goals",
+      ".hallmark",
+      "**/.hallmark",
       "node_modules",
       "**/node_modules",
       "**/dist",
@@ -246,6 +256,13 @@ describe("Docker release and CI workflows", () => {
     expect(releaseWorkflow.slice(ghcrJobStart, dockerHubJobStart)).not.toContain("DOCKERHUB_");
     expect(releaseWorkflow.slice(dockerHubJobStart)).toContain("DOCKERHUB_USERNAME");
     expect(releaseWorkflow.slice(dockerHubJobStart)).toContain("DOCKERHUB_TOKEN");
+  });
+
+  it("pins cosign verification to the release workflow on main", () => {
+    expect(readme).toContain(
+      "--certificate-identity='https://github.com/roshangautam/genie/.github/workflows/release-please.yml@refs/heads/main'",
+    );
+    expect(readme).not.toContain("--certificate-identity-regexp");
   });
 
   it("scopes fallback cleanup to this run and removes anonymous volumes", () => {
