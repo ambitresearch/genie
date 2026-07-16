@@ -6,9 +6,10 @@
  * own external Identity Provider (Keycloak, Okta, Auth0, Authentik, etc.),
  * validating a bearer token that IdP issued rather than one genie minted
  * itself. The provider must expose OIDC discovery/JWKS, issue signed JWT
- * access tokens for the genie resource/API, and map group membership into a
- * `groups` claim. Opaque access tokens are not supported. Verification
- * checks the signature plus exact `iss`, configured `aud`, and required `exp`
+ * access tokens for the genie resource/API using the RFC 9068 `typ: at+jwt`
+ * discriminator, and map group membership into a `groups` claim. Opaque
+ * access tokens and OIDC ID tokens are not supported. Verification checks the
+ * signature plus exact `iss`, configured `aud`, required `exp`, and token type
  * before enforcing group membership.
  *
  * Configuration is opt-in via env, mirroring `resolveOAuthSigningKey`'s
@@ -41,11 +42,11 @@ export interface OidcVerifier {
   readonly audience: string;
   readonly requiredGroup: string;
   /**
-   * Verify `token`'s signature (against the provider's live JWKS), `iss`,
-   * `aud`, and expiry, THEN enforce group membership (AC6). Returns the
-   * decoded claims on success. Throws on any failure — signature failure,
-   * `iss`/`aud` mismatch, expiry, or {@link GroupAccessDeniedError} (403) for
-   * a valid-but-ungrouped token.
+   * Verify `token`'s signature (against the provider's live JWKS), `typ:
+   * at+jwt`, `iss`, `aud`, and expiry, THEN enforce group membership (AC6).
+   * Returns the decoded claims on success. Throws on any failure — signature
+   * failure, token-type/`iss`/`aud` mismatch, expiry, or
+   * {@link GroupAccessDeniedError} (403) for a valid-but-ungrouped token.
    */
   verify(token: string): Promise<OidcClaims>;
 }
@@ -112,6 +113,7 @@ export async function createOidcVerifier(config: OidcVerifierConfig): Promise<Oi
       const { payload } = await jwtVerify(token, jwks, {
         issuer,
         audience: config.audience,
+        typ: "at+jwt",
         requiredClaims: ["exp"],
       });
       const claims = payload as OidcClaims;

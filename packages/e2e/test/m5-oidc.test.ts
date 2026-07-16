@@ -85,41 +85,83 @@ function pkcePair(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
-function waitForAuthorizationCode(callbackPort: number, timeoutMs = 20_000): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    let settled = false;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const catcher = createNodeHttpServer((req, res) => {
-      const url = new URL(req.url ?? "/", `http://127.0.0.1:${callbackPort}`);
-      res.writeHead(200, { "content-type": "text/plain" });
-      res.end("ok");
-      const code = url.searchParams.get("code");
-      if (code) settle(undefined, code);
-      else settle(new Error(`callback missing code: ${url.search}`));
-    });
+interface AuthorizationCodeCatcher {
+  promise: Promise<string>;
+  cancel: () => Promise<void>;
+}
 
-    const settle = (error?: Error, code?: string): void => {
-      if (settled) return;
-      settled = true;
-      if (timeout !== undefined) clearTimeout(timeout);
-      const finish = (closeError?: Error): void => {
-        if (error !== undefined) reject(error);
-        else if (closeError !== undefined) reject(closeError);
-        else if (code !== undefined) resolve(code);
-        else reject(new Error("OAuth callback completed without an authorization code"));
-      };
-      if (catcher.listening) catcher.close(finish);
-      else finish();
-    };
-
-    catcher.once("error", settle);
-    catcher.listen(callbackPort, "127.0.0.1", () => {
-      timeout = setTimeout(
-        () => settle(new Error("timed out waiting for OAuth callback")),
-        timeoutMs,
-      );
-    });
+async function startAuthorizationCodeCatcher(
+  callbackPort: number,
+  timeoutMs = 20_000,
+): Promise<AuthorizationCodeCatcher> {
+  let resolveCode: (code: string) => void;
+  let rejectCode: (error: Error) => void;
+  const promise = new Promise<string>((resolve, reject) => {
+    resolveCode = resolve;
+    rejectCode = reject;
   });
+  // Browser failures can cancel the catcher before runAuthCodeFlow awaits it.
+  void promise.catch(() => undefined);
+
+  let settled = false;
+  const catcher = createNodeHttpServer((req, res) => {
+    const url = new URL(req.url ?? "/", `http://127.0.0.1:${callbackPort}`);
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+    const code = url.searchParams.get("code");
+    if (code) void settle(undefined, code);
+    else void settle(new Error(`callback missing code: ${url.search}`));
+  });
+
+  const close = (): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      catcher.close((error) => (error ? reject(error) : resolve()));
+    });
+
+  const settle = async (error?: Error, code?: string): Promise<void> => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    try {
+      await close();
+    } catch (closeError) {
+      if (error === undefined) {
+        error = closeError instanceof Error ? closeError : new Error(String(closeError));
+      }
+    }
+    if (error !== undefined) rejectCode(error);
+    else if (code !== undefined) resolveCode(code);
+    else rejectCode(new Error("OAuth callback completed without an authorization code"));
+  };
+
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error): void => reject(error);
+    catcher.once("error", onError);
+    catcher.listen(callbackPort, "127.0.0.1", () => {
+      catcher.off("error", onError);
+      resolve();
+    });
+  }).catch((error: unknown) => {
+    const listenError = error instanceof Error ? error : new Error(String(error));
+    rejectCode(listenError);
+    throw listenError;
+  });
+
+  catcher.once("error", (error) => {
+    void settle(error);
+  });
+  const timeout = setTimeout(
+    () => void settle(new Error("timed out waiting for OAuth callback")),
+    timeoutMs,
+  );
+
+  return {
+    promise,
+    cancel: async () => {
+      await settle(new Error("OAuth callback catcher cancelled"));
+      await promise.catch(() => undefined);
+    },
+  };
 }
 
 async function unusedPort(): Promise<number> {
@@ -133,9 +175,8 @@ async function unusedPort(): Promise<number> {
 describe("OIDC callback catcher", () => {
   it("releases its listener when the callback times out", async () => {
     const port = await unusedPort();
-    await expect(waitForAuthorizationCode(port, 10)).rejects.toThrow(
-      "timed out waiting for OAuth callback",
-    );
+    const catcher = await startAuthorizationCodeCatcher(port, 10);
+    await expect(catcher.promise).rejects.toThrow("timed out waiting for OAuth callback");
 
     const probe = createNodeHttpServer();
     await new Promise<void>((resolve, reject) => {
@@ -151,12 +192,25 @@ describe("OIDC callback catcher", () => {
     const { port } = occupied.address() as AddressInfo;
 
     try {
-      await expect(waitForAuthorizationCode(port, 100)).rejects.toMatchObject({
+      await expect(startAuthorizationCodeCatcher(port, 100)).rejects.toMatchObject({
         code: "EADDRINUSE",
       });
     } finally {
       await new Promise<void>((resolve) => occupied.close(() => resolve()));
     }
+  });
+
+  it("releases its listener when explicitly cancelled", async () => {
+    const port = await unusedPort();
+    const catcher = await startAuthorizationCodeCatcher(port);
+    await catcher.cancel();
+
+    const probe = createNodeHttpServer();
+    await new Promise<void>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(port, "127.0.0.1", resolve);
+    });
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
   });
 });
 
@@ -164,6 +218,16 @@ interface AccessTokenClaims {
   aud?: unknown;
   groups?: unknown;
   sub?: unknown;
+}
+
+interface AccessTokenHeader {
+  typ?: unknown;
+}
+
+function decodeAccessTokenHeader(token: string): AccessTokenHeader {
+  const [header] = token.split(".");
+  if (header === undefined) throw new Error("OIDC fixture JWT is missing its header segment");
+  return JSON.parse(Buffer.from(header, "base64url").toString("utf8")) as AccessTokenHeader;
 }
 
 function decodeAccessTokenClaims(token: string): AccessTokenClaims {
@@ -212,7 +276,9 @@ async function runAuthCodeFlow(
   callbackPort: number,
 ): Promise<string> {
   const page = await browser.newPage();
+  let codeCatcher: AuthorizationCodeCatcher | undefined;
   try {
+    codeCatcher = await startAuthorizationCodeCatcher(callbackPort);
     const authorizeUrl = new URL(`${oidc.issuer}/auth`);
     authorizeUrl.searchParams.set("client_id", OIDC_CLIENT_ID);
     authorizeUrl.searchParams.set("response_type", "code");
@@ -223,11 +289,8 @@ async function runAuthCodeFlow(
     authorizeUrl.searchParams.set("resource", oidc.resource);
     authorizeUrl.searchParams.set("state", "genie-e2e-state");
 
-    // Race the navigation (which ultimately 302s to our own callback catcher
-    // and hangs there, since that tiny server never responds) against the
-    // callback catcher's own promise, resolved below via a shared listener.
-    const codePromise = waitForAuthorizationCode(callbackPort);
-
+    // The catcher is started before navigation and explicitly cancelled in
+    // `finally`, so any browser failure releases the callback port immediately.
     await page.goto(authorizeUrl.toString());
     await page.fill('input[name="username"]', user.username);
     await page.fill('input[name="password"]', user.password);
@@ -236,8 +299,9 @@ async function runAuthCodeFlow(
       page.click('button[type="submit"]'),
     ]);
 
-    return await codePromise;
+    return await codeCatcher.promise;
   } finally {
+    await codeCatcher?.cancel();
     await page.close();
   }
 }
@@ -246,7 +310,7 @@ async function exchangeCodeForToken(
   oidc: OidcFixture,
   code: string,
   verifier: string,
-): Promise<string> {
+): Promise<{ accessToken: string; idToken: string }> {
   const res = await fetch(`${oidc.issuer}/token`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -262,22 +326,22 @@ async function exchangeCodeForToken(
   if (!res.ok) {
     throw new Error(`token exchange failed: ${res.status} ${await res.text()}`);
   }
-  const body = (await res.json()) as { access_token: string };
-  return body.access_token;
+  const body = (await res.json()) as { access_token: string; id_token: string };
+  return { accessToken: body.access_token, idToken: body.id_token };
 }
 
 describe.skipIf(!dockerAvailable)("M5-04 — OIDC provider integration (DRO-276)", () => {
   const suiteStartedAt = Date.now();
-  const CALLBACK_PORT = 4180;
-
   let oidc: OidcFixture;
   let browser: Browser;
+  let callbackPort: number;
   let genieBaseUrl: string;
   let closeGenie: () => Promise<void>;
   let testRoot: string;
 
   beforeAll(async () => {
-    oidc = await startOidcProvider(`http://127.0.0.1:${CALLBACK_PORT}/callback`);
+    callbackPort = await unusedPort();
+    oidc = await startOidcProvider(`http://127.0.0.1:${callbackPort}/callback`);
     browser = await chromium.launch();
     testRoot = await mkdtemp(join(tmpdir(), "genie-oidc-e2e-"));
 
@@ -317,10 +381,11 @@ describe.skipIf(!dockerAvailable)("M5-04 — OIDC provider integration (DRO-276)
       oidc,
       OIDC_TEST_USERS.authorized,
       challenge,
-      CALLBACK_PORT,
+      callbackPort,
     );
-    const accessToken = await exchangeCodeForToken(oidc, code, verifier);
+    const { accessToken, idToken } = await exchangeCodeForToken(oidc, code, verifier);
     expect(accessToken).toBeTruthy();
+    expect(decodeAccessTokenHeader(accessToken)).toMatchObject({ typ: "at+jwt" });
     const claims = decodeAccessTokenClaims(accessToken);
     expect(claims).toMatchObject({ sub: OIDC_TEST_USERS.authorized.username, aud: OIDC_CLIENT_ID });
     expect(claims.groups).toEqual(expect.arrayContaining([OIDC_REQUIRED_GROUP]));
@@ -374,6 +439,26 @@ describe.skipIf(!dockerAvailable)("M5-04 — OIDC provider integration (DRO-276)
     const textResult = rpc.result?.content?.find((part) => part.type === "text")?.text;
     expect(textResult).toBeDefined();
     expect(JSON.parse(textResult ?? "null")).toEqual([]);
+
+    const idTokenRes = await fetch(`${genieBaseUrl}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "genie-e2e-oidc-id-token", version: "0.0.0" },
+        },
+      }),
+    });
+    expect(idTokenRes.status).toBe(401);
   }, 30_000);
 
   it("AC6 — a real PKCE auth-code flow for a NON-genie-users user is rejected with HTTP 403", async () => {
@@ -383,9 +468,9 @@ describe.skipIf(!dockerAvailable)("M5-04 — OIDC provider integration (DRO-276)
       oidc,
       OIDC_TEST_USERS.unauthorized,
       challenge,
-      CALLBACK_PORT,
+      callbackPort,
     );
-    const accessToken = await exchangeCodeForToken(oidc, code, verifier);
+    const { accessToken } = await exchangeCodeForToken(oidc, code, verifier);
     expect(accessToken).toBeTruthy();
     const claims = decodeAccessTokenClaims(accessToken);
     expect(claims).toMatchObject({

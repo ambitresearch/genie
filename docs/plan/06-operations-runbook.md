@@ -1761,17 +1761,18 @@ self-issues bearer JWTs for shared-install harnesses (`claude mcp add`,
 `codex mcp login`). **Separately**, genie can also act as an OIDC *relying
 party* against an adopter's own external Identity Provider, such as Keycloak,
 Okta, Auth0, or Authentik. The provider must expose OIDC discovery/JWKS, issue
-signed JWT access tokens for the genie resource/API, and map membership into a
-`groups` claim. Opaque access tokens and providers without that claim
-mapping are not supported. This is the path an operator running genie behind a
-corporate IdP uses instead of (or alongside) the self-issued OAuth server.
+signed RFC 9068 JWT access tokens for the genie resource/API with the `typ:
+at+jwt` discriminator, and map membership into a `groups` claim. Opaque access
+tokens, OIDC ID tokens, and providers without that claim mapping are not
+supported. This is the path an operator running genie behind a corporate IdP
+uses instead of (or alongside) the self-issued OAuth server.
 
 **How it works** (`packages/server/src/auth/oidc/`):
 
 - `verifier.ts` — resolves the provider's `jwks_uri` via OIDC Discovery
   (`${issuer}/.well-known/openid-configuration`), verifies incoming JWT access
-  tokens' signature/`iss`/`aud`/expiry against the live JWKS (`jose`'s
-  `createRemoteJWKSet`, cached and auto-refreshed on unknown `kid`).
+  tokens' `typ: at+jwt`/signature/`iss`/`aud`/expiry against the live JWKS
+  (`jose`'s `createRemoteJWKSet`, cached and auto-refreshed on unknown `kid`).
 - `group-policy.ts` — after signature verification succeeds, enforces that
   the token's `groups` claim contains a required group (default
   `genie-users`). A validly-signed token that fails this check gets HTTP 403

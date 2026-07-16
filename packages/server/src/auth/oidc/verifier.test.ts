@@ -45,7 +45,7 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
   let publicJwk: Record<string, unknown>;
   let signToken: (
     claims: Record<string, unknown>,
-    options?: { issuer?: string; audience?: string; omitExpiration?: boolean },
+    options?: { issuer?: string; audience?: string; omitExpiration?: boolean; typ?: string },
   ) => Promise<string>;
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
@@ -55,7 +55,7 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
 
     signToken = (claims, options = {}) => {
       const jwt = new SignJWT(claims)
-        .setProtectedHeader({ alg: "RS256", kid: "test-key-1" })
+        .setProtectedHeader({ alg: "RS256", kid: "test-key-1", typ: options.typ ?? "at+jwt" })
         .setIssuedAt()
         .setIssuer(options.issuer ?? ISSUER)
         .setAudience(options.audience ?? AUDIENCE);
@@ -212,7 +212,7 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
       sub: "alice",
       groups: ["genie-users"],
     })
-      .setProtectedHeader({ alg: "RS256", kid: "test-key-1" })
+      .setProtectedHeader({ alg: "RS256", kid: "test-key-1", typ: "at+jwt" })
       .setIssuedAt()
       .setIssuer(ISSUER)
       .setAudience(AUDIENCE)
@@ -230,6 +230,13 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     );
 
     await expect(verifier.verify(nonExpiringToken)).rejects.toThrow();
+  });
+
+  it("rejects a correctly signed OIDC ID token used as a bearer access token", async () => {
+    const verifier = await createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE });
+    const idToken = await signToken({ sub: "alice", groups: ["genie-users"] }, { typ: "JWT" });
+
+    await expect(verifier.verify(idToken)).rejects.toThrow();
   });
 
   it("rejects an expired token signed by the correct key", async () => {
@@ -254,7 +261,7 @@ describe("createOidcVerifier (real RS256 JWT + JWKS round-trip, no network)", ()
     });
     const verifier = await createOidcVerifier({ issuer: ISSUER, audience: AUDIENCE });
     const expired = await new SignJWT({ sub: "alice", groups: ["genie-users"] })
-      .setProtectedHeader({ alg: "RS256", kid })
+      .setProtectedHeader({ alg: "RS256", kid, typ: "at+jwt" })
       .setIssuedAt(Math.floor(Date.now() / 1000) - 3600)
       .setIssuer(ISSUER)
       .setAudience(AUDIENCE)
