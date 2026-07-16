@@ -107,6 +107,10 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("Debian 12+");
     expect(CLAUDE_DESKTOP_DOC).not.toContain("Linux is not officially supported");
   });
+
+  it("documents the exact macOS Claude Desktop MCP log glob", () => {
+    expect(CLAUDE_DESKTOP_DOC).toContain("~/Library/Logs/Claude/mcp*.log");
+  });
 });
 
 describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", () => {
