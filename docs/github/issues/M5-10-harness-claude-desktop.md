@@ -23,7 +23,9 @@ Ship the Claude Desktop config snippet for
       transport via `npx -y @genie/server`). The original bare `genie` name
       is occupied by an unrelated npm package; M5-06 owns publishing the
       scoped package.
-- [ ] AC2 — Mentions Linux is not officially supported by Claude Desktop.
+- [ ] AC2 — Documents current Linux beta support: Ubuntu 22.04 LTS+ or
+      Debian 12+ on x64/arm64. This supersedes the original non-support
+      wording after Anthropic shipped its official Linux beta.
 - [ ] AC3 — Documents `~/Library/Logs/Claude/mcp*.log` for debugging.
 - [ ] AC4 — Documents the `mcp-remote` bridge pattern for users who want to
       reach a remote server from Desktop.
@@ -39,7 +41,7 @@ Ship the Claude Desktop config snippet for
 
 ## Out of Scope
 
-- Windows-specific smoke (defer to v2; v1 is macOS-tested).
+- Windows- and Linux-specific smoke (defer to v2; AC6 is macOS-tested).
 
 ## Dependencies
 

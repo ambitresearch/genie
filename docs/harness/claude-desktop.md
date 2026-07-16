@@ -5,10 +5,11 @@ file and, unlike Claude Code, has no notion of a project-local `.mcp.json`.
 Everything below is specific to Claude Desktop; see
 [claude-code.md](./claude-code.md) for the Claude Code / claude.ai variants.
 
-**Platform support:** Claude Desktop ships for **macOS and Windows only**.
-**Linux is not officially supported** by Anthropic's Claude Desktop app —
-if you're on Linux, use [Claude Code](./claude-code.md) or a browser-based
-harness instead.
+**Platform support:** Claude Desktop is available on macOS, Windows, and as a
+**Linux beta**. Anthropic currently supports Ubuntu 22.04 LTS+ and Debian 12+
+on x64 or arm64. See the current
+[install guide](https://support.claude.com/en/articles/10065433-installing-claude-desktop)
+for platform requirements and Linux limitations.
 
 ## Recommended: install the `.mcpb` bundle
 

@@ -27,6 +27,14 @@ const CLAUDE_DESKTOP_DOC = readFileSync(
 const hasBuiltServer =
   spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`])
     .status === 0;
+const requireBuiltServer = process.env.GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE === "1";
+
+if (requireBuiltServer && !hasBuiltServer) {
+  throw new Error(
+    "GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE=1 but packages/server/dist/cli.js is missing. " +
+      "Build @genie/server before running the Claude Desktop smoke suite.",
+  );
+}
 
 const hasLlmEnv = Boolean(
   process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim(),
@@ -92,19 +100,29 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toMatch(/does not\s+currently include the Agent Skill/);
     expect(CLAUDE_DESKTOP_DOC).not.toContain("bundles it automatically");
   });
+
+  it("documents current Linux beta support", () => {
+    expect(CLAUDE_DESKTOP_DOC).toContain("Linux beta");
+    expect(CLAUDE_DESKTOP_DOC).toContain("Ubuntu 22.04 LTS+");
+    expect(CLAUDE_DESKTOP_DOC).toContain("Debian 12+");
+    expect(CLAUDE_DESKTOP_DOC).not.toContain("Linux is not officially supported");
+  });
 });
 
 describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", () => {
   let client: Client;
+  let genieHome: string;
   let kitsRoot: string;
 
   beforeAll(async () => {
+    genieHome = await mkdtemp(join(tmpdir(), "genie-m5-claude-desktop-home-"));
     kitsRoot = await mkdtemp(join(tmpdir(), "genie-m5-claude-desktop-kits-"));
     const transport = new StdioClientTransport({
       command: "node",
       args: [SERVER_CLI, "--transport", "stdio"],
       env: {
         ...(process.env as Record<string, string>),
+        GENIE_HOME: genieHome,
         GENIE_KITS_ROOT: kitsRoot,
         // The current CLI validates both secrets before creating stdio.
         OAUTH_HS256_KEY: "claude-desktop-smoke-test-not-a-real-secret",
@@ -122,6 +140,7 @@ describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", ()
 
   afterAll(async () => {
     await client?.close();
+    await rm(genieHome, { recursive: true, force: true });
     await rm(kitsRoot, { recursive: true, force: true });
   });
 

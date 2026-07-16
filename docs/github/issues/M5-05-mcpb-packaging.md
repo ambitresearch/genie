@@ -36,8 +36,7 @@ attached to every GitHub Release.
   (`GENIE_LLM_API_KEY`, etc.).
 
 ## Out of Scope
-- Windows / Linux Claude Desktop (Linux not supported by Claude Desktop
-  per research §4).
+- Windows-specific smoke (defer to v2; v1 is macOS-tested).
 
 ## Dependencies
 - Blocks: M5-10 (Claude Desktop smoke).
