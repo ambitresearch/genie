@@ -150,7 +150,7 @@ grid today.
 ## Smoke-testing a genie/Codex CLI registration
 
 `packages/e2e/test/m5-smoke-codex.test.ts` is the automated check for this
-document. It drives two things against the REAL `codex` binary and genie's
+document. It drives three things against the REAL `codex` binary and genie's
 real built server, not a stand-in for either:
 
 1. The canonical TOML snippets above, fed through `codex mcp add`/`codex mcp
@@ -161,14 +161,14 @@ real built server, not a stand-in for either:
    real stdio child process launched exactly the way Codex's `command`-keyed
    `mcp_servers` entry launches genie.
 
-CI runs all three legs for every same-repository PR and push (`codex-smoke` job). It
-maps a dedicated public smoke-endpoint secret pair into
-`GENIE_LLM_BASE_URL`/`GENIE_LLM_API_KEY` and sets `GENIE_REQUIRE_LLM=1`, so
-`conjure` must run for real. The gateway times out from GitHub-hosted Actions,
-so this job uses the repository's network-capable self-hosted runner. Local
-runs still skip the paid endpoint cases visibly when that pair is absent.
-GitHub does not expose repository secrets to untrusted fork PRs, so fork
-contributions need a maintainer-run trusted branch before this gate can pass.
+CI runs all three legs for every same-repository PR and push (`codex-smoke`
+job). It sets `GENIE_REQUIRE_LLM=1`, so `conjure` must run for real. The
+configured gateway is private-LAN-only, so this job uses the dedicated
+`self-hosted, Linux, X64, genie` runner and the same `GENIE_LLM_*` secret pair
+as the proven M2 canary. Local runs still skip the paid endpoint cases visibly
+when that pair is absent. GitHub does not expose repository secrets to
+untrusted fork PRs, so fork contributions need a maintainer-run trusted branch
+before this gate can pass.
 
 A third leg drives the actual Codex REPL end-to-end: `codex exec` (Codex's own
 non-interactive entry point — the same binary an interactive session runs) is

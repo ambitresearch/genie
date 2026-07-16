@@ -92,14 +92,14 @@ describe("codex-smoke CI contract", () => {
     // GitHub withholds Actions secrets from untrusted forks. Do not turn that
     // missing-credential state into a required red job or expose secrets via
     // pull_request_target; maintainers must rerun fork changes on a trusted branch.
-    expect(job).toContain("runs-on: [self-hosted, Linux, X64, azure-docker]");
-    expect(job).toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}");
-    expect(job).toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}");
+    expect(job).toContain("runs-on: [self-hosted, Linux, X64, genie]");
+    expect(job).toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}");
+    expect(job).toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}");
     expect(job).toContain('GENIE_REQUIRE_LLM: "1"');
     expect(job).toContain("GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}");
     expect(job).toContain("npm install -g @openai/codex@0.144.5");
-    expect(job).not.toContain("GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}");
-    expect(job).not.toContain("GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}");
+    expect(job).not.toContain("GENIE_CODEX_SMOKE_LLM_BASE_URL");
+    expect(job).not.toContain("GENIE_CODEX_SMOKE_LLM_API_KEY");
   });
 });
 
@@ -200,7 +200,7 @@ describe.skipIf(!hasCodex)("AC1/AC2/AC4 — codex mcp accepts the canonical geni
 // CLIENT transport (the harness side of the same wire protocol Codex speaks).
 
 const hasLlmEnv = Boolean(process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim());
-const smokeModel = process.env.GENIE_SMOKE_LLM_MODEL ?? "gpt-5.6-sol";
+const smokeModel = process.env.GENIE_SMOKE_LLM_MODEL?.trim() || "gpt-5.6-sol";
 
 if (!hasLlmEnv) {
   console.info(

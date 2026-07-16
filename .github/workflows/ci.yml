@@ -391,7 +391,7 @@ jobs:
           retention-days: 7
 
   # ── Codex CLI harness smoke (M5-11 / DRO-283) ────────────────────────────────
-  # `packages/e2e/test/m5-smoke-codex.test.ts` — two independent live checks:
+  # `packages/e2e/test/m5-smoke-codex.test.ts` — three independent live checks:
   #   (1) the real `codex` binary parses docs/harness/codex.md's canonical
   #       TOML snippet exactly as documented (no `type` key; transport
   #       inferred from `url` vs `command`; `bearer_token_env_var`;
@@ -402,15 +402,13 @@ jobs:
   #   (3) a real `codex exec` turn drives the ordered tool chain and records
   #       the JSONL transcript as evidence.
   # The config-CLI and non-generation stdio checks are free. The `conjure` and
-  # real `codex exec` checks are a required live-endpoint gate here. Dedicated
-  # smoke secrets keep this job independent from the private-LAN GENIE_LLM_*
-  # pair used by the M2 main-branch canary above. The configured
-  # gateway times out from GitHub-hosted runner IPs, so this live leg uses the
-  # repository's network-capable self-hosted runner.
+  # real `codex exec` checks are a required live-endpoint gate here. The
+  # configured gateway is private-LAN-only, so this job uses the same dedicated
+  # `genie` runner and GENIE_LLM_* secrets as the proven M2 canary above.
   codex-smoke:
     name: codex CLI harness smoke (M5-11)
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, X64, azure-docker]
+    runs-on: [self-hosted, Linux, X64, genie]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -445,8 +443,8 @@ jobs:
         env:
           VITEST_JUNIT: "1"
           GENIE_REQUIRE_LLM: "1"
-          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}
-          GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
           GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}
         run: pnpm --filter @genie/e2e test:e2e:codex
 
