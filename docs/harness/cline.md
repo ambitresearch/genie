@@ -147,6 +147,9 @@ probed against an installed Cursor extension on 2026-07-16:
   nothing. Limit this list to read-only, side-effect-free verbs — `conjure`,
   `refine`, and `write_files` mutate project state and should stay outside
   `autoApprove` so Cline still asks for confirmation.
+  This per-tool list is consumed by the Cline IDE extension. Cline CLI 3.0.42
+  currently has only a run-level `--auto-approve` switch; it preserves this
+  field on disk but does not enforce selective per-server approval.
 - `disabled: false` — Cline's toggle to keep the server registered but
   inactive without deleting the entry.
 

@@ -68,6 +68,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -85,6 +86,7 @@ import { createStreamableHttpRequestHandler } from "../../server/src/transport.j
 import { bootViewer } from "../../viewer/src/index.js";
 
 const execFileAsync = promisify(execFile);
+const HERE = dirname(fileURLToPath(import.meta.url));
 const CLINE_VERSION = "3.0.42";
 const CLINE_PLATFORM = process.platform === "win32" ? "windows" : process.platform;
 const requireFromHere = createRequire(import.meta.url);
@@ -96,6 +98,26 @@ const CLINE_BIN = join(
   "bin",
   process.platform === "win32" ? "cline.exe" : "cline",
 );
+const CLINE_DOC = join(HERE, "../../../docs/harness/cline.md");
+const READ_ONLY_AUTO_APPROVE = [
+  "mcp__genie__list_components",
+  "mcp__genie__preview",
+  "mcp__genie__list_files",
+];
+
+async function documentedClineConfig(options: {
+  url: string;
+  token: string;
+}): Promise<Record<string, unknown>> {
+  const markdown = await readFile(CLINE_DOC, "utf8");
+  const section = markdown.match(/## Register the server[^]*?```json\n([^]*?)\n```/)?.[1];
+  if (!section) throw new Error("docs/harness/cline.md has no registration JSON block");
+  return JSON.parse(
+    section
+      .replace("https://genie.<operator-domain>/mcp", options.url)
+      .replace("<paste-token-here>", options.token),
+  ) as Record<string, unknown>;
+}
 
 function createSourceViewerBooter(): { booter: ViewerBooter; closeAll: () => Promise<void> } {
   const closeViewers = new Set<() => Promise<void>>();
@@ -455,6 +477,35 @@ function parseClineJson(stdout: string): ClineJsonEvent[] {
     .map((line) => JSON.parse(line) as ClineJsonEvent);
 }
 
+it("keeps the canonical extension auto-approval list aligned with registered read tools", async () => {
+  const config = await documentedClineConfig({
+    url: "https://example.invalid/mcp",
+    token: "genie_test_token",
+  });
+  const autoApprove = (config as { mcpServers?: { genie?: { autoApprove?: string[] } } }).mcpServers
+    ?.genie?.autoApprove;
+
+  const server = createServer();
+  const client = new Client({ name: "cline-config-contract", version: "0" });
+  const [clientTransport, serverTransport] =
+    await import("@modelcontextprotocol/sdk/inMemory.js").then(({ InMemoryTransport }) =>
+      InMemoryTransport.createLinkedPair(),
+    );
+  try {
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { tools } = await client.listTools();
+    const registeredNames = new Set(tools.map((tool) => tool.name));
+
+    expect(autoApprove).toEqual(READ_ONLY_AUTO_APPROVE);
+    expect(autoApprove?.every((name) => registeredNames.has(name))).toBe(true);
+    expect(autoApprove).not.toContain("mcp__genie__conjure");
+    expect(autoApprove).not.toContain("mcp__genie__write_files");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 describe("M5-14 Cline harness smoke test — real CLI", () => {
   it("drives the four-verb chain through pinned Cline and surfaces preview text", async () => {
     const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
@@ -632,6 +683,12 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
         ],
         { env },
       );
+      const settingsPath = join(clineConfig, "cline_mcp_settings.json");
+      const canonicalConfig = await documentedClineConfig({
+        url: `http://127.0.0.1:${mcpPort}/mcp`,
+        token,
+      });
+      await writeFile(settingsPath, `${JSON.stringify(canonicalConfig, null, 2)}\n`);
 
       const result = await execFileAsync(
         CLINE_BIN,
@@ -672,17 +729,24 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
         text: expect.stringContaining("Remote preview unavailable"),
       });
 
-      const settingsPath = join(clineConfig, "cline_mcp_settings.json");
       const written = JSON.parse(await readFile(settingsPath, "utf8")) as {
         mcpServers?: Record<
           string,
-          { transport?: { type?: string; url?: string; headers?: Record<string, string> } }
+          {
+            transport?: { type?: string; url?: string; headers?: Record<string, string> };
+            disabled?: boolean;
+            autoApprove?: string[];
+          }
         >;
       };
-      expect(written.mcpServers?.["genie"]?.transport).toMatchObject({
-        type: "streamableHttp",
-        url: `http://127.0.0.1:${mcpPort}/mcp`,
-        headers: { Authorization: `Bearer ${token}` },
+      expect(written.mcpServers?.["genie"]).toEqual({
+        transport: {
+          type: "streamableHttp",
+          url: `http://127.0.0.1:${mcpPort}/mcp`,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+        disabled: false,
+        autoApprove: READ_ONLY_AUTO_APPROVE,
       });
     } finally {
       if (previousHome === undefined) delete process.env["GENIE_HOME"];

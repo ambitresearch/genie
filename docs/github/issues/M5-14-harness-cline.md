@@ -51,8 +51,7 @@ asserts the four-verb chain works and the `ui://` resource degrades to text.
 **Follow the full SDLC in [`AGENTS.md`](../../../AGENTS.md)** (repo root): orient →
 plan-on-issue → TDD (failing test first) → test against the local live service →
 adversarial self-review → open PR → peer-AI review loop (iterate until zero open comments
-
-- explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
+and explicit approval) → merge → monitor CI → follow-up PR if CI breaks, else close.
 
 Do not merge with open review comments. Do not leave `main` red. The issue closes only
 when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
