@@ -137,11 +137,29 @@ async function main(): Promise<void> {
   const requireBearerAuth = resolveRequireBearerAuth(args.requireBearerAuth);
   const createConfiguredServer = () => createServer({ transportKind, previewLocality });
   const server = createConfiguredServer();
+
+  // Test-only hook (M5-13 / DRO-285 AC4): when set, register N additional
+  // no-op tools on the SAME server instance this CLI starts over its real
+  // transport, so the harness smoke suites can probe `tools/list` over the
+  // exact transport a harness config launches — not an in-memory stand-in.
+  // Never set in production; intentionally undocumented outside test code.
+  const extraToolCount = Number(process.env.GENIE_TEST_EXTRA_TOOLS ?? "0");
+  if (Number.isFinite(extraToolCount) && extraToolCount > 0) {
+    for (let i = 0; i < extraToolCount; i++) {
+      server.registerTool(
+        `dummy_tool_${i}`,
+        { title: `Dummy ${i}`, description: "Harness smoke-test filler tool.", inputSchema: {} },
+        () => ({ content: [{ type: "text", text: "dummy" }] }),
+      );
+    }
+  }
   await startTransport(server, {
     kind: transportKind,
     port: args.port,
     host,
-    ...(transportKind === "http" ? { serverFactory: createConfiguredServer, requireBearerAuth } : {}),
+    ...(transportKind === "http"
+      ? { serverFactory: createConfiguredServer, requireBearerAuth }
+      : {}),
   });
 }
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.0](https://github.com/roshangautam/genie/compare/server-v1.1.0...server-v1.2.0) (2026-07-14)
+
+
+### Features
+
+* **server:** add chat-invocation preview workflow ([#178](https://github.com/roshangautam/genie/issues/178)) ([268f740](https://github.com/roshangautam/genie/commit/268f740dd75ffe7bbef07f1c168956b5e132ecc7))
+* **server:** OAuth 2.0 + Dynamic Client Registration (DRO-273/M5-01) ([#187](https://github.com/roshangautam/genie/issues/187)) ([dfe632b](https://github.com/roshangautam/genie/commit/dfe632b9d3f3d9bde28f3a0539e41fe438904c36))
+* **server:** secure env and mounted-file secret handling (DRO-275) ([#185](https://github.com/roshangautam/genie/issues/185)) ([c85ea1a](https://github.com/roshangautam/genie/commit/c85ea1a46c6a51253fefbf74bf764ef04d028035))
+* **server:** static Bearer token fallback (M5-02, DRO-274) ([#184](https://github.com/roshangautam/genie/issues/184)) ([336deee](https://github.com/roshangautam/genie/commit/336deee8b481901d7ed4584a35c34318e3b6610f))
+
+
+### Bug Fixes
+
+* **server:** render previews in Codex Desktop canvas ([#180](https://github.com/roshangautam/genie/issues/180)) ([#181](https://github.com/roshangautam/genie/issues/181)) ([801a69c](https://github.com/roshangautam/genie/commit/801a69c654cb4abbe0a2e5a81509e8acfbc851ae))
+
 ## [1.1.0](https://github.com/roshangautam/genie/compare/server-v1.0.0...server-v1.1.0) (2026-07-10)
 
 
