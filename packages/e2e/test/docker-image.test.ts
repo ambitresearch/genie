@@ -15,7 +15,7 @@
  *      of skipping vacuously.
  */
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -28,11 +28,13 @@ const execFileAsync = promisify(execFile);
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "..", "..");
 const dockerfilePath = resolve(repoRoot, "Dockerfile");
+const dockerignorePath = resolve(repoRoot, ".dockerignore");
 const composePath = resolve(repoRoot, "deploy", "docker-compose.yml");
 const ciPath = resolve(repoRoot, ".github", "workflows", "ci.yml");
 const releaseWorkflowPath = resolve(repoRoot, ".github", "workflows", "release-please.yml");
 
 const dockerfile = readFileSync(dockerfilePath, "utf-8");
+const dockerignore = existsSync(dockerignorePath) ? readFileSync(dockerignorePath, "utf-8") : "";
 const compose = readFileSync(composePath, "utf-8");
 const ci = readFileSync(ciPath, "utf-8");
 const releaseWorkflow = readFileSync(releaseWorkflowPath, "utf-8");
@@ -86,6 +88,25 @@ describe("Dockerfile (M5-07 static ACs)", () => {
   });
 });
 
+describe("Docker build context", () => {
+  it("excludes secrets, dependency trees, build outputs, and repository metadata", () => {
+    for (const pattern of [
+      ".git",
+      ".env*",
+      "node_modules",
+      "**/node_modules",
+      "**/dist",
+      "reports",
+      "**/reports",
+      "coverage",
+      "**/coverage",
+    ]) {
+      expect(dockerignore.split("\n")).toContain(pattern);
+    }
+    expect(dockerignore.split("\n")).toContain("!.env.example");
+  });
+});
+
 describe("deploy/docker-compose.yml (AC6)", () => {
   it("includes the genie MCP server service", () => {
     expect(compose).toMatch(/genie:\s*\n\s*image: ghcr\.io\/roshangautam\/genie/);
@@ -97,6 +118,11 @@ describe("deploy/docker-compose.yml (AC6)", () => {
 
   it("comments out the kit-root volume example rather than mounting it live", () => {
     expect(compose).toMatch(/#\s*- \.\/my-ui-kit:\/data\/kits\/my-ui-kit/);
+  });
+
+  it("documents /data/kits as the image's default kit root", () => {
+    expect(compose).toMatch(/default `\/data\/kits`/);
+    expect(compose).not.toMatch(/default `\.genie\/kits`/);
   });
 
   it("keeps the kit-root env example in the service environment mapping", () => {
@@ -130,9 +156,26 @@ describe("Docker release and CI workflows", () => {
     expect(releaseWorkflow).toContain('version="${tag#server-v}"');
   });
 
+  it("publishes GHCR independently from Docker Hub credentials", () => {
+    const ghcrJobStart = releaseWorkflow.indexOf("  docker-publish-ghcr:");
+    const dockerHubJobStart = releaseWorkflow.indexOf("  docker-publish-dockerhub:");
+
+    expect(ghcrJobStart).toBeGreaterThanOrEqual(0);
+    expect(dockerHubJobStart).toBeGreaterThan(ghcrJobStart);
+    expect(releaseWorkflow.slice(ghcrJobStart, dockerHubJobStart)).not.toContain("DOCKERHUB_");
+    expect(releaseWorkflow.slice(dockerHubJobStart)).toContain("DOCKERHUB_USERNAME");
+    expect(releaseWorkflow.slice(dockerHubJobStart)).toContain("DOCKERHUB_TOKEN");
+  });
+
   it("cleans up the container created by this suite", () => {
     expect(ci).toMatch(/docker rm -f genie-docker-image-test/);
     expect(ci).not.toMatch(/docker rm -f genie-smoke/);
+  });
+
+  it("builds both release platforms in PR CI before publishing", () => {
+    expect(ci).toMatch(/docker\/setup-qemu-action@v3/);
+    expect(ci).toMatch(/docker\/setup-buildx-action@v3/);
+    expect(ci).toMatch(/docker buildx build --platform linux\/amd64,linux\/arm64/);
   });
 });
 
@@ -287,7 +330,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
     expect(stdout.trim()).toBe("components/inputs/Button/Button.preview.js");
   });
 
-  it("boots and reports healthy on /health (AC4)", async () => {
+  it("boots with a green Docker healthcheck and responds on /health (AC4)", async () => {
     await execFileAsync("docker", [
       "run",
       "-d",
@@ -304,19 +347,21 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
       imageTag,
     ]);
 
-    let healthy = false;
-    for (let i = 0; i < 20; i++) {
-      try {
-        const res = await fetch("http://127.0.0.1:18081/health");
-        if (res.ok) {
-          healthy = true;
-          break;
-        }
-      } catch {
-        // not up yet
-      }
+    let healthStatus = "";
+    for (let i = 0; i < 70; i++) {
+      const { stdout } = await execFileAsync("docker", [
+        "inspect",
+        "--format",
+        "{{if .State.Health}}{{.State.Health.Status}}{{end}}",
+        containerName,
+      ]);
+      healthStatus = stdout.trim();
+      if (healthStatus === "healthy") break;
       await new Promise((r) => setTimeout(r, 1000));
     }
-    expect(healthy).toBe(true);
-  }, 60_000);
+    expect(healthStatus).toBe("healthy");
+
+    const res = await fetch("http://127.0.0.1:18081/health");
+    expect(res.ok).toBe(true);
+  }, 75_000);
 });

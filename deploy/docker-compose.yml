@@ -41,7 +41,7 @@ services:
       # Persisted server state (auth tokens, plans, reports) — GENIE_HOME.
       - genie-home:/data
       # Uncomment to mount a UI kit from the host instead of the container's
-      # default `.genie/kits`:
+      # default `/data/kits`:
       # - ./my-ui-kit:/data/kits/my-ui-kit
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

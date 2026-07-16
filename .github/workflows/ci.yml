@@ -460,12 +460,9 @@ jobs:
           retention-days: 7
 
   # ── Docker image build smoke test (M5-07 / DRO-279) ──────────────────────────
-  # Builds the runtime image for the host arch only (no push, no buildx
-  # multi-platform — that's exercised by the release workflow's real publish
-  # job) and asserts the ACs that are cheap to check in CI: size budget (AC2),
-  # non-root UID (AC3), and a live healthcheck against a running container
-  # (AC4). Gated the same way the Gitea leg is: GitHub-hosted ubuntu-latest
-  # guarantees a Docker daemon.
+  # Builds and exercises the native runtime image, then performs a no-push
+  # buildx build for both release platforms so QEMU/native-dependency failures
+  # are caught before release publication (AC2-AC5).
   docker-build-smoke:
     name: docker image build smoke
     runs-on: ubuntu-latest
@@ -488,6 +485,12 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Run Docker image AC suite (AC2/AC3/AC4)
         # GENIE_REQUIRE_DOCKER makes the suite FAIL (not skip) if no daemon is
         # reachable — same discipline as the Gitea conformance leg — so a
@@ -499,6 +502,11 @@ jobs:
           VITEST_JUNIT: "1"
           GENIE_REQUIRE_DOCKER: "1"
         run: pnpm --filter @genie/e2e test:e2e:docker
+
+      - name: Build both release platforms without pushing (AC5)
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --output=type=oci,dest=/tmp/genie-multiarch.tar .
 
       - name: Upload test report
         if: ${{ !cancelled() }}

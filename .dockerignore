@@ -1,0 +1,13 @@
+.git
+.env*
+!.env.example
+node_modules
+**/node_modules
+**/dist
+reports
+**/reports
+coverage
+**/coverage
+*.log
+*.tar
+*.tgz
