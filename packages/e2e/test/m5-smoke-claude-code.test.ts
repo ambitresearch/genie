@@ -375,6 +375,21 @@ function toWriteFileInput(file: ConjuredFile): {
   };
 }
 
+async function requireSuccessfulCardPreview(
+  request: {
+    get: (url: string) => Promise<{ ok: () => boolean; status: () => number }>;
+  },
+  viewerUrl: string,
+  iframeSrc: string,
+): Promise<string> {
+  const cardUrl = new URL(iframeSrc, viewerUrl).toString();
+  const response = await request.get(cardUrl);
+  if (!response.ok()) {
+    throw new Error(`Generated card iframe returned HTTP ${response.status()}: ${cardUrl}`);
+  }
+  return cardUrl;
+}
+
 interface ClaudeStreamEvent {
   type?: string;
   message?: { content?: unknown[] };
@@ -653,6 +668,31 @@ describe("Claude protocol file handoff", () => {
       mimeType: "image/png",
       encoding: "base64",
     });
+  });
+});
+
+describe("Claude preview screenshot evidence", () => {
+  it("requires the card iframe URL itself to return a successful response", async () => {
+    const get = vi.fn(async () => ({ ok: () => true, status: () => 200 }));
+
+    await expect(
+      requireSuccessfulCardPreview(
+        { get },
+        "http://127.0.0.1:5173/",
+        "components/actions/Button/Button.html",
+      ),
+    ).resolves.toBe("http://127.0.0.1:5173/components/actions/Button/Button.html");
+    expect(get).toHaveBeenCalledWith("http://127.0.0.1:5173/components/actions/Button/Button.html");
+  });
+
+  it("rejects a non-success card iframe response before screenshotting", async () => {
+    await expect(
+      requireSuccessfulCardPreview(
+        { get: async () => ({ ok: () => false, status: () => 404 }) },
+        "http://127.0.0.1:5173/",
+        "components/missing.html",
+      ),
+    ).rejects.toThrow(/card iframe returned HTTP 404.*components\/missing\.html/s);
   });
 });
 
@@ -1516,7 +1556,14 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             const response = await page.goto(hostPreviewUrl, { waitUntil: "load" });
             expect(response?.ok(), `preview URL was not reachable: ${hostPreviewUrl}`).toBe(true);
             await page.waitForSelector(".ds-card", { state: "attached", timeout: 10_000 });
-            const previewFrame = page.locator(".ds-card iframe").first().contentFrame();
+            const previewIframe = page.locator(".ds-card iframe").first();
+            const iframeSrc = await previewIframe.getAttribute("src");
+            expect(
+              iframeSrc,
+              "expected the generated preview card to have an iframe src",
+            ).toBeTruthy();
+            await requireSuccessfulCardPreview(page.request, hostPreviewUrl, iframeSrc!);
+            const previewFrame = previewIframe.contentFrame();
             await expect
               .poll(
                 async () =>
