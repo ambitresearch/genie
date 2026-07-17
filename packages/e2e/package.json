@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "genie end-to-end + harness smoke tests. Hosts the M1 19-tool conformance suite (M1-14 / DRO-318).",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "build": "echo \"@genie/e2e: test-only package, nothing to build\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
