@@ -201,6 +201,43 @@ function structuredOf(result: unknown): Record<string, unknown> | undefined {
   return (result as { structuredContent?: Record<string, unknown> } | undefined)?.structuredContent;
 }
 
+interface ConjuredFile {
+  path: string;
+  content: string;
+  mimeType: string;
+  encoding: "utf-8" | "base64";
+}
+
+function toWriteFileInput(file: ConjuredFile): {
+  path: string;
+  data: string;
+  mimeType: string;
+  encoding: "utf-8" | "base64";
+} {
+  return {
+    path: file.path,
+    data: file.content,
+    mimeType: file.mimeType,
+    encoding: file.encoding,
+  };
+}
+
+it("preserves generated base64 metadata when handing files to write_files", () => {
+  expect(
+    toWriteFileInput({
+      path: "components/media/Logo/logo.png",
+      content: "iVBORw0KGgo=",
+      mimeType: "image/png",
+      encoding: "base64",
+    }),
+  ).toEqual({
+    path: "components/media/Logo/logo.png",
+    data: "iVBORw0KGgo=",
+    mimeType: "image/png",
+    encoding: "base64",
+  });
+});
+
 /**
  * A minimal OpenAI-compatible chat-completions stub for `conjure`'s REAL
  * default seam (`defaultChatCompletion`, driven by `GENIE_LLM_BASE_URL` /
@@ -361,7 +398,7 @@ describe("M5-14 Cline harness smoke test", () => {
         });
         expect(conjured.isError).not.toBe(true);
         const conjureResult = JSON.parse(textOf(conjured)) as {
-          files: Array<{ path: string; content: string }>;
+          files: ConjuredFile[];
         };
         expect(conjureResult.files.length).toBeGreaterThan(0);
 
@@ -384,11 +421,7 @@ describe("M5-14 Cline harness smoke test", () => {
           name: "mcp__genie__write_files",
           arguments: {
             planId,
-            files: conjureResult.files.map((f) => ({
-              path: f.path,
-              data: f.content,
-              encoding: "utf-8",
-            })),
+            files: conjureResult.files.map(toWriteFileInput),
           },
         });
         expect(written.isError).not.toBe(true);
@@ -476,6 +509,37 @@ function parseClineJson(stdout: string): ClineJsonEvent[] {
     .filter((line) => line.trim().startsWith("{"))
     .map((line) => JSON.parse(line) as ClineJsonEvent);
 }
+
+function requireCompleteClineToolCalls(events: ClineJsonEvent[]): ClineJsonEvent[] {
+  const toolEvents = events.filter(
+    (event) => event.type === "agent_event" && event.event?.contentType === "tool",
+  );
+  const starts = toolEvents
+    .filter((event) => event.event?.type === "content_start")
+    .map((event) => event.event?.toolName);
+  const completions = toolEvents
+    .filter((event) => event.event?.type === "content_end")
+    .map((event) => event.event?.toolName);
+  if (
+    starts.length !== completions.length ||
+    starts.some((name, index) => completions[index] !== name)
+  ) {
+    throw new Error(
+      `Cline tool transcript mismatch: started ${starts.join(", ")}; completed ${completions.join(", ")}`,
+    );
+  }
+  return toolEvents;
+}
+
+it("rejects a Cline transcript with a started tool call that never completes", () => {
+  expect(() =>
+    requireCompleteClineToolCalls([
+      { type: "agent_event", event: { type: "content_start", contentType: "tool", toolName: "a" } },
+      { type: "agent_event", event: { type: "content_end", contentType: "tool", toolName: "a" } },
+      { type: "agent_event", event: { type: "content_start", contentType: "tool", toolName: "b" } },
+    ]),
+  ).toThrow(/started.*a, b.*completed.*a/s);
+});
 
 it("keeps the canonical extension auto-approval list aligned with registered read tools", async () => {
   const config = await documentedClineConfig({
@@ -715,9 +779,7 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
         { cwd: base, env, timeout: 90_000, maxBuffer: 10_000_000 },
       );
       const events = parseClineJson(result.stdout);
-      const toolEvents = events.filter(
-        (event) => event.type === "agent_event" && event.event?.contentType === "tool",
-      );
+      const toolEvents = requireCompleteClineToolCalls(events);
       const starts = toolEvents
         .filter((event) => event.event?.type === "content_start")
         .map((event) => event.event?.toolName);
@@ -725,6 +787,7 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
         suffixes.map((suffix) => expect.stringMatching(new RegExp(`${suffix}$`))),
       );
       for (const event of toolEvents.filter((entry) => entry.event?.type === "content_end")) {
+        expect(event.event?.output, JSON.stringify(event)).toBeDefined();
         expect(event.event?.output?.isError, JSON.stringify(event)).not.toBe(true);
       }
       const previewResult = toolEvents.find(

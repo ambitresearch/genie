@@ -13,8 +13,8 @@ resolves from the transport, not from the harness:
 - **Remote HTTP connection** (the default locality for HTTP, e.g. the
   `url`+`headers` registration below with no locality override) — there is
   **no** `viewerUrl`/`file://` fallback. `preview`'s text is either
-  `"Preview ready in the inline MCP App."` (only reachable if the client
-  negotiated the UI extension, which Cline does not) or a
+  `"Preview ready in the inline MCP App."` (when the server has a usable
+  previews origin, even though Cline cannot render it) or a
   `"Remote preview unavailable: …"` message. With a valid
   `GENIE_PREVIEWS_BASE_URL`, Cline can receive the first message even though it
   cannot render that inline app; without a usable previews origin it receives
