@@ -211,6 +211,22 @@ function resolveClaudeDriverConfig(
   return undefined;
 }
 
+function resolveFullDockerLeg(options: {
+  required: boolean;
+  dockerAvailable: boolean;
+  hasLlmConfig: boolean;
+  driverConfig: ClaudeDriverConfig | undefined;
+}): boolean {
+  const canRun = options.dockerAvailable && options.hasLlmConfig && Boolean(options.driverConfig);
+  if (options.required && !canRun) {
+    throw new Error(
+      "GENIE_REQUIRE_DOCKER=1 but the full Claude-Code-in-Docker leg is missing Docker, " +
+        "the genie LLM endpoint, or a Claude driver credential — it must run rather than skip.",
+    );
+  }
+  return canRun;
+}
+
 interface DockerPreviewServer {
   httpServer: { address: () => string | { port: number } | null } | null;
   listen: () => Promise<unknown>;
@@ -323,7 +339,12 @@ if (dockerAvailable && !claudeDriverConfig && process.env["GENIE_REQUIRE_DOCKER"
       "the m5-smoke-claude-code CI job must run the real Claude-Code-in-Docker leg, not skip it.",
   );
 }
-const runFullDockerLeg = dockerAvailable && Boolean(claudeDriverConfig) && hasLlmConfig;
+const runFullDockerLeg = resolveFullDockerLeg({
+  required: process.env["GENIE_REQUIRE_DOCKER"] === "1",
+  dockerAvailable,
+  hasLlmConfig,
+  driverConfig: claudeDriverConfig,
+});
 
 // ── Harness (mirrors m1-conformance.test.ts) ─────────────────────────────────
 
@@ -331,6 +352,27 @@ interface ToolResult {
   isError?: boolean;
   structuredContent?: unknown;
   content?: { type: string; text: string }[];
+}
+
+interface ConjuredFile {
+  path: string;
+  content: string;
+  mimeType: string;
+  encoding: "utf-8" | "base64";
+}
+
+function toWriteFileInput(file: ConjuredFile): {
+  path: string;
+  data: string;
+  mimeType: string;
+  encoding: "utf-8" | "base64";
+} {
+  return {
+    path: file.path,
+    data: file.content,
+    mimeType: file.mimeType,
+    encoding: file.encoding,
+  };
 }
 
 interface ClaudeStreamEvent {
@@ -576,6 +618,41 @@ describe("Claude driver credential selection", () => {
         GENIE_LLM_BASE_URL: "  ",
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("Claude smoke prerequisites", () => {
+  it("fails a required Docker leg when the genie LLM endpoint is absent", () => {
+    expect(() =>
+      resolveFullDockerLeg({
+        required: true,
+        dockerAvailable: true,
+        hasLlmConfig: false,
+        driverConfig: {
+          apiKey: "dedicated-token",
+          baseUrl: "https://api.anthropic.com",
+          source: "dedicated",
+        },
+      }),
+    ).toThrow(/GENIE_REQUIRE_DOCKER=1.*full Claude-Code-in-Docker leg/s);
+  });
+});
+
+describe("Claude protocol file handoff", () => {
+  it("preserves base64 encoding and MIME type for write_files", () => {
+    expect(
+      toWriteFileInput({
+        path: "components/media/Logo/logo.png",
+        content: "iVBORw0KGgo=",
+        mimeType: "image/png",
+        encoding: "base64",
+      }),
+    ).toEqual({
+      path: "components/media/Logo/logo.png",
+      data: "iVBORw0KGgo=",
+      mimeType: "image/png",
+      encoding: "base64",
+    });
   });
 });
 
@@ -1116,7 +1193,7 @@ describe.skipIf(!hasLlmConfig)(
       const conjured = payload(conjureResult as ToolResult) as {
         componentName: string;
         group: string;
-        files: { path: string; content: string }[];
+        files: ConjuredFile[];
         manifestEntry: unknown;
       };
       expect(conjured.files.length).toBeGreaterThan(0);
@@ -1136,7 +1213,7 @@ describe.skipIf(!hasLlmConfig)(
         arguments: {
           kitId,
           planId,
-          files: conjured.files.map((f) => ({ path: f.path, data: f.content })),
+          files: conjured.files.map(toWriteFileInput),
           manifestEntry: conjured.manifestEntry,
         },
       });
