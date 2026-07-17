@@ -975,31 +975,31 @@ it("returns a reachable viewer URL for explicit local preview over HTTP", async 
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end("<!doctype html><title>reachable viewer</title><p>Preview works</p>");
   });
-  const viewerPort = await listen(viewerHttp);
-  const viewerUrl = `http://127.0.0.1:${viewerPort}/`;
   const closeViewer = () => closeHttpServer(viewerHttp);
-
-  const mcpHttp = createNodeHttpServer(
-    createStreamableHttpRequestHandler(() =>
-      createServer({
-        projectsRoot: join(base, "projects"),
-        kitsRoot,
-        reportsDir: join(base, "reports"),
-        transportKind: "http",
-        previewLocality: "local",
-        previewBooter: async () => ({
-          url: viewerUrl,
-          port: viewerPort,
-          open: async () => {},
-          close: closeViewer,
-        }),
-      }),
-    ),
-  );
-  const mcpPort = await listen(mcpHttp);
+  let mcpHttp: NodeHttpServer | undefined;
   const client = new Client({ name: "m5-local-http-preview", version: "0" });
 
   try {
+    const viewerPort = await listen(viewerHttp);
+    const viewerUrl = `http://127.0.0.1:${viewerPort}/`;
+    mcpHttp = createNodeHttpServer(
+      createStreamableHttpRequestHandler(() =>
+        createServer({
+          projectsRoot: join(base, "projects"),
+          kitsRoot,
+          reportsDir: join(base, "reports"),
+          transportKind: "http",
+          previewLocality: "local",
+          previewBooter: async () => ({
+            url: viewerUrl,
+            port: viewerPort,
+            open: async () => {},
+            close: closeViewer,
+          }),
+        }),
+      ),
+    );
+    const mcpPort = await listen(mcpHttp);
     await client.connect(
       new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${mcpPort}/mcp`)),
     );
@@ -1019,7 +1019,7 @@ it("returns a reachable viewer URL for explicit local preview over HTTP", async 
     await expect(response.text()).resolves.toContain("Preview works");
   } finally {
     await client.close().catch(() => {});
-    await closeHttpServer(mcpHttp);
+    if (mcpHttp !== undefined) await closeHttpServer(mcpHttp);
     await closeViewer();
     await rm(base, { recursive: true, force: true });
   }
@@ -1417,6 +1417,20 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             const response = await page.goto(hostPreviewUrl, { waitUntil: "load" });
             expect(response?.ok(), `preview URL was not reachable: ${hostPreviewUrl}`).toBe(true);
             await page.waitForSelector(".ds-card", { state: "attached", timeout: 10_000 });
+            const previewFrame = page.locator(".ds-card iframe").first().contentFrame();
+            await expect
+              .poll(
+                async () =>
+                  previewFrame
+                    .locator("body")
+                    .evaluate(
+                      (body) =>
+                        body.childElementCount > 0 || (body.textContent?.trim().length ?? 0) > 0,
+                    )
+                    .catch(() => false),
+                { timeout: 10_000 },
+              )
+              .toBe(true);
             const screenshotDir = joinPath(process.cwd(), "docs/harness/screenshots/claude-code");
             await mkdirp(screenshotDir, { recursive: true });
             const screenshotPath = joinPath(screenshotDir, "m5-09-docker-smoke.png");

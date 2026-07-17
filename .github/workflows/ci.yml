@@ -473,7 +473,7 @@ jobs:
   # run free — this spends real model + LLM $ like m2-generation does.
   m5-smoke-claude-code:
     name: M5-09 Claude Code smoke (manual)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

@@ -89,7 +89,7 @@ describe("Claude plugin artifacts", () => {
       );
     }
     expect(ci).toMatch(
-      /^ {2}m5-smoke-claude-code:\n(?: {4}.*\n)*? {4}if: github\.event_name == 'workflow_dispatch'$/m,
+      /^ {2}m5-smoke-claude-code:\n(?: {4}.*\n)*? {4}if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'$/m,
     );
   });
 
