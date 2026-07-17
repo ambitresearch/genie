@@ -5,8 +5,9 @@ genie is an MCP server. Every harness that speaks MCP can call its 20 tools —
 depends on two independent harness capabilities:
 
 - **Agent Skills** — does the harness load a bundled `SKILL.md`? Claude,
-  Cursor, Codex, and GitHub Copilot support the open Agent Skills format, with
-  different install directories. The Skill teaches the
+  Cursor, Codex, GitHub Copilot, and Cline (via its own `skill` subcommand,
+  confirmed 2026-07-14 — see [cline.md](./cline.md)) support the open Agent
+  Skills format, with different install directories. The Skill teaches the
   `conjure → plan → write_files → preview` workflow so a plain-English request
   ("build me a button and show me") just works. Tool descriptions remain the
   fallback when a host or session does not load the Skill.
@@ -16,14 +17,15 @@ depends on two independent harness capabilities:
 
 These are orthogonal, so harnesses fall into a grid:
 
-| Harness                           | Renders `ui://` inline? | Loads Agent Skills? | What it relies on                                                          |
-| --------------------------------- | :---------------------: | :-----------------: | -------------------------------------------------------------------------- |
-| Claude Code / Desktop / claude.ai |           yes           |       **yes**       | Skill + `/genie:preview` + tool descriptions                               |
-| Cursor                            |         **yes**         |       **yes**       | Skill + inline grid + tool descriptions                                    |
-| VS Code Copilot (≥ Jan 2026)      |  capability-dependent   |       **yes**       | Skill + inline grid when MCP Apps is negotiated + descriptions             |
-| ChatGPT remote connector          |           yes           |         no          | inline grid + tool descriptions                                            |
-| Codex CLI                         |         **no**          |       **yes**       | Skill + **server-opened browser tab** + descriptions                       |
-| GitHub Copilot (host-dependent)   |  capability-dependent   |       **yes**       | Skill + inline grid when negotiated; local fallback browser + descriptions |
+| Harness                           | Renders `ui://` inline? | Loads Agent Skills? | What it relies on                                                                                    |
+| --------------------------------- | :---------------------: | :-----------------: | ---------------------------------------------------------------------------------------------------- |
+| Claude Code / Desktop / claude.ai |           yes           |       **yes**       | Skill + `/genie:preview` + tool descriptions                                                         |
+| Cursor                            |         **yes**         |       **yes**       | Skill + inline grid + tool descriptions                                                              |
+| VS Code Copilot (≥ Jan 2026)      |  capability-dependent   |       **yes**       | Skill + inline grid when MCP Apps is negotiated + descriptions                                       |
+| ChatGPT remote connector          |           yes           |         no          | inline grid + tool descriptions                                                                      |
+| Codex CLI                         |         **no**          |       **yes**       | Skill + **server-opened browser tab** + descriptions                                                 |
+| GitHub Copilot (host-dependent)   |  capability-dependent   |       **yes**       | Skill + inline grid when negotiated; local fallback browser + descriptions                           |
+| Cline                             |         **no**          |       **yes**       | Skill (`cline skill add`) + descriptions; local-stdio viewer/`file://`, remote HTTP degrades to text |
 
 **Takeaways:**
 
@@ -67,4 +69,5 @@ Per-harness registration snippets:
 [claude-code.md](./claude-code.md) ·
 [cursor.md](./cursor.md) ·
 [codex.md](./codex.md) ·
-[copilot.md](./copilot.md)
+[copilot.md](./copilot.md) ·
+[cline.md](./cline.md)
