@@ -139,10 +139,10 @@ const dockerAvailable = await isTestcontainersDockerAvailable();
 if (!dockerAvailable) {
   console.info(
     "[m5-smoke-claude-code] no container runtime detected — skipping the full Claude Code " +
-      "CLI-in-Docker leg (AC4/AC6/AC7: boot Claude Code, install genie, drive the chain through " +
-      "Claude's own agent loop, capture screenshots). Provision Docker + the `claude` CLI in the " +
-      "image to run it for real; CI's dedicated m5-smoke-claude-code job (manually triggered) " +
-      "runs it.",
+      "CLI-in-Docker leg (AC4/AC6/AC7: boot Claude Code, connect it to the host-owned genie HTTP " +
+      "server, drive the chain through Claude's own agent loop, capture screenshots). Provision " +
+      "Docker + the `claude` CLI in the image to run it for real; CI's dedicated " +
+      "m5-smoke-claude-code job (manually triggered) runs it.",
   );
 }
 if (!dockerAvailable && process.env["GENIE_REQUIRE_DOCKER"] === "1") {

@@ -168,6 +168,7 @@ jobs:
   # the `gitea` job is pinned there.
   oidc:
     name: OIDC provider integration (docker)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     # AC7 requires the walk itself to run under 3 minutes; this ceiling adds
     # generous headroom for image build + dependency install + browser

@@ -80,7 +80,7 @@ describe("Claude plugin artifacts", () => {
       "group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}",
     );
     expect(ci).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
-    for (const job of ["check", "gitea", "viewer-a11y", "viewer-e2e", "codex-smoke"]) {
+    for (const job of ["check", "gitea", "oidc", "viewer-a11y", "viewer-e2e", "codex-smoke"]) {
       expect(ci).toMatch(
         new RegExp(
           `^  ${job}:\\n(?:    .*\\n)*?    if: github\\.event_name != 'workflow_dispatch'$`,
