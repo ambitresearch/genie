@@ -159,10 +159,12 @@ if (!dockerAvailable && process.env["GENIE_REQUIRE_DOCKER"] === "1") {
 // authenticates with to run its own agent loop. A dedicated key defaults to
 // Anthropic and may use only its dedicated base-URL override. If no dedicated
 // key exists, the genie gateway key and URL may be intentionally reused as a
-// pair; never send a dedicated Anthropic key to GENIE_LLM_BASE_URL.
+// pair with its explicit smoke model; never send a dedicated Anthropic key to
+// GENIE_LLM_BASE_URL.
 interface ClaudeDriverConfig {
   apiKey: string;
   baseUrl: string;
+  model?: string;
   source: "dedicated" | "gateway";
 }
 
@@ -197,10 +199,12 @@ function resolveClaudeDriverConfig(
 
   const gatewayKey = env["GENIE_LLM_API_KEY"]?.trim();
   const gatewayBaseUrl = env["GENIE_LLM_BASE_URL"]?.trim();
-  if (gatewayKey && gatewayBaseUrl) {
+  const gatewayModel = env["GENIE_SMOKE_MODEL"]?.trim();
+  if (gatewayKey && gatewayBaseUrl && gatewayModel) {
     return {
       apiKey: gatewayKey,
       baseUrl: gatewayBaseUrl.replace(/\/v1\/?$/, ""),
+      model: gatewayModel,
       source: "gateway",
     };
   }
@@ -308,15 +312,15 @@ if (dockerAvailable && !claudeDriverConfig) {
   console.info(
     "[m5-smoke-claude-code] no Claude driver credential is configured — skipping the full " +
       "Claude Code CLI-in-Docker leg even though Docker is available. Set a dedicated " +
-      "GENIE_ANTHROPIC_SMOKE_API_KEY or configure the GENIE_LLM_* gateway pair for " +
-      "intentional reuse inside the throwaway container.",
+      "GENIE_ANTHROPIC_SMOKE_API_KEY or configure the GENIE_LLM_* gateway pair plus " +
+      "GENIE_SMOKE_MODEL for intentional reuse inside the throwaway container.",
   );
 }
 if (dockerAvailable && !claudeDriverConfig && process.env["GENIE_REQUIRE_DOCKER"] === "1") {
   throw new Error(
     "GENIE_REQUIRE_DOCKER=1 but neither a dedicated GENIE_ANTHROPIC_SMOKE_API_KEY nor a " +
-      "complete GENIE_LLM_* gateway pair is configured — the m5-smoke-claude-code CI job " +
-      "must run the real Claude-Code-in-Docker leg, not skip it.",
+      "complete GENIE_LLM_* gateway configuration with GENIE_SMOKE_MODEL is configured — " +
+      "the m5-smoke-claude-code CI job must run the real Claude-Code-in-Docker leg, not skip it.",
   );
 }
 const runFullDockerLeg = dockerAvailable && Boolean(claudeDriverConfig) && hasLlmConfig;
@@ -498,6 +502,7 @@ describe("Claude driver credential selection", () => {
         GENIE_ANTHROPIC_SMOKE_API_KEY: "dedicated-token",
         GENIE_LLM_API_KEY: "gateway-token",
         GENIE_LLM_BASE_URL: "https://gateway.example/v1",
+        GENIE_SMOKE_MODEL: "gateway-driver",
       }),
     ).toEqual({
       apiKey: "dedicated-token",
@@ -543,12 +548,24 @@ describe("Claude driver credential selection", () => {
         GENIE_ANTHROPIC_SMOKE_BASE_URL: "  ",
         GENIE_LLM_API_KEY: " gateway-token ",
         GENIE_LLM_BASE_URL: " https://gateway.example/v1/ ",
+        GENIE_SMOKE_MODEL: " gateway-driver ",
       }),
     ).toEqual({
       apiKey: "gateway-token",
       baseUrl: "https://gateway.example",
+      model: "gateway-driver",
       source: "gateway",
     });
+  });
+
+  it("does not select a gateway driver without an exposed model", () => {
+    expect(
+      resolveClaudeDriverConfig({
+        GENIE_LLM_API_KEY: "gateway-token",
+        GENIE_LLM_BASE_URL: "https://gateway.example/v1",
+        GENIE_SMOKE_MODEL: "  ",
+      }),
+    ).toBeUndefined();
   });
 
   it("treats a blank gateway base URL as absent", () => {
@@ -635,6 +652,8 @@ it("denies built-in Claude tools while allowing only the documented MCP wrappers
 
   expect(script).toContain('--tools "mcp__genie__mcp__genie__conjure');
   expect(script).toContain("--allowedTools");
+  expect(script).toContain("GENIE_CLAUDE_DRIVER_MODEL");
+  expect(script).toContain('--model "$GENIE_CLAUDE_DRIVER_MODEL"');
   expect(script).not.toMatch(/--tools\s+"[^\n]*(?:Bash|Read|Edit)/);
   expect(script).not.toContain("--dangerously-skip-permissions");
 });
@@ -1272,6 +1291,9 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             .withEnvironment({
               ANTHROPIC_BASE_URL: claudeDriverConfig!.baseUrl,
               GENIE_CLAUDE_DRIVER_API_KEY: claudeDriverConfig!.apiKey,
+              ...(claudeDriverConfig!.model
+                ? { GENIE_CLAUDE_DRIVER_MODEL: claudeDriverConfig!.model }
+                : {}),
             })
             .withExtraHosts([{ host: "host.docker.internal", ipAddress: "host-gateway" }])
             .withCopyFilesToContainer([

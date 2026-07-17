@@ -30,8 +30,15 @@ if [ ! -f "$MCP_CONFIG" ]; then
   exit 1
 fi
 
+if [ -n "${GENIE_CLAUDE_DRIVER_MODEL:-}" ]; then
+  set -- --model "$GENIE_CLAUDE_DRIVER_MODEL"
+else
+  set --
+fi
+
 exec claude \
   -p "$(cat "$PROMPT_FILE")" \
+  "$@" \
   --setting-sources user \
   --tools "mcp__genie__mcp__genie__conjure,mcp__genie__mcp__genie__write_files,mcp__genie__mcp__genie__preview,mcp__genie__mcp__genie__validate,mcp__genie__mcp__genie__create_kit,mcp__genie__mcp__genie__plan" \
   --output-format stream-json \

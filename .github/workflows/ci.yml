@@ -515,7 +515,10 @@ jobs:
         # The manual job exists to prove the paid smoke, so every prerequisite
         # is required. Missing secrets fail at suite import instead of allowing
         # an all-skipped test report to look successful. GENIE_SMOKE_MODEL must
-        # name a structured-output model the configured gateway actually serves.
+        # name a structured-output model the configured gateway actually serves;
+        # when the Claude driver reuses that gateway, the CLI selects the same
+        # model explicitly rather than assuming the gateway exposes Claude's
+        # built-in default model.
         # The driver uses the dedicated Anthropic key/base pair when present;
         # otherwise it intentionally reuses the public smoke gateway key/base
         # pair below. Normal deployment secrets remain untouched.

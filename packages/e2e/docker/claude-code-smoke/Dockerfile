@@ -44,6 +44,8 @@ RUN chown node:node /workspace
 #   /workspace/.claude.json          — HTTP genie server + headersHelper
 #   /workspace/*-helper.sh        — throwaway helper scripts referenced above
 #   /workspace/prompt.txt        — the non-interactive prompt to run
+# and optionally sets GENIE_CLAUDE_DRIVER_MODEL when the CLI is routed through
+# a gateway that does not expose Claude Code's built-in default model.
 # then starts this image idle and invokes the CLI through `container.exec`
 # (see run-smoke.sh) so stdout and stderr remain separate and the exact
 # prompt/config can vary per test run without rebuilding the image.
