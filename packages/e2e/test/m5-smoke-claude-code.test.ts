@@ -432,9 +432,11 @@ function parseClaudeStream(stdout: string): ClaudeStreamEvent[] {
 function collectClaudeToolResults(events: ClaudeStreamEvent[]): {
   calledToolNames: string[];
   toolResultsByName: Map<string, ClaudeContentBlock[]>;
+  missingToolResults: { id: string; name: string }[];
   terminalResult?: Record<string, unknown>;
 } {
   const toolUseIdToName = new Map<string, string>();
+  const matchedToolUseIds = new Set<string>();
   const calledToolNames: string[] = [];
   const toolResultsByName = new Map<string, ClaudeContentBlock[]>();
   let terminalResult: Record<string, unknown> | undefined;
@@ -449,6 +451,7 @@ function collectClaudeToolResults(events: ClaudeStreamEvent[]): {
       } else if (block.type === "tool_result" && block.tool_use_id) {
         const name = toolUseIdToName.get(block.tool_use_id);
         if (name) {
+          matchedToolUseIds.add(block.tool_use_id);
           const list = toolResultsByName.get(name) ?? [];
           list.push(block);
           toolResultsByName.set(name, list);
@@ -456,7 +459,10 @@ function collectClaudeToolResults(events: ClaudeStreamEvent[]): {
       }
     }
   }
-  return { calledToolNames, toolResultsByName, terminalResult };
+  const missingToolResults = [...toolUseIdToName]
+    .filter(([id]) => !matchedToolUseIds.has(id))
+    .map(([id, name]) => ({ id, name }));
+  return { calledToolNames, toolResultsByName, missingToolResults, terminalResult };
 }
 
 function extractPreviewUrl(result: ClaudeContentBlock | undefined): string | undefined {
@@ -543,6 +549,28 @@ describe("Claude Code stream-json transcript parsing", () => {
     );
 
     expect(collectClaudeToolResults(events).calledToolNames).toEqual(names);
+  });
+
+  it("reports every tool-use ID that has no matching result", () => {
+    const name = claudeCodeToolName(CONJURE_TOOL_NAME);
+    const events = parseClaudeStream(
+      [
+        JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "tool_use", id: "tool-1", name }] },
+        }),
+        JSON.stringify({
+          type: "user",
+          message: { content: [{ type: "tool_result", tool_use_id: "tool-1", content: "{}" }] },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "tool_use", id: "tool-2", name }] },
+        }),
+      ].join("\n"),
+    );
+
+    expect(collectClaudeToolResults(events).missingToolResults).toEqual([{ id: "tool-2", name }]);
   });
 
   it("rejects non-JSON stdout instead of treating a CLI error as a transcript", () => {
@@ -1476,8 +1504,13 @@ describe("AC4/AC6/AC7 — Claude Code CLI in Docker", () => {
             `expected at least one stream-json event; ${cliDiagnostics}`,
           ).toBeGreaterThan(0);
 
-          const { calledToolNames, toolResultsByName, terminalResult } =
+          const { calledToolNames, toolResultsByName, missingToolResults, terminalResult } =
             collectClaudeToolResults(events);
+          expect(
+            missingToolResults,
+            `expected every Claude Code tool_use ID to have a matching tool_result; ` +
+              `missing: ${JSON.stringify(missingToolResults)}; ${cliDiagnostics}`,
+          ).toEqual([]);
           expect(
             terminalResult?.["is_error"],
             `expected Claude Code's terminal stream-json result to be non-error; ${cliDiagnostics}`,
