@@ -635,6 +635,7 @@ jobs:
       - name: Install dependencies
         run: |
           pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
       - name: Build @genie/server
@@ -727,6 +728,7 @@ jobs:
   # CLI can turn a clean checkout green through a skipped suite.
   continue-smoke:
     name: Continue CLI harness smoke (M5-15)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

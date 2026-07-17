@@ -27,7 +27,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import yaml from "yaml";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(here, "../../..");
 const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
 const CONTINUE_CLI = resolve(here, "../node_modules/@continuedev/cli/dist/cn.js");
 const DOC_PATH = resolve(here, "../../../docs/harness/continue.md");
@@ -175,7 +174,68 @@ async function close(server: Server): Promise<void> {
   });
 }
 
-async function runContinue(args: string[], env: NodeJS.ProcessEnv) {
+function isolatedContinueEnv(
+  source: NodeJS.ProcessEnv,
+  home: string,
+  continueHome: string,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  const excluded = new Set([
+    "GENIE_LLM_API_KEY",
+    "GENIE_LLM_BASE_URL",
+    "GENIE_PREVIEWS_BASE_URL",
+    "OAUTH_HS256_KEY",
+  ]);
+  for (const [name, value] of Object.entries(source)) {
+    const normalizedName = name.toUpperCase();
+    if (
+      value === undefined ||
+      normalizedName.startsWith("CONTINUE_") ||
+      excluded.has(normalizedName)
+    ) {
+      continue;
+    }
+    env[name] = value;
+  }
+  return {
+    ...env,
+    HOME: home,
+    USERPROFILE: home,
+    CONTINUE_GLOBAL_DIR: continueHome,
+    CONTINUE_METRICS_ENABLED: "0",
+    CONTINUE_CLI_ENABLE_TELEMETRY: "0",
+    FORCE_NO_TTY: "true",
+    CI: "true",
+  };
+}
+
+it("isolates Continue state and inherited credentials across platforms", () => {
+  const env = isolatedContinueEnv(
+    {
+      PATH: "/bin",
+      Continue_Global_Dir: "/real/continue",
+      continue_api_key: "real-continue-key",
+      Genie_Llm_Api_Key: "real-genie-key",
+      genie_previews_base_url: "https://previews.example.test",
+    },
+    "/tmp/home",
+    "/tmp/continue",
+  );
+
+  expect(env).toMatchObject({
+    PATH: "/bin",
+    HOME: "/tmp/home",
+    USERPROFILE: "/tmp/home",
+    CONTINUE_GLOBAL_DIR: "/tmp/continue",
+    CONTINUE_METRICS_ENABLED: "0",
+  });
+  expect(env).not.toHaveProperty("Continue_Global_Dir");
+  expect(env).not.toHaveProperty("continue_api_key");
+  expect(env).not.toHaveProperty("Genie_Llm_Api_Key");
+  expect(env).not.toHaveProperty("genie_previews_base_url");
+});
+
+async function runContinue(args: string[], env: NodeJS.ProcessEnv, cwd: string) {
   return await new Promise<{
     status: number | null;
     signal: NodeJS.Signals | null;
@@ -183,7 +243,7 @@ async function runContinue(args: string[], env: NodeJS.ProcessEnv) {
     stderr: string;
   }>((resolveRun, reject) => {
     const child = spawn(process.execPath, [CONTINUE_CLI, ...args], {
-      cwd: REPO_ROOT,
+      cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -266,6 +326,7 @@ describe.skipIf(!hasBuiltServer || !hasContinueCli)(
     let expectedFile: string;
     let expectedFilePath: string;
     let observedPreviewText: string;
+    let continueEnv: NodeJS.ProcessEnv;
 
     beforeAll(async () => {
       tempRoot = await mkdtemp(join(tmpdir(), "genie-continue-smoke-"));
@@ -279,6 +340,7 @@ describe.skipIf(!hasBuiltServer || !hasContinueCli)(
         "<!doctype html><button>Continue smoke</button>";
       observedPreviewText = "";
       requests = [];
+      continueEnv = isolatedContinueEnv(process.env, tempRoot, continueHome);
       await mkdir(continueHome, { recursive: true });
       await mkdir(kitsRoot, { recursive: true });
 
@@ -511,16 +573,8 @@ describe.skipIf(!hasBuiltServer || !hasContinueCli)(
           configWithoutTypePath,
           "CONTINUE_TYPE_OPTIONAL_PROBE: reply with the requested marker.",
         ],
-        {
-          ...process.env,
-          HOME: tempRoot,
-          CONTINUE_GLOBAL_DIR: continueHome,
-          CONTINUE_METRICS_ENABLED: "0",
-          FORCE_NO_TTY: "true",
-          CI: "true",
-          GENIE_LLM_API_KEY: undefined,
-          GENIE_LLM_BASE_URL: undefined,
-        },
+        continueEnv,
+        tempRoot,
       );
 
       expect(result.status, `signal=${result.signal}\n${result.stdout}\n${result.stderr}`).toBe(0);
@@ -541,16 +595,8 @@ describe.skipIf(!hasBuiltServer || !hasContinueCli)(
           "*",
           "Use the genie tools to create, conjure, plan, write, and preview a button.",
         ],
-        {
-          ...process.env,
-          HOME: tempRoot,
-          CONTINUE_GLOBAL_DIR: continueHome,
-          CONTINUE_METRICS_ENABLED: "0",
-          FORCE_NO_TTY: "true",
-          CI: "true",
-          GENIE_LLM_API_KEY: undefined,
-          GENIE_LLM_BASE_URL: undefined,
-        },
+        continueEnv,
+        tempRoot,
       );
 
       expect(result.status, `signal=${result.signal}\n${result.stdout}\n${result.stderr}`).toBe(0);
