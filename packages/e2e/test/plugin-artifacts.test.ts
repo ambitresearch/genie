@@ -77,8 +77,9 @@ describe("Claude plugin artifacts", () => {
     const ci = readFileSync(resolve(ROOT, ".github/workflows/ci.yml"), "utf8");
 
     expect(ci).toContain(
-      "group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}",
+      "group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}",
     );
+    expect(ci).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
     for (const job of ["check", "gitea", "viewer-a11y", "viewer-e2e", "codex-smoke"]) {
       expect(ci).toMatch(
         new RegExp(
