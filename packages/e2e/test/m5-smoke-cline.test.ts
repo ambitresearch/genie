@@ -534,7 +534,12 @@ function requireCompleteClineToolCalls(events: ClineJsonEvent[]): ClineJsonEvent
 function isolatedClineEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   const childEnv: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || name.startsWith("CLINE_") || name === "GENIE_PREVIEWS_BASE_URL") {
+    const normalizedName = name.toUpperCase();
+    if (
+      value === undefined ||
+      normalizedName.startsWith("CLINE_") ||
+      normalizedName === "GENIE_PREVIEWS_BASE_URL"
+    ) {
       continue;
     }
     childEnv[name] = value;
@@ -549,19 +554,17 @@ function isolatedClineEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 }
 
 it("removes preview-origin and Cline overrides from the real-CLI child", () => {
-  expect(
-    isolatedClineEnv({
-      PATH: "/bin",
-      CLINE_DATA_DIR: "/real/cline",
-      GENIE_PREVIEWS_BASE_URL: "https://previews.example.test",
-    }),
-  ).toMatchObject({ PATH: "/bin", CLINE_TELEMETRY_DISABLED: "1" });
-  expect(
-    isolatedClineEnv({
-      CLINE_DATA_DIR: "/real/cline",
-      GENIE_PREVIEWS_BASE_URL: "https://previews.example.test",
-    }),
-  ).not.toHaveProperty("GENIE_PREVIEWS_BASE_URL");
+  const isolated = isolatedClineEnv({
+    PATH: "/bin",
+    Cline_Data_Dir: "/real/cline",
+    Cline_Mcp_Settings_Path: "/real/cline/settings.json",
+    genie_previews_base_url: "https://previews.example.test",
+  });
+
+  expect(isolated).toMatchObject({ PATH: "/bin", CLINE_TELEMETRY_DISABLED: "1" });
+  expect(isolated).not.toHaveProperty("Cline_Data_Dir");
+  expect(isolated).not.toHaveProperty("Cline_Mcp_Settings_Path");
+  expect(isolated).not.toHaveProperty("genie_previews_base_url");
 });
 
 it("rejects a Cline transcript with a started tool call that never completes", () => {

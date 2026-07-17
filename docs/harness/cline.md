@@ -14,12 +14,11 @@ resolves from the transport, not from the harness:
   `url`+`headers` registration below with no locality override) — there is
   **no** `viewerUrl`/`file://` fallback. `preview`'s text is either
   `"Preview ready in the inline MCP App."` (when the server has a usable
-  previews origin, even though Cline cannot render it) or a
-  `"Remote preview unavailable: …"` message. With a valid
-  `GENIE_PREVIEWS_BASE_URL`, Cline can receive the first message even though it
-  cannot render that inline app; without a usable previews origin it receives
-  the second. Neither outcome is browsable in Cline. Point Cline at a local
-  stdio server if you need a viewer/file URL.
+  previews origin or the filtered manifest is empty, even though Cline cannot
+  render it) or a `"Remote preview unavailable: …"` message. Cline receives
+  the second only when the filtered manifest has components and no usable
+  `GENIE_PREVIEWS_BASE_URL`. Neither outcome is browsable in Cline. Point Cline
+  at a local stdio server if you need a viewer/file URL.
 
 Skill support carries the `conjure → plan → write_files → preview` workflow;
 without it, tool descriptions are the fallback guidance. See
@@ -159,8 +158,9 @@ probed against an installed Cursor extension on 2026-07-16:
 This snippet registers a **remote** HTTP endpoint, so — per the locality
 section above — `preview` returns either `"Preview ready in the inline MCP
 App."` or `"Remote preview unavailable: …"`, depending on the server's
-previews-origin configuration. Neither is a browsable URL in Cline. If you
-want a browsable `viewerUrl`/`fileUrl`, run genie over local stdio instead:
+previews-origin configuration and whether the filtered manifest is empty.
+Neither is a browsable URL in Cline. If you want a browsable
+`viewerUrl`/`fileUrl`, run genie over local stdio instead:
 
 ```json
 {
@@ -214,7 +214,8 @@ present in the tool result but Cline does not consume it, so the response
 still shows the plain-text tool output described in the locality section
 above. Over the remote HTTP registration documented here, that text is either
 `"Preview ready in the inline MCP App."` or `"Remote preview unavailable: …"`;
-neither is a clickable Cline preview — see
+the former appears when a previews origin is usable or the filtered manifest
+is empty. Neither is a clickable Cline preview — see
 [Register the server](#register-the-server-clinedatasettingscline_mcp_settingsjson)
 for the local-stdio alternative if you need a browsable viewer.
 
