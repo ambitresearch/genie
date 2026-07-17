@@ -720,3 +720,45 @@ jobs:
             reports/codex-repl-stderr.log
           if-no-files-found: ignore
           retention-days: 7
+
+  # ── Continue CLI harness smoke (M5-15 / DRO-287) ────────────────────────────
+  # Runs the published, pinned `cn -p` agent against a deterministic loopback
+  # model. The package command builds @genie/viewer + @genie/server and sets
+  # GENIE_REQUIRE_CONTINUE=1, so neither a missing dist/ nor a missing Continue
+  # CLI can turn a clean checkout green through a skipped suite.
+  continue-smoke:
+    name: Continue CLI harness smoke (M5-15)
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Run Continue CLI headless harness smoke (AC1-AC5)
+        env:
+          VITEST_JUNIT: "1"
+        run: pnpm --filter @genie/e2e test:e2e:continue
+
+      - name: Upload Continue smoke report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-continue-smoke
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
