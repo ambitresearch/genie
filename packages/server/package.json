@@ -1,11 +1,19 @@
 {
   "name": "@genie/server",
   "version": "1.2.0",
-  "private": true,
   "type": "module",
   "description": "genie MCP server — harness-agnostic AI UI-component generation.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/roshangautam/genie.git",
+    "directory": "packages/server"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "bin": {
-    "genie": "./dist/cli.js"
+    "genie": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,6 +34,7 @@
     "chokidar": "^3.6.0",
     "diff": "^8.0.2",
     "esbuild": "^0.28.1",
+    "jose": "^6.2.3",
     "micromatch": "^4.0.8",
     "mime-types": "^3.0.2",
     "openai": "^6.45.0",

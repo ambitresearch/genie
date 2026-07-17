@@ -55,6 +55,12 @@ app to open.
 6. **Skybridge is parked, not adopted** — gated on a spike before M4 (RFC §15.8;
    verdict in `docs/research/skybridge.md` §8). Don't build on it until the spike clears
    genie's CSP + G-5 constraints.
+7. **npm package names (M0-04 fallback, recorded here per that issue's AC5):** the
+   root name `genie` is already registered by an unrelated npm package (verified via
+   `registry.npmjs.org/genie`), so the server publishes as **`@genie/server`** (not bare
+   `genie`) and the viewer as **`@genie/viewer`** — both scoped, public, with npm
+   provenance. npm provenance requires this source repository to be public before the
+   first live publish. See `.github/workflows/release.yml` (DRO-278 / M5-06).
 
 ## Conventions
 
@@ -62,4 +68,5 @@ app to open.
   JPEG compression washes out the cream palette.
 - `git` operations in this environment may need the MacOS-MCP shell tool (the sandbox blocks
   `.git` writes from the Bash tool).
-- This repo is committed to a **private** GitHub repo: `roshangautam/genie`.
+- This repo currently lives in the **private** GitHub repo `roshangautam/genie`;
+  DRO-278 release publishing remains blocked until the repository is public.

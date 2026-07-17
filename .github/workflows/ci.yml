@@ -11,8 +11,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Supersede stale PR runs, but never cancel a main-push run: release.yml
+  # consumes each completed push run as the proof that a release commit is green.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -148,6 +150,65 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-report-gitea
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ── OIDC provider integration test (M5-04 / DRO-276) ─────────────────────────
+  # `packages/e2e/test/m5-oidc.test.ts` — boots a real `oidc-provider`-backed
+  # authorization server in a throwaway container (packages/e2e/test/support/
+  # oidc-fixture.ts), drives a real headless-Chromium auth-code + PKCE flow
+  # against it (client_id `genie-test`), and asserts genie's OIDC
+  # relying-party gate (packages/server/src/auth/oidc/*) both authorizes a
+  # genie-users member's mcp__genie__list_kits call (AC5) and rejects a
+  # non-member with HTTP 403 (AC6). Kept as its own job — same reasoning as
+  # `gitea` above: needs a real Docker daemon + a real browser binary, neither
+  # of which the fast matrix legs install. Pinned to `ubuntu-latest` (guarantees
+  # a Docker daemon) rather than the RUNS_ON offload var, for the same reason
+  # the `gitea` job is pinned there.
+  oidc:
+    name: OIDC provider integration (docker)
+    runs-on: ubuntu-latest
+    # AC7 requires the walk itself to run under 3 minutes; this ceiling adds
+    # generous headroom for image build + dependency install + browser
+    # install, none of which count against AC7's own budget.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        # Same ERR_PNPM_EAGAIN hardlink-fallback retry as the other jobs.
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @genie/e2e exec playwright install --with-deps chromium
+
+      - name: Run OIDC provider integration walk (AC1-AC7)
+        # GENIE_REQUIRE_DOCKER makes the suite FAIL (not skip) if no daemon is
+        # reachable — the same "vacuous skip must fail somewhere" contract the
+        # Gitea/a11y/viewer-e2e legs already use.
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_REQUIRE_DOCKER: "1"
+        run: pnpm --filter @genie/e2e test:e2e:oidc
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-oidc
           path: reports/junit.xml
           if-no-files-found: warn
           retention-days: 7
