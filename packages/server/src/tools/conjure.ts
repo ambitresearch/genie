@@ -376,7 +376,7 @@ async function safeFetchFollowingRedirects(
   let currentUrl = startUrl;
   for (let hop = 0; hop <= MAX_REF_URL_REDIRECTS; hop++) {
     if (!isSafeRefUrl(currentUrl)) {
-      logStderr({ event: "conjure.ref_url.ssrf_blocked", refUrl: currentUrl, startUrl, hop });
+      logStderr({ event: "conjure.ref_url.ssrf_blocked", startUrl, hop });
       return undefined;
     }
     const hostname = new URL(currentUrl).hostname;

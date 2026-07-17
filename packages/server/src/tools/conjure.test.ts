@@ -732,6 +732,31 @@ describe("AC7 — reference URL fetch + inline", () => {
     expect(stderrLines().some((l) => l.event === "conjure.ref_url.ssrf_blocked")).toBe(true);
   });
 
+  it("rejects a credential-bearing redirect without logging its target", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const credentialTarget = "https://user:password@example.com/secret";
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === "https://example.com/start") {
+        return {
+          ok: false,
+          status: 302,
+          headers: { get: (name: string) => (name === "location" ? credentialTarget : null) },
+          text: async () => "",
+        };
+      }
+      throw new Error("must not fetch a credential-bearing redirect target");
+    });
+
+    const result = await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/start" }),
+    );
+
+    expect(result.componentName).toBe("Button");
+    expect(fetchImpl).not.toHaveBeenCalledWith(credentialTarget);
+    expect(JSON.stringify(stderrLines())).not.toContain("user:password");
+  });
+
   it("rejects a public-looking redirect hostname that resolves to a private address", async () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
     const lookupAddresses = vi.fn(async (hostname: string) =>

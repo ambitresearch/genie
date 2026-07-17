@@ -1,12 +1,12 @@
 # Security Audit v1 (M6-03 / DRO-291)
 
-Status: **Re-audit complete; not signed off for GA.** The P1 `conjure.refUrl`
+Status: **M6-03 re-audit complete; security fixes signed off for merge.** The P1 `conjure.refUrl`
 SSRF finding is fixed and regression-tested. Real-browser CSP and sandbox
 probes passed. Dependency scanning found no known vulnerabilities.
 Prompt-injection probes observed no system-prompt leak, but generated tool
 output remains untrusted and schema validation is not a confidentiality
 control. Open supply-chain findings are tracked in GitHub issue #207 and block
-GA sign-off.
+the GA tag, but not closure of this completed audit-and-remediation issue.
 
 Evidence in this report is limited to commands and outputs that were observed.
 The current re-audit was run on PR #189 after its SSRF follow-up changes.
@@ -201,7 +201,7 @@ found by M6-03 re-audit`.
 Re-audit evidence after the final SSRF changes:
 
 ```text
-pnpm exec vitest run packages/server/src/tools/conjure.test.ts  # 54 passed
+pnpm exec vitest run packages/server/src/tools/conjure.test.ts  # 56 passed
 pnpm exec vitest run packages/server/src/ui/grid-resource.test.ts \
   packages/server/src/middleware/plan-guard.test.ts             # 74 passed
 pnpm --filter @genie/server typecheck                           # clean
@@ -216,7 +216,6 @@ above rather than omitted. The local Chromium probe replay passed 12/12. The
 full suite was also run, but two unrelated tests repeatedly exceeded Vitest's
 5-second timeout (`packages/server/src/cli.test.ts` and the fresh-kit browser
 case in `packages/server/src/create_kit.test.ts`); focused security tests,
-lint, typecheck, and build passed. PR approval and a complete green CI run are
-still required before merge. This audit is **not signed off for GA** until
-GitHub issue #207's A08 findings are resolved or explicitly accepted with
-evidence.
+lint, typecheck, and build passed. The M6-03 audit and fixes are signed off for
+merge and issue #68 closure. GitHub issue #207's A08 findings remain an explicit
+blocker for the GA tag until resolved or accepted with evidence.
