@@ -44,7 +44,11 @@
  * versioned by git-blob hash, AC5) is where that iteration lives; this file is the
  * stable request/validate/retry harness around it.
  */
+import { lookup as dnsLookup } from "node:dns/promises";
+
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import ipaddr from "ipaddr.js";
+import { Agent, fetch as undiciFetch } from "undici";
 import { z } from "zod";
 
 import { type ValidatedComponent } from "../llm/schema.js";
@@ -119,6 +123,7 @@ export const DEFAULT_MODEL = "design-default";
 /** `refUrl` bodies larger than this are warned about (AC7) and truncated before
  * inlining, so a giant page can't blow the request's token budget. */
 export const REF_URL_WARN_BYTES = 1024 * 1024; // 1 MB
+const REF_URL_FETCH_TIMEOUT_MS = 30_000;
 
 /**
  * SSRF guard for `refUrl` (Copilot review): `conjure` fetches this URL
@@ -131,6 +136,36 @@ export const REF_URL_WARN_BYTES = 1024 * 1024; // 1 MB
  * and `http://169.254.169.254/…` (cloud metadata) holes at the tool boundary.
  * Exported so a future network-egress policy can reuse the exact same rule.
  */
+type SafeAddress = { address: string; family: 4 | 6 };
+export type AddressLookup = (
+  hostname: string,
+) => Promise<readonly { address: string; family: number }[]>;
+
+const defaultAddressLookup: AddressLookup = (hostname) =>
+  dnsLookup(hostname, { all: true, verbatim: true });
+
+function parseIpLiteral(host: string): ipaddr.IPv4 | ipaddr.IPv6 | undefined {
+  const unbracketed = host.startsWith("[") ? host.replace(/^\[|\]$/g, "") : host;
+  try {
+    return ipaddr.process(unbracketed);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Return a canonical address only for globally routable unicast IPs. Using a
+ * real IP parser avoids textual-prefix gaps such as IPv4-mapped loopback
+ * (`::ffff:127.0.0.1`), the full IPv6 link-local `/10`, and multicast or
+ * unspecified addresses. */
+function asSafeAddress(host: string): SafeAddress | undefined {
+  const parsed = parseIpLiteral(host);
+  if (parsed === undefined || parsed.range() !== "unicast") return undefined;
+  return {
+    address: parsed.toString(),
+    family: parsed.kind() === "ipv4" ? 4 : 6,
+  };
+}
+
 export function isSafeRefUrl(raw: string): boolean {
   let url: URL;
   try {
@@ -139,34 +174,239 @@ export function isSafeRefUrl(raw: string): boolean {
     return false;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (url.username !== "" || url.password !== "") return false;
 
   const host = url.hostname.toLowerCase();
   // Named internal hosts.
   if (host === "localhost" || host === "ip6-localhost" || host.endsWith(".localhost")) return false;
   if (host === "" || host === "[::1]" || host === "::1") return false;
 
-  // IPv4 literal → block loopback/private/link-local/CGNAT ranges.
-  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (ipv4) {
-    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
-    if (a === 127 || a === 10 || a === 0) return false; // loopback / private / this-host
-    if (a === 169 && b === 254) return false; // link-local incl. 169.254.169.254 metadata
-    if (a === 192 && b === 168) return false; // private
-    if (a === 172 && b >= 16 && b <= 31) return false; // private
-    if (a === 100 && b >= 64 && b <= 127) return false; // CGNAT
-  }
-  // Bare IPv6 loopback/link-local/unique-local.
-  if (host.startsWith("[")) {
-    const inner = host.replace(/^\[|\]$/g, "");
-    if (
-      inner === "::1" ||
-      inner.startsWith("fe80:") ||
-      inner.startsWith("fc") ||
-      inner.startsWith("fd")
-    )
-      return false;
-  }
+  // Any literal must be globally routable unicast. Hostnames are resolved and
+  // subjected to the same rule immediately before the pinned connection.
+  if (parseIpLiteral(host) !== undefined && asSafeAddress(host) === undefined) return false;
   return true;
+}
+
+/**
+ * Resolve `hostname` and return only the addresses that pass the
+ * private/loopback/link-local/CGNAT check, or `undefined` if none do (all
+ * addresses unsafe, or the lookup failed). Exported so both the fetch-time
+ * guard and its regression tests share one resolution path.
+ *
+ * DNS-rebinding guard (M6-03 follow-up, fixes the gap the audit flagged in
+ * `docs/security-audit-v1.md`): {@link isSafeRefUrl} is a *syntactic*
+ * pre-filter on the hostname as typed — it cannot catch an attacker-controlled
+ * DNS name that resolves to a private/loopback/link-local address (the
+ * classic SSRF/DNS-rebinding bypass: `evil.example.com` passes the hostname
+ * check today and answers `127.0.0.1` at fetch time).
+ */
+async function resolveSafeAddress(
+  hostname: string,
+  lookupAddresses: AddressLookup = defaultAddressLookup,
+): Promise<{ address: string; family: 4 | 6 } | undefined> {
+  const literal = parseIpLiteral(hostname);
+  if (literal !== undefined) return asSafeAddress(hostname);
+
+  try {
+    const results = await lookupAddresses(hostname);
+    for (const { address } of results) {
+      const safe = asSafeAddress(address);
+      if (safe !== undefined) return safe;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Public boolean form of {@link resolveSafeAddress} kept for the existing
+ * test surface / any external reuse (M6-03 follow-up). A hostname is "safe"
+ * if at least one resolved address is not private/loopback/link-local.
+ */
+export async function isSafeResolvedAddress(
+  hostname: string,
+  lookupAddresses: AddressLookup = defaultAddressLookup,
+): Promise<boolean> {
+  return (await resolveSafeAddress(hostname, lookupAddresses)) !== undefined;
+}
+
+/**
+ * Fetch a single URL whose hostname has already been resolved to a
+ * known-safe `address`/`family` (M6-03 follow-up, TOCTOU fix): rather than
+ * re-validating a hostname and then letting the HTTP client perform its own,
+ * second, independent DNS resolution at connect time — the exact gap an
+ * attacker-controlled DNS name (a "rebinding" host that answers safely to
+ * the guard and privately to the real connection) can exploit — this pins
+ * the *already-validated* address into the connection via undici's
+ * `Agent({ connect: { lookup } })` override, so validation and connection
+ * are guaranteed to use the identical address. Redirects are fetched with
+ * `redirect: "manual"` and returned to the caller un-followed; the caller
+ * (`safeFetchFollowingRedirects`) re-runs full validation (schema-level
+ * `isSafeRefUrl` + resolved-address check) on every redirect target before
+ * following it, so a public URL cannot use a redirect to smuggle a request to
+ * a private target past the guard.
+ */
+export async function fetchWithPinnedAddress(
+  url: string,
+  address: string,
+  family: 4 | 6,
+  timeoutMs = REF_URL_FETCH_TIMEOUT_MS,
+): Promise<
+  ReferenceFetchResponse & {
+    bodyTruncated: boolean;
+    observedBodyBytes: number;
+  }
+> {
+  const pinnedAgent = new Agent({
+    connect: {
+      lookup: (_hostname, options, callback) => {
+        if (options.all) {
+          callback(null, [{ address, family }]);
+        } else {
+          callback(null, address, family);
+        }
+      },
+    },
+  });
+  try {
+    const response = await undiciFetch(url, {
+      redirect: "manual",
+      dispatcher: pinnedAgent,
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "accept-encoding": "identity" },
+    });
+    const contentEncoding = response.headers.get("content-encoding")?.trim().toLowerCase();
+    if (contentEncoding && contentEncoding !== "identity") {
+      await response.body?.cancel();
+      throw new Error("Encoded reference responses are not supported");
+    }
+    const isRedirect = response.status >= 300 && response.status < 400;
+    if (isRedirect || !response.ok) {
+      await response.body?.cancel();
+      return {
+        status: response.status,
+        ok: response.ok,
+        headers: response.headers,
+        bodyTruncated: false,
+        observedBodyBytes: 0,
+        text: async () => "",
+      };
+    }
+
+    const reader = response.body?.getReader();
+    const chunks: Buffer[] = [];
+    let observedBodyBytes = 0;
+    let bodyTruncated = false;
+    if (reader) {
+      try {
+        while (observedBodyBytes <= REF_URL_WARN_BYTES) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const remaining = REF_URL_WARN_BYTES + 1 - observedBodyBytes;
+          chunks.push(Buffer.from(value.subarray(0, remaining)));
+          observedBodyBytes += Math.min(value.byteLength, remaining);
+          if (value.byteLength > remaining || observedBodyBytes > REF_URL_WARN_BYTES) {
+            bodyTruncated = true;
+            await reader.cancel();
+            break;
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    const body = truncateUtf8Buffer(Buffer.concat(chunks), REF_URL_WARN_BYTES);
+    return {
+      status: response.status,
+      ok: response.ok,
+      headers: response.headers,
+      bodyTruncated,
+      observedBodyBytes,
+      text: async () => body,
+    };
+  } finally {
+    await pinnedAgent.close();
+  }
+}
+
+const MAX_REF_URL_REDIRECTS = 5;
+
+async function runBeforeDeadline<T>(
+  deadlineMs: number,
+  operation: (remainingMs: number) => Promise<T>,
+): Promise<T> {
+  const remainingMs = deadlineMs - Date.now();
+  if (remainingMs <= 0) throw new Error("Reference URL fetch timed out");
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation(remainingMs),
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("Reference URL fetch timed out")), remainingMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Fetch `refUrl`, following redirects manually and re-validating every hop
+ * (M6-03 follow-up — closes both blocking gaps from the security-audit
+ * re-review): each hop must (1) pass the schema-level `isSafeRefUrl` check —
+ * scheme + syntactic private-range rules — and (2) resolve to a non-private
+ * address, which is then pinned into the actual connection via
+ * {@link fetchWithPinnedAddress} so the validated and connected addresses can
+ * never diverge. A public URL that redirects to a private target (loopback,
+ * link-local, cloud metadata, or another rebinding host) is rejected at the
+ * first unsafe hop rather than silently followed by the HTTP client's own
+ * redirect handling.
+ */
+async function safeFetchFollowingRedirects(
+  fetchImpl: FetchFn | undefined,
+  fetchPinnedAddress: PinnedFetchFn,
+  startUrl: string,
+  lookupAddresses: AddressLookup,
+  timeoutMs: number,
+): Promise<ReferenceFetchResponse | undefined> {
+  const deadlineMs = Date.now() + timeoutMs;
+  let currentUrl = startUrl;
+  for (let hop = 0; hop <= MAX_REF_URL_REDIRECTS; hop++) {
+    if (!isSafeRefUrl(currentUrl)) {
+      logStderr({ event: "conjure.ref_url.ssrf_blocked", startUrl, hop });
+      return undefined;
+    }
+    const hostname = new URL(currentUrl).hostname;
+    const resolved = await runBeforeDeadline(deadlineMs, () =>
+      resolveSafeAddress(hostname, lookupAddresses),
+    );
+    if (!resolved) {
+      logStderr({ event: "conjure.ref_url.ssrf_blocked", refUrl: currentUrl, startUrl, hop });
+      return undefined;
+    }
+    const res = await runBeforeDeadline(deadlineMs, (remainingMs) =>
+      fetchImpl
+        ? fetchImpl(currentUrl)
+        : fetchPinnedAddress(currentUrl, resolved.address, resolved.family, remainingMs),
+    );
+
+    const status = res.status;
+    if (status >= 300 && status < 400) {
+      const location = res.headers?.get("location") ?? null;
+      if (!location) {
+        logStderr({ event: "conjure.ref_url.skip", refUrl: currentUrl, status });
+        return undefined;
+      }
+      currentUrl = new URL(location, currentUrl).toString();
+      continue;
+    }
+    return res;
+  }
+  logStderr({ event: "conjure.ref_url.skip", refUrl: startUrl, reason: "too_many_redirects" });
+  return undefined;
 }
 
 /** Reusable Zod schema for `refUrl`: a bounded http(s) URL that passes the SSRF
@@ -234,14 +474,31 @@ export interface ConjureResult extends Record<string, unknown> {
   usage: UsageInfo;
 }
 
-/** The URL-fetch seam (AC7). Defaults to the global `fetch`; injectable for tests. */
-export type FetchFn = (
-  url: string,
-) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+/** Injectable URL-fetch seam for tests (AC7). When omitted, production uses the
+ * DNS-validated, address-pinned Undici path rather than global `fetch`.
+ * `headers` is optional so existing test doubles that only stub `{ ok, status, text }`
+ * keep compiling; the redirect-following logic treats a missing `headers` on a
+ * 3xx response as "no Location to follow" and stops rather than throwing. */
+export interface ReferenceFetchResponse {
+  ok: boolean;
+  status: number;
+  headers?: { get(name: string): string | null };
+  bodyTruncated?: boolean;
+  observedBodyBytes?: number;
+  text(): Promise<string>;
+}
+export type FetchFn = (url: string) => Promise<ReferenceFetchResponse>;
+export type PinnedFetchFn = typeof fetchWithPinnedAddress;
 
 export interface ConjureDeps {
   chat?: ChatCompletionFn;
   fetchImpl?: FetchFn;
+  /** Pinned socket seam for deterministic production-path tests. */
+  fetchPinnedAddress?: PinnedFetchFn;
+  /** DNS seam for deterministic SSRF tests. Production uses `dns.lookup`. */
+  lookupAddresses?: AddressLookup;
+  /** Overall DNS + redirect/fetch deadline seam. Production defaults to 30 seconds. */
+  refUrlTimeoutMs?: number;
   /** Prompt loader override (tests). Defaults to the real versioned loader (AC5). */
   loadSystemPrompt?: () => LoadedPrompt;
 }
@@ -272,8 +529,11 @@ export class ConjureError extends Error {
  * guaranteed ≤ `maxBytes`.
  */
 export function truncateUtf8(text: string, maxBytes: number): string {
-  const buf = Buffer.from(text, "utf-8");
-  if (buf.length <= maxBytes) return text;
+  return truncateUtf8Buffer(Buffer.from(text, "utf-8"), maxBytes);
+}
+
+function truncateUtf8Buffer(buf: Buffer, maxBytes: number): string {
+  if (buf.length <= maxBytes) return buf.toString("utf-8");
   let end = maxBytes;
   // A UTF-8 continuation byte matches 0b10xxxxxx (0x80–0xBF); back up off any
   // partial sequence at the cut so we never split a codepoint.
@@ -288,16 +548,33 @@ export function truncateUtf8(text: string, maxBytes: number): string {
  * warned and skipped — generation proceeds without the reference rather than
  * dying on a flaky link.
  */
-async function fetchReference(fetchImpl: FetchFn, refUrl: string): Promise<string | undefined> {
+async function fetchReference(
+  fetchImpl: FetchFn | undefined,
+  fetchPinnedAddress: PinnedFetchFn,
+  refUrl: string,
+  lookupAddresses: AddressLookup,
+  timeoutMs: number,
+): Promise<string | undefined> {
   try {
-    const res = await fetchImpl(refUrl);
+    // Re-validate at fetch time against the *resolved* address, pin that exact
+    // address into the connection, and re-validate every redirect hop the same
+    // way (M6-03 follow-up — closes both the TOCTOU and redirect-bypass gaps
+    // from the security-audit re-review). See `safeFetchFollowingRedirects`.
+    const res = await safeFetchFollowingRedirects(
+      fetchImpl,
+      fetchPinnedAddress,
+      refUrl,
+      lookupAddresses,
+      timeoutMs,
+    );
+    if (!res) return undefined;
     if (!res.ok) {
       logStderr({ event: "conjure.ref_url.skip", refUrl, status: res.status });
       return undefined;
     }
     const body = await res.text();
-    const bytes = Buffer.byteLength(body, "utf-8");
-    if (bytes > REF_URL_WARN_BYTES) {
+    const bytes = Math.max(res.observedBodyBytes ?? 0, Buffer.byteLength(body, "utf-8"));
+    if (res.bodyTruncated || bytes > REF_URL_WARN_BYTES) {
       logStderr({ event: "conjure.ref_url.oversize", refUrl, bytes, capBytes: REF_URL_WARN_BYTES });
       return (
         truncateUtf8(body, REF_URL_WARN_BYTES) + "\n<!-- …reference truncated by genie (>1 MB) -->"
@@ -402,8 +679,6 @@ const defaultChatCompletion: ChatCompletionFn = async (input) => {
   return withRetry(createChatCompletion)(input);
 };
 
-const defaultFetch: FetchFn = (url) => fetch(url);
-
 // ── Core ──────────────────────────────────────────────────────────────────────
 
 /**
@@ -420,7 +695,10 @@ const defaultFetch: FetchFn = (url) => fetch(url);
 export async function conjure(deps: ConjureDeps, args: unknown): Promise<ConjureResult> {
   const parsed = conjureArgsSchema.parse(args);
   const chat = deps.chat ?? defaultChatCompletion;
-  const fetchImpl = deps.fetchImpl ?? defaultFetch;
+  const fetchImpl = deps.fetchImpl;
+  const fetchPinnedAddress = deps.fetchPinnedAddress ?? fetchWithPinnedAddress;
+  const lookupAddresses = deps.lookupAddresses ?? defaultAddressLookup;
+  const refUrlTimeoutMs = deps.refUrlTimeoutMs ?? REF_URL_FETCH_TIMEOUT_MS;
   const systemPrompt = (
     deps.loadSystemPrompt ?? (() => loadPrompt(GENERATE_COMPONENT_SYSTEM_PROMPT_FILE))
   )();
@@ -435,7 +713,15 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
   const adapter = await getAdapter(parsed.framework);
   const frameworkDirective = adapter.promptDirective;
 
-  const referenceHtml = parsed.refUrl ? await fetchReference(fetchImpl, parsed.refUrl) : undefined;
+  const referenceHtml = parsed.refUrl
+    ? await fetchReference(
+        fetchImpl,
+        fetchPinnedAddress,
+        parsed.refUrl,
+        lookupAddresses,
+        refUrlTimeoutMs,
+      )
+    : undefined;
 
   const { outcome, usage, attempts } = await runComponentGeneration({
     chat,

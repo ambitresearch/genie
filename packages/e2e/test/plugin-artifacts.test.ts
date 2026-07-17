@@ -55,6 +55,44 @@ describe("Claude plugin artifacts", () => {
     expect(claude).toContain("mkdir -p ~/.claude/skills ~/.claude/commands");
   });
 
+  it("does not promise automatic Claude Code OAuth before protected-resource discovery ships", () => {
+    const claude = readFileSync(resolve(ROOT, "docs/harness/claude-code.md"), "utf8");
+
+    expect(claude).toContain("`/.well-known/oauth-protected-resource/mcp`");
+    expect(claude).toMatch(/supported Claude\s+Code setup/);
+    expect(claude).not.toContain("Claude Code discovers the metadata document");
+    expect(claude).not.toContain("all automatically");
+  });
+
+  it("documents apiKeyHelper and headersHelper in their default Claude Code files", () => {
+    const claude = readFileSync(resolve(ROOT, "docs/harness/claude-code.md"), "utf8");
+
+    expect(claude).toContain("`~/.claude/settings.json`");
+    expect(claude).toContain("`~/.claude.json`");
+    expect(claude).toContain("Do not combine these blocks into `~/.claude.json`");
+    expect(claude).not.toContain("together in the same config file");
+  });
+
+  it("keeps manual paid smoke runs isolated from normal CI concurrency", () => {
+    const ci = readFileSync(resolve(ROOT, ".github/workflows/ci.yml"), "utf8");
+
+    expect(ci).toContain(
+      "group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}",
+    );
+    expect(ci).toContain("cancel-in-progress: ${{ github.event_name == 'pull_request' }}");
+    for (const job of ["check", "gitea", "oidc", "viewer-a11y", "viewer-e2e", "codex-smoke"]) {
+      expect(ci).toMatch(
+        new RegExp(
+          `^  ${job}:\\n(?:    .*\\n)*?    if: github\\.event_name != 'workflow_dispatch'$`,
+          "m",
+        ),
+      );
+    }
+    expect(ci).toMatch(
+      /^ {2}m5-smoke-claude-code:\n(?: {4}.*\n)*? {4}if: github\.event_name == 'workflow_dispatch' && github\.ref == 'refs\/heads\/main'$/m,
+    );
+  });
+
   it("documents portable Agent Skill installation for supported harnesses", () => {
     const cursor = readFileSync(resolve(ROOT, "docs/harness/cursor.md"), "utf8");
     const codex = readFileSync(resolve(ROOT, "docs/harness/codex.md"), "utf8");

@@ -3,7 +3,17 @@
   "release-type": "node",
   "packages": {
     "packages/server": {
-      "package-name": "@genie/server"
+      "package-name": "@genie/server",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "/mcpb/manifest.json",
+          "jsonpath": "$.version"
+        }
+      ]
+    },
+    "packages/viewer": {
+      "package-name": "@genie/viewer"
     }
   },
   "include-component-in-tag": true,

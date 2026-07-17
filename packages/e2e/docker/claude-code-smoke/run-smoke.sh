@@ -1,0 +1,46 @@
+#!/usr/bin/env sh
+# Runs Claude Code non-interactively against a genie MCP server reachable at
+# the URL in HOME's normal .claude.json, with apiKeyHelper in the normal
+# .claude/settings.json and the prompt supplied in /workspace/prompt.txt.
+# Emits `--output-format stream-json` (NDJSON, one
+# structured event per line, including tool_use/tool_result entries) on
+# stdout so the caller (m5-smoke-claude-code.test.ts) can walk the actual
+# event stream and assert each documented protocol-level mcp__genie__* tool
+# call ran through Claude Code's mcp__genie__mcp__genie__* wrapper and returned
+# a non-error result (AC5/AC6) — a single collapsed
+# `--output-format json` result cannot prove that.
+# `--verbose` is required by the Claude Code CLI whenever `--print`/`-p` is
+# combined with `--output-format stream-json`.
+set -eu
+
+PROMPT_FILE="/workspace/prompt.txt"
+SETTINGS_FILE="/workspace/.claude/settings.json"
+MCP_CONFIG="/workspace/.claude.json"
+
+if [ ! -f "$PROMPT_FILE" ]; then
+  echo "run-smoke.sh: missing $PROMPT_FILE (mount/copy it before starting the container)" >&2
+  exit 1
+fi
+if [ ! -f "$SETTINGS_FILE" ]; then
+  echo "run-smoke.sh: missing $SETTINGS_FILE (copy it before starting the container)" >&2
+  exit 1
+fi
+if [ ! -f "$MCP_CONFIG" ]; then
+  echo "run-smoke.sh: missing $MCP_CONFIG (copy it before starting the container)" >&2
+  exit 1
+fi
+
+if [ -n "${GENIE_CLAUDE_DRIVER_MODEL:-}" ]; then
+  set -- --model "$GENIE_CLAUDE_DRIVER_MODEL"
+else
+  set --
+fi
+
+exec claude \
+  -p "$(cat "$PROMPT_FILE")" \
+  "$@" \
+  --setting-sources user \
+  --tools "mcp__genie__mcp__genie__conjure,mcp__genie__mcp__genie__write_files,mcp__genie__mcp__genie__preview,mcp__genie__mcp__genie__validate,mcp__genie__mcp__genie__create_kit,mcp__genie__mcp__genie__plan" \
+  --output-format stream-json \
+  --verbose \
+  --allowedTools "mcp__genie__mcp__genie__conjure,mcp__genie__mcp__genie__write_files,mcp__genie__mcp__genie__preview,mcp__genie__mcp__genie__validate,mcp__genie__mcp__genie__create_kit,mcp__genie__mcp__genie__plan"
