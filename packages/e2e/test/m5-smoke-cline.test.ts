@@ -531,6 +531,39 @@ function requireCompleteClineToolCalls(events: ClineJsonEvent[]): ClineJsonEvent
   return toolEvents;
 }
 
+function isolatedClineEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const childEnv: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined || name.startsWith("CLINE_") || name === "GENIE_PREVIEWS_BASE_URL") {
+      continue;
+    }
+    childEnv[name] = value;
+  }
+  Object.assign(childEnv, {
+    CLINE_TELEMETRY_DISABLED: "1",
+    CLINE_NO_AUTO_UPDATE: "1",
+    CLINE_DISABLE_CLINE_PASS_NOTICE: "1",
+    NO_UPDATE_NOTIFIER: "1",
+  });
+  return childEnv;
+}
+
+it("removes preview-origin and Cline overrides from the real-CLI child", () => {
+  expect(
+    isolatedClineEnv({
+      PATH: "/bin",
+      CLINE_DATA_DIR: "/real/cline",
+      GENIE_PREVIEWS_BASE_URL: "https://previews.example.test",
+    }),
+  ).toMatchObject({ PATH: "/bin", CLINE_TELEMETRY_DISABLED: "1" });
+  expect(
+    isolatedClineEnv({
+      CLINE_DATA_DIR: "/real/cline",
+      GENIE_PREVIEWS_BASE_URL: "https://previews.example.test",
+    }),
+  ).not.toHaveProperty("GENIE_PREVIEWS_BASE_URL");
+});
+
 it("rejects a Cline transcript with a started tool call that never completes", () => {
   expect(() =>
     requireCompleteClineToolCalls([
@@ -576,7 +609,9 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
     const clineConfig = join(base, ".cline", "data", "settings");
     const kitsRoot = join(base, "kits");
     const previousHome = process.env["GENIE_HOME"];
+    const previousPreviewsBaseUrl = process.env["GENIE_PREVIEWS_BASE_URL"];
     process.env["GENIE_HOME"] = join(base, "genie-home");
+    delete process.env["GENIE_PREVIEWS_BASE_URL"];
     let mcp: NodeHttpServer | undefined;
     let model: NodeHttpServer | undefined;
     try {
@@ -713,16 +748,10 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
       await new Promise<void>((resolveListen) => model!.listen(0, "127.0.0.1", resolveListen));
       const modelPort = (model.address() as AddressInfo).port;
 
-      const env = Object.fromEntries(
-        Object.entries(process.env).filter(([name]) => !name.startsWith("CLINE_")),
-      );
+      const env = isolatedClineEnv(process.env);
       Object.assign(env, {
         HOME: base,
         USERPROFILE: base,
-        CLINE_TELEMETRY_DISABLED: "1",
-        CLINE_NO_AUTO_UPDATE: "1",
-        CLINE_DISABLE_CLINE_PASS_NOTICE: "1",
-        NO_UPDATE_NOTIFIER: "1",
       });
       const version = await execFileAsync(CLINE_BIN, ["--version"], { env });
       expect(version.stdout.trim()).toBe(CLINE_VERSION);
@@ -824,6 +853,8 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
     } finally {
       if (previousHome === undefined) delete process.env["GENIE_HOME"];
       else process.env["GENIE_HOME"] = previousHome;
+      if (previousPreviewsBaseUrl === undefined) delete process.env["GENIE_PREVIEWS_BASE_URL"];
+      else process.env["GENIE_PREVIEWS_BASE_URL"] = previousPreviewsBaseUrl;
       mcp?.closeAllConnections();
       model?.closeAllConnections();
       await Promise.allSettled([
