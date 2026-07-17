@@ -9,8 +9,9 @@ estimate: "5h"
 ## Summary
 Ship the Claude Code config snippet for `~/.claude.json` (or project
 `.mcp.json`) and an automated Playwright smoke that runs
-`conjure → preview → write_files → validate`
-inside Claude Code. Capture screenshots.
+`conjure → write_files → preview → validate`
+inside Claude Code. Capture screenshots. `write_files` precedes `preview`
+because preview compiles the grid from the kit contents already on disk.
 
 ## Context
 - Research report §7 step 11 + per-harness snippets.
@@ -23,8 +24,9 @@ inside Claude Code. Capture screenshots.
       template.
 - [ ] AC3 — Gotcha: callout that OAuth login can bypass the configured LLM endpoint
       routing in Claude Code (research CLAUDE.md gotcha — `/logout` to restore routing).
-- [ ] AC4 — Smoke test boots Claude Code in a Docker sandbox, installs the
-      MCP server, runs the four-verb chain, captures screenshots.
+- [ ] AC4 — Smoke test boots Claude Code in a Docker sandbox, connects it to
+      a real genie HTTP server owned by the host test process, runs the
+      four-verb chain, and captures screenshots.
 - [ ] AC5 — Smoke test asserts each tool call returns non-error.
 - [ ] AC6 — Screenshots saved to `docs/harness/screenshots/claude-code/`.
 - [ ] AC7 — Smoke runs in M5 CI workflow (manually triggered).

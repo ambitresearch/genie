@@ -11,6 +11,7 @@
  */
 import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { gzipSync } from "node:zlib";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -22,7 +23,9 @@ import {
   DEFAULT_MODEL,
   REF_URL_WARN_BYTES,
   conjure,
+  fetchWithPinnedAddress,
   isSafeRefUrl,
+  isSafeResolvedAddress,
   truncateUtf8,
   registerConjureTool,
   ConjureError,
@@ -155,7 +158,7 @@ describe("AC2 — input", () => {
     }));
     await expect(
       conjure(
-        { chat, fetchImpl },
+        { chat, fetchImpl, lookupAddresses: publicAddressLookup },
         args({
           group: "actions",
           refUrl: "https://example.com/ref",
@@ -164,6 +167,7 @@ describe("AC2 — input", () => {
         }),
       ),
     ).resolves.toBeDefined();
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.com/ref");
   });
 
   it("rejects a missing kit (required)", async () => {
@@ -314,6 +318,11 @@ describe("AC6 — reference image as vision input", () => {
 
 // ── AC7 — refUrl fetch + 1 MB warn ────────────────────────────────────────────
 
+/** Stub DNS resolver that returns a single globally routable address for any
+ * hostname — used wherever `fetchImpl` is injected so tests run without a live
+ * network (the real resolver would be called otherwise). */
+const publicAddressLookup = async () => [{ address: "93.184.216.34", family: 4 as const }];
+
 describe("AC7 — reference URL fetch + inline", () => {
   it("fetches refUrl and inlines the body into the user message", async () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
@@ -322,7 +331,10 @@ describe("AC7 — reference URL fetch + inline", () => {
       status: 200,
       text: async () => "<h1>Ref Page</h1>",
     }));
-    await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/ref" }));
+    await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/ref" }),
+    );
     expect(fetchImpl).toHaveBeenCalledWith("https://example.com/ref");
     expect(JSON.stringify(chat.calls[0]!.messages[1]!.content)).toContain("<h1>Ref Page</h1>");
   });
@@ -331,7 +343,10 @@ describe("AC7 — reference URL fetch + inline", () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
     const big = "x".repeat(REF_URL_WARN_BYTES + 1000);
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => big }));
-    await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/big" }));
+    await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/big" }),
+    );
     const warn = stderrLines().find((l) => l.event === "conjure.ref_url.oversize");
     expect(warn).toBeDefined();
     expect(warn?.bytes).toBeGreaterThan(REF_URL_WARN_BYTES);
@@ -343,7 +358,10 @@ describe("AC7 — reference URL fetch + inline", () => {
   it("skips a failed fetch (non-ok) and still generates", async () => {
     const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 404, text: async () => "" }));
-    const res = await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/missing" }));
+    const res = await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/missing" }),
+    );
     expect(res.componentName).toBe("Button");
     expect(stderrLines().some((l) => l.event === "conjure.ref_url.skip")).toBe(true);
   });
@@ -355,12 +373,40 @@ describe("AC7 — reference URL fetch + inline", () => {
     // the cap plus only the small fixed message preamble/marker.
     const multibyte = "€".repeat(REF_URL_WARN_BYTES); // 3 bytes each → ~3 MB
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => multibyte }));
-    await conjure({ chat, fetchImpl }, args({ refUrl: "https://example.com/utf8" }));
+    await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/utf8" }),
+    );
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.com/utf8");
     const sent = chat.calls[0]!.messages[1]!.content as string;
     // The whole message (preamble + capped reference + marker) stays within the
     // cap plus a small fixed overhead — i.e. the 3 MB body was truncated, not
     // sent whole (which would be ~3× the cap).
     expect(Buffer.byteLength(sent, "utf-8")).toBeLessThan(REF_URL_WARN_BYTES + 4096);
+  });
+
+  it("caps malformed UTF-8 after decoding expands the pinned response", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const malformedByteCount = Math.floor(REF_URL_WARN_BYTES / 2);
+    const decodedBody = "\uFFFD".repeat(malformedByteCount);
+    const fetchPinnedAddress = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      bodyTruncated: false,
+      observedBodyBytes: malformedByteCount,
+      text: async () => decodedBody,
+    }));
+
+    await conjure(
+      { chat, fetchPinnedAddress, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/malformed-utf8" }),
+    );
+
+    const sent = chat.calls[0]!.messages[1]!.content as string;
+    expect(Buffer.byteLength(decodedBody, "utf-8")).toBeGreaterThan(REF_URL_WARN_BYTES);
+    expect(Buffer.byteLength(sent, "utf-8")).toBeLessThan(REF_URL_WARN_BYTES + 4096);
+    expect(sent).toContain("reference truncated by genie");
   });
 
   it("truncateUtf8 caps by bytes on a codepoint boundary (no U+FFFD)", () => {
@@ -396,6 +442,373 @@ describe("AC7 — reference URL fetch + inline", () => {
     expect(isSafeRefUrl("file:///etc/passwd")).toBe(false);
     expect(isSafeRefUrl("http://172.16.0.1/x")).toBe(false);
     expect(isSafeRefUrl("http://172.32.0.1/x")).toBe(true); // .32 is outside 16-31 private range
+  });
+
+  it("rejects refUrl credentials before fetch or logging", async () => {
+    const credentialUrl = "https://user:password@example.com/reference";
+    expect(isSafeRefUrl(credentialUrl)).toBe(false);
+
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    await expect(conjure({ chat }, args({ refUrl: credentialUrl }))).rejects.toThrow();
+  });
+
+  it("rejects non-public IPv6 literals, including IPv4-mapped loopback", () => {
+    for (const bad of [
+      "http://[::]/",
+      "http://[::ffff:7f00:1]/",
+      "http://[fe90::1]/",
+      "http://[ff02::1]/",
+    ]) {
+      expect(isSafeRefUrl(bad), bad).toBe(false);
+    }
+    expect(isSafeRefUrl("https://[2606:4700:4700::1111]/")).toBe(true);
+  });
+
+  it("isSafeResolvedAddress rejects a hostname that resolves to a private/loopback address (DNS-rebinding, M6-03 follow-up)", async () => {
+    // `isSafeRefUrl` is a syntactic pre-filter on the hostname as typed and
+    // cannot see this — a name that resolves to 127.0.0.1 passes it today.
+    // `isSafeResolvedAddress` closes that gap by resolving and re-checking.
+    expect(await isSafeResolvedAddress("localhost")).toBe(false);
+    expect(await isSafeResolvedAddress("127.0.0.1")).toBe(false);
+    expect(await isSafeResolvedAddress("169.254.169.254")).toBe(false);
+    expect(await isSafeResolvedAddress("[::1]")).toBe(false);
+    expect(await isSafeResolvedAddress("[::ffff:7f00:1]")).toBe(false);
+  });
+
+  it("isSafeResolvedAddress accepts a public literal without a DNS lookup", async () => {
+    expect(await isSafeResolvedAddress("93.184.216.34")).toBe(true);
+  });
+
+  it("pins the production socket address without resolving the URL hostname", async () => {
+    const server = createHttpServer((_req, response) => {
+      response.setHeader("content-encoding", "identity");
+      response.end("pinned response");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      const response = await fetchWithPinnedAddress(
+        `http://does-not-resolve.invalid:${port}/reference`,
+        "127.0.0.1",
+        4,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("pinned response");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("caps a production response body before buffering it", async () => {
+    const body = "x".repeat(REF_URL_WARN_BYTES + 8192);
+    const server = createHttpServer((_req, response) => response.end(body));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      const response = await fetchWithPinnedAddress(
+        `http://does-not-resolve.invalid:${port}/oversize`,
+        "127.0.0.1",
+        4,
+      );
+      expect(response.bodyTruncated).toBe(true);
+      expect(response.observedBodyBytes).toBe(REF_URL_WARN_BYTES + 1);
+      expect(Buffer.byteLength(await response.text(), "utf-8")).toBeLessThanOrEqual(
+        REF_URL_WARN_BYTES,
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("requests identity encoding and rejects an encoded production response", async () => {
+    let acceptEncoding: string | undefined;
+    const compressed = gzipSync("must not be decoded");
+    const server = createHttpServer((request, response) => {
+      acceptEncoding = request.headers["accept-encoding"];
+      response.writeHead(200, {
+        "content-encoding": "gzip",
+        "content-length": compressed.byteLength,
+      });
+      response.end(compressed);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      await expect(
+        fetchWithPinnedAddress(`http://does-not-resolve.invalid:${port}/encoded`, "127.0.0.1", 4),
+      ).rejects.toThrow("Encoded reference responses are not supported");
+      expect(acceptEncoding).toBe("identity");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("aborts a production response whose body stalls", async () => {
+    const server = createHttpServer((_req, response) => {
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.flushHeaders();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      await expect(
+        fetchWithPinnedAddress(`http://does-not-resolve.invalid:${port}/stall`, "127.0.0.1", 4, 50),
+      ).rejects.toThrow();
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("applies the reference deadline while DNS lookup stalls", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const lookupAddresses = vi.fn(() => new Promise<never>(() => undefined));
+    const fetchPinnedAddress = vi.fn(async () => {
+      throw new Error("must not fetch before DNS resolution completes");
+    });
+
+    const outcome = await Promise.race([
+      conjure(
+        { chat, lookupAddresses, fetchPinnedAddress, refUrlTimeoutMs: 20 },
+        args({ refUrl: "https://stalled-dns.example/reference" }),
+      ).then(() => "completed"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("still-waiting"), 200)),
+    ]);
+
+    expect(outcome).toBe("completed");
+    expect(fetchPinnedAddress).not.toHaveBeenCalled();
+    expect(chat.calls).toHaveLength(1);
+  });
+
+  it("cancels redirect and non-ok production bodies without waiting for EOF", async () => {
+    const server = createHttpServer((request, response) => {
+      const status = request.url === "/redirect" ? 302 : 500;
+      response.writeHead(status, status === 302 ? { location: "/destination" } : undefined);
+      response.flushHeaders();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      for (const path of ["redirect", "error"]) {
+        const response = await fetchWithPinnedAddress(
+          `http://does-not-resolve.invalid:${port}/${path}`,
+          "127.0.0.1",
+          4,
+          500,
+        );
+        expect(response.status).toBe(path === "redirect" ? 302 : 500);
+        expect(response.observedBodyBytes).toBe(0);
+        expect(await response.text()).toBe("");
+      }
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("passes the resolver's exact address into the default pinned-fetch path", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const lookupAddresses = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
+    const fetchPinnedAddress = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      text: async () => "<h1>Pinned Page</h1>",
+    }));
+
+    await conjure(
+      { chat, lookupAddresses, fetchPinnedAddress },
+      args({ refUrl: "https://pin-test.example/reference" }),
+    );
+
+    expect(fetchPinnedAddress).toHaveBeenCalledWith(
+      "https://pin-test.example/reference",
+      "93.184.216.34",
+      4,
+      expect.any(Number),
+    );
+    expect(JSON.stringify(chat.calls[0]!.messages[1]!.content)).toContain("Pinned Page");
+  });
+
+  it("shares one deadline across DNS and redirect hops", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_001)
+      .mockReturnValueOnce(1_002)
+      .mockReturnValueOnce(1_050)
+      .mockReturnValueOnce(1_060);
+    const fetchPinnedAddress = vi.fn(async (url: string) =>
+      url.endsWith("/start")
+        ? {
+            ok: false,
+            status: 302,
+            headers: { get: () => "https://example.com/destination" },
+            text: async () => "",
+          }
+        : {
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            text: async () => "destination",
+          },
+    );
+
+    await conjure(
+      {
+        chat,
+        fetchPinnedAddress,
+        lookupAddresses: publicAddressLookup,
+        refUrlTimeoutMs: 100,
+      },
+      args({ refUrl: "https://example.com/start" }),
+    );
+
+    expect(fetchPinnedAddress.mock.calls.map((call) => call[3])).toEqual([98, 40]);
+  });
+
+  // M6-03 follow-up regression tests (post security-audit re-review): prove the
+  // *fetch path*, not just the isolated helper, uses validated addresses and
+  // rejects redirects to private targets — the two blocking gaps the reviewer
+  // flagged in the first DNS-rebinding fix.
+  it("follows a redirect to a public target and inlines its body", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === "https://example.com/start") {
+        return {
+          ok: false,
+          status: 302,
+          headers: { get: (n: string) => (n === "location" ? "https://example.com/dest" : null) },
+          text: async () => "",
+        };
+      }
+      return { ok: true, status: 200, text: async () => "<h1>Dest Page</h1>" };
+    });
+    await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/start" }),
+    );
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.com/start");
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.com/dest");
+    expect(JSON.stringify(chat.calls[0]!.messages[1]!.content)).toContain("<h1>Dest Page</h1>");
+  });
+
+  it("rejects a redirect from a public URL to a private/loopback target instead of following it", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === "https://example.com/start") {
+        return {
+          ok: false,
+          status: 302,
+          headers: { get: (n: string) => (n === "location" ? "http://127.0.0.1/secret" : null) },
+          text: async () => "",
+        };
+      }
+      throw new Error("must not fetch the redirect target — it is a private address");
+    });
+    const res = await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/start" }),
+    );
+    // Generation still succeeds — a blocked reference degrades to "no reference", not a hard failure.
+    expect(res.componentName).toBe("Button");
+    expect(fetchImpl).toHaveBeenCalledWith("https://example.com/start");
+    expect(fetchImpl).not.toHaveBeenCalledWith("http://127.0.0.1/secret");
+    expect(stderrLines().some((l) => l.event === "conjure.ref_url.ssrf_blocked")).toBe(true);
+  });
+
+  it("rejects a credential-bearing redirect without logging its target", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const credentialTarget = "https://user:password@example.com/secret";
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === "https://example.com/start") {
+        return {
+          ok: false,
+          status: 302,
+          headers: { get: (name: string) => (name === "location" ? credentialTarget : null) },
+          text: async () => "",
+        };
+      }
+      throw new Error("must not fetch a credential-bearing redirect target");
+    });
+
+    const result = await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/start" }),
+    );
+
+    expect(result.componentName).toBe("Button");
+    expect(fetchImpl).not.toHaveBeenCalledWith(credentialTarget);
+    expect(JSON.stringify(stderrLines())).not.toContain("user:password");
+  });
+
+  it("rejects a public-looking redirect hostname that resolves to a private address", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const lookupAddresses = vi.fn(async (hostname: string) =>
+      hostname === "rebind.example"
+        ? [{ address: "127.0.0.1", family: 4 }]
+        : [{ address: "93.184.216.34", family: 4 }],
+    );
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === "https://example.com/start") {
+        return {
+          ok: false,
+          status: 302,
+          headers: {
+            get: (n: string) => (n === "location" ? "https://rebind.example/x" : null),
+          },
+          text: async () => "",
+        };
+      }
+      throw new Error("must not fetch a hostname that resolves to loopback");
+    });
+    const res = await conjure(
+      { chat, fetchImpl, lookupAddresses },
+      args({ refUrl: "https://example.com/start" }),
+    );
+    expect(res.componentName).toBe("Button");
+    expect(isSafeRefUrl("https://rebind.example/x")).toBe(true);
+    expect(lookupAddresses).toHaveBeenCalledWith("rebind.example");
+    expect(fetchImpl).not.toHaveBeenCalledWith("https://rebind.example/x");
+  });
+
+  it("gives up after too many redirect hops rather than looping forever", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    let hop = 0;
+    const fetchImpl = vi.fn(async () => {
+      hop += 1;
+      return {
+        ok: false,
+        status: 302,
+        headers: {
+          get: (n: string) => (n === "location" ? `https://example.com/hop${hop}` : null),
+        },
+        text: async () => "",
+      };
+    });
+    const res = await conjure(
+      { chat, fetchImpl, lookupAddresses: publicAddressLookup },
+      args({ refUrl: "https://example.com/hop0" }),
+    );
+    expect(res.componentName).toBe("Button");
+    expect(stderrLines().some((l) => l.event === "conjure.ref_url.skip")).toBe(true);
+    // Exactly MAX_REF_URL_REDIRECTS (5) plus the initial request.
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
   });
 });
 

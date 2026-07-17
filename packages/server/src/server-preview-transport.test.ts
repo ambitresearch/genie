@@ -100,13 +100,13 @@ describe("createServer preview transport policy", () => {
   });
 
   it("threads an injected viewer booter into preview registration", () => {
-    const viewerBooter = vi.fn();
+    const previewBooter = vi.fn();
 
-    createServer({ viewerBooter });
+    createServer({ previewBooter });
 
     expect(preview.registerPreviewTool).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ booter: viewerBooter }),
+      expect.objectContaining({ booter: previewBooter }),
     );
   });
 

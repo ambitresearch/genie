@@ -303,7 +303,7 @@ describe("M5-14 Cline harness smoke test", () => {
             // A clean test job has viewer source + dependencies but no dist/;
             // createServer's supported booter seam keeps that build order from
             // changing preview's truthful production fallback behavior.
-            viewerBooter: sourceViewer.booter,
+            previewBooter: sourceViewer.booter,
           }),
         { requireBearerAuth: true },
       ),

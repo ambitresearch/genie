@@ -1754,6 +1754,64 @@ We will list reporters here with consent.
 6. **Post a public advisory** for any High+ that shipped to users — GitHub Advisory + configured social/support channels.
 7. **Postmortem** for any High+ that we shipped (§13).
 
+### 16.5 OIDC relying-party integration (M5-04 / DRO-276)
+
+genie's own OAuth server (`packages/server/src/auth/oauth/*`, M5-01/DRO-273)
+self-issues bearer JWTs for shared-install harnesses (`claude mcp add`,
+`codex mcp login`). **Separately**, genie can also act as an OIDC *relying
+party* against an adopter's own external Identity Provider, such as Keycloak,
+Okta, Auth0, or Authentik. The provider must expose OIDC discovery/JWKS, issue
+signed RFC 9068 JWT access tokens for the genie resource/API with the `typ:
+at+jwt` discriminator, and map membership into a `groups` claim. Opaque access
+tokens, OIDC ID tokens, and providers without that claim mapping are not
+supported. This is the path an operator running genie behind a corporate IdP
+uses instead of (or alongside) the self-issued OAuth server.
+
+**How it works** (`packages/server/src/auth/oidc/`):
+
+- `verifier.ts` — resolves the provider's `jwks_uri` via OIDC Discovery
+  (`${issuer}/.well-known/openid-configuration`), verifies incoming JWT access
+  tokens' `typ: at+jwt`/signature and mandatory RFC 9068 claims (`iss`, `aud`,
+  `exp`, `sub`, `client_id`, `iat`, `jti`) against the live JWKS (`jose`'s
+  `createRemoteJWKSet`, cached and auto-refreshed on unknown `kid`). Discovery
+  fails startup after a bounded 10-second timeout rather than hanging. Issuer
+  and JWKS URLs require HTTPS; plaintext is accepted only when both belong to
+  the same loopback development setup used by the integration fixture.
+- `group-policy.ts` — after signature verification succeeds, enforces that
+  the token's `groups` claim contains a required group (default
+  `genie-users`). A validly-signed token that fails this check gets HTTP 403
+  (distinct from HTTP 401 for signature/issuer/audience/expiry failures).
+
+**Configuration** (both required to activate; both absent = feature off; a
+partial or empty configuration fails startup rather than silently disabling
+authentication). Existing static bearer-token and self-issued OAuth paths remain
+alternative credential sources when co-configured:
+
+| Env var                      | Purpose                                                        |
+| ----------------------------- | --------------------------------------------------------------- |
+| `GENIE_OIDC_ISSUER`           | The external IdP's issuer URL.                                           |
+| `GENIE_OIDC_AUDIENCE`         | Expected access-token `aud` for the genie resource/API.                  |
+| `GENIE_OIDC_REQUIRED_GROUP`   | Group required in the mapped `groups` claim. Default `genie-users`.      |
+
+**Integration test** (`packages/e2e/test/m5-oidc.test.ts`, DRO-276): boots a
+real ephemeral `oidc-provider`-backed authorization server in a throwaway
+container (`packages/e2e/test/support/oidc-fixture.ts`), registers a client
+`genie-test`, and drives a REAL headless-Chromium auth-code + PKCE flow for
+two seeded users — one in `genie-users`, one not. Its RFC 8707 resource-server
+configuration emits signed JWT access tokens carrying `aud=genie-test` and the
+account's `groups`; the test asserts those claims before proving a real
+`list_kits` result (200) or group-policy rejection (403) against genie's HTTP
+transport. The fixture deliberately reuses `genie-test` as both its OAuth
+client ID and resource audience; real providers commonly use a separate API
+audience, which is the value operators must configure in
+`GENIE_OIDC_AUDIENCE`. This is the reference template for the required
+issuer/JWT-audience/group-claim shape, and proves genie's enforcement side of
+that contract end-to-end. Runs in CI's dedicated `oidc` job
+(`.github/workflows/ci.yml`),
+gated behind Docker availability like the `gitea` conformance job; run it
+locally with `pnpm --filter @genie/e2e test:e2e:oidc` (skips cleanly without
+a container runtime; set `GENIE_REQUIRE_DOCKER=1` to fail loudly instead).
+
 ---
 
 ## 17. Maintenance windows

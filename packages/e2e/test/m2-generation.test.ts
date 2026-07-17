@@ -221,16 +221,37 @@ const COMPONENT_NAME_PATTERN = /^[A-Z][A-Za-z0-9]{1,63}$/;
 function toSchemaShape(result: {
   componentName: string;
   group: string;
-  files: ValidatedComponent["files"];
+  files: Array<ValidatedComponent["files"][number] & { encoding?: "utf-8" | "base64" }>;
   manifestEntry: ValidatedComponent["manifestEntry"];
 }): unknown {
   return {
     componentName: result.componentName,
     group: result.group,
-    files: result.files,
+    files: result.files.map(({ path, content, mimeType }) => ({ path, content, mimeType })),
     manifestEntry: result.manifestEntry,
   };
 }
+
+describe("M2 canary schema projection", () => {
+  it("strips tool-result encoding before revalidating COMPONENT_SCHEMA", () => {
+    const shape = toSchemaShape({
+      componentName: "Button",
+      group: "actions",
+      files: [
+        {
+          path: "components/actions/Button/Button.html",
+          content: '<!-- @genie group="actions" -->\n<button>Click</button>',
+          mimeType: "text/html",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 320, height: 140 } },
+    });
+
+    expect(() => validateComponent(shape)).not.toThrow();
+    expect((shape as { files: Record<string, unknown>[] }).files[0]).not.toHaveProperty("encoding");
+  });
+});
 
 /**
  * Every `<Name>/<Name>.html` NAMED preview file among a component's file set

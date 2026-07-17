@@ -7,6 +7,11 @@ dist/
 *.tsbuildinfo
 coverage/
 
+# ── .mcpb bundle staging (M5-05, DRO-277) ─────────────────
+# Transient deploy tree assembled by scripts/bundle-mcpb.mjs before packing;
+# the shipped artefact is dist/genie.mcpb (dist/ already ignored above).
+mcpb/.stage/
+
 # ── Test reports (JUnit XML; CI artefact, M1-14 AC8) ──────
 # Written by vitest's junit reporter only when VITEST_JUNIT=1 / CI=true.
 # Uploaded by ci.yml, never committed.

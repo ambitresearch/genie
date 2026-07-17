@@ -61,8 +61,8 @@ export interface CreateServerOptions {
   transportKind?: TransportKind;
   /** Whether the viewer URL is reachable from the host running the MCP client. */
   previewLocality?: PreviewLocality;
-  /** Optional local preview implementation for embedders and integration tests. */
-  viewerBooter?: ViewerBooter;
+  /** Injectable preview viewer seam for embedders and transport-level tests. */
+  previewBooter?: ViewerBooter;
   projectsRoot?: string;
   kitsRoot?: string;
   reportsDir?: string;
@@ -355,7 +355,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     kitsRoot,
     transportKind: options.transportKind,
     locality: previewLocality,
-    ...(options.viewerBooter !== undefined ? { booter: options.viewerBooter } : {}),
+    ...(options.previewBooter !== undefined ? { booter: options.previewBooter } : {}),
     ...(getCardAssetBroker !== undefined ? { getCardAssetBroker } : {}),
   });
   registerServerDisposer(server, () => previewRegistry.closeAll());
