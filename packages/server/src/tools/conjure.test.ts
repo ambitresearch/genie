@@ -444,6 +444,14 @@ describe("AC7 — reference URL fetch + inline", () => {
     expect(isSafeRefUrl("http://172.32.0.1/x")).toBe(true); // .32 is outside 16-31 private range
   });
 
+  it("rejects refUrl credentials before fetch or logging", async () => {
+    const credentialUrl = "https://user:password@example.com/reference";
+    expect(isSafeRefUrl(credentialUrl)).toBe(false);
+
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    await expect(conjure({ chat }, args({ refUrl: credentialUrl }))).rejects.toThrow();
+  });
+
   it("rejects non-public IPv6 literals, including IPv4-mapped loopback", () => {
     for (const bad of [
       "http://[::]/",

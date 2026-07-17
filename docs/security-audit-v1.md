@@ -186,10 +186,12 @@ No separate issue is needed because this P1 is fixed in PR #189.
 ### Open Supply-Chain Findings
 
 Semgrep's action pinning and pnpm trust-policy findings are still open in this
-checkout. GitHub issue #69 (M6-04 / DRO-292) is marked completed, but its body
-has no completion evidence and this branch has no `.github/workflows/release.yml`
-or `docs/supply-chain.md`. A follow-up must reconcile that closed issue with the
-repository state before GA.
+checkout. `.github/workflows/release.yml` now publishes `@genie/server` and
+`@genie/viewer` with npm provenance, satisfying the implemented portion of
+GitHub issue #69 (M6-04 / DRO-292). The repository still lacks the issue's
+cosign signatures, SBOM generation, real-release verification, and
+`docs/supply-chain.md`. A follow-up must reconcile that partially completed,
+closed issue with the remaining repository state before GA.
 
 Follow-up filed: GitHub issue #207, `security(ci): close supply-chain gaps
 found by M6-03 re-audit`.

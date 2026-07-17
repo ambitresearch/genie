@@ -174,6 +174,7 @@ export function isSafeRefUrl(raw: string): boolean {
     return false;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (url.username !== "" || url.password !== "") return false;
 
   const host = url.hostname.toLowerCase();
   // Named internal hosts.
