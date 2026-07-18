@@ -232,6 +232,22 @@ jobs:
       - name: Build @genie/server
         run: pnpm --filter @genie/server build
 
+      # Supply-chain (issue #207 / M6-04): emit a CycloneDX SBOM for the
+      # package and attach it to the GitHub release as a durable, downloadable
+      # bill of materials. cdxgen is used (not cyclonedx-npm) because this is a
+      # pnpm workspace with only pnpm-lock.yaml and `workspace:*` specifiers —
+      # the npm-lock-based generator cannot read it. It is a lockfile-pinned
+      # devDependency (integrity-hashed, installed by the `--frozen-lockfile`
+      # step above) and run via `pnpm exec`, so the SBOM tool is subject to the
+      # same integrity guarantees as the rest of the tree. `--required-only`
+      # restricts the SBOM to the shipped runtime deps. Generated BEFORE the
+      # `npm publish` below so a tooling failure surfaces before the
+      # irreversible publish, keeping the release's artifacts consistent.
+      - name: Generate CycloneDX SBOM
+        env:
+          FETCH_LICENSE: "false"
+        run: pnpm exec cdxgen -t pnpm --required-only --spec-version 1.6 -o packages/server/genie-server-sbom.cdx.json packages/server
+
       - name: Publish @genie/server (public, provenance)
         working-directory: packages/server
         # AC3 — NODE_AUTH_TOKEN sourced from the NPM_TOKEN repo secret; npm's
@@ -244,20 +260,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
-
-      # Supply-chain (issue #207 / M6-04): emit a CycloneDX SBOM for the
-      # published package and attach it to the GitHub release as a durable,
-      # downloadable bill of materials. cdxgen is used (not cyclonedx-npm)
-      # because this is a pnpm workspace with only pnpm-lock.yaml and
-      # `workspace:*` specifiers — the npm-lock-based generator cannot read it.
-      # It is a lockfile-pinned devDependency (integrity-hashed, installed by the
-      # `--frozen-lockfile` step above) and run via `pnpm exec`, so the SBOM
-      # tool is subject to the same integrity guarantees as the rest of the
-      # tree. `--required-only` restricts the SBOM to the shipped runtime deps.
-      - name: Generate CycloneDX SBOM
-        env:
-          FETCH_LICENSE: "false"
-        run: pnpm exec cdxgen -t pnpm --required-only --spec-version 1.6 -o packages/server/genie-server-sbom.cdx.json packages/server
 
       - name: Attach SBOM to the server release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
@@ -298,6 +300,16 @@ jobs:
       - name: Build @genie/viewer
         run: pnpm --filter @genie/viewer build
 
+      # Supply-chain (issue #207 / M6-04): CycloneDX SBOM attached to the
+      # viewer release, matching the server job above (lockfile-pinned cdxgen
+      # via `pnpm exec`, package-scoped, runtime deps only). Generated BEFORE
+      # `npm publish` so a tooling failure surfaces before the irreversible
+      # publish, keeping the release's artifacts consistent.
+      - name: Generate CycloneDX SBOM
+        env:
+          FETCH_LICENSE: "false"
+        run: pnpm exec cdxgen -t pnpm --required-only --spec-version 1.6 -o packages/viewer/genie-viewer-sbom.cdx.json packages/viewer
+
       - name: Publish @genie/viewer (public, provenance)
         working-directory: packages/viewer
         # AC5 — `@genie/viewer` publishes scoped + public via the same
@@ -305,14 +317,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
-
-      # Supply-chain (issue #207 / M6-04): CycloneDX SBOM attached to the
-      # viewer release, matching the server job above (lockfile-pinned cdxgen
-      # via `pnpm exec`, package-scoped, runtime deps only).
-      - name: Generate CycloneDX SBOM
-        env:
-          FETCH_LICENSE: "false"
-        run: pnpm exec cdxgen -t pnpm --required-only --spec-version 1.6 -o packages/viewer/genie-viewer-sbom.cdx.json packages/viewer
 
       - name: Attach SBOM to the viewer release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2

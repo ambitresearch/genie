@@ -31,6 +31,11 @@
     "typescript-eslint": "^8.62.0",
     "vitest": "^4.1.9"
   },
+  "pnpm": {
+    "overrides": {
+      "typescript": "$typescript"
+    }
+  },
   "license": "MIT",
   "author": "Roshan Gautam",
   "repository": {

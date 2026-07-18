@@ -98,6 +98,13 @@ integrity evidence:
   adds no supply-chain value there while otherwise blocking routine lockfile maintenance.
   Every other dependency still honours `minimumReleaseAge`.
 
+`package.json` also sets `pnpm.overrides.typescript: "$typescript"`. `cdxgen` pulls in
+`typescript` as an optional transitive dependency (via `@appthreat/atom-parsetools`);
+without the override pnpm re-binds the workspace's optional `typescript` peers (notably
+`vue`) onto that newer version. The override pins the entire tree to the root
+`typescript` devDependency spec, so adding the SBOM tool does not silently change the
+TypeScript version the runtime packages build against.
+
 ### Omitted: `trustPolicy: no-downgrade`
 
 The M6-03 follow-up proposed a `trustPolicy: no-downgrade` setting. This is **not a real
