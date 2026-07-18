@@ -78,7 +78,7 @@ LABELS=(
   "area:generation|7057ff|Generation workflows and artifacts"
   "area:projects|1f883d|Projects, blueprints, and kit bindings"
   "area:storage|f9d0c4|Git-backed storage adapter (any git host)"
-  "area:viewer|fef2c0|@genie/viewer package"
+  "area:viewer|fef2c0|@ambitresearch/genie-viewer package"
   "area:mcpb|fbca04|.mcpb bundling"
   "area:harness:claude-code|a67c00|Claude Code harness"
   "area:harness:claude-desktop|a67c00|Claude Desktop harness"
@@ -137,7 +137,7 @@ MILESTONES=(
   "M1 — Kit + Project Foundation|13 kit verbs + 6 project verbs, storage, tests|2026-07-12T23:59:59Z"
   "M2 — LLM Generation Surface|conjure, refine, model routing|2026-07-26T23:59:59Z"
   "M3 — @genie Validator + Manifest|first-line marker contract + atomic write sequence|2026-08-09T23:59:59Z"
-  "M4 — Preview Viewer (Vite + ui://)|@genie/viewer + MCP-Apps fallback|2026-08-30T23:59:59Z"
+  "M4 — Preview Viewer (Vite + ui://)|@ambitresearch/genie-viewer + MCP-Apps fallback|2026-08-30T23:59:59Z"
   "M5 — Auth + Distribution + Smoke Tests|OAuth/bearer + .mcpb/npm/Docker + 7-harness smoke|2026-09-27T23:59:59Z"
   "M6 — GA Hardening|Observability, perf, security, supply chain, launch|2026-10-11T23:59:59Z"
 )

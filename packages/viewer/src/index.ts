@@ -1,6 +1,6 @@
 /**
- * Public barrel for `@genie/viewer` (M4-01 scaffold). Mirrors the
- * `@genie/server` `index.ts` convention: downstream code (future M4
+ * Public barrel for `@ambitresearch/genie-viewer` (M4-01 scaffold). Mirrors the
+ * `@ambitresearch/genie` `index.ts` convention: downstream code (future M4
  * work, tests, or a consumer that wants to drive the CLI programmatically)
  * imports from here rather than reaching into `./cli.js` directly.
  *

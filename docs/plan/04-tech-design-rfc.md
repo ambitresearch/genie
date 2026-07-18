@@ -36,7 +36,7 @@
 
 ## 2. TL;DR
 
-`genie` is a single-process TypeScript MCP server with a stdio-first local install and Streamable HTTP for already-running local dev, shared, or remote deployments. It speaks its **own** native conventions (`00-decisions.md` D0), fronts a **configurable OpenAI-compatible chat-completions endpoint** (LiteLLM is the reference; Ollama / OpenAI / vLLM / any compatible gateway also work — no provider URL baked in) for component and screen generation, owns a **git-backed kit/project store** (any git host for shared use, local filesystem for solo) whose preview HTML carries first-line `<!-- @genie group="…" -->` markers validated by genie's own regex, and ships the visual workspace two ways: the MCP App `ui://genie/grid` as the primary inline preview/generate/refine/audit surface for capable hosts, plus a tiny Vite-backed local viewer (`@genie/viewer`) as fallback for URL-only harnesses. The server speaks genie's own **19-tool M1 protocol** — 13 kit/component verbs plus six project verbs — with `read → plan → write/delete` protected by a single permission gate for file mutation; kit artefacts land in a tidy `.genie/` bookkeeping dir anchored by `.genie/sync.json`, while projects use `.genie/project.json`. Round-trip interop with a real Claude Design project (the verbatim `@dsCard` / `_ds_*` shapes) is a post-v1 opt-in bridge, not the native surface. The single irreducible R&D cost is the MCP-App-side _generation_ loop (prompt shape, per-element edit affordances) which Anthropic does not publish; we implement the smallest useful loop over `conjure`, `refine`, and `validate` seeded by structured-output JSON Schema. HTTP auth is OAuth 2.0 with Dynamic Client Registration for supporting harnesses (Claude Code, Codex CLI, Cursor) and static `Authorization: Bearer` as fallback for the rest; local stdio relies on the harness-owned process boundary instead of network auth. Observability is exposed via a Prometheus `/metrics` endpoint and OpenTelemetry traces for the operator's own stack. Target ship: **M5 within ~12 days of focused work**[^m5-effort] for the universal substrate, plus an open-ended canvas-generation workstream.
+`genie` is a single-process TypeScript MCP server with a stdio-first local install and Streamable HTTP for already-running local dev, shared, or remote deployments. It speaks its **own** native conventions (`00-decisions.md` D0), fronts a **configurable OpenAI-compatible chat-completions endpoint** (LiteLLM is the reference; Ollama / OpenAI / vLLM / any compatible gateway also work — no provider URL baked in) for component and screen generation, owns a **git-backed kit/project store** (any git host for shared use, local filesystem for solo) whose preview HTML carries first-line `<!-- @genie group="…" -->` markers validated by genie's own regex, and ships the visual workspace two ways: the MCP App `ui://genie/grid` as the primary inline preview/generate/refine/audit surface for capable hosts, plus a tiny Vite-backed local viewer (`@ambitresearch/genie-viewer`) as fallback for URL-only harnesses. The server speaks genie's own **19-tool M1 protocol** — 13 kit/component verbs plus six project verbs — with `read → plan → write/delete` protected by a single permission gate for file mutation; kit artefacts land in a tidy `.genie/` bookkeeping dir anchored by `.genie/sync.json`, while projects use `.genie/project.json`. Round-trip interop with a real Claude Design project (the verbatim `@dsCard` / `_ds_*` shapes) is a post-v1 opt-in bridge, not the native surface. The single irreducible R&D cost is the MCP-App-side _generation_ loop (prompt shape, per-element edit affordances) which Anthropic does not publish; we implement the smallest useful loop over `conjure`, `refine`, and `validate` seeded by structured-output JSON Schema. HTTP auth is OAuth 2.0 with Dynamic Client Registration for supporting harnesses (Claude Code, Codex CLI, Cursor) and static `Authorization: Bearer` as fallback for the rest; local stdio relies on the harness-owned process boundary instead of network auth. Observability is exposed via a Prometheus `/metrics` endpoint and OpenTelemetry traces for the operator's own stack. Target ship: **M5 within ~12 days of focused work**[^m5-effort] for the universal substrate, plus an open-ended canvas-generation workstream.
 
 [^m5-effort]: "M5 within ~12 days of focused work" is single-developer effort, not calendar elapsed; see `github/milestones.md` for week-level allocation through M6.
 
@@ -244,7 +244,7 @@ flowchart TD
     - On any `**/preview.html` change, debounces 250 ms, then re-runs the `@genie` regex across affected files.
     - Writes `.genie/manifest.json` atomically via tmp-file + rename.
     - Emits an `mcp/resources/updated` notification for `genie://manifest` subscribers.
-11. **Vite-backed preview viewer** (`@genie/viewer`)
+11. **Vite-backed preview viewer** (`@ambitresearch/genie-viewer`)
     - Separate npm package, distributed alongside the server.
     - Vite multi-page entry config: one `<Name>/preview.html` per entry.
     - Chokidar-driven HMR via postMessage to the parent iframe.
@@ -1094,7 +1094,7 @@ async function compileManifest(kitRoot: string) {
 > here is the _fallback_ if the §15.8 Skybridge spike fails genie's hard constraints
 > (G-5 byte-identical cards + embedded CSP). See `docs/research/skybridge.md` §8.
 
-The viewer ships as a separate npm package `@genie/viewer` so it can be upgraded independently and run without the MCP server (e.g. for designers reviewing a kit directly).
+The viewer ships as a separate npm package `@ambitresearch/genie-viewer` so it can be upgraded independently and run without the MCP server (e.g. for designers reviewing a kit directly).
 
 **Vite multi-page entry config:**
 
@@ -1128,7 +1128,7 @@ export default defineConfig(({ command }) => {
 **CLI:**
 
 ```
-npx @genie/viewer <kitRoot> [options]
+npx @ambitresearch/genie-viewer <kitRoot> [options]
   --port <number>         Initial port (default 5173)
   --host <host>           Bind address (default 127.0.0.1)
   --open                  Open default browser on start
@@ -3142,7 +3142,7 @@ Coverage gate: 85% branch coverage on `server/src/**`, 95% on `server/src/tools/
 against real headless Chromium, serving the actual `packages/viewer/static/*` shell (no jsdom,
 no mocks) — scope is the viewer chrome only (`.exclude(["iframe"])`); a component author's own
 preview accessibility is out of scope by design (the issue's own framing: "the viewer must not
-block it"). `pnpm --filter @genie/viewer test:a11y` runs it; CI's dedicated `viewer-a11y` job
+block it"). `pnpm --filter @ambitresearch/genie-viewer test:a11y` runs it; CI's dedicated `viewer-a11y` job
 (`.github/workflows/ci.yml`) installs a real Chromium via `playwright install --with-deps` and
 sets `GENIE_REQUIRE_A11Y_BROWSER=1` so a broken browser install fails the job loudly instead of
 silently skipping — the suite self-skips (never fails) everywhere else that lacks a launchable
@@ -3152,7 +3152,7 @@ already use.
 
 AC coverage:
 
-- **AC1** — `pnpm --filter @genie/viewer test:a11y` (above).
+- **AC1** — `pnpm --filter @ambitresearch/genie-viewer test:a11y` (above).
 - **AC2** — zero `critical`/`serious` axe-core violations, scanned against the populated grid
   (light + dark) and the empty-manifest state. The suite also inspects axe-core's third result
   bucket, `results.incomplete` (checks it cannot auto-resolve, as distinct from checks that ran

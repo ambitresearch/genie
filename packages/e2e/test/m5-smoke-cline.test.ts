@@ -161,7 +161,7 @@ async function scaffoldFixtureKit(kitsRoot: string): Promise<string> {
       `<!doctype html><html lang="en"><body>Button</body></html>\n`,
     "utf8",
   );
-  // @genie/viewer's multi-page Vite config always includes the kit root's
+  // @ambitresearch/genie-viewer's multi-page Vite config always includes the kit root's
   // `index.html` as the `main` Rollup entry (config.ts:227), independent of
   // how many component previews exist. Without this file present, Vite's
   // dependency-scan step fails to resolve that entry — the dev server still

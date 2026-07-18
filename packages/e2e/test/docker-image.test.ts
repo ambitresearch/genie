@@ -101,7 +101,7 @@ describe("Dockerfile (M5-07 static ACs)", () => {
   });
 
   it("stages production dependencies from the frozen pnpm lockfile", () => {
-    expect(dockerfile).toMatch(/pnpm --filter @genie\/server deploy --prod --legacy \/out/);
+    expect(dockerfile).toMatch(/pnpm --filter @ambitresearch\/genie deploy --prod --legacy \/out/);
     expect(dockerfile).not.toMatch(/\bnpm (?:ci|install)\b/);
   });
 
@@ -410,7 +410,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
     expect(stdout.trim()).toBe("/data/kits,/data/projects,/data/reports");
   });
 
-  it("scaffolds viewer assets when create_kit runs without @genie/viewer", async () => {
+  it("scaffolds viewer assets when create_kit runs without @ambitresearch/genie-viewer", async () => {
     const { stdout } = await execFileAsync("docker", [
       "run",
       "--rm",

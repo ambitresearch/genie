@@ -9,7 +9,7 @@
   },
   "packageManager": "pnpm@10.34.4",
   "scripts": {
-    "dev": "pnpm --filter @genie/server dev",
+    "dev": "pnpm --filter @ambitresearch/genie dev",
     "build": "pnpm -r build",
     "test": "vitest run",
     "test:watch": "vitest",

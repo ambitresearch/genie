@@ -186,8 +186,8 @@ No separate issue is needed because this P1 is fixed in PR #189.
 ### Open Supply-Chain Findings
 
 Semgrep's action pinning and pnpm trust-policy findings are still open in this
-checkout. `.github/workflows/release.yml` now publishes `@genie/server` and
-`@genie/viewer` with npm provenance, satisfying the implemented portion of
+checkout. `.github/workflows/release.yml` now publishes `@ambitresearch/genie` and
+`@ambitresearch/genie-viewer` with npm provenance, satisfying the implemented portion of
 GitHub issue #69 (M6-04 / DRO-292). The repository still lacks the issue's
 cosign signatures, SBOM generation, real-release verification, and
 `docs/supply-chain.md`. A follow-up must reconcile that partially completed,
@@ -204,7 +204,7 @@ Re-audit evidence after the final SSRF changes:
 pnpm exec vitest run packages/server/src/tools/conjure.test.ts  # 56 passed
 pnpm exec vitest run packages/server/src/ui/grid-resource.test.ts \
   packages/server/src/middleware/plan-guard.test.ts             # 74 passed
-pnpm --filter @genie/server typecheck                           # clean
+pnpm --filter @ambitresearch/genie typecheck                           # clean
 pnpm exec eslint packages/server/src/tools/conjure.ts \
   packages/server/src/tools/conjure.test.ts                     # clean
 go run github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.1 \

@@ -4,7 +4,8 @@
   "bootstrap-sha": "55eea44c0e558ac237cbf17cea10b003df88f612",
   "packages": {
     "packages/server": {
-      "package-name": "@genie/server",
+      "package-name": "@ambitresearch/genie",
+      "component": "server",
       "extra-files": [
         {
           "type": "json",
@@ -14,7 +15,8 @@
       ]
     },
     "packages/viewer": {
-      "package-name": "@genie/viewer",
+      "package-name": "@ambitresearch/genie-viewer",
+      "component": "viewer",
       "initial-version": "0.1.0"
     }
   },

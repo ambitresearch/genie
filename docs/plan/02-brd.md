@@ -233,7 +233,7 @@ The scope statement is the most consequential paragraph in this BRD — it draws
 3. **Configurable OpenAI-compatible LLM integration** via a base-URL + key the operator sets. Works against a direct provider (Anthropic, OpenAI, Google, local Ollama) or a gateway/proxy (LiteLLM, OpenRouter, etc.). Ships with a sensible default model and named aliases the operator can remap. No specific provider or gateway is required.
 4. **Git-backed component store** with two backends: local FS for solo developers (default), and any git host (GitHub, GitLab, Gitea/Forgejo — self-hosted or cloud) for shared teams. Project ↔ repo, planId ↔ branch, write ↔ commit, merge ↔ publish.
 5. **Card-marker validator and manifest compiler** — genie defines its own first-line marker convention (syntax settled in the RFC); the server compiles a component `manifest.json` on every write that touches a preview file, rejecting files missing the marker.
-6. **Vite-backed preview viewer** (`@genie/viewer`) shipping as `npx genie-viewer <kit-path>`, with chokidar HMR, iframe grid layout, viewport buttons, `file://` fallback.
+6. **Vite-backed preview viewer** (`@ambitresearch/genie-viewer`) shipping as `npx genie-viewer <kit-path>`, with chokidar HMR, iframe grid layout, viewport buttons, `file://` fallback.
 7. **MCP-Apps `ui://genie/grid` resource** registered with MIME `text/html;profile=mcp-app`, manifest inlined as `<script type="application/json">` for sandboxed-iframe compatibility, surfaced via `_meta.ui.resourceUri` on `preview`.
 8. **Auth surface**:
    - OAuth 2.0 with Dynamic Client Registration (for Claude Code, Codex CLI, Cursor),
@@ -686,7 +686,7 @@ Seven milestones, M0 through M6, from the research report's build plan (§7 of t
 **M4 — Preview viewer (weeks 9-10)**
 
 - **Business description.**
-  - Build `@genie/viewer` as a Vite multi-page entry with chokidar HMR.
+  - Build `@ambitresearch/genie-viewer` as a Vite multi-page entry with chokidar HMR.
   - Implement `preview` tool with `ui://genie/grid` MCP-Apps resource.
   - Designer continues exemplar library; ships ≥ 12 components by milestone close.
 - **⚠ Pre-M4 gate — Skybridge spike.** Before hand-building this tier, run the time-boxed [Skybridge](https://www.skybridge.tech/) spike (RFC §15.8, `docs/research/skybridge.md` §8): prove/disprove embedded-tier CSP + inline/fullscreen/pip parity + real Cursor/VS Code rendering. If it clears genie's hard constraints (G-5 + CSP), M4 builds _on_ Skybridge; else M4 proceeds hand-rolled as described. Either path keeps the `ui://` payload framework-agnostic. Decide before M4 starts — switching cost rises once the viewer is hand-built.

@@ -33,7 +33,7 @@
  *     into a catchable `CommanderError` that {@link runCli} maps to a code.
  *   - `configureOutput()` routes commander's own writes through the injected IO.
  */
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
@@ -409,10 +409,17 @@ async function main(): Promise<void> {
   process.exitCode = await runCli(process.argv.slice(2));
 }
 
+export function isDirectExecution(argvPath: string | undefined, moduleUrl: string): boolean {
+  return (
+    argvPath !== undefined &&
+    existsSync(argvPath) &&
+    moduleUrl === pathToFileURL(realpathSync(argvPath)).href
+  );
+}
+
 // Only run when executed directly (`node dist/cli.js` / the linked bin), not
 // when a test imports `runCli`/`buildProgram`.
-const isMainModule =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+const isMainModule = isDirectExecution(process.argv[1], import.meta.url);
 if (isMainModule) {
   main().catch((err: unknown) => {
     process.stderr.write(`genie-viewer: fatal: ${errorMessage(err)}\n`);

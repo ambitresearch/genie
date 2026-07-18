@@ -1182,7 +1182,7 @@ returned the error code and the list of files that did land.
 `write_files` call with `_meta.final: true` so the server knows to write
 the anchor and clear the sentinel.
 
-### 6.9 The Vite-backed preview viewer (`@genie/viewer`)
+### 6.9 The Vite-backed preview viewer (`@ambitresearch/genie-viewer`)
 
 **FR-080 — CLI.** `npx genie-viewer <kit-dir> [--port N]
 [--no-open] [--once]`. `--once` builds the static site and exits (used by
@@ -1592,7 +1592,7 @@ Tagged "decision", "user research", or "technical spike".
    **Resolved (D-A):** both verbs are **dropped\*\* — the `@genie` marker IS the
    registration; to remove a card, delete the file. Hand-authored kits simply
    include the first-line marker.
-4. **Should the viewer ship as a separate package (`@genie/viewer`)
+4. **Should the viewer ship as a separate package (`@ambitresearch/genie-viewer`)
    or be bundled into the main npm package?**
    - Separate gives users the option to skip Vite/chokidar; bundled is one-command.
    - _Tag: needs decision._

@@ -1,5 +1,5 @@
 ---
-title: "[M4-01] @genie/viewer package scaffold"
+title: "[M4-01] @ambitresearch/genie-viewer package scaffold"
 milestone: "M4 — Preview Viewer (Vite + ui://)"
 labels: ["type:feature", "area:viewer", "priority:P0-critical", "size:M"]
 assignees: []
@@ -7,26 +7,26 @@ estimate: "5h"
 ---
 
 ## Summary
-Create the second pnpm workspace package `@genie/viewer`. Owns
+Create the second pnpm workspace package `@ambitresearch/genie-viewer`. Owns
 the static viewer assets (`index.html`, `viewer.js`, `viewer.css`), the Vite
 config, and the CLI binary `genie-viewer`. M4-02 … M4-10 fill it
 in.
 
 ## Context
 - Research report §3.4: "Adopt the bundled-skill file layout verbatim … plus
-  a tiny Vite-backed viewer (`@genie/viewer`) watches the
+  a tiny Vite-backed viewer (`@ambitresearch/genie-viewer`) watches the
   directory and renders the same files in a grid with HMR."
 - §7 step 5: "Build the preview viewer … Vite multi-page entry, chokidar
   watch, iframe grid renderer, HMR-driven card refresh via `postMessage`."
 
 ## Acceptance Criteria
 - [ ] AC1 — Directory `packages/viewer/` exists with its own
-      `package.json` (`@genie/viewer`, `version: 0.0.0`).
+      `package.json` (`@ambitresearch/genie-viewer`, `version: 0.0.0`).
 - [ ] AC2 — Listed in `pnpm-workspace.yaml`.
 - [ ] AC3 — Declares `vite`, `chokidar`, `@types/node` as devDeps; `commander`
       as runtime dep.
 - [ ] AC4 — `package.json` exports the `genie-viewer` bin.
-- [ ] AC5 — `pnpm --filter @genie/viewer build` produces
+- [ ] AC5 — `pnpm --filter @ambitresearch/genie-viewer build` produces
       `packages/viewer/dist/` containing the CLI + static assets.
 - [ ] AC6 — Bin script greets with `Usage: genie-viewer <kit-dir>
       [--port N]`.

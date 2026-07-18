@@ -24,7 +24,7 @@ Generated 2026-06-21. All docs derive from the validated research report
 - LLM backend: **any OpenAI-compatible endpoint** (configurable; LiteLLM is the reference, Ollama / OpenAI / vLLM also work — D-H). No provider URL baked in.
 - Default model alias: `design-default` (operator-mapped to a Sonnet-class model)
 - Storage: local FS for solo; **any git host** (GitHub / Gitea / GitLab) for shared — D-G
-- Preview pane: Vite-backed viewer (`@genie/viewer`) + MCP-UI `ui://` fallback
+- Preview pane: Vite-backed viewer (`@ambitresearch/genie-viewer`) + MCP-UI `ui://` fallback
 - Card marker regex (genie's own — D-B): `/^<!--\s*@genie\s+group="[^"]*"[^>]*-->/`
 - Tool-name shape: `mcp__genie__<verb>`
 - **Tool catalog: 19 M1 tools (genie's own — D-A/D-F)** — kit/component core: `list_kits`, `get_kit`, `list_files`, `read_file`, `create_kit`, `list_components`, `plan`, `write_files`, `delete_files`, `validate`, `conjure`, `refine`, `preview`; project foundation: `list_projects`, `get_project`, `create_project`, `delete_project`, `bind_kit`, `conjure_screen`. Blueprints are reusable projects (`kind: "blueprint"`), not a separate tool family. Resource URI scheme: `genie://`; bookkeeping under `.genie/`.

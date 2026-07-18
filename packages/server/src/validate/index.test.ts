@@ -40,7 +40,7 @@ describe("validate/index.ts re-export barrel", () => {
   it("AC6: re-exports the MarkerValidationResult and MarkerViewport types (IDE-only type check)", () => {
     // Copilot review, PR #142: `packages/server/tsconfig.json` excludes
     // `src/**/*.test.ts` (the repo-wide convention every package's tsconfig
-    // follows), so `pnpm --filter @genie/server typecheck` never type-checks
+    // follows), so `pnpm --filter @ambitresearch/genie typecheck` never type-checks
     // this file — these assignments are only checked by an editor's TS
     // language server, not any CI gate. The runtime assertions are this
     // test's actual (and only enforced) regression guard: if a future change

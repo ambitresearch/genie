@@ -58,7 +58,7 @@ talking to a real `createServer()`, no network. It is the milestone-level
 
 ```bash
 pnpm test                                        # runs unit + e2e together (root vitest)
-pnpm --filter @genie/e2e typecheck               # type-check the suite in isolation
+pnpm --filter @ambitresearch/genie-e2e typecheck               # type-check the suite in isolation
 npx vitest run packages/e2e/test                 # just the e2e conformance walk
 VITEST_JUNIT=1 npx vitest run packages/e2e/test  # + write reports/junit.xml (CI artefact)
 ```

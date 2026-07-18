@@ -152,7 +152,7 @@ Claude Desktop users on macOS can install genie without hand-editing a config fi
 3. genie now shows up as an installed extension; no manual
    `claude_desktop_config.json` editing needed.
 
-To build the bundle locally: `pnpm bundle:mcpb` (builds `@genie/server`,
+To build the bundle locally: `pnpm bundle:mcpb` (builds `@ambitresearch/genie`,
 stages a production-only deploy, and packs `dist/genie.mcpb` via
 `@anthropic-ai/mcpb`). See `mcpb/manifest.json` for the bundle manifest and
 `scripts/bundle-mcpb.mjs` for the packaging steps. See the
@@ -163,9 +163,9 @@ configuration, remote connectors, debugging, and smoke-test evidence.
 
 ```
 packages/
-  server/     @genie/server — the MCP server (this is the product)
-  viewer/     @genie/viewer — Vite preview viewer (M4 in progress; CLI + multi-page config + grid renderer, booted on demand by the `preview` tool)
-  e2e/        @genie/e2e — harness smoke tests (M5, placeholder)
+  server/     @ambitresearch/genie — the MCP server (this is the product)
+  viewer/     @ambitresearch/genie-viewer — Vite preview viewer (M4 in progress; CLI + multi-page config + grid renderer, booted on demand by the `preview` tool)
+  e2e/        @ambitresearch/genie-e2e — harness smoke tests (M5, placeholder)
 docs/
   plan/       vision, BRD, PRD, tech-design RFC, launch plan, ops runbook
   designs/    locked design system + SVG surface mockups

@@ -6,7 +6,7 @@
  * rule 5 — "byte-identical across file:// / localhost / ui://"):
  *
  *   (a) `file://<root>/index.html`  — a raw file open (inline-manifest transport)
- *   (b) `http://127.0.0.1:<port>`   — the real `@genie/viewer` Vite dev server
+ *   (b) `http://127.0.0.1:<port>`   — the real `@ambitresearch/genie-viewer` Vite dev server
  *   (c) `ui://genie/grid`           — the embedded MCP-Apps document, built by
  *                                     the server's own `buildGridDocument` and
  *                                     rendered headless

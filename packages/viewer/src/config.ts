@@ -1,5 +1,5 @@
 /**
- * M4-02 (DRO-264) — `@genie/viewer` Vite multi-page dev config.
+ * M4-02 (DRO-264) — `@ambitresearch/genie-viewer` Vite multi-page dev config.
  *
  * Serves a kit directory (`<kit-dir>`) so that every
  * `components/**\/*.html` preview is its own Vite entry point, in addition to

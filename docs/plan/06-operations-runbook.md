@@ -1809,7 +1809,7 @@ issuer/JWT-audience/group-claim shape, and proves genie's enforcement side of
 that contract end-to-end. Runs in CI's dedicated `oidc` job
 (`.github/workflows/ci.yml`),
 gated behind Docker availability like the `gitea` conformance job; run it
-locally with `pnpm --filter @genie/e2e test:e2e:oidc` (skips cleanly without
+locally with `pnpm --filter @ambitresearch/genie-e2e test:e2e:oidc` (skips cleanly without
 a container runtime; set `GENIE_REQUIRE_DOCKER=1` to fail loudly instead).
 
 ---
