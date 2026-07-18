@@ -242,11 +242,13 @@ jobs:
       # same integrity guarantees as the rest of the tree. `--required-only`
       # restricts the SBOM to the shipped runtime deps. Generated BEFORE the
       # `npm publish` below so a tooling failure surfaces before the
-      # irreversible publish, keeping the release's artifacts consistent.
+      # irreversible publish, keeping the release's artifacts consistent. Output
+      # goes to a workspace-level dir (not inside packages/server) so it can
+      # never be swept into the published npm tarball.
       - name: Generate CycloneDX SBOM
         env:
           FETCH_LICENSE: "false"
-        run: pnpm exec cdxgen -t pnpm --required-only --spec-version 1.6 -o packages/server/genie-server-sbom.cdx.json packages/server
+        run: pnpm exec cdxgen -t pnpm --required-only --spec-version 1.6 -o sbom/genie-server-sbom.cdx.json packages/server
 
       - name: Publish @genie/server (public, provenance)
         working-directory: packages/server
@@ -265,7 +267,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.release-please.outputs.server_tag }}
-          files: packages/server/genie-server-sbom.cdx.json
+          files: sbom/genie-server-sbom.cdx.json
 
   publish-viewer:
     name: publish @genie/viewer (npm)
@@ -304,11 +306,12 @@ jobs:
       # viewer release, matching the server job above (lockfile-pinned cdxgen
       # via `pnpm exec`, package-scoped, runtime deps only). Generated BEFORE
       # `npm publish` so a tooling failure surfaces before the irreversible
-      # publish, keeping the release's artifacts consistent.
+      # publish, and written to a workspace-level dir (not inside
+      # packages/viewer) so it cannot be swept into the published npm tarball.
       - name: Generate CycloneDX SBOM
         env:
           FETCH_LICENSE: "false"
-        run: pnpm exec cdxgen -t pnpm --required-only --spec-version 1.6 -o packages/viewer/genie-viewer-sbom.cdx.json packages/viewer
+        run: pnpm exec cdxgen -t pnpm --required-only --spec-version 1.6 -o sbom/genie-viewer-sbom.cdx.json packages/viewer
 
       - name: Publish @genie/viewer (public, provenance)
         working-directory: packages/viewer
@@ -322,7 +325,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.release-please.outputs.viewer_tag }}
-          files: packages/viewer/genie-viewer-sbom.cdx.json
+          files: sbom/genie-viewer-sbom.cdx.json
 
   # M5-05 / DRO-277 AC6 — attach the macOS Claude Desktop bundle to every
   # server GitHub Release. Build from the release tag so the bundle version

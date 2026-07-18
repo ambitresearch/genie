@@ -52,7 +52,10 @@ integrity evidence:
   `pnpm exec`; `-t pnpm --required-only` so it reads the workspace `pnpm-lock.yaml` and
   records only the shipped runtime dependency tree) and attached to that package's GitHub
   Release as a downloadable asset (`genie-server-sbom.cdx.json`,
-  `genie-viewer-sbom.cdx.json`). `cdxgen` is used instead of `cyclonedx-npm` because this
+  `genie-viewer-sbom.cdx.json`). The SBOM is generated before `npm publish` (so a tooling
+  failure surfaces before the irreversible publish) and written to a workspace-level `sbom/`
+  directory, never inside the package, so it cannot be swept into the published npm tarball.
+  `cdxgen` is used instead of `cyclonedx-npm` because this
   is a pnpm workspace with `workspace:*` specifiers and no `package-lock.json`, which the
   npm-lock-based generator cannot parse.
 - **Container images** (GHCR + Docker Hub): built multi-arch (amd64/arm64) from the
