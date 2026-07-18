@@ -1,17 +1,25 @@
 import { describe, it, expect } from "vitest";
 import { mkdtemp, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer, SERVER_INFO } from "./server.js";
 import { MCP_APP_MIME, UI_EXTENSION_ID } from "./tools/preview.js";
+
+const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
 
 describe("createServer", () => {
   it("builds a server with the genie identity", () => {
     const server = createServer();
     expect(server).toBeDefined();
     expect(SERVER_INFO.name).toBe("genie");
+  });
+
+  it("keeps the server identity synchronized with the package version", async () => {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as { version: string };
+    expect(SERVER_INFO.version).toBe(packageJson.version);
   });
 
   it("can be constructed repeatedly without shared state", () => {

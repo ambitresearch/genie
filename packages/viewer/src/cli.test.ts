@@ -31,6 +31,7 @@
  *     independent of a parse.
  */
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -48,6 +49,9 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VIEWER_PKG = resolve(HERE, "..");
+const VIEWER_PACKAGE = JSON.parse(readFileSync(resolve(VIEWER_PKG, "package.json"), "utf8")) as {
+  version: string;
+};
 
 /**
  * Fake {@link CliDeps} that captures the Vite config a boot would receive
@@ -125,6 +129,10 @@ describe("parsePort", () => {
 });
 
 describe("buildProgram", () => {
+  it("keeps the CLI version synchronized with the package version", () => {
+    expect(VIEWER_VERSION).toBe(VIEWER_PACKAGE.version);
+  });
+
   it("names the program genie-viewer", () => {
     const io = createRecordingIO();
     expect(buildProgram(io).name()).toBe("genie-viewer");
@@ -151,18 +159,18 @@ describe("runCli", () => {
     expect(io.out()).toContain("Usage: genie-viewer <kit-dir> [--port N]");
   });
 
-  it("--version prints VIEWER_VERSION and exits 0", async () => {
+  it("--version prints the package version and exits 0", async () => {
     const io = createRecordingIO();
     const code = await runCli(["--version"], io);
     expect(code).toBe(0);
-    expect(io.out().trim()).toBe(VIEWER_VERSION);
+    expect(io.out().trim()).toBe(VIEWER_PACKAGE.version);
   });
 
   it("-v is a shorthand for --version", async () => {
     const io = createRecordingIO();
     const code = await runCli(["-v"], io);
     expect(code).toBe(0);
-    expect(io.out().trim()).toBe(VIEWER_VERSION);
+    expect(io.out().trim()).toBe(VIEWER_PACKAGE.version);
   });
 
   it("a bare invocation (no kit-dir) does not throw and prints help", async () => {

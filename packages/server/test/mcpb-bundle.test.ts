@@ -20,6 +20,8 @@ const bundleScript = join(repoRoot, "scripts", "bundle-mcpb.mjs");
 const outFile = join(repoRoot, "dist", "genie.mcpb");
 const rootPackagePath = join(repoRoot, "package.json");
 const serverPackagePath = join(repoRoot, "packages", "server", "package.json");
+const viewerPackagePath = join(repoRoot, "packages", "viewer", "package.json");
+const viewerChangelogPath = join(repoRoot, "packages", "viewer", "CHANGELOG.md");
 const lockfilePath = join(repoRoot, "pnpm-lock.yaml");
 const releaseConfigPath = join(repoRoot, "release-please-config.json");
 const releaseManifestPath = join(repoRoot, ".release-please-manifest.json");
@@ -86,12 +88,23 @@ describe("mcpb bundle manifest (AC1)", () => {
       jsonpath: "$.version",
     });
 
-    // Viewer has never been tagged or published. Model it as a true first
-    // release instead of inventing a viewer-v0.1.0 baseline tag.
+    // Model viewer as a true first release instead of inventing a
+    // viewer-v0.1.0 baseline tag. Once that release exists, all generated
+    // version records must remain synchronized.
     expect(releaseConfig["bootstrap-sha"]).toBe("55eea44c0e558ac237cbf17cea10b003df88f612");
     expect(releaseConfig.packages["packages/viewer"]["initial-version"]).toBe("0.1.0");
     const releaseManifest = JSON.parse(readFileSync(releaseManifestPath, "utf8"));
-    expect(releaseManifest).not.toHaveProperty("packages/viewer");
+    const viewerPackage = JSON.parse(readFileSync(viewerPackagePath, "utf8"));
+    const viewerReleaseVersion = releaseManifest["packages/viewer"];
+    if (viewerReleaseVersion === undefined) {
+      expect(viewerPackage.version).toBe(
+        releaseConfig.packages["packages/viewer"]["initial-version"],
+      );
+      expect(existsSync(viewerChangelogPath)).toBe(false);
+    } else {
+      expect(viewerReleaseVersion).toBe(viewerPackage.version);
+      expect(readFileSync(viewerChangelogPath, "utf8")).toContain(`## ${viewerPackage.version}`);
+    }
   });
 
   it("uses only project-pinned packaging and deployment commands", () => {

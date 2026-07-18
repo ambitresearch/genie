@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { join } from "node:path";
+import packageJson from "../package.json" with { type: "json" };
 import { ProjectStore, registerCreateProjectTool } from "./tools/create_project.js";
 import { registerListProjectsTool } from "./tools/list_projects.js";
 import { registerGetProjectTool } from "./tools/get_project.js";
@@ -31,10 +32,10 @@ import type { KitStore } from "./store/interface.js";
 import { registerGetKitTool } from "./tools/get_kit.js";
 import { getServerTransportKind, registerServerDisposer, type TransportKind } from "./transport.js";
 
-/** Server identity. Bumped independently of the workspace version. */
+/** Server identity. The package manifest is Release Please's version source of truth. */
 export const SERVER_INFO = {
   name: "genie",
-  version: "0.0.0",
+  version: packageJson.version,
 } as const;
 
 /**
