@@ -64,6 +64,6 @@ This issue produces visual output (reference context). Validate per [`AGENTS.md`
 ## Definition of Done
 - [ ] Tests added — placeholder.
 - [ ] Docs updated — viewer README.
-- [ ] Manual verification — `npx genie-viewer --help`.
+- [ ] Manual verification — `npx @ambitresearch/genie-viewer --help`.
 - [ ] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.

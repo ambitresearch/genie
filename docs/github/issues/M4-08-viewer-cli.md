@@ -12,7 +12,7 @@ given kit directory, prints the URL, opens the system browser (unless
 `--no-open`), exits cleanly on Ctrl-C.
 
 ## Context
-- Research report §3.4 + §7 step 5: `npx genie-viewer
+- Research report §3.4 + §7 step 5: `npx @ambitresearch/genie-viewer
   ui_kits/<kit>`.
 
 ## Acceptance Criteria

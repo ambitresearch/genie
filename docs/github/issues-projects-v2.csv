@@ -2266,7 +2266,7 @@ This issue produces visual output (reference context). Validate per [`AGENTS.md`
 ## Definition of Done
 - [ ] Tests added — placeholder.
 - [ ] Docs updated — viewer README.
-- [ ] Manual verification — `npx genie-viewer --help`.
+- [ ] Manual verification — `npx @ambitresearch/genie-viewer --help`.
 - [ ] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.","type:feature,area:viewer,priority:P0-critical,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,Urgent,5h
 [M4-02] Vite multi-page config (each preview.html as entry point),"## Summary
@@ -2661,7 +2661,7 @@ given kit directory, prints the URL, opens the system browser (unless
 `--no-open`), exits cleanly on Ctrl-C.
 
 ## Context
-- Research report §3.4 + §7 step 5: `npx genie-viewer
+- Research report §3.4 + §7 step 5: `npx @ambitresearch/genie-viewer
   ui_kits/<kit>`.
 
 ## Acceptance Criteria

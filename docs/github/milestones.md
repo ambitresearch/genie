@@ -94,7 +94,7 @@ six-phase split in INDEX.md.
   `text/html;profile=mcp-app`, inline `manifest.json` into the iframe payload so
   no network fetch is needed in the sandbox.
 - **Exit criteria:**
-  - [ ] `npx genie-viewer ui_kits/<kit>` boots on `:5173` with HMR
+  - [ ] `npx @ambitresearch/genie-viewer ui_kits/<kit>` boots on `:5173` with HMR
   - [ ] `preview` rendered inline in VS Code Insiders + Claude Code
   - [ ] Viewer accessibility audit (axe-core) passes
 - **Dependencies:** M3 (manifest is the input).

@@ -575,7 +575,7 @@ Anthropic, and the bridge handles round-tripping.
 | 1 | The M1 genie tool surface works end-to-end against a local FS | Kit verbs plus `list_projects`, `get_project`, `create_project`, `delete_project`, `bind_kit`, and `conjure_screen` pass smoke tests in 7 harnesses |
 | 2 | `conjure` produces a card that lands in the store and validates | `M2` release; demo video of Sonnet 4.6 generating an `acme.Button` variant in Cursor |
 | 3 | `@genie` validator and manifest compiler ship and are covered by genie's own regex test fixtures | `M3` release; CI matrix runs the `@genie` regex against genie's fixture suite |
-| 4 | Vite-backed preview viewer with HMR ships as `@ambitresearch/genie-viewer` | `npx genie-viewer ui_kits/<kit>` renders the grid at `http://localhost:5173` |
+| 4 | Vite-backed preview viewer with HMR ships as `@ambitresearch/genie-viewer` | `npx @ambitresearch/genie-viewer ui_kits/<kit>` renders the grid at `http://localhost:5173` |
 | 5 | Auth + distribution complete: local stdio install, OAuth DCR for supported HTTP harnesses, static bearer for the rest, `.mcpb` bundle for Claude Desktop | `M5` release; one-command install in all 7 harnesses |
 | 6 | First wave of public adoption | 1,000 GitHub stars; 100 weekly active component-store mutations |
 | 7 | Reference self-hosted deployment documented end-to-end | `docs/06-operations-runbook.md` plus a self-hosting tutorial blog post |

@@ -28,14 +28,14 @@ the full M4 breakdown.
 
 ```bash
 # Boot a live preview of a synced kit (opens your browser at the URL):
-npx genie-viewer ui_kits/acme
+npx @ambitresearch/genie-viewer ui_kits/acme
 #   Preview: http://127.0.0.1:5173
 
 # Pick a port (falls back to the next free one, with a warning, if it's taken):
-npx genie-viewer ui_kits/acme --port 5180
+npx @ambitresearch/genie-viewer ui_kits/acme --port 5180
 
 # Headless / CI — print the URL but don't open a browser:
-npx genie-viewer ui_kits/acme --no-open
+npx @ambitresearch/genie-viewer ui_kits/acme --no-open
 ```
 
 Press **Ctrl-C** to stop: the watcher and dev server shut down within a second.
@@ -48,7 +48,7 @@ Press **Ctrl-C** to stop: the watcher and dev server shut down within a second.
 ## Usage
 
 ```bash
-npx genie-viewer <kit-dir> [--port N] [--no-open]
+npx @ambitresearch/genie-viewer <kit-dir> [--port N] [--no-open]
 ```
 
 ```
