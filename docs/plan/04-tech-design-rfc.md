@@ -3098,7 +3098,8 @@ Coverage gate: 85% branch coverage on `server/src/**`, 95% on `server/src/tools/
 ### 14.4 End-to-end tests
 
 - **One Playwright suite per harness** for the smoke test from research §7 step 11:
-  - Install MCP server, run `conjure → preview → write_files → validate`, capture screenshots.
+  - Connect the harness to the MCP server, run
+    `conjure → write_files → preview → validate`, capture screenshots.
   - Asserts: tool calls succeed, `manifest.json` contains the new card, the viewer at `:5173` renders it.
 - Runs nightly on schedule; manual trigger on release branch.
 - Captures `_meta.ui.resourceUri` presence for the Tier-2 harnesses; absence in Tier-0 harnesses is asserted explicitly (regression guard).

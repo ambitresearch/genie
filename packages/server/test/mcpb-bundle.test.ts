@@ -22,7 +22,7 @@ const rootPackagePath = join(repoRoot, "package.json");
 const serverPackagePath = join(repoRoot, "packages", "server", "package.json");
 const lockfilePath = join(repoRoot, "pnpm-lock.yaml");
 const releaseConfigPath = join(repoRoot, "release-please-config.json");
-const releaseWorkflowPath = join(repoRoot, ".github", "workflows", "release-please.yml");
+const releaseWorkflowPath = join(repoRoot, ".github", "workflows", "release.yml");
 const readmePath = join(repoRoot, "README.md");
 const MAX_BYTES = 30 * 1024 * 1024;
 
@@ -111,6 +111,9 @@ describe("mcpb bundle manifest (AC1)", () => {
 
     const releaseWorkflow = readFileSync(releaseWorkflowPath, "utf8");
     expect(releaseWorkflow).toMatch(/publish-mcpb:[\s\S]*?runs-on: macos-latest/);
+    expect(releaseWorkflow).toMatch(
+      /publish-mcpb:[\s\S]*?ref: \$\{\{ needs\.release-please\.outputs\.server_tag \}\}/,
+    );
   });
 
   it("does not link to Claude Desktop documentation before M5-10 lands", () => {

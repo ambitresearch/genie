@@ -1,0 +1,50 @@
+# genie — reference docker-compose for self-hosters (M5-07 / DRO-279 AC6)
+#
+# Boots the genie MCP server over HTTP transport, listening on :8080 with the
+# non-root, multi-arch image built from the repo-root Dockerfile.
+#
+# No git host (e.g. Gitea) sidecar ships by default — genie's LocalFs store
+# works standalone; add a git host only if you use genie's GitHostStore
+# (docs/plan/04-tech-design-rfc.md §"GitHostKitStore").
+#
+# Quickstart:
+#   cp .env.example .env   # fill in the required LLM + OAuth values
+#   docker compose -f deploy/docker-compose.yml up -d
+
+services:
+  genie:
+    image: ghcr.io/roshangautam/genie:latest
+    # Uncomment to build from local source instead of the published image:
+    # build:
+    #   context: ..
+    #   dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # Required — configurable OpenAI-compatible LLM endpoint (D-H).
+      GENIE_LLM_BASE_URL: ${GENIE_LLM_BASE_URL:?set GENIE_LLM_BASE_URL}
+      GENIE_LLM_API_KEY: ${GENIE_LLM_API_KEY:?set GENIE_LLM_API_KEY}
+      # Required — HS256 signing key for OAuth-issued tokens (>=32 chars).
+      OAUTH_HS256_KEY: ${OAUTH_HS256_KEY:?set OAUTH_HS256_KEY}
+      # Required — externally reachable public origin used in OAuth metadata.
+      GENIE_OAUTH_ISSUER: ${GENIE_OAUTH_ISSUER:?set GENIE_OAUTH_ISSUER}
+      MCP_TRANSPORT: "http"
+      GENIE_PREVIEW_LOCALITY: "remote"
+      # Uncomment when overriding the image's default kit storage path:
+      # GENIE_KITS_ROOT: /data/kits
+    volumes:
+      # Persisted server state (auth tokens, plans, reports) — GENIE_HOME.
+      - genie-home:/data
+      # Uncomment to mount a UI kit from the host instead of the container's
+      # default `/data/kits`:
+      # - ./my-ui-kit:/data/kits/my-ui-kit
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  genie-home: {}

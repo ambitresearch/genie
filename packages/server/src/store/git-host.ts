@@ -722,7 +722,7 @@ export class GitHostKitStore implements KitStore {
       // file lands; a failure scaffolding the viewer assets below still
       // leaves a valid, gettable kit — matching the local adapter's
       // best-effort semantics (`loadViewerAssets` degrades to `[]` rather
-      // than throwing when `@genie/viewer` is unresolvable).
+      // than throwing when neither packaged nor optional assets are usable).
       const viewerAssets = await loadViewerAssets();
       for (const asset of viewerAssets) {
         await this.writeRepoFile(meta.id, asset.path, asset.content);
