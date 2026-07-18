@@ -20,6 +20,20 @@ blockExoticSubdeps: true
 # --frozen-lockfile installs (all CI legs), so it cannot break reproducible CI.
 minimumReleaseAge: 4320
 
+# The @cline/cli-* platform binaries are an exactly-pinned, fast-moving E2E test
+# dependency (packages/e2e). They are pinned to an exact version in that
+# package's manifest and are dev/test-only, never shipped, so the cooldown adds
+# no supply-chain value there but would otherwise block routine lockfile
+# maintenance whenever a new cline release is <3 days old. Exclude them from the
+# cooldown; every other dependency still honours minimumReleaseAge.
+minimumReleaseAgeExclude:
+  - "@cline/cli-darwin-arm64"
+  - "@cline/cli-darwin-x64"
+  - "@cline/cli-linux-arm64"
+  - "@cline/cli-linux-x64"
+  - "@cline/cli-windows-arm64"
+  - "@cline/cli-windows-x64"
+
 # trustPolicy / trustPolicyIgnoreAfter is intentionally NOT set. The issue's
 # proposed `trustPolicy: no-downgrade` is not a real pnpm 10.34 setting (pnpm
 # exposes only the numeric `trustPolicyIgnoreAfter`). The equivalent

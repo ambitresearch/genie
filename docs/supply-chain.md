@@ -48,12 +48,13 @@ integrity evidence:
   exact source commit and workflow run. Provenance requires the source repository to be
   public before the first live publish.
 - **npm SBOMs**: a CycloneDX JSON SBOM is generated for each package with
-  `@cyclonedx/cdxgen` (pinned to an exact version, `-t pnpm --required-only` so it reads
-  the workspace `pnpm-lock.yaml` and records only the shipped runtime dependency tree)
-  and attached to that package's GitHub Release as a downloadable asset
-  (`genie-server-sbom.cdx.json`, `genie-viewer-sbom.cdx.json`). `cdxgen` is used instead
-  of `cyclonedx-npm` because this is a pnpm workspace with `workspace:*` specifiers and
-  no `package-lock.json`, which the npm-lock-based generator cannot parse.
+  `@cyclonedx/cdxgen` (a lockfile-pinned, integrity-hashed devDependency run via
+  `pnpm exec`; `-t pnpm --required-only` so it reads the workspace `pnpm-lock.yaml` and
+  records only the shipped runtime dependency tree) and attached to that package's GitHub
+  Release as a downloadable asset (`genie-server-sbom.cdx.json`,
+  `genie-viewer-sbom.cdx.json`). `cdxgen` is used instead of `cyclonedx-npm` because this
+  is a pnpm workspace with `workspace:*` specifiers and no `package-lock.json`, which the
+  npm-lock-based generator cannot parse.
 - **Container images** (GHCR + Docker Hub): built multi-arch (amd64/arm64) from the
   CI-verified release tag. `docker/build-push-action` is configured with `sbom: true`
   and `provenance: mode=max`, so each pushed image manifest carries an embedded
@@ -86,7 +87,16 @@ integrity evidence:
   version younger than 4320 minutes. This blunts the "publish a malicious patch and hope
   a build pulls it before takedown" window on fresh installs and lockfile updates. It does
   **not** apply to `--frozen-lockfile` installs, which every CI leg uses, so reproducible
-  CI cannot break from the cooldown.
+  CI cannot break from the cooldown. Because the cooldown is enforced during resolution,
+  regenerating the lockfile while an already-locked or newly-selected version is <3 days
+  old will fail until that version matures; a maintainer bumping dependencies inside the
+  window can add the specific package to `minimumReleaseAgeExclude` (below) or pass a
+  one-off `--config.minimumReleaseAge=0` for a reviewed lockfile update.
+- **`minimumReleaseAgeExclude`** — exempts the `@cline/cli-*` platform binaries from the
+  cooldown. They are an exactly-pinned, dev/test-only E2E dependency (`packages/e2e`) that
+  tracks a fast-moving upstream and never ships in a published artifact, so the cooldown
+  adds no supply-chain value there while otherwise blocking routine lockfile maintenance.
+  Every other dependency still honours `minimumReleaseAge`.
 
 ### Omitted: `trustPolicy: no-downgrade`
 
