@@ -5,8 +5,9 @@ SSRF finding is fixed and regression-tested. Real-browser CSP and sandbox
 probes passed. Dependency scanning found no known vulnerabilities.
 Prompt-injection probes observed no system-prompt leak, but generated tool
 output remains untrusted and schema validation is not a confidentiality
-control. Open supply-chain findings are tracked in GitHub issue #207 and block
-the GA tag, but not closure of this completed audit-and-remediation issue.
+control. The supply-chain findings that previously blocked the GA tag are now
+closed in GitHub issue #207 (SHA-pinned actions, pnpm install policy, SBOM
+generation, `docs/supply-chain.md`).
 
 Evidence in this report is limited to commands and outputs that were observed.
 The current re-audit was run on PR #189 after its SSRF follow-up changes.
@@ -43,7 +44,7 @@ Result: **0 known vulnerabilities in the current lockfile via OSV Scanner.**
 | A05 Security Misconfiguration    | Mitigated             | Embedded CSP uses `default-src 'none'`, hash-pinned script/style, `connect-src 'none'`, `object-src 'none'`, `base-uri 'none'`, and `form-action 'none'`. Real Chromium probes passed 12/12 in CI.                                                                                              |
 | A06 Vulnerable Components        | Clean in current scan | OSV Scanner reported no issues across 543 lockfile packages.                                                                                                                                                                                                                                    |
 | A07 Identification/Auth Failures | N/A - not exposed     | Authentication belongs to the MCP transport/harness; this package exposes no user-account surface.                                                                                                                                                                                              |
-| A08 Software/Data Integrity      | Open findings         | Semgrep reported mutable GitHub Action tags and missing pnpm trust-policy settings. GitHub issue #69 (M6-04 / DRO-292) is closed, but this checkout contains no release signing/SBOM workflow and the new findings are not covered by its recorded evidence. Follow-up: #207.                   |
+| A08 Software/Data Integrity      | Fixed in #207         | The Semgrep mutable-action-tag and pnpm trust-policy findings are resolved: every third-party action is SHA-pinned with a version comment, `pnpm-workspace.yaml` sets `blockExoticSubdeps` + `minimumReleaseAge` (with the `trustPolicy: no-downgrade` omission justified), and `release.yml` now emits CycloneDX SBOMs (npm release assets + image attestations) alongside its existing cosign signing and npm provenance. See `docs/supply-chain.md`.                   |
 | A09 Logging/Monitoring Failures  | Reviewed              | Plan-guard rejection logs go to stderr and omit file contents. Generation logs include model, usage, latency, component name, and prompt hash.                                                                                                                                                  |
 | A10 SSRF                         | Fixed in this PR      | Every `refUrl` hop is syntactically checked, resolved, classified as globally routable unicast, and connected through the exact validated address. Redirects are manual and bounded. IPv4-mapped IPv6, unspecified, link-local, multicast, private, loopback, and CGNAT addresses are rejected. |
 
@@ -183,18 +184,30 @@ The final fix:
 
 No separate issue is needed because this P1 is fixed in PR #189.
 
-### Open Supply-Chain Findings
+### Open Supply-Chain Findings — resolved in #207
 
-Semgrep's action pinning and pnpm trust-policy findings are still open in this
-checkout. `.github/workflows/release.yml` now publishes `@genie/server` and
-`@genie/viewer` with npm provenance, satisfying the implemented portion of
-GitHub issue #69 (M6-04 / DRO-292). The repository still lacks the issue's
-cosign signatures, SBOM generation, real-release verification, and
-`docs/supply-chain.md`. A follow-up must reconcile that partially completed,
-closed issue with the remaining repository state before GA.
+The Semgrep action-pinning and pnpm trust-policy findings were closed by GitHub
+issue #207. Every third-party action across `ci.yml` and `release.yml` is now
+pinned to a full 40-character commit SHA with a `# vX.Y.Z` provenance comment
+(24 previously-mutable references, now 0), and `pnpm-workspace.yaml` sets
+`blockExoticSubdeps: true` and `minimumReleaseAge: 4320` (the three pnpm
+supply-chain findings), with the proposed `trustPolicy: no-downgrade` omission
+justified because it is not a real pnpm 10.34 setting.
 
-Follow-up filed: GitHub issue #207, `security(ci): close supply-chain gaps
-found by M6-03 re-audit`.
+`.github/workflows/release.yml` already published `@genie/server` and
+`@genie/viewer` with npm provenance and signed both container images keyless
+with cosign; issue #207 added the remaining gap — CycloneDX SBOM generation
+(npm packages attached as release assets, container images via
+`sbom: true` + `provenance: mode=max` attestations) — and documented the full
+control set in `docs/supply-chain.md`. That reconciles the closed
+GitHub issue #69 (M6-04 / DRO-292) with the repository state.
+
+The one remaining OWASP-scan finding is the viewer's `postMessage(targetOrigin:
+"*")`, which is retained as the documented host-protocol residual risk described
+under AC2 (A08 now Fixed), not a supply-chain gap.
+
+Follow-up filed and resolved: GitHub issue #207, `security(ci): close
+supply-chain gaps found by M6-03 re-audit`.
 
 ## AC6 - Re-audit / Sign-off
 
@@ -211,11 +224,17 @@ go run github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.1 \
   scan source -r .                                              # no issues, 543 packages
 ```
 
-The final Semgrep replay was **not clean**: its 28 findings are documented
-above rather than omitted. The local Chromium probe replay passed 12/12. The
-full suite was also run, but two unrelated tests repeatedly exceeded Vitest's
-5-second timeout (`packages/server/src/cli.test.ts` and the fresh-kit browser
-case in `packages/server/src/create_kit.test.ts`); focused security tests,
-lint, typecheck, and build passed. The M6-03 audit and fixes are signed off for
-merge and issue #68 closure. GitHub issue #207's A08 findings remain an explicit
-blocker for the GA tag until resolved or accepted with evidence.
+The M6-03-era Semgrep replay reported 28 findings; issue #207 resolved 27 of
+them (24 mutable action references now SHA-pinned, 3 pnpm supply-chain settings
+now configured). The final registry-hosted `p/owasp-top-ten` ruleset could not
+be re-downloaded in the #207 sandbox (semgrep.dev was network-blocked), so the
+pin and pnpm-policy closures were verified deterministically from the workflow
+and `pnpm-workspace.yaml` sources instead. The single remaining finding is the
+viewer `postMessage("*")`, retained as a documented residual risk. The local
+Chromium probe replay passed 12/12. The full suite was also run, but two
+unrelated tests repeatedly exceeded Vitest's 5-second timeout
+(`packages/server/src/cli.test.ts` and the fresh-kit browser case in
+`packages/server/src/create_kit.test.ts`); focused security tests, lint,
+typecheck, and build passed. The M6-03 audit and fixes are signed off for merge
+and issue #68 closure. The A08 supply-chain findings that previously blocked the
+GA tag are resolved in issue #207 (see above).
