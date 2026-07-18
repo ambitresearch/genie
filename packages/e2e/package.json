@@ -13,6 +13,7 @@
     "test:e2e:viewer": "vitest run --root ../.. --config vitest.config.ts packages/e2e/test/m4-viewer.test.ts",
     "test:e2e:copilot": "vitest run --root ../.. --config vitest.config.ts packages/e2e/test/m5-smoke-copilot.test.ts",
     "test:e2e:codex": "vitest run --root ../.. --config vitest.config.ts packages/e2e/test/m5-smoke-codex.test.ts",
+    "test:e2e:claude-desktop": "vitest run --root ../.. --config vitest.config.ts packages/e2e/test/m5-smoke-claude-desktop.test.ts",
     "test:e2e:docker": "vitest run --root ../.. --config vitest.config.ts packages/e2e/test/docker-image.test.ts",
     "test:e2e:continue": "pnpm --filter @genie/viewer build && pnpm --filter @genie/server build && cross-env GENIE_REQUIRE_CONTINUE=1 vitest run --root ../.. --config vitest.config.ts packages/e2e/test/m5-smoke-continue.test.ts",
     "test:e2e:oidc": "vitest run --root ../.. --config vitest.config.ts packages/e2e/test/m5-oidc.test.ts"

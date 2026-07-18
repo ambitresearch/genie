@@ -436,6 +436,22 @@ jobs:
           fi
           pnpm test m2-generation
 
+      # The configured LLM gateway is private-LAN-only, so the Desktop suite's
+      # optional live-generation leg belongs on this self-hosted canary rather
+      # than its GitHub-hosted, always-free supplemental stdio job below.
+      - name: Run Claude Desktop live-generation smoke when configured
+        env:
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_LLM_API_KEY }}
+        run: |
+          if [ -z "$GENIE_LLM_BASE_URL" ] || [ -z "$GENIE_LLM_API_KEY" ]; then
+            echo "Skipping Claude Desktop live-generation smoke: LLM secrets are not configured."
+            exit 0
+          fi
+          pnpm --filter @genie/server build
+          GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE=1 \
+            CI=false VITEST_JUNIT=0 pnpm --filter @genie/e2e test:e2e:claude-desktop
+
       # AC7 — the per-component `.html` samples + summary.json this suite
       # writes to reports/m2-generation/ (empty/absent when AC2 skipped the
       # run — `if-no-files-found: warn`, not `error`, so that's not a failure).
@@ -832,6 +848,50 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-report-continue-smoke
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+  # ── Claude Desktop supplemental smoke (M5-10 / DRO-282) ─────────────────────
+  # A real Desktop install remains manual AC6 evidence. This job continuously
+  # exercises the built CLI and exact stdio command the .mcpb launches, and
+  # fails instead of silently skipping when dist/ is absent.
+  claude-desktop-smoke:
+    name: Claude Desktop stdio smoke (M5-10 supplemental)
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build @genie/server
+        run: pnpm --filter @genie/server build
+
+      - name: Run Claude Desktop supplemental stdio smoke
+        env:
+          GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE: "1"
+          VITEST_JUNIT: "1"
+        run: pnpm --filter @genie/e2e test:e2e:claude-desktop
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-claude-desktop-smoke
           path: reports/junit.xml
           if-no-files-found: warn
           retention-days: 7
