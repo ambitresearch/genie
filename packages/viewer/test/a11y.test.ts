@@ -36,7 +36,7 @@
  * requirement.
  *
  * AC coverage map:
- *   - AC1 — this file; `pnpm --filter @genie/viewer test:a11y` (package.json
+ *   - AC1 — this file; `pnpm --filter @ambitresearch/genie-viewer test:a11y` (package.json
  *           script below) runs it.
  *   - AC2 — zero critical/serious violations, scanned twice (light + dark).
  *   - AC3 — keyboard walk: Tab → search, Tab → card 1 (article, tabindex=0),

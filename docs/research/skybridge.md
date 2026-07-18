@@ -59,7 +59,7 @@ current plan **hand-rolls** exactly the layer Skybridge productizes:
 
 | genie plan (RFC) | Skybridge equivalent | Overlap |
 |---|---|---|
-| §6.9 Vite multi-page viewer (`@genie/viewer`) + chokidar HMR | "Delightful dev environment" — emulator, HMR, tunnel | **High** |
+| §6.9 Vite multi-page viewer (`@ambitresearch/genie-viewer`) + chokidar HMR | "Delightful dev environment" — emulator, HMR, tunnel | **High** |
 | §6.5 `ui://genie/grid` MCP-App payload + postMessage protocol | core "MCP Apps" React view binding | **High** |
 | G-5 "one artifact, three vehicles" (file://, localhost, ui://) | "Write once, run everywhere" | **High** |
 | §6.2 hand-written Zod tool schemas → manual `_meta.ui` wiring | "tRPC-style inference, tool def → React view" | **Medium** |

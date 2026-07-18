@@ -21,7 +21,7 @@ import {
 describe("PRICING_TABLE", () => {
   it("DEFAULT_MODEL_ALIAS matches conjure.ts/refine.ts DEFAULT_MODEL", () => {
     // pricing.ts's DEFAULT_MODEL_ALIAS is a re-declared literal, not an import
-    // from @genie/server (pricing.ts stays runtime-dependency-free — see its
+    // from @ambitresearch/genie (pricing.ts stays runtime-dependency-free — see its
     // module doc). That means nothing enforces the two stay in sync EXCEPT
     // this assertion: import the tools' real exported constants directly (by
     // relative source path, same as m2-generation.test.ts — both conjure.js
@@ -36,7 +36,7 @@ describe("PRICING_TABLE", () => {
   it("has an entry for every model alias conjure/refine accept by default", () => {
     // conjure.ts / refine.ts DEFAULT_MODEL — the alias AC3 requires the 5
     // components to be generated against. Pinned as a literal (not imported
-    // from @genie/server) so this table can't silently drift out of having an
+    // from @ambitresearch/genie) so this table can't silently drift out of having an
     // entry for it without a test noticing.
     expect(PRICING_TABLE[DEFAULT_MODEL_ALIAS]).toBeDefined();
   });

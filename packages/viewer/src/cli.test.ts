@@ -30,9 +30,10 @@
  *   - `buildProgram`'s static shape (name/usage) is asserted directly,
  *     independent of a parse.
  */
-import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 import type { InlineConfig, ViteDevServer } from "vite";
@@ -40,6 +41,7 @@ import type { InlineConfig, ViteDevServer } from "vite";
 import {
   buildProgram,
   DEFAULT_PORT,
+  isDirectExecution,
   parsePort,
   runCli,
   VIEWER_VERSION,
@@ -49,6 +51,7 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VIEWER_PKG = resolve(HERE, "..");
+const CLI_SOURCE = resolve(HERE, "cli.ts");
 const VIEWER_PACKAGE = JSON.parse(readFileSync(resolve(VIEWER_PKG, "package.json"), "utf8")) as {
   version: string;
 };
@@ -141,6 +144,31 @@ describe("buildProgram", () => {
   it("sets the AC6-mandated usage string", () => {
     const io = createRecordingIO();
     expect(buildProgram(io).usage()).toBe("<kit-dir> [--port N]");
+  });
+});
+
+describe("isDirectExecution", () => {
+  it("recognizes the module's canonical path as direct execution", () => {
+    expect(isDirectExecution(CLI_SOURCE, pathToFileURL(CLI_SOURCE).href)).toBe(true);
+  });
+
+  it("recognizes an installed package-bin symlink as direct execution", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "genie-viewer-bin-"));
+    try {
+      const binPath = resolve(dir, "genie-viewer");
+      symlinkSync(CLI_SOURCE, binPath);
+      expect(isDirectExecution(binPath, pathToFileURL(CLI_SOURCE).href)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an imported module and a missing argv path", () => {
+    expect(isDirectExecution(CLI_SOURCE, import.meta.url)).toBe(false);
+    expect(isDirectExecution(undefined, pathToFileURL(CLI_SOURCE).href)).toBe(false);
+    expect(isDirectExecution(resolve(HERE, "missing-cli.ts"), pathToFileURL(CLI_SOURCE).href)).toBe(
+      false,
+    );
   });
 });
 

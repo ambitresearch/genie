@@ -1,5 +1,5 @@
 /**
- * M4-02 (DRO-264) — `@genie/viewer` Vite entry config.
+ * M4-02 (DRO-264) — `@ambitresearch/genie-viewer` Vite entry config.
  *
  * AC1 names THIS file (`packages/viewer/vite.config.ts`) as the config Vite
  * loads. It is deliberately a thin shim: every decision — the glob-built
@@ -10,7 +10,7 @@
  *
  *   - `GENIE_KIT_ROOT` — the `<kit-dir>` to serve. Defaults to `process.cwd()`,
  *     so a bare `vite` launched from inside a kit serves that kit. NOTE: run
- *     via `pnpm --filter @genie/viewer serve`, cwd is the *viewer package*
+ *     via `pnpm --filter @ambitresearch/genie-viewer serve`, cwd is the *viewer package*
  *     dir, not your kit — set `GENIE_KIT_ROOT` explicitly there (the polished
  *     M4-08 CLI will pass the kit-dir arg through this same env).
  *   - `GENIE_VIEWER_PORT` — optional port override (AC3), parsed leniently by

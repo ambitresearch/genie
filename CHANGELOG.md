@@ -25,7 +25,7 @@ and the project aims to follow [Semantic Versioning](https://semver.org/) from 1
 ### Added
 
 - **M0 — Discovery & Scaffold.** _(2026-06-24)_
-  - Bootable MCP server (`@genie/server`) with a stdio/HTTP transport
+  - Bootable MCP server (`@ambitresearch/genie`) with a stdio/HTTP transport
     multiplexer (RFC §5.2) and a built-in `ping` health tool. Speaks MCP
     end-to-end: `initialize → tools/list → tools/call ping → "pong"`.
   - pnpm workspace (`server` / `viewer` / `e2e`), TypeScript strict/ESM/NodeNext,

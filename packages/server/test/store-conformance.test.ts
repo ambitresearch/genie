@@ -77,7 +77,7 @@ function kitStoreContract(
     it("createKit scaffolds the viewer's 3 static assets, byte-identical to packages/viewer/static (DRO-764 AC1)", async () => {
       const kit = await store.createKit("viewer-scaffold-kit");
       const expected = await loadViewerAssets();
-      // Guard against a silently-empty expectation (e.g. @genie/viewer
+      // Guard against a silently-empty expectation (e.g. @ambitresearch/genie-viewer
       // unresolvable in this test run) — a pass with zero expected assets
       // would prove nothing.
       expect(expected.length).toBe(3);

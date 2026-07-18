@@ -36,7 +36,7 @@ Claude Desktop reads its MCP server list from a JSON config file:
 
 Add genie under `mcpServers`:
 
-> **Publication gate:** `@genie/server` is the planned package name but is not
+> **Publication gate:** `@ambitresearch/genie` is the planned package name but is not
 > yet published. The snippet below is the post-M5-06 configuration. Use the
 > source-checkout form described immediately after it today.
 
@@ -45,7 +45,7 @@ Add genie under `mcpServers`:
   "mcpServers": {
     "genie": {
       "command": "npx",
-      "args": ["-y", "@genie/server", "--transport", "stdio"],
+      "args": ["-y", "@ambitresearch/genie", "--transport", "stdio"],
       "env": {
         "GENIE_HOME": "/absolute/path/to/.genie",
         "GENIE_KITS_ROOT": "/absolute/path/to/.genie/kits",
@@ -71,12 +71,12 @@ inherit an unexpected or unwritable working directory. Examples:
 - **Linux:** `/home/you/.genie`, `/home/you/.genie/kits`, and
   `/home/you/.genie/projects`
 
-The original M5-10 draft named the bare `genie` npm package, but that name is
-owned by an unrelated package. The current M5-06 publishing contract uses
-`@genie/server`. It is not yet published, so the `npx` command above is a
-post-M5-06 configuration and currently returns an npm 404. Do not substitute
-`npx -y genie`. For a source checkout today, build `@genie/server` and replace
-the snippet's command with `node` and its args with
+The original M5-10 draft named the bare `genie` npm package, but that package
+and the `@genie` scope are owned by unrelated npm users. The current M5-06
+publishing contract uses `@ambitresearch/genie`. It is not yet published, so
+the `npx` command above is a post-M5-06 configuration and currently returns an
+npm 404. Do not substitute `npx -y genie`. For a source checkout today, build
+`@ambitresearch/genie` and replace the snippet's command with `node` and its args with
 `["/absolute/path/to/genie/packages/server/dist/cli.js", "--transport", "stdio"]`.
 
 The current CLI calls `loadSecrets()` before it creates the stdio transport.

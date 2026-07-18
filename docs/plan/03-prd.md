@@ -511,12 +511,12 @@ Epics map to milestones M0–M5 from the research report §7.
 
 ### Epic E4 — Preview viewer (Vite + ui://) (M4)
 
-#### DS-050 — `npx genie-viewer <kit-dir>` dev mode
+#### DS-050 — `npx @ambitresearch/genie-viewer <kit-dir>` dev mode
 
 - **Persona:** A, B
 - **Narrative:** As a Designer-Engineer, I want a single command to spin up the viewer with HMR, so I can save → see refresh.
 - **Acceptance criteria:**
-  - Given `npx genie-viewer ui_kits/acme`, Then Vite starts and prints `Local: http://localhost:5173`.
+  - Given `npx @ambitresearch/genie-viewer ui_kits/acme`, Then Vite starts and prints `Local: http://localhost:5173`.
   - Given a `preview.html` save, Then the corresponding iframe reloads within 100 ms via `postMessage`.
   - Given a `.genie/manifest.json` change, Then the grid re-flows without a full reload.
   - Given the port is busy, Then the viewer picks the next free port and prints it.
@@ -1182,9 +1182,9 @@ returned the error code and the list of files that did land.
 `write_files` call with `_meta.final: true` so the server knows to write
 the anchor and clear the sentinel.
 
-### 6.9 The Vite-backed preview viewer (`@genie/viewer`)
+### 6.9 The Vite-backed preview viewer (`@ambitresearch/genie-viewer`)
 
-**FR-080 — CLI.** `npx genie-viewer <kit-dir> [--port N]
+**FR-080 — CLI.** `npx @ambitresearch/genie-viewer <kit-dir> [--port N]
 [--no-open] [--once]`. `--once` builds the static site and exits (used by
 CI). `--no-open` skips opening the browser.
 
@@ -1526,7 +1526,7 @@ code → user-facing message → recovery action.
 | EC-018 | Binary file in `read_file`                                                                                                     | Return base64 with `_meta.encoding: "base64"`                                                                | (no error)                       | n/a                                                                                          | Client decodes.                                                                                                                               |
 | EC-019 | `conjure` returns a 4-file response (one missing)                                                                              | Schema repair retry; if still 4, raise                                                                       | `ERR_GENERATION_INVALID`         | "Generation missing required file <Name>.html (got 4 of 5)."                                 | Re-prompt with stricter system instructions.                                                                                                  |
 | EC-020 | Plan SQLite corruption                                                                                                         | Server logs corruption; recreates empty DB; warns                                                            | `ERR_PLAN_STATE_RESET`           | "Plan state DB corrupted; reset. Active plans lost."                                         | Re-`plan` active plans.                                                                                                                       |
-| EC-021 | Stale chokidar handle after kit rename                                                                                         | Viewer restart needed; CLI exits with code 2 and prints kit-not-found                                        | `ERR_KIT_DIR_MISSING`            | "Kit directory ui_kits/acme moved or deleted; restart the viewer with the new path."         | Re-run `npx genie-viewer <newpath>`.                                                                                                          |
+| EC-021 | Stale chokidar handle after kit rename                                                                                         | Viewer restart needed; CLI exits with code 2 and prints kit-not-found                                        | `ERR_KIT_DIR_MISSING`            | "Kit directory ui_kits/acme moved or deleted; restart the viewer with the new path."         | Re-run `npx @ambitresearch/genie-viewer <newpath>`.                                                                                           |
 | EC-022 | Two simultaneous `plan` for same kitId                                                                                         | Both succeed; both planIds valid; writes to overlapping paths are last-write-wins                            | (no error)                       | n/a                                                                                          | Client serializes its own plans.                                                                                                              |
 | EC-023 | OAuth client refresh token expired                                                                                             | Server returns 401 with `WWW-Authenticate` directing re-auth                                                 | `ERR_OAUTH_EXPIRED`              | "OAuth token expired; please re-authenticate."                                               | Harness re-runs DCR flow.                                                                                                                     |
 | EC-024 | Streaming response disconnect mid-token                                                                                        | Server treats as 5xx; retries 3x                                                                             | `ERR_UPSTREAM_5XX`               | "Generation endpoint stream disconnected."                                                   | Retry the call.                                                                                                                               |
@@ -1592,7 +1592,7 @@ Tagged "decision", "user research", or "technical spike".
    **Resolved (D-A):** both verbs are **dropped\*\* — the `@genie` marker IS the
    registration; to remove a card, delete the file. Hand-authored kits simply
    include the first-line marker.
-4. **Should the viewer ship as a separate package (`@genie/viewer`)
+4. **Should the viewer ship as a separate package (`@ambitresearch/genie-viewer`)
    or be bundled into the main npm package?**
    - Separate gives users the option to skip Vite/chokidar; bundled is one-command.
    - _Tag: needs decision._

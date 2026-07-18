@@ -22,13 +22,13 @@
  * If any of the three drifts from the compiler's real output again, this fails — a
  * hand-authored `preview.html` fixture can no longer hide the divergence (AC3).
  *
- * ── Why this lives in @genie/e2e (not packages/viewer/test) ─────────────────
+ * ── Why this lives in @ambitresearch/genie-e2e (not packages/viewer/test) ─────────────────
  * It is the only test that spans BOTH packages — the server's `compileManifest`
  * AND the viewer's `collectPreviewEntries`/`classifyHmrPath` — so it belongs in the
- * cross-package integration package (`@genie/e2e`, which declares `@genie/server` +
- * `@genie/viewer`), matching every other `../../<pkg>/src/…` monorepo-test import in
+ * cross-package integration package (`@ambitresearch/genie-e2e`, which declares `@ambitresearch/genie` +
+ * `@ambitresearch/genie-viewer`), matching every other `../../<pkg>/src/…` monorepo-test import in
  * the repo and, unlike `packages/viewer/test/**` (excluded from viewer's tsconfig),
- * getting typechecked by `@genie/e2e typecheck`. The server's and viewer's own
+ * getting typechecked by `@ambitresearch/genie-e2e typecheck`. The server's and viewer's own
  * transitive deps (zod, mime-types, fast-glob, vite) resolve from each package's own
  * `node_modules`; this is a vitest-only test (nothing is bundled), so the reach across
  * the boundary stays test-scoped.

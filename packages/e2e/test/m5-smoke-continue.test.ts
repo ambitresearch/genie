@@ -43,7 +43,7 @@ const hasContinueCli =
 if (process.env.GENIE_REQUIRE_CONTINUE === "1" && !hasBuiltServer) {
   throw new Error(
     "GENIE_REQUIRE_CONTINUE=1 but packages/server/dist/cli.js is missing; " +
-      "test:e2e:continue must build @genie/viewer and @genie/server before Vitest.",
+      "test:e2e:continue must build @ambitresearch/genie-viewer and @ambitresearch/genie before Vitest.",
   );
 }
 if (process.env.GENIE_REQUIRE_CONTINUE === "1" && !hasContinueCli) {

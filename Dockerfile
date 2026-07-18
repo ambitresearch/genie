@@ -1,7 +1,7 @@
 # genie — multi-arch (amd64/arm64) Docker image (M5-07, DRO-279)
 #
 # Two-stage build: `build` compiles the pnpm workspace with full devDependencies,
-# `runtime` copies ONLY the compiled @genie/server package + its production
+# `runtime` copies ONLY the compiled @ambitresearch/genie package + its production
 # node_modules into a slim, non-root Alpine image (AC1/AC2/AC3).
 #
 # Build (single-arch, local):
@@ -35,13 +35,13 @@ COPY tsconfig.base.json ./
 COPY packages/server packages/server
 COPY packages/viewer packages/viewer
 
-# @genie/viewer's static/ assets are mirrored into the server's dist/ui by
+# @ambitresearch/genie-viewer's static/ assets are mirrored into the server's dist/ui by
 # copy-viewer-assets.mjs (see packages/server/scripts) — build the viewer's
 # TS first only if the server build needs its typings; the runtime image never
-# depends on @genie/viewer at runtime (see packages/server/src/store/viewer-assets.ts), only
+# depends on @ambitresearch/genie-viewer at runtime (see packages/server/src/store/viewer-assets.ts), only
 # on the copied static/ bytes.
-RUN pnpm --filter @genie/viewer build
-RUN pnpm --filter @genie/server build
+RUN pnpm --filter @ambitresearch/genie-viewer build
+RUN pnpm --filter @ambitresearch/genie build
 
 # ts-morph publishes a large CommonJS graph containing a full TypeScript
 # compiler. Bundle only the two runtime exports used by the framework adapters
@@ -60,7 +60,7 @@ RUN node -e "const fs=require('node:fs');const entry=require.resolve('ts-morph',
 # below AC2's 200,000,000-byte ceiling. Optional dependencies stay installed because
 # esbuild's native per-platform binary is one of them and is required by the
 # preview bundler at runtime.
-RUN pnpm --filter @genie/server deploy --prod --legacy /out && \
+RUN pnpm --filter @ambitresearch/genie deploy --prod --legacy /out && \
     node -e "const fs=require('node:fs');const path=require('node:path');const root='/out/node_modules/.pnpm';const dir=fs.readdirSync(root).find((name)=>name.startsWith('ts-morph@'));const commonDir=fs.readdirSync(root).find((name)=>name.startsWith('@ts-morph+common@'));if(!dir||!commonDir)throw new Error('deployed ts-morph graph not found');const packageRoot=path.join(root,dir,'node_modules/ts-morph');fs.copyFileSync('/tmp/ts-morph-runtime.mjs',path.join(packageRoot,'dist/runtime.mjs'));fs.copyFileSync(path.join(root,commonDir,'node_modules/@ts-morph/common/LICENSE'),path.join(packageRoot,'LICENSE.@ts-morph-common'));const file=path.join(packageRoot,'package.json');const manifest=JSON.parse(fs.readFileSync(file,'utf8'));manifest.type='module';manifest.main='./dist/runtime.mjs';manifest.exports={'.':'./dist/runtime.mjs'};fs.writeFileSync(file,JSON.stringify(manifest))" && \
     node packages/server/scripts/pack-ts-morph-runtime.mjs /out/node_modules/ts-morph/dist/runtime.mjs && \
     find /out/node_modules -type f \

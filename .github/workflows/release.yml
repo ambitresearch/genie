@@ -30,11 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        package: ["@genie/server", "@genie/viewer"]
+        package: ["@ambitresearch/genie", "@ambitresearch/genie-viewer"]
         include:
-          - package: "@genie/server"
+          - package: "@ambitresearch/genie"
             dir: packages/server
-          - package: "@genie/viewer"
+          - package: "@ambitresearch/genie-viewer"
             dir: packages/viewer
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +61,27 @@ jobs:
 
       - name: Build ${{ matrix.package }}
         run: pnpm --filter ${{ matrix.package }} build
+
+      - name: Smoke packaged CLI entry point
+        working-directory: ${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          BIN_NAME=$(node -p 'const p = require("./package.json"); typeof p.bin === "string" ? p.name.split("/").pop() : Object.keys(p.bin)[0]')
+          BIN_TARGET=$(node -p 'const p = require("./package.json"); typeof p.bin === "string" ? p.bin : p.bin[Object.keys(p.bin)[0]]')
+          PACKAGE_VERSION=$(node -p 'require("./package.json").version')
+          expected="$PACKAGE_VERSION"
+          if [ "$BIN_NAME" = "genie" ]; then
+            expected="genie $PACKAGE_VERSION"
+          fi
+
+          tmp_dir=$(mktemp -d)
+          trap 'rm -rf "$tmp_dir"' EXIT
+          ln -s "$PWD/$BIN_TARGET" "$tmp_dir/$BIN_NAME"
+          actual=$(node "$tmp_dir/$BIN_NAME" --version)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::$BIN_NAME --version returned '$actual'; expected '$expected'." >&2
+            exit 1
+          fi
 
       - name: npm publish --dry-run (${{ matrix.package }})
         working-directory: ${{ matrix.dir }}
@@ -181,11 +202,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$SERVER_RELEASED" = "true" ] && [ "$SERVER_SHA" != "$TESTED_SHA" ]; then
-            echo "::error::@genie/server release targets $SERVER_SHA, but CI succeeded for $TESTED_SHA."
+            echo "::error::@ambitresearch/genie release targets $SERVER_SHA, but CI succeeded for $TESTED_SHA."
             exit 1
           fi
           if [ "$VIEWER_RELEASED" = "true" ] && [ "$VIEWER_SHA" != "$TESTED_SHA" ]; then
-            echo "::error::@genie/viewer release targets $VIEWER_SHA, but CI succeeded for $TESTED_SHA."
+            echo "::error::@ambitresearch/genie-viewer release targets $VIEWER_SHA, but CI succeeded for $TESTED_SHA."
             exit 1
           fi
 
@@ -200,7 +221,7 @@ jobs:
   # (`include-component-in-tag: true`), not a bare `v*`. Each publish job is
   # gated on release-please's own per-package `release_created` output.
   publish-server:
-    name: publish @genie/server (npm)
+    name: publish @ambitresearch/genie (npm)
     needs: [publish-dry-run, release-please, verify-release]
     if: needs.release-please.outputs.server_released == 'true'
     runs-on: ubuntu-latest
@@ -229,24 +250,24 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Build @genie/server
-        run: pnpm --filter @genie/server build
+      - name: Build @ambitresearch/genie
+        run: pnpm --filter @ambitresearch/genie build
 
-      - name: Publish @genie/server (public, provenance)
+      - name: Publish @ambitresearch/genie (public, provenance)
         working-directory: packages/server
         # AC3 — NODE_AUTH_TOKEN sourced from the NPM_TOKEN repo secret; npm's
         # own tooling reads this env var during `npm publish` when a registry
         # requires auth (set above via setup-node's registry-url).
         # AC4 — `publishConfig.access: public` in packages/server/package.json
-        # publishes the scoped `@genie/server` package publicly (the root
-        # `genie` name is already registered by an unrelated npm package —
-        # documented fallback recorded on M0-04 / CLAUDE.md).
+        # publishes the scoped `@ambitresearch/genie` package publicly. Both
+        # bare `genie` and the `@genie` scope belong to unrelated npm users;
+        # the Ambit Research-owned fallback is recorded in M0-04 / CLAUDE.md.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --provenance --access public
 
   publish-viewer:
-    name: publish @genie/viewer (npm)
+    name: publish @ambitresearch/genie-viewer (npm)
     needs: [publish-dry-run, release-please, verify-release]
     if: needs.release-please.outputs.viewer_released == 'true'
     runs-on: ubuntu-latest
@@ -275,12 +296,12 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Build @genie/viewer
-        run: pnpm --filter @genie/viewer build
+      - name: Build @ambitresearch/genie-viewer
+        run: pnpm --filter @ambitresearch/genie-viewer build
 
-      - name: Publish @genie/viewer (public, provenance)
+      - name: Publish @ambitresearch/genie-viewer (public, provenance)
         working-directory: packages/viewer
-        # AC5 — `@genie/viewer` publishes scoped + public via the same
+        # AC5 — `@ambitresearch/genie-viewer` publishes scoped + public via the same
         # publishConfig pattern as the server package above.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

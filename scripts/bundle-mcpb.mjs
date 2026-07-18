@@ -9,7 +9,7 @@
  * the pinned project dependency if the scoped name ships).
  *
  * Steps:
- *   1. `pnpm --filter @genie/server build` (idempotent if already built).
+ *   1. `pnpm --filter @ambitresearch/genie build` (idempotent if already built).
  *   2. Use `pnpm deploy --prod` to stage the server and its production-only
  *      runtime dependencies from the committed workspace lockfile, including
  *      esbuild binaries for both supported Darwin architectures. A hoisted
@@ -37,13 +37,13 @@ function run(cmd, args, opts = {}) {
 }
 
 // 1. Build the server (safe to re-run; each build step is itself idempotent).
-run("pnpm", ["--filter", "@genie/server", "build"]);
+run("pnpm", ["--filter", "@ambitresearch/genie", "build"]);
 
 // 2. Fresh stage dir every run so stale files never leak into the bundle.
 rmSync(stageDir, { recursive: true, force: true });
 run("pnpm", [
   "--filter",
-  "@genie/server",
+  "@ambitresearch/genie",
   "deploy",
   deployDir,
   "--prod",

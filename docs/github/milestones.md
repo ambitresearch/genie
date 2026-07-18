@@ -9,7 +9,7 @@ six-phase split in INDEX.md.
 | M1  | Kit + Project Foundation          | wk 1–3      | 19     | 13 kit verbs + 6 project verbs, storage, tests           |
 | M2  | LLM Generation Surface            | wk 3–4      | 9      | `conjure`, `refine`, model routing |
 | M3  | @genie Validator + Manifest      | wk 4–5      | 6      | First-line `@genie` marker contract + atomic write sequence |
-| M4  | Preview Viewer (Vite + ui://)     | wk 5–7      | 10     | `@genie/viewer` + MCP-Apps fallback          |
+| M4  | Preview Viewer (Vite + ui://)     | wk 5–7      | 10     | `@ambitresearch/genie-viewer` + MCP-Apps fallback          |
 | M5  | Auth + Distribution + Smoke Tests | wk 7–11     | 16     | OAuth/bearer, .mcpb/npm/Docker, 7-harness smoke         |
 | M6  | GA Hardening                      | wk 11–12    | 6      | Observability, perf, security, supply chain, launch     |
 
@@ -88,13 +88,13 @@ six-phase split in INDEX.md.
 ## M4 — Preview Viewer (Vite + ui://)
 
 - **Window:** week 5–7 (≈6 working days)
-- **Scope summary:** build `@genie/viewer` (Vite multi-page entry,
+- **Scope summary:** build `@ambitresearch/genie-viewer` (Vite multi-page entry,
   chokidar HMR, sandboxed iframe grid), ship `preview` tool that returns
   `_meta.ui.resourceUri` for hosts that render `ui://`, register MIME
   `text/html;profile=mcp-app`, inline `manifest.json` into the iframe payload so
   no network fetch is needed in the sandbox.
 - **Exit criteria:**
-  - [ ] `npx genie-viewer ui_kits/<kit>` boots on `:5173` with HMR
+  - [ ] `npx @ambitresearch/genie-viewer ui_kits/<kit>` boots on `:5173` with HMR
   - [ ] `preview` rendered inline in VS Code Insiders + Claude Code
   - [ ] Viewer accessibility audit (axe-core) passes
 - **Dependencies:** M3 (manifest is the input).

@@ -21,6 +21,7 @@ const outFile = join(repoRoot, "dist", "genie.mcpb");
 const rootPackagePath = join(repoRoot, "package.json");
 const serverPackagePath = join(repoRoot, "packages", "server", "package.json");
 const viewerPackagePath = join(repoRoot, "packages", "viewer", "package.json");
+const e2ePackagePath = join(repoRoot, "packages", "e2e", "package.json");
 const viewerChangelogPath = join(repoRoot, "packages", "viewer", "CHANGELOG.md");
 const lockfilePath = join(repoRoot, "pnpm-lock.yaml");
 const releaseConfigPath = join(repoRoot, "release-please-config.json");
@@ -34,7 +35,21 @@ describe("mcpb bundle manifest (AC1)", () => {
     expect(existsSync(manifestPath)).toBe(true);
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     const serverPackage = JSON.parse(readFileSync(serverPackagePath, "utf8"));
+    const viewerPackage = JSON.parse(readFileSync(viewerPackagePath, "utf8"));
+    const e2ePackage = JSON.parse(readFileSync(e2ePackagePath, "utf8"));
     const releaseConfig = JSON.parse(readFileSync(releaseConfigPath, "utf8"));
+
+    expect(serverPackage.name).toBe("@ambitresearch/genie");
+    expect(viewerPackage.name).toBe("@ambitresearch/genie-viewer");
+    expect(e2ePackage.name).toBe("@ambitresearch/genie-e2e");
+    expect(releaseConfig.packages["packages/server"]).toMatchObject({
+      "package-name": serverPackage.name,
+      component: "server",
+    });
+    expect(releaseConfig.packages["packages/viewer"]).toMatchObject({
+      "package-name": viewerPackage.name,
+      component: "viewer",
+    });
 
     expect(manifest.manifest_version).toBeTruthy();
     expect(manifest.name).toBe("genie");
@@ -94,7 +109,6 @@ describe("mcpb bundle manifest (AC1)", () => {
     expect(releaseConfig["bootstrap-sha"]).toBe("55eea44c0e558ac237cbf17cea10b003df88f612");
     expect(releaseConfig.packages["packages/viewer"]["initial-version"]).toBe("0.1.0");
     const releaseManifest = JSON.parse(readFileSync(releaseManifestPath, "utf8"));
-    const viewerPackage = JSON.parse(readFileSync(viewerPackagePath, "utf8"));
     const viewerReleaseVersion = releaseManifest["packages/viewer"];
     if (viewerReleaseVersion === undefined) {
       expect(viewerPackage.version).toBe(
@@ -116,7 +130,7 @@ describe("mcpb bundle manifest (AC1)", () => {
     expect(mcpbVersion).toMatch(/^\d+\.\d+\.\d+$/);
     expect(lockfile).toContain(`specifier: ${mcpbVersion}`);
     expect(lockfile).toContain(`'@anthropic-ai/mcpb@${mcpbVersion}':`);
-    expect(script).toContain('"@genie/server",\n  "deploy",');
+    expect(script).toContain('"@ambitresearch/genie",\n  "deploy",');
     expect(script).toContain('"--prod"');
     expect(script).toContain('"--frozen-lockfile"');
     expect(script).toContain('"--config.inject-workspace-packages=true"');
@@ -131,6 +145,8 @@ describe("mcpb bundle manifest (AC1)", () => {
     expect(script).toContain("size >= MAX_BYTES");
 
     const releaseWorkflow = readFileSync(releaseWorkflowPath, "utf8");
+    expect(releaseWorkflow).toContain("Smoke packaged CLI entry point");
+    expect(releaseWorkflow).toContain('actual=$(node "$tmp_dir/$BIN_NAME" --version)');
     expect(releaseWorkflow).toMatch(/publish-mcpb:[\s\S]*?runs-on: macos-latest/);
     expect(releaseWorkflow).toMatch(
       /publish-mcpb:[\s\S]*?ref: \$\{\{ needs\.release-please\.outputs\.server_tag \}\}/,
@@ -186,7 +202,7 @@ describe("mcpb bundle output (AC2/AC3/AC4)", () => {
         }
 
         const excludedDevDependencies = [
-          "server/node_modules/@genie/viewer/package.json",
+          "server/node_modules/@ambitresearch/genie-viewer/package.json",
           "server/node_modules/jsdom/package.json",
           "server/node_modules/playwright/package.json",
           "server/node_modules/esbuild/bin/esbuild",

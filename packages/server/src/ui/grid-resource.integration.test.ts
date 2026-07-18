@@ -1,5 +1,5 @@
 /**
- * M4-06 (DRO-268) — cross-package integration: the REAL `@genie/viewer` static
+ * M4-06 (DRO-268) — cross-package integration: the REAL `@ambitresearch/genie-viewer` static
  * assets rendered through the REAL server assembly path.
  *
  * `grid-resource.test.ts` drives every branch with FAKE assets (fast, isolated).
