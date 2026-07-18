@@ -721,6 +721,79 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # ── Docker image build smoke test (M5-07 / DRO-279) ──────────────────────────
+  # Builds and exercises the native runtime image, then performs a no-push
+  # buildx build for both release platforms so QEMU/native-dependency failures
+  # are caught before release publication (AC2-AC5).
+  docker-build-smoke:
+    name: docker image build smoke
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run Docker image AC suite (AC2/AC3/AC4)
+        # GENIE_REQUIRE_DOCKER makes the suite FAIL (not skip) if no daemon is
+        # reachable — same discipline as the Gitea conformance leg — so a
+        # misconfigured runner can't turn this leg green-but-vacuous. This
+        # single job builds the image once (docker-image.test.ts's beforeAll)
+        # and asserts size, UID, and healthcheck against it, avoiding the
+        # duplicate manual `docker build` a parallel shell-only leg would need.
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_REQUIRE_DOCKER: "1"
+        run: pnpm --filter @genie/e2e test:e2e:docker
+
+      - name: Build both release platforms without pushing (AC5)
+        run: |
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --output=type=oci,dest=/tmp/genie-multiarch.tar .
+
+      - name: Assert ARM64 image size (AC2)
+        run: |
+          docker buildx build --platform linux/arm64 --load \
+            -t genie:docker-image-test-arm64 .
+          size="$(docker image inspect genie:docker-image-test-arm64 --format '{{.Size}}')"
+          test "$size" -lt 200000000
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-docker-image
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker ps -aq \
+            --filter "label=com.genie.docker-image-test.run=${GITHUB_RUN_ID}" \
+            | xargs --no-run-if-empty docker rm -fv
+
   # ── Continue CLI harness smoke (M5-15 / DRO-287) ────────────────────────────
   # Runs the published, pinned `cn -p` agent against a deterministic loopback
   # model. The package command builds @genie/viewer + @genie/server and sets

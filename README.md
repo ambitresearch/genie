@@ -99,6 +99,45 @@ Auto-detects: a TTY on stdin → HTTP, piped JSON-RPC → stdio. Override with
 stdio and `remote` for HTTP; override it with `--preview-locality` or
 `GENIE_PREVIEW_LOCALITY` only when the MCP client can reach server-local URLs.
 
+### Docker
+
+A multi-arch (amd64/arm64) image is published to Docker Hub and GitHub
+Container Registry on every release, built from the repo-root `Dockerfile`
+(`node:22-alpine`, multi-stage, non-root UID 1000, < 200 MB runtime image).
+
+```bash
+test "${#GENIE_LLM_API_KEY}" -ge 16 || {
+  echo "Export a real GENIE_LLM_API_KEY (at least 16 characters) first." >&2
+  exit 1
+}
+docker run -d --name genie -p 8080:8080 \
+  -e GENIE_LLM_BASE_URL=https://your-llm-gateway/v1 \
+  -e GENIE_LLM_API_KEY \
+  -e OAUTH_HS256_KEY="$(openssl rand -hex 32)" \
+  -e GENIE_OAUTH_ISSUER=http://localhost:8080 \
+  ghcr.io/roshangautam/genie:latest
+health_status=
+for _ in $(seq 1 70); do
+  health_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' genie)"
+  [ "$health_status" = healthy ] && break
+  [ "$health_status" = unhealthy ] && break
+  sleep 1
+done
+[ "$health_status" = healthy ] || { docker logs genie; exit 1; }
+curl --fail http://localhost:8080/health
+```
+
+See [`deploy/docker-compose.yml`](./deploy/docker-compose.yml) for a
+self-hoster reference compose file (kit-root volume + env examples included,
+commented out by default). Published images are signed with keyless
+[cosign](https://docs.sigstore.dev/cosign/); verify with:
+
+```bash
+cosign verify ghcr.io/roshangautam/genie:latest \
+  --certificate-identity='https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main' \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
+```
+
 ### Claude Desktop (`.mcpb` bundle)
 
 Claude Desktop users on macOS can install genie without hand-editing a config file:

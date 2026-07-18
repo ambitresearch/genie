@@ -321,3 +321,120 @@ jobs:
         with:
           tag_name: ${{ needs.release-please.outputs.server_tag }}
           files: dist/genie.mcpb
+
+  # M5-07 / DRO-279 — publish each container registry independently so a
+  # Docker Hub credential failure cannot block the built-in-token GHCR path.
+  # Both jobs build amd64 + arm64 from the CI-verified server release tag and
+  # sign that registry's digest with GitHub OIDC (no stored signing key).
+  docker-publish-ghcr:
+    name: publish GHCR image (multi-arch, signed)
+    needs: [publish-dry-run, release-please, verify-release]
+    if: needs.release-please.outputs.server_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.server_tag }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Derive image version
+        id: tags
+        env:
+          SERVER_TAG: ${{ needs.release-please.outputs.server_tag }}
+        run: |
+          set -euo pipefail
+          case "$SERVER_TAG" in
+            server-v*) version="${SERVER_TAG#server-v}" ;;
+            *) echo "::error::Unexpected server release tag: $SERVER_TAG"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/roshangautam/genie:${{ steps.tags.outputs.version }}
+            ghcr.io/roshangautam/genie:latest
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign GHCR image digest (keyless)
+        run: cosign sign --yes "ghcr.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+
+  docker-publish-dockerhub:
+    name: publish Docker Hub image (multi-arch, signed)
+    needs: [publish-dry-run, release-please, verify-release]
+    if: needs.release-please.outputs.server_released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.server_tag }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Derive image version
+        id: tags
+        env:
+          SERVER_TAG: ${{ needs.release-please.outputs.server_tag }}
+        run: |
+          set -euo pipefail
+          case "$SERVER_TAG" in
+            server-v*) version="${SERVER_TAG#server-v}" ;;
+            *) echo "::error::Unexpected server release tag: $SERVER_TAG"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            docker.io/roshangautam/genie:${{ steps.tags.outputs.version }}
+            docker.io/roshangautam/genie:latest
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign Docker Hub image digest (keyless)
+        run: cosign sign --yes "docker.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
