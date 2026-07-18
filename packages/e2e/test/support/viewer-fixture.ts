@@ -6,7 +6,7 @@
  * artefacts render byte-identical cards across three delivery vehicles:
  *
  *   (a) `file://<root>/index.html`   — a raw file open, no server
- *   (b) `http://127.0.0.1:<port>`    — the Vite dev server (`@genie/viewer`)
+ *   (b) `http://127.0.0.1:<port>`    — the Vite dev server (`@ambitresearch/genie-viewer`)
  *   (c) `ui://genie/grid`            — the embedded MCP-Apps resource, rendered
  *                                      headless from `buildGridDocument`
  *
@@ -46,13 +46,13 @@ import { compileManifest, type Manifest } from "../../../server/src/manifest/ind
 import { buildGridDocument } from "../../../server/src/ui/grid-resource.js";
 
 /**
- * The `@genie/viewer` shipped shell (`static/index.html` + `viewer.js` +
+ * The `@ambitresearch/genie-viewer` shipped shell (`static/index.html` + `viewer.js` +
  * `viewer.css`) — the real artefacts a scaffolded kit carries at its root
  * (DRO-764) and the exact bytes all three vehicles boot into. Resolved off the
  * viewer package so this fixture tracks whatever the viewer actually ships.
  */
 const VIEWER_STATIC_DIR = resolve(
-  dirname(createRequire(import.meta.url).resolve("@genie/viewer/package.json")),
+  dirname(createRequire(import.meta.url).resolve("@ambitresearch/genie-viewer/package.json")),
   "static",
 );
 
@@ -222,7 +222,7 @@ export interface ViteVehicle {
 }
 
 /**
- * Boot the real `@genie/viewer` Vite dev server against the fixture kit
+ * Boot the real `@ambitresearch/genie-viewer` Vite dev server against the fixture kit
  * (vehicle b). Uses the viewer's own `createViewerConfig` so this exercises the
  * shipped multi-page config, not a bespoke one. Port 0 → an ephemeral free port
  * (no clash with a dev instance or a parallel test worker).

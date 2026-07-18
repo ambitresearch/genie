@@ -146,7 +146,7 @@ describe("mcpb bundle manifest (AC1)", () => {
 
     const releaseWorkflow = readFileSync(releaseWorkflowPath, "utf8");
     expect(releaseWorkflow).toContain("Smoke packaged CLI entry point");
-    expect(releaseWorkflow).toContain('actual=$("$tmp_dir/$BIN_NAME" --version)');
+    expect(releaseWorkflow).toContain('actual=$(node "$tmp_dir/$BIN_NAME" --version)');
     expect(releaseWorkflow).toMatch(/publish-mcpb:[\s\S]*?runs-on: macos-latest/);
     expect(releaseWorkflow).toMatch(
       /publish-mcpb:[\s\S]*?ref: \$\{\{ needs\.release-please\.outputs\.server_tag \}\}/,
