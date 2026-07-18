@@ -32,8 +32,9 @@ install (M5-05).
       reach a remote server from Desktop.
 - [x] AC5 — `.mcpb` install is the recommended path; the JSON snippet is
       "if you prefer".
-- [ ] AC6 — Smoke test installs the `.mcpb`, opens Claude Desktop, fires
-      `list_kits`, captures screenshot.
+- [x] AC6 — Smoke test installs the `.mcpb`, opens Claude Desktop, fires
+      `list_kits`, and captures the non-secret result screenshot at
+      [`docs/harness/screenshots/claude-desktop/m5-10-list-kits.png`](../../harness/screenshots/claude-desktop/m5-10-list-kits.png).
 
 ## Implementation Notes
 
@@ -61,8 +62,8 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 ## Definition of Done
 
-- [ ] Tests added — smoke passes; screenshot remains.
+- [x] Tests added — automated smoke and manual Desktop screenshot pass.
 - [x] Docs updated.
 - [x] Manual verification.
-- [ ] No new ESLint/TS errors.
+- [x] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.

@@ -157,13 +157,16 @@ native custom-connector flow.
 ## AC6 smoke-test status
 
 The real Claude Desktop leg was completed on macOS with Claude Desktop
-1.21459.3. The exact M5-05 artifact was installed into the separate
+1.22209.0. The exact M5-05 artifact was installed into the separate
 `Claude-3p` profile, where no genie extension previously existed. Claude
 persisted `local.mcpb.roshan-gautam.genie` v1.2.0 with the artifact's exact
 SHA-256, saved all required configuration fields, and enabled the extension.
 A new chat discovered genie, invoked `list_kits`, and returned an empty kit
-list successfully. Sensitive configuration remained encrypted. The remaining
-AC6 evidence is a non-secret screenshot of the connected server and result.
+list successfully. Sensitive configuration remained encrypted. The cropped,
+non-secret AC6 evidence is at
+[`screenshots/claude-desktop/m5-10-list-kits.png`](./screenshots/claude-desktop/m5-10-list-kits.png);
+it shows the genie connection badge, request, and
+`{"kits":[]}` result without configuration values or unrelated chat content.
 
 Use this protocol to reproduce the verification on another profile or release:
 

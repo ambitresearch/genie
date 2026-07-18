@@ -4,10 +4,10 @@
  * AC6 itself requires installing a real `.mcpb` in Claude Desktop, invoking
  * `list_kits`, and capturing the Desktop UI. This suite does not substitute
  * an SDK client for that evidence. It verifies the guide's current package and
- * startup contracts, then exercises the same built CLI and stdio transport a
- * valid Desktop bundle will eventually launch.
+ * startup contracts, then exercises the same built CLI and stdio transport the
+ * validated Desktop bundle launches.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -22,6 +22,10 @@ const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
 const CLAUDE_DESKTOP_DOC = readFileSync(
   resolve(here, "../../../docs/harness/claude-desktop.md"),
   "utf8",
+);
+const CLAUDE_DESKTOP_SCREENSHOT = resolve(
+  here,
+  "../../../docs/harness/screenshots/claude-desktop/m5-10-list-kits.png",
 );
 const HARNESS_OVERVIEW = readFileSync(resolve(here, "../../../docs/harness/README.md"), "utf8");
 const CI_WORKFLOW = readFileSync(resolve(here, "../../../.github/workflows/ci.yml"), "utf8");
@@ -137,6 +141,15 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("~/Library/Logs/Claude/mcp*.log");
     expect(CLAUDE_DESKTOP_DOC).toContain("for genie's stderr output");
     expect(CLAUDE_DESKTOP_DOC).not.toContain("genie's own stdout/stderr");
+  });
+
+  it("links the non-secret AC6 Claude Desktop evidence", () => {
+    expect(existsSync(CLAUDE_DESKTOP_SCREENSHOT)).toBe(true);
+    expect(CLAUDE_DESKTOP_DOC).toContain(
+      "[`screenshots/claude-desktop/m5-10-list-kits.png`](./screenshots/claude-desktop/m5-10-list-kits.png)",
+    );
+    expect(CLAUDE_DESKTOP_DOC).toContain('`{"kits":[]}` result');
+    expect(CLAUDE_DESKTOP_DOC).not.toContain("remaining AC6 evidence");
   });
 
   it("keeps shared harness prerequisites consistent and links this guide", () => {
