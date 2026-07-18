@@ -22,6 +22,7 @@ const rootPackagePath = join(repoRoot, "package.json");
 const serverPackagePath = join(repoRoot, "packages", "server", "package.json");
 const lockfilePath = join(repoRoot, "pnpm-lock.yaml");
 const releaseConfigPath = join(repoRoot, "release-please-config.json");
+const releaseManifestPath = join(repoRoot, ".release-please-manifest.json");
 const releaseWorkflowPath = join(repoRoot, ".github", "workflows", "release.yml");
 const readmePath = join(repoRoot, "README.md");
 const MAX_BYTES = 30 * 1024 * 1024;
@@ -84,6 +85,13 @@ describe("mcpb bundle manifest (AC1)", () => {
       path: "/mcpb/manifest.json",
       jsonpath: "$.version",
     });
+
+    // Viewer has never been tagged or published. Model it as a true first
+    // release instead of inventing a viewer-v0.1.0 baseline tag.
+    expect(releaseConfig["bootstrap-sha"]).toBe("55eea44c0e558ac237cbf17cea10b003df88f612");
+    expect(releaseConfig.packages["packages/viewer"]["initial-version"]).toBe("0.1.0");
+    const releaseManifest = JSON.parse(readFileSync(releaseManifestPath, "utf8"));
+    expect(releaseManifest).not.toHaveProperty("packages/viewer");
   });
 
   it("uses only project-pinned packaging and deployment commands", () => {
