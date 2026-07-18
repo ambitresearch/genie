@@ -4,3 +4,27 @@ packages:
   - "packages/e2e"
 allowBuilds:
   esbuild: true
+
+# Supply-chain hardening (M6-03 re-audit follow-up, issue #207).
+# See docs/supply-chain.md for the full threat model and rationale.
+
+# Reject non-registry transitive dependencies (git/tarball/http/link specifiers
+# introduced by a subdependency). All first-party links are workspace:* direct
+# deps, which remain allowed; only *exotic subdeps* are blocked. Defaults true in
+# pnpm 11 but is set explicitly here so the policy is pinned under pnpm 10.x too.
+blockExoticSubdeps: true
+
+# Cooldown: refuse to install any published version younger than 3 days (4320
+# minutes). Blunts the "publish malicious patch, hope CI pulls it before takedown"
+# window on fresh installs / lockfile updates. Does NOT apply to
+# --frozen-lockfile installs (all CI legs), so it cannot break reproducible CI.
+minimumReleaseAge: 4320
+
+# trustPolicy / trustPolicyIgnoreAfter is intentionally NOT set. The issue's
+# proposed `trustPolicy: no-downgrade` is not a real pnpm 10.34 setting (pnpm
+# exposes only the numeric `trustPolicyIgnoreAfter`). The equivalent
+# downgrade/tamper protection is already provided by the committed
+# pnpm-lock.yaml (lockfileVersion 9.0, every dep integrity-pinned to a
+# sha512 registry tarball) plus `--frozen-lockfile` in every CI leg and npm
+# provenance on our own published packages. Revisit if pnpm ships a first-class
+# no-downgrade trust policy.
