@@ -50,7 +50,7 @@ const envExamplePath = resolve(repoRoot, ".env.example");
 const composePath = resolve(repoRoot, "deploy", "docker-compose.yml");
 const readmePath = resolve(repoRoot, "README.md");
 const ciPath = resolve(repoRoot, ".github", "workflows", "ci.yml");
-const releaseWorkflowPath = resolve(repoRoot, ".github", "workflows", "release-please.yml");
+const releaseWorkflowPath = resolve(repoRoot, ".github", "workflows", "release.yml");
 
 const dockerfile = readFileSync(dockerfilePath, "utf-8");
 const dockerignore = existsSync(dockerignorePath) ? readFileSync(dockerignorePath, "utf-8") : "";
@@ -244,7 +244,7 @@ describe("Docker release and CI workflows", () => {
       "${{ steps.release.outputs['packages/server--release_created'] }}",
     );
     expect(releaseWorkflow).toContain("${{ steps.release.outputs['packages/server--tag_name'] }}");
-    expect(releaseWorkflow).toContain('version="${tag#server-v}"');
+    expect(releaseWorkflow).toContain('version="${SERVER_TAG#server-v}"');
   });
 
   it("publishes GHCR independently from Docker Hub credentials", () => {
@@ -260,7 +260,7 @@ describe("Docker release and CI workflows", () => {
 
   it("pins cosign verification to the release workflow on main", () => {
     expect(readme).toContain(
-      "--certificate-identity='https://github.com/roshangautam/genie/.github/workflows/release-please.yml@refs/heads/main'",
+      "--certificate-identity='https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main'",
     );
     expect(readme).not.toContain("--certificate-identity-regexp");
   });

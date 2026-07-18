@@ -5,6 +5,8 @@ Claude Code loads genie's **Agent Skill**, so this is where you get the full
 
 ## 1. Register the MCP server (Claude Code only)
 
+### 1A. Local stdio (single-user dev loop)
+
 For Claude Code, register genie in `~/.claude.json` (or a project `.mcp.json`):
 
 ```json
@@ -22,6 +24,148 @@ For Claude Code, register genie in `~/.claude.json` (or a project `.mcp.json`):
 
 Provide `GENIE_LLM_BASE_URL` / `GENIE_LLM_API_KEY` to the server process as
 environment (for example through a launcher script), never in committed JSON.
+
+### 1B. HTTP transport + shared/remote server (`headersHelper` pattern)
+
+When genie is already running as a shared HTTP server (not spawned per-session
+by Claude Code), register it over `http` and supply credentials through a
+per-server `headersHelper` script instead of a literal token in the config
+file.
+
+**Do not use top-level `apiKeyHelper` for this.** `apiKeyHelper` and
+`headersHelper` are two different settings at two different scopes, and
+Claude Code `2.1.203`'s `claude mcp add-json` only serializes `type`/`url`
+for an MCP server entry — anything else nested under `mcpServers.<name>`
+(like an `apiKeyHelper` placed there by mistake) is silently dropped, not
+merely ignored at runtime.
+
+- **`apiKeyHelper`** is a **top-level** Claude Code setting, unrelated to any
+  MCP server. It governs Claude Code's own Anthropic/model-API routing
+  credential. `apiKeyHelper` is any executable that prints the model-API
+  key/token (a bare string, not JSON) to stdout; Claude Code uses it to
+  authenticate its own calls to the configured LLM endpoint
+  (`ANTHROPIC_BASE_URL` / a custom router). It has no per-`mcpServers` entry
+  equivalent and nothing to do with authenticating to the genie MCP server.
+
+- **`headersHelper`** is the mechanism that _does_ attach to a specific
+  HTTP/SSE MCP server: a field nested inside that server's own
+  `mcpServers.<name>` config, returning a JSON object of headers merged into
+  every request Claude Code makes to that server:
+
+```json
+{
+  "mcpServers": {
+    "genie": {
+      "type": "http",
+      "url": "https://genie.example.internal/mcp",
+      "headersHelper": "/absolute/path/to/genie-headers-helper.sh"
+    }
+  }
+}
+```
+
+`headersHelper` is any executable that prints a **JSON object of header
+key/value strings** to stdout (not a bare token) — Claude Code merges those
+headers into every request to that server. Point it at genie's
+static-Bearer-token mechanism (M5-02, DRO-274, already shipped — `genie token
+create --scope read --scope write`):
+
+```bash
+#!/usr/bin/env bash
+# genie-headers-helper.sh — never echo the token to a terminal; store it in
+# your OS keychain / secret manager and have this script fetch + print it as
+# a JSON object, e.g. {"Authorization": "Bearer <token>"}.
+set -euo pipefail
+token=$(security find-generic-password -a "$USER" -s genie-mcp-token -w)
+# or: token=$(op read "op://vault/genie-mcp-token/credential") (1Password CLI), etc.
+printf '{"Authorization": "Bearer %s"}\n' "$token"
+```
+
+Run the server with `--require-bearer-auth` (or `GENIE_REQUIRE_BEARER_AUTH=1`)
+so unauthenticated `/mcp` requests are rejected; `/health` stays open for
+liveness checks. Mint the token once with `genie token create`, store only its
+hash server-side, and hand the plaintext to the secret manager the helper
+script reads from — it is shown exactly once at creation time.
+
+### Combined setup: HTTP transport + top-level `apiKeyHelper`
+
+These settings live at different scopes **and in different default files**.
+Put Claude Code's model credential helper in `~/.claude/settings.json`:
+
+```json
+{
+  "apiKeyHelper": "/absolute/path/to/anthropic-api-key-helper.sh"
+}
+```
+
+Put the HTTP MCP server and its request-header helper in `~/.claude.json` (or
+the project's `.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "genie": {
+      "type": "http",
+      "url": "https://genie.example.internal/mcp",
+      "headersHelper": "/absolute/path/to/genie-headers-helper.sh"
+    }
+  }
+}
+```
+
+Do not combine these blocks into `~/.claude.json`: Claude Code does not load
+`apiKeyHelper` from that file during normal startup. A single temporary file
+only works when explicitly supplied through both `--settings` and
+`--mcp-config`, which is not the default on-disk setup documented here.
+
+`anthropic-api-key-helper.sh` is any executable on `$PATH` (or referenced by
+absolute path, as above) that prints Claude Code's own model-API key/token —
+a bare string, not JSON — to stdout. A real, ready-to-use implementation
+ships in this repo at
+[`docs/harness/scripts/anthropic-api-key-helper.sh`](./scripts/anthropic-api-key-helper.sh)
+(tracked as executable mode `100755`). Copy it, adjust the credential source
+for your environment, and point the top-level `apiKeyHelper` field at your
+copy. Claude Code has no `claude config set` shell subcommand; edit
+`~/.claude/settings.json` or use `/config` in an interactive session.
+
+genie now ships OAuth 2.0 + Dynamic Client Registration endpoints (M5-01,
+DRO-273): `/.well-known/oauth-authorization-server` (RFC 8414 metadata),
+`POST /register` (RFC 7591 DCR), `GET`/`POST /authorize` (browser consent),
+and `POST /token`. Compatibility clients that are configured directly with
+that authorization-server metadata can exercise the flow: fetch the metadata,
+register a redirect URI at `/register`, send the returned `client_id` through
+the PKCE consent flow at `/authorize`, then exchange the code at `/token`.
+`packages/server/src/oauth-transport.test.ts` is the executable reference for
+that compatibility flow.
+
+Claude Code's current remote-MCP OAuth discovery starts at RFC 9728
+`/.well-known/oauth-protected-resource/mcp` for a server whose resource URL is
+`/mcp`. genie does not expose that document yet, so the following command
+registers the server URL but does **not** currently complete an automatic
+DCR/consent flow:
+
+```bash
+claude mcp add --transport http genie https://genie.example.internal/mcp
+```
+
+Until protected-resource metadata and its `WWW-Authenticate` challenge land,
+the static-Bearer-token + `headersHelper` pattern above is the supported Claude
+Code setup. Keep the OAuth endpoints enabled with `OAUTH_HS256_KEY` only for
+manual testing or compatible clients that already know the authorization
+server; do not rely on the one-command Claude Code flow yet.
+
+### Gotcha: `/login` (Claude Code OAuth) can silently bypass configured LLM routing
+
+If you separately run `/login` inside Claude Code to authenticate against
+Anthropic's own OAuth (a _different_ credential from the genie MCP server's
+`headersHelper`), Claude Code can start routing model calls through that
+OAuth session instead of your configured LLM endpoint (`ANTHROPIC_BASE_URL` /
+custom router / top-level `apiKeyHelper`) — none of that governs the genie
+MCP connection's own `Authorization` header, which stays on `headersHelper`
+regardless. If genie tool calls stop reflecting your expected model/endpoint
+after using `/login`, run `/logout` to drop the OAuth session and restore
+your configured LLM routing. This is a Claude Code CLI-wide behavior, not
+specific to genie.
 
 Claude Desktop uses `claude_desktop_config.json` (or, once M5 packaging lands,
 the `.mcpb` installer), not these Claude Code files. claude.ai cannot launch a
@@ -71,3 +215,11 @@ source file as `/genie:preview`.
 - **`/genie:preview [kitId]`** — force-open the viewer without model inference.
 - **Inline grid** — Claude renders the `ui://genie/grid` card grid in-panel;
   no browser tab needed (so `GENIE_PREVIEW_NO_OPEN` is irrelevant here).
+
+The automated Claude Code Docker smoke captures the generated fallback viewer
+at [`screenshots/claude-code/m5-09-docker-smoke.png`](./screenshots/claude-code/m5-09-docker-smoke.png).
+
+Implementation note for permissions and transcript tooling: Claude Code adds
+the configured server-name prefix to the protocol tool name. Because genie's
+wire names are already `mcp__genie__<verb>`, a server configured as `genie`
+appears inside Claude Code as `mcp__genie__mcp__genie__<verb>`.

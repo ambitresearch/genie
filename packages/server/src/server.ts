@@ -22,6 +22,7 @@ import {
   UI_EXTENSION_ID,
   registerPreviewTool,
   type PreviewLocality,
+  type ViewerBooter,
 } from "./tools/preview.js";
 import { normalizePreviewsBaseUrl, registerGridResource } from "./ui/grid-resource.js";
 import { startCardAssetBroker, type CardAssetBroker } from "./ui/card-asset-broker.js";
@@ -60,6 +61,8 @@ export interface CreateServerOptions {
   transportKind?: TransportKind;
   /** Whether the viewer URL is reachable from the host running the MCP client. */
   previewLocality?: PreviewLocality;
+  /** Injectable preview viewer seam for embedders and transport-level tests. */
+  previewBooter?: ViewerBooter;
   projectsRoot?: string;
   kitsRoot?: string;
   reportsDir?: string;
@@ -352,6 +355,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     kitsRoot,
     transportKind: options.transportKind,
     locality: previewLocality,
+    ...(options.previewBooter !== undefined ? { booter: options.previewBooter } : {}),
     ...(getCardAssetBroker !== undefined ? { getCardAssetBroker } : {}),
   });
   registerServerDisposer(server, () => previewRegistry.closeAll());

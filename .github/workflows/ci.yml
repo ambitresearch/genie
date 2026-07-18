@@ -5,17 +5,21 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Supersede stale PR runs, but never cancel a main-push run: release.yml
+  # consumes each completed push run as the proof that a release commit is green.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
     name: ${{ matrix.task }} (node ${{ matrix.node }})
+    if: github.event_name != 'workflow_dispatch'
     # Honor the RUNS_ON repo variable (set by runner-guard.yml) so CI offloads to
     # the self-hosted TrueNAS runner near the monthly quota; `["self-hosted"]`.
     runs-on: ${{ fromJSON(vars.RUNS_ON || '["ubuntu-latest"]') }}
@@ -97,6 +101,7 @@ jobs:
   #      this leg skip vacuously.
   gitea:
     name: gitea conformance (docker)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     # Image pull + DB migration + the walk; generous ceiling well under any
     # matrix leg's concurrency budget.
@@ -149,6 +154,66 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # ── OIDC provider integration test (M5-04 / DRO-276) ─────────────────────────
+  # `packages/e2e/test/m5-oidc.test.ts` — boots a real `oidc-provider`-backed
+  # authorization server in a throwaway container (packages/e2e/test/support/
+  # oidc-fixture.ts), drives a real headless-Chromium auth-code + PKCE flow
+  # against it (client_id `genie-test`), and asserts genie's OIDC
+  # relying-party gate (packages/server/src/auth/oidc/*) both authorizes a
+  # genie-users member's mcp__genie__list_kits call (AC5) and rejects a
+  # non-member with HTTP 403 (AC6). Kept as its own job — same reasoning as
+  # `gitea` above: needs a real Docker daemon + a real browser binary, neither
+  # of which the fast matrix legs install. Pinned to `ubuntu-latest` (guarantees
+  # a Docker daemon) rather than the RUNS_ON offload var, for the same reason
+  # the `gitea` job is pinned there.
+  oidc:
+    name: OIDC provider integration (docker)
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # AC7 requires the walk itself to run under 3 minutes; this ceiling adds
+    # generous headroom for image build + dependency install + browser
+    # install, none of which count against AC7's own budget.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        # Same ERR_PNPM_EAGAIN hardlink-fallback retry as the other jobs.
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @genie/e2e exec playwright install --with-deps chromium
+
+      - name: Run OIDC provider integration walk (AC1-AC7)
+        # GENIE_REQUIRE_DOCKER makes the suite FAIL (not skip) if no daemon is
+        # reachable — the same "vacuous skip must fail somewhere" contract the
+        # Gitea/a11y/viewer-e2e legs already use.
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_REQUIRE_DOCKER: "1"
+        run: pnpm --filter @genie/e2e test:e2e:oidc
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-oidc
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
   # ── Viewer accessibility audit (M4-09 / DRO-271) ─────────────────────────────
   # `packages/viewer/test/a11y.test.ts` — real headless Chromium + axe-core
   # against the actual static/{index.html,viewer.js,viewer.css} shell. Kept as
@@ -164,6 +229,7 @@ jobs:
   # nor paid API access, so there is no reason to gate it to push-only.
   viewer-a11y:
     name: viewer accessibility audit (axe-core)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -233,6 +299,7 @@ jobs:
   # on every PR (needs no daemon or paid API), like the a11y leg.
   viewer-e2e:
     name: viewer E2E gate (three vehicles)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -390,6 +457,149 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # M5-09 (DRO-281) AC7 — manually triggered smoke of the documented
+  # conjure→write_files→preview→validate chain for Claude Code. Unlike the
+  # push-only M2 canary, this dedicated manual job requires every paid-smoke
+  # prerequisite and fails if any required test is skipped.
+  #
+  # The AC4/AC6 Claude-Code-CLI-in-Docker leg additionally needs a real
+  # container runtime plus a Claude driver credential. A dedicated
+  # GENIE_ANTHROPIC_SMOKE_API_KEY defaults to api.anthropic.com; only when that
+  # key is absent does the smoke intentionally reuse the GENIE_LLM_* gateway
+  # key and URL as a pair. Dedicated smoke endpoint secrets keep
+  # this job independent from the private-LAN M2 gateway, so ubuntu-latest can
+  # provide a guaranteed Docker daemon and reach the configured public smoke
+  # gateway. GENIE_REQUIRE_DOCKER still makes any daemon regression loud.
+  # `workflow_dispatch` only (never push/pull_request) keeps every normal CI
+  # run free — this spends real model + LLM $ like m2-generation does.
+  m5-smoke-claude-code:
+    name: M5-09 Claude Code smoke (manual)
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Build preview viewer
+        # `previewLocality: local` boots @genie/viewer's compiled entrypoint.
+        # A clean checkout has no dist/ until this build runs; without it the
+        # Docker smoke can return only file:// fallback text and cannot capture
+        # the required reachable preview screenshot.
+        run: pnpm --filter @genie/viewer build
+
+      - name: Install Playwright Chromium
+        # The smoke captures the returned preview URL with real Chromium and
+        # requires a rendered .ds-card. Install both the browser and its Linux
+        # library closure, matching the dedicated viewer E2E job.
+        run: pnpm --filter @genie/e2e exec playwright install --with-deps chromium
+
+      - name: Run M5-09 Claude Code smoke
+        # GENIE_REQUIRE_DOCKER makes the AC4/AC6 leg FAIL (not skip) if the
+        # selected GitHub-hosted runner lacks a daemon; this leg must never go
+        # green-but-vacuous here.
+        # The manual job exists to prove the paid smoke, so every prerequisite
+        # is required. Missing secrets fail at suite import instead of allowing
+        # an all-skipped test report to look successful. GENIE_SMOKE_MODEL must
+        # name a structured-output model the configured gateway actually serves;
+        # when the Claude driver reuses that gateway, the CLI selects the same
+        # model explicitly rather than assuming the gateway exposes Claude's
+        # built-in default model.
+        # The driver uses the dedicated Anthropic key/base pair when present;
+        # otherwise it intentionally reuses the public smoke gateway key/base
+        # pair below. Normal deployment secrets remain untouched.
+        env:
+          VITEST_JUNIT: "1"
+          GENIE_REQUIRE_DOCKER: "1"
+          GENIE_REQUIRE_LLM: "1"
+          GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CLAUDE_CODE_SMOKE_LLM_BASE_URL }}
+          GENIE_LLM_API_KEY: ${{ secrets.GENIE_CLAUDE_CODE_SMOKE_LLM_API_KEY }}
+          GENIE_ANTHROPIC_SMOKE_API_KEY: ${{ secrets.GENIE_ANTHROPIC_SMOKE_API_KEY }}
+          GENIE_ANTHROPIC_SMOKE_BASE_URL: ${{ secrets.GENIE_ANTHROPIC_SMOKE_BASE_URL }}
+          GENIE_SMOKE_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}
+        run: pnpm test m5-smoke-claude-code
+
+      - name: Surface AC4/AC6 status (read what the test actually did, not just tool presence)
+        # Parses the Docker leg's exact JUnit testcase, rather than re-probing
+        # `docker`/`claude` or grepping neighboring XML. Those shortcuts can be
+        # green while the test itself skipped or failed for an unrelated reason.
+        #
+        # This job exists ONLY to prove AC4/AC6/AC7 for real (it is manually
+        # triggered, `workflow_dispatch`-only, precisely so it can spend real
+        # model/LLM $ running the full Docker leg). A run that quietly
+        # skips that leg — e.g. because no driver credential is configured —
+        # must NOT report success: this step now hard-fails (non-zero exit)
+        # whenever the Docker-leg test did not report a real pass, instead of
+        # only warning while the job stays green.
+        if: ${{ !cancelled() }}
+        run: |
+          REPORT="reports/junit.xml"
+          if [ ! -f "$REPORT" ]; then
+            echo "::error::No JUnit report found at $REPORT — cannot verify AC4/AC6 status."
+            echo "## ❌ AC4/AC6 status unknown — no test report produced" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if node --input-type=module - "$REPORT" <<'NODE'
+          import { readFileSync } from "node:fs";
+
+          const xml = readFileSync(process.argv[2], "utf8");
+          const escapedName = "boots Claude Code CLI in Docker";
+          const testcase = xml.match(
+            new RegExp(`<testcase[^>]*name="[^"]*${escapedName}[^"]*"[^>]*(?:/>|>[\\s\\S]*?</testcase>)`),
+          )?.[0];
+          if (!testcase || /<(?:skipped|failure|error)\b/i.test(testcase)) process.exit(1);
+          NODE
+          then
+            echo "AC4/AC6: the Claude-Code-CLI-in-Docker test ran and passed for real." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::AC4/AC6 Docker leg did not run to a passing result — see reports/junit.xml"
+            {
+              echo "## ❌ AC4/AC6 unverified this run — failing the job"
+              echo ""
+              echo "The Claude-Code-CLI-in-Docker test (boot Claude Code, connect to the real"
+              echo "host-owned genie HTTP server, drive the four-verb chain, and capture a"
+              echo "screenshot to \`docs/harness/screenshots/claude-code/\`) did not report a pass"
+              echo "in \`reports/junit.xml\`. Common cause: neither a dedicated"
+              echo "\`GENIE_ANTHROPIC_SMOKE_API_KEY\` nor the gateway key is configured. This job is"
+              echo "manually triggered specifically to"
+              echo "prove AC4/AC6/AC7 for real, so it fails rather than reporting green when that"
+              echo "leg was skipped or failed."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Upload M5-09 smoke test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-m5-smoke-claude-code
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Claude Code smoke screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-code-smoke-screenshots
+          path: docs/harness/screenshots/claude-code/
+          if-no-files-found: error
+          retention-days: 7
+
   # ── Codex CLI harness smoke (M5-11 / DRO-283) ────────────────────────────────
   # `packages/e2e/test/m5-smoke-codex.test.ts` — three independent checks:
   #   (1) the real `codex` binary parses docs/harness/codex.md's canonical
@@ -407,6 +617,7 @@ jobs:
   # and the private-LAN `genie` runner.
   codex-smoke:
     name: codex CLI harness smoke (M5-11)
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -516,6 +727,7 @@ jobs:
   # are caught before release publication (AC2-AC5).
   docker-build-smoke:
     name: docker image build smoke
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -581,3 +793,45 @@ jobs:
           docker ps -aq \
             --filter "label=com.genie.docker-image-test.run=${GITHUB_RUN_ID}" \
             | xargs --no-run-if-empty docker rm -fv
+
+  # ── Continue CLI harness smoke (M5-15 / DRO-287) ────────────────────────────
+  # Runs the published, pinned `cn -p` agent against a deterministic loopback
+  # model. The package command builds @genie/viewer + @genie/server and sets
+  # GENIE_REQUIRE_CONTINUE=1, so neither a missing dist/ nor a missing Continue
+  # CLI can turn a clean checkout green through a skipped suite.
+  continue-smoke:
+    name: Continue CLI harness smoke (M5-15)
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink \
+            || pnpm install --frozen-lockfile --package-import-method=hardlink
+
+      - name: Run Continue CLI headless harness smoke (AC1-AC5)
+        env:
+          VITEST_JUNIT: "1"
+        run: pnpm --filter @genie/e2e test:e2e:continue
+
+      - name: Upload Continue smoke report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-continue-smoke
+          path: reports/junit.xml
+          if-no-files-found: warn
+          retention-days: 7

@@ -15,6 +15,10 @@ export default tseslint.config(
       "**/node_modules/**",
       "docs/**",
       "packages/*/scripts/**",
+      // Root-level build/packaging CLI scripts (e.g. M5-05's
+      // scripts/bundle-mcpb.mjs) — same carve-out as the per-package scripts/
+      // above, just at the repo root instead of inside a workspace package.
+      "scripts/**",
       ".remember/**",
       ".claude/**",
       ".paperclip-runtime/**",
@@ -35,6 +39,19 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
+    },
+  },
+  {
+    // The OIDC provider fixture is a standalone Node ESM entrypoint copied
+    // directly into its testcontainer image, outside TypeScript's Node globals.
+    files: ["packages/e2e/test/support/oidc-provider-image/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        Buffer: "readonly",
+        console: "readonly",
+        process: "readonly",
+        URLSearchParams: "readonly",
+      },
     },
   },
   {

@@ -616,7 +616,7 @@ Epics map to milestones M0–M5 from the research report §7.
 #### DS-065 — Per-harness smoke tests in CI
 
 - **Persona:** C, D
-- **Narrative:** As a Platform Engineer, I want CI to install the server in each of 7 harnesses and run `conjure → preview → write_files → validate`, so regressions are caught pre-release.
+- **Narrative:** As a Platform Engineer, I want CI to connect each of 7 harnesses to the server and run `conjure → write_files → preview → validate`, so regressions are caught pre-release.
 - **Acceptance criteria:**
   - Given a GitHub Actions matrix `{harness: [claude-code, claude-desktop, codex-cli, vscode-copilot, cursor, cline, continue]}`, Then each cell runs the smoke flow against the built binary.
   - Given any cell failing, Then the release is blocked.

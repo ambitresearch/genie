@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/roshangautam/genie/actions/workflows/ci.yml/badge.svg)](https://github.com/roshangautam/genie/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](.nvmrc)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522.19.0-brightgreen.svg)](.nvmrc)
 
 </div>
 
@@ -32,7 +32,7 @@ _inside_ a coding harness — are genuinely useful. See [`docs/plan/02-brd.md`](
 
 ## Quickstart
 
-> Requires Node ≥ 22 (current Active LTS) and [pnpm](https://pnpm.io) (`corepack enable`).
+> Requires Node ≥ 22.19.0 and [pnpm](https://pnpm.io) (`corepack enable`).
 
 ```bash
 git clone https://github.com/roshangautam/genie.git
@@ -134,9 +134,29 @@ commented out by default). Published images are signed with keyless
 
 ```bash
 cosign verify ghcr.io/roshangautam/genie:latest \
-  --certificate-identity='https://github.com/roshangautam/genie/.github/workflows/release-please.yml@refs/heads/main' \
+  --certificate-identity='https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 ```
+
+### Claude Desktop (`.mcpb` bundle)
+
+Claude Desktop users on macOS can install genie without hand-editing a config file:
+
+1. Download `genie.mcpb` from the [latest release](../../releases/latest)
+   (attached to every GitHub Release — see `mcpb/manifest.json` and
+   `pnpm bundle:mcpb`).
+2. Double-click it. Claude Desktop opens its extension installer and prompts
+   for the required config values (`llm_base_url`, an `llm_api_key` of at
+   least 16 characters, and a random `oauth_hs256_key` of at least 32
+   characters) on first run — nothing is hardcoded into the bundle.
+3. genie now shows up as an installed extension; no manual
+   `claude_desktop_config.json` editing needed.
+
+To build the bundle locally: `pnpm bundle:mcpb` (builds `@genie/server`,
+stages a production-only deploy, and packs `dist/genie.mcpb` via
+`@anthropic-ai/mcpb`). See `mcpb/manifest.json` for the bundle manifest and
+`scripts/bundle-mcpb.mjs` for the packaging steps. The manual JSON configuration
+and debugging guide will land separately in M5-10.
 
 ## Repository layout
 
