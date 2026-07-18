@@ -62,6 +62,7 @@ RUN node -e "const fs=require('node:fs');const entry=require.resolve('ts-morph',
 # preview bundler at runtime.
 RUN pnpm --filter @genie/server deploy --prod --legacy /out && \
     node -e "const fs=require('node:fs');const path=require('node:path');const root='/out/node_modules/.pnpm';const dir=fs.readdirSync(root).find((name)=>name.startsWith('ts-morph@'));const commonDir=fs.readdirSync(root).find((name)=>name.startsWith('@ts-morph+common@'));if(!dir||!commonDir)throw new Error('deployed ts-morph graph not found');const packageRoot=path.join(root,dir,'node_modules/ts-morph');fs.copyFileSync('/tmp/ts-morph-runtime.mjs',path.join(packageRoot,'dist/runtime.mjs'));fs.copyFileSync(path.join(root,commonDir,'node_modules/@ts-morph/common/LICENSE'),path.join(packageRoot,'LICENSE.@ts-morph-common'));const file=path.join(packageRoot,'package.json');const manifest=JSON.parse(fs.readFileSync(file,'utf8'));manifest.type='module';manifest.main='./dist/runtime.mjs';manifest.exports={'.':'./dist/runtime.mjs'};fs.writeFileSync(file,JSON.stringify(manifest))" && \
+    node packages/server/scripts/pack-ts-morph-runtime.mjs /out/node_modules/ts-morph/dist/runtime.mjs && \
     find /out/node_modules -type f \
       \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \
          -o -iname '*.md' -o -iname '*.markdown' \) \
@@ -73,6 +74,9 @@ RUN pnpm --filter @genie/server deploy --prod --legacy /out && \
       -prune -exec rm -rf '{}' + && \
     rm -rf \
       /out/node_modules/.pnpm/@ts-morph+common@* \
+      /out/node_modules/.pnpm/@aws-sdk+* \
+      /out/node_modules/.pnpm/@aws+lambda-invoke-store@* \
+      /out/node_modules/.pnpm/@smithy+* \
       /out/node_modules/.pnpm/openai@*/node_modules/openai/src \
       /out/node_modules/.pnpm/zod@*/node_modules/zod/src \
       /out/node_modules/.pnpm/parse5@*/node_modules/parse5/dist/cjs \

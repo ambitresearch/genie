@@ -51,6 +51,13 @@ const composePath = resolve(repoRoot, "deploy", "docker-compose.yml");
 const readmePath = resolve(repoRoot, "README.md");
 const ciPath = resolve(repoRoot, ".github", "workflows", "ci.yml");
 const releaseWorkflowPath = resolve(repoRoot, ".github", "workflows", "release.yml");
+const tsMorphPackScriptPath = resolve(
+  repoRoot,
+  "packages",
+  "server",
+  "scripts",
+  "pack-ts-morph-runtime.mjs",
+);
 
 const dockerfile = readFileSync(dockerfilePath, "utf-8");
 const dockerignore = existsSync(dockerignorePath) ? readFileSync(dockerignorePath, "utf-8") : "";
@@ -59,6 +66,7 @@ const compose = readFileSync(composePath, "utf-8");
 const readme = readFileSync(readmePath, "utf-8");
 const ci = readFileSync(ciPath, "utf-8");
 const releaseWorkflow = readFileSync(releaseWorkflowPath, "utf-8");
+const tsMorphPackScript = readFileSync(tsMorphPackScriptPath, "utf-8");
 
 describe("Dockerfile (M5-07 static ACs)", () => {
   it("uses a node:22-alpine base for both build and runtime stages (AC1)", () => {
@@ -106,6 +114,14 @@ describe("Dockerfile (M5-07 static ACs)", () => {
     expect(dockerfile).not.toContain("200 MiB");
     expect(dockerfile).toContain("packages/server/src/store/viewer-assets.ts");
     expect(dockerfile).not.toContain("docs/store/viewer-assets.ts");
+  });
+
+  it("stores the bundled ts-morph runtime compressed and loads it lazily", () => {
+    expect(dockerfile).toContain("pack-ts-morph-runtime.mjs");
+    expect(tsMorphPackScript).toContain("brotliCompressSync");
+    expect(tsMorphPackScript).toContain("runtime.mjs.br");
+    expect(tsMorphPackScript).toContain("brotliDecompressSync");
+    expect(tsMorphPackScript).toContain('new URL("./runtime.mjs.br", import.meta.url)');
   });
 
   it("points persistent storage at the writable data volume", () => {
@@ -483,10 +499,54 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
       "-e",
       [
         'Promise.all([import("pino"), import("openai"), import("zod")])',
-        '  .then(() => process.stdout.write("dependencies-ok"))',
+        "  .then(([_, { default: OpenAI }]) => {",
+        '    new OpenAI({ apiKey: "not-a-real-key", baseURL: "http://127.0.0.1:9/v1" })',
+        '    process.stdout.write("dependencies-ok")',
+        "  })",
       ].join("\n"),
     ]);
     expect(stdout.trim()).toBe("dependencies-ok");
+  });
+
+  it("omits OpenAI's unused optional AWS signing stack", async () => {
+    const { stdout } = await execFileAsync("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "node",
+      imageTag,
+      "-e",
+      [
+        'const fs = require("node:fs")',
+        'const names = fs.readdirSync("node_modules/.pnpm")',
+        'if (names.some((name) => name.startsWith("@aws-sdk+") || name.startsWith("@smithy+") || name.startsWith("@aws+lambda-invoke-store@"))) throw new Error("unused AWS signing stack present")',
+        'process.stdout.write("aws-signing-stack-pruned")',
+      ].join(";"),
+    ]);
+    expect(stdout.trim()).toBe("aws-signing-stack-pruned");
+  });
+
+  it("ships only the compressed ts-morph payload", async () => {
+    const { stdout } = await execFileAsync("docker", [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "node",
+      imageTag,
+      "-e",
+      [
+        'const fs = require("node:fs")',
+        'const root = "node_modules/ts-morph/dist"',
+        "const loaderBytes = fs.statSync(`${root}/runtime.mjs`).size",
+        "const compressedBytes = fs.statSync(`${root}/runtime.mjs.br`).size",
+        'if (loaderBytes >= 4096) throw new Error("ts-morph loader is unexpectedly large")',
+        'if (compressedBytes >= 2000000) throw new Error("ts-morph payload is not compact")',
+        "process.stdout.write(`${loaderBytes},${compressedBytes}`)",
+      ].join(";"),
+    ]);
+    const [loaderBytes, compressedBytes] = stdout.trim().split(",").map(Number);
+    expect(loaderBytes).toBeLessThan(4096);
+    expect(compressedBytes).toBeLessThan(2_000_000);
   });
 
   it("preserves dependency license files while pruning package docs", async () => {
