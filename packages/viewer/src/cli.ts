@@ -36,6 +36,7 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import packageJson from "../package.json" with { type: "json" };
 
 import { Command, CommanderError, InvalidArgumentError } from "commander";
 import open from "open";
@@ -59,8 +60,8 @@ const processIO: CliIO = {
   },
 };
 
-/** Bumped independently of the workspace version, mirrors `SERVER_INFO`. */
-export const VIEWER_VERSION = "0.0.0";
+/** The package manifest is Release Please's version source of truth. */
+export const VIEWER_VERSION = packageJson.version;
 
 /**
  * The Vite dev-server default port. Re-exported from the single source of
