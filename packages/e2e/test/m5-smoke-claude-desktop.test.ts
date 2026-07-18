@@ -23,6 +23,7 @@ const CLAUDE_DESKTOP_DOC = readFileSync(
   resolve(here, "../../../docs/harness/claude-desktop.md"),
   "utf8",
 );
+const ROOT_README = readFileSync(resolve(here, "../../../README.md"), "utf8");
 const CLAUDE_DESKTOP_SCREENSHOT = resolve(
   here,
   "../../../docs/harness/screenshots/claude-desktop/m5-10-list-kits.png",
@@ -150,6 +151,11 @@ describe("Claude Desktop guide contracts", () => {
     );
     expect(CLAUDE_DESKTOP_DOC).toContain('`{"kits":[]}` result');
     expect(CLAUDE_DESKTOP_DOC).not.toContain("remaining AC6 evidence");
+  });
+
+  it("links the completed guide from the top-level Claude Desktop entry point", () => {
+    expect(ROOT_README).toContain("[Claude Desktop guide](./docs/harness/claude-desktop.md)");
+    expect(ROOT_README).not.toContain("debugging guide will land separately in M5-10");
   });
 
   it("keeps shared harness prerequisites consistent and links this guide", () => {

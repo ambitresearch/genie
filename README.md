@@ -155,8 +155,9 @@ Claude Desktop users on macOS can install genie without hand-editing a config fi
 To build the bundle locally: `pnpm bundle:mcpb` (builds `@genie/server`,
 stages a production-only deploy, and packs `dist/genie.mcpb` via
 `@anthropic-ai/mcpb`). See `mcpb/manifest.json` for the bundle manifest and
-`scripts/bundle-mcpb.mjs` for the packaging steps. The manual JSON configuration
-and debugging guide will land separately in M5-10.
+`scripts/bundle-mcpb.mjs` for the packaging steps. See the
+[Claude Desktop guide](./docs/harness/claude-desktop.md) for manual JSON
+configuration, remote connectors, debugging, and smoke-test evidence.
 
 ## Repository layout
 
