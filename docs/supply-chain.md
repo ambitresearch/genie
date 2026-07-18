@@ -48,10 +48,12 @@ integrity evidence:
   exact source commit and workflow run. Provenance requires the source repository to be
   public before the first live publish.
 - **npm SBOMs**: a CycloneDX JSON SBOM is generated for each package with
-  `@cyclonedx/cyclonedx-npm` (pinned to an exact version, run with `--omit dev` so
-  the SBOM reflects only the shipped production dependency tree) and attached to that
-  package's GitHub Release as a downloadable asset (`genie-server-sbom.cdx.json`,
-  `genie-viewer-sbom.cdx.json`).
+  `@cyclonedx/cdxgen` (pinned to an exact version, `-t pnpm --required-only` so it reads
+  the workspace `pnpm-lock.yaml` and records only the shipped runtime dependency tree)
+  and attached to that package's GitHub Release as a downloadable asset
+  (`genie-server-sbom.cdx.json`, `genie-viewer-sbom.cdx.json`). `cdxgen` is used instead
+  of `cyclonedx-npm` because this is a pnpm workspace with `workspace:*` specifiers and
+  no `package-lock.json`, which the npm-lock-based generator cannot parse.
 - **Container images** (GHCR + Docker Hub): built multi-arch (amd64/arm64) from the
   CI-verified release tag. `docker/build-push-action` is configured with `sbom: true`
   and `provenance: mode=max`, so each pushed image manifest carries an embedded

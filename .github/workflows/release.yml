@@ -247,13 +247,17 @@ jobs:
 
       # Supply-chain (issue #207 / M6-04): emit a CycloneDX SBOM for the
       # published package and attach it to the GitHub release as a durable,
-      # downloadable bill of materials. cyclonedx-npm is pinned to an exact
-      # version (consistent with the action SHA-pinning above) and run via npx;
-      # `--omit dev` restricts the SBOM to the production dependency tree that
-      # actually ships in the package. No new pinned action is added.
+      # downloadable bill of materials. cdxgen is used (not cyclonedx-npm)
+      # because this is a pnpm workspace with only pnpm-lock.yaml and
+      # `workspace:*` specifiers — the npm-lock-based generator cannot read it.
+      # cdxgen is pinned to an exact version (consistent with the action
+      # SHA-pinning above), scoped to this package dir, and run with
+      # `--required-only` so the SBOM reflects the shipped runtime dependency
+      # tree rather than dev tooling.
       - name: Generate CycloneDX SBOM
-        working-directory: packages/server
-        run: npx --yes @cyclonedx/cyclonedx-npm@6.0.0 --omit dev --output-format JSON --output-file genie-server-sbom.cdx.json
+        env:
+          FETCH_LICENSE: "false"
+        run: npx --yes @cyclonedx/cdxgen@12.7.1 -t pnpm --required-only --spec-version 1.6 -o packages/server/genie-server-sbom.cdx.json packages/server
 
       - name: Attach SBOM to the server release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
@@ -303,10 +307,12 @@ jobs:
         run: npm publish --provenance --access public
 
       # Supply-chain (issue #207 / M6-04): CycloneDX SBOM attached to the
-      # viewer release, matching the server job above (exact pin + --omit dev).
+      # viewer release, matching the server job above (pnpm-aware cdxgen,
+      # exact-pinned, package-scoped, runtime deps only).
       - name: Generate CycloneDX SBOM
-        working-directory: packages/viewer
-        run: npx --yes @cyclonedx/cyclonedx-npm@6.0.0 --omit dev --output-format JSON --output-file genie-viewer-sbom.cdx.json
+        env:
+          FETCH_LICENSE: "false"
+        run: npx --yes @cyclonedx/cdxgen@12.7.1 -t pnpm --required-only --spec-version 1.6 -o packages/viewer/genie-viewer-sbom.cdx.json packages/viewer
 
       - name: Attach SBOM to the viewer release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
