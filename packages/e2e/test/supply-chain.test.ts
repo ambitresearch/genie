@@ -183,6 +183,16 @@ describe("supply-chain policy", () => {
         {
           metadata: { component: { components: [root] } },
           components: [],
+          dependencies: [],
+        },
+        manifest,
+      ),
+    ).toThrow(/has no dependency graph for @ambitresearch\/example/);
+    expect(() =>
+      selectPackageClosure(
+        {
+          metadata: { component: { components: [root] } },
+          components: [],
           dependencies: [{ ref: rootRef, dependsOn: [] }],
         },
         manifest,
@@ -198,6 +208,25 @@ describe("supply-chain policy", () => {
         manifest,
       ),
     ).toThrow(/has no component record/);
+    expect(() =>
+      selectPackageClosure(
+        {
+          metadata: { component: { components: [root] } },
+          components: [
+            {
+              "bom-ref": directRef,
+              purl: directRef,
+              group: "",
+              name: "direct",
+              version: "1.0.0",
+              type: "library",
+            },
+          ],
+          dependencies: [{ ref: rootRef, dependsOn: [directRef] }],
+        },
+        manifest,
+      ),
+    ).toThrow(/component pkg:npm\/direct@1\.0\.0 has no dependency graph entry/);
   });
 
   it("signs and verifies the Desktop bundle and both image digests", () => {
