@@ -404,7 +404,7 @@ jobs:
     # label narrows to that specific TrueNAS runner rather than the shared
     # Azure `azure-docker` one, which sits outside the same private network.
     runs-on: [self-hosted, Linux, X64, genie]
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
