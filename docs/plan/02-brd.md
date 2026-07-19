@@ -405,7 +405,7 @@ Dependencies split cleanly between **internal** (we own or operate the resource)
 | D-I-04 | Service        | Docker engine on the self-hosted server for app hosting                                                                          | Current               | Maintainer | ✅ Live                   | Low                                         |
 | D-I-05 | Network        | Private network access (operator VPN/overlay) for off-LAN gateway access                                                         | Current               | Maintainer | ✅ Live                   | Low                                         |
 | D-I-06 | Secret         | LLM gateway API key (operator-provided), kept in the operator's environment                                                      | n/a                   | Maintainer | ✅ Configured             | Low                                         |
-| D-I-07 | Project        | `genie` repo on `roshangautam/` (GitHub)                                                                                          | To create in M0       | Maintainer | ⚠️ Not yet created        | Low                                         |
+| D-I-07 | Project        | `ambitresearch/genie` repository (GitHub)                                                                                          | Current               | Maintainer | ✅ Created, private       | Low                                         |
 
 ### §10.2 External dependencies
 
