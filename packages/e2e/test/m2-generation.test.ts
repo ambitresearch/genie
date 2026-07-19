@@ -46,6 +46,7 @@
  * reads back is exactly what `conjure` really returned, live, one step
  * earlier in this same run.
  */
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -65,6 +66,8 @@ import {
 import type { ValidatedComponent } from "../../server/src/llm/schema.js";
 
 import { estimateCostUsd } from "../src/pricing.js";
+
+const CI_WORKFLOW = readFileSync(join(import.meta.dirname, "../../../.github/workflows/ci.yml"), "utf8");
 
 // ── AC2 — gate ────────────────────────────────────────────────────────────────
 //
@@ -148,7 +151,7 @@ const BUDGET_CAP_USD = 5;
  * doubles the ceiling to 360s: comfortably covers a ~125s conjure tail plus a
  * ~120s refine call (refine's own single-call latencies observed so far:
  * 65-72s) with real margin, while staying well under the `m2-generation`
- * CI job's own `timeout-minutes: 15` (900s) wall-clock cap (ci.yml) so a
+ * CI job's own `timeout-minutes: 25` (1500s) wall-clock cap (ci.yml) so a
  * truly hung call still fails the job rather than hanging indefinitely. */
 const GENERATION_TIMEOUT_MS = 360_000;
 
@@ -233,6 +236,12 @@ function toSchemaShape(result: {
 }
 
 describe("M2 canary schema projection", () => {
+  it("reserves enough wall-clock time for slow self-hosted setup plus both live checks", () => {
+    const m2Job = CI_WORKFLOW.match(/ {2}m2-generation:\n([\s\S]*?)(?=\n {2}[a-z0-9-]+:\n|$)/)?.[1] ?? "";
+
+    expect(m2Job).toContain("timeout-minutes: 25");
+  });
+
   it("strips tool-result encoding before revalidating COMPONENT_SCHEMA", () => {
     const shape = toSchemaShape({
       componentName: "Button",
