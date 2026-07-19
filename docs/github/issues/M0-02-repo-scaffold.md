@@ -7,7 +7,7 @@ estimate: "2h"
 ---
 
 ## Summary
-Create `ambitresearch/genie` on GitHub, ship MIT LICENSE,
+Record and verify the transferred `ambitresearch/genie` GitHub repository, MIT LICENSE,
 CONTRIBUTING, CODE_OF_CONDUCT, SECURITY.md, CODEOWNERS, and a README that
 points at the docs/ tree. This is the legal and social entry point for the
 project.
@@ -34,9 +34,9 @@ project.
       (CI · npm · license), quickstart, and links into `INDEX.md`.
 
 ## Implementation Notes
-- Use `gh repo create ambitresearch/genie --private` (per
-  INDEX.md §Source-of-truth — repo is **private, to be created**; any future
-  visibility change is a separate decision).
+- Verify the transferred repository with `gh repo view ambitresearch/genie`.
+  It remains **private pending public release** per INDEX.md; any visibility
+  change is a separate release decision.
 - Pull templates from `github.com/github/docs` or
   `github.com/anthropics/skills` for COC.
 - Do NOT enable `Discussions` yet — pre-launch noise.
