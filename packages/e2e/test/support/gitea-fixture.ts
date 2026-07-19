@@ -51,7 +51,7 @@ const OWNER_ORG = "genie-kits";
 const TOKEN_NAME = "genie-e2e";
 
 /** The shape the server's GitHostStore adapters accept, replicated here so the
- *  fixture stays decoupled from `@genie/server` internals. Structurally equal
+ *  fixture stays decoupled from `@ambitresearch/genie` internals. Structurally equal
  *  to `GitHostConfig` in packages/server/src/store/git-host.ts. */
 export interface GiteaTarget {
   /** e.g. `http://localhost:49213/api/v1` */

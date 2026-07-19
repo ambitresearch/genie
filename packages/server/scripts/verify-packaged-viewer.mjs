@@ -2,7 +2,7 @@
 /**
  * Postbuild integration gate for the packaged MCP App shell.
  *
- * Blocks `@genie/viewer` package resolution, loads the compiled server, and
+ * Blocks `@ambitresearch/genie-viewer` package resolution, loads the compiled server, and
  * reads the bare grid resource through a real in-memory MCP client. The build
  * fails unless copied `dist/ui/viewer-static` assets supply the executable
  * initialize/tool-result bridge without the optional viewer package.
@@ -16,9 +16,9 @@ const originalResolveFilename = Module._resolveFilename;
 let viewerResolutionAttempted = false;
 
 Module._resolveFilename = function (request, parent, isMain, options) {
-  if (request === "@genie/viewer/package.json") {
+  if (request === "@ambitresearch/genie-viewer/package.json") {
     viewerResolutionAttempted = true;
-    const error = new Error("blocked optional @genie/viewer resolution");
+    const error = new Error("blocked optional @ambitresearch/genie-viewer resolution");
     error.code = "MODULE_NOT_FOUND";
     throw error;
   }
@@ -49,7 +49,9 @@ try {
   const result = await client.readResource({ uri: grid.uri });
   const html = String(result.contents[0]?.text ?? "");
   if (viewerResolutionAttempted) {
-    throw new Error("packaged grid resource attempted to resolve optional @genie/viewer");
+    throw new Error(
+      "packaged grid resource attempted to resolve optional @ambitresearch/genie-viewer",
+    );
   }
   if (!html.includes("ui/initialize") || !html.includes("ui/notifications/tool-result")) {
     throw new Error("packaged grid resource is missing the executable MCP App bridge");
@@ -60,5 +62,5 @@ try {
 }
 
 process.stdout.write(
-  "verify-packaged-viewer: bare MCP App shell is executable without @genie/viewer\n",
+  "verify-packaged-viewer: bare MCP App shell is executable without @ambitresearch/genie-viewer\n",
 );

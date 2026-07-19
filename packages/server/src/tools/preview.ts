@@ -17,9 +17,9 @@
  *
  * ── Viewer boot seam (AC5/AC6) ───────────────────────────────────────────────
  * Booting the Vite dev server is behind an injectable `ViewerBooter` so the
- * tool has NO hard dependency on `@genie/viewer` or Vite — the server core
+ * tool has NO hard dependency on `@ambitresearch/genie-viewer` or Vite — the server core
  * stays independent of the preview framework (CLAUDE.md; RFC §4). The default
- * booter lazily `import()`s `@genie/viewer` through a NON-LITERAL specifier
+ * booter lazily `import()`s `@ambitresearch/genie-viewer` through a NON-LITERAL specifier
  * (so `tsc` never hard-resolves it) and degrades gracefully when it is absent —
  * exactly the OPTIONAL-peer-dependency pattern `refine` uses for Playwright.
  * A failed boot (Vite missing, port unbindable, kit dir invalid) is caught and
@@ -53,9 +53,9 @@ export const PREVIEW_TOOL_NAME = "mcp__genie__preview";
 
 /**
  * Vite dev-server default port. Duplicated as a local literal (rather than
- * imported from `@genie/viewer`) so this module carries no build-time edge to
+ * imported from `@ambitresearch/genie-viewer`) so this module carries no build-time edge to
  * the viewer package — the whole point of the lazy boot seam below. Kept in
- * sync with `@genie/viewer`'s `DEFAULT_VIEWER_PORT` (RFC §6.9/§14).
+ * sync with `@ambitresearch/genie-viewer`'s `DEFAULT_VIEWER_PORT` (RFC §6.9/§14).
  */
 export const DEFAULT_VIEWER_PORT = 5173;
 
@@ -325,9 +325,9 @@ export class ViewerRegistry {
   }
 }
 
-// ─── Default (production) booter: lazy @genie/viewer, graceful degradation ────
+// ─── Default (production) booter: lazy @ambitresearch/genie-viewer, graceful degradation ────
 //
-// `@genie/viewer` is an OPTIONAL peer (a workspace devDependency here) — the
+// `@ambitresearch/genie-viewer` is an OPTIONAL peer (a workspace devDependency here) — the
 // server core must not hard-depend on the preview framework (CLAUDE.md; RFC
 // §4). Loaded through a NON-LITERAL specifier so `tsc` doesn't resolve it at
 // build; when it (or Vite) is absent, or the boot throws, the rejection flows
@@ -355,7 +355,7 @@ interface ViewerModuleLike {
 }
 
 /**
- * The default `ViewerBooter`. Lazily loads `@genie/viewer` and boots its Vite
+ * The default `ViewerBooter`. Lazily loads `@ambitresearch/genie-viewer` and boots its Vite
  * dev server against the kit dir and honors {@link BootRequest.open} for direct
  * callers. On its local path, {@link runPreview} deliberately passes `false`,
  * constructs the filter-bearing viewer URL, and invokes
@@ -368,7 +368,7 @@ interface ViewerModuleLike {
  */
 export const defaultViewerBooter: ViewerBooter = async ({ kitDir, port, open }) => {
   // Non-literal specifier: keeps `tsc` from resolving the optional dep at build.
-  const specifier = "@genie/viewer";
+  const specifier = "@ambitresearch/genie-viewer";
   let mod: ViewerModuleLike;
   try {
     mod = (await import(specifier)) as ViewerModuleLike;
@@ -720,7 +720,7 @@ export async function runPreview(
         viewerUrl = url.toString();
         if (autoOpen) await deps.registry.open(kitDir, viewerUrl);
       } catch (error) {
-        // AC6 — the local viewer could not boot (Vite/@genie/viewer absent,
+        // AC6 — the local viewer could not boot (Vite/@ambitresearch/genie-viewer absent,
         // port unbindable, …). Preserve any independently prepared inline
         // manifest, otherwise degrade to the file:// vehicle.
         logStderr({

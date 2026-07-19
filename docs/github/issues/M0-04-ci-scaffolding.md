@@ -27,10 +27,11 @@ Changesets) to manage versioning automatically. Reserve the npm package name
 - [ ] AC4 — `release-please` (or Changesets) PR is opened by the bot whenever
       Conventional Commits land on `main`.
 - [ ] AC5 — npm name `genie` is registered (publish empty
-      0.0.0-placeholder). **If `genie` is taken** (unverified at issue-write time
-      — `npm view genie` was blocked by a sandbox cert error), fall back in order:
-      `@genie/server` (scoped) → `genie`. Record the chosen name in `CLAUDE.md`
-      and reconcile any docs that assumed bare `genie`.
+      0.0.0-placeholder). **Reconciled after registry verification:** bare `genie`
+      and the `@genie` scope belong to unrelated npm users, so publish the server
+      as `@ambitresearch/genie` and the viewer as `@ambitresearch/genie-viewer`.
+      Record the chosen names in `CLAUDE.md` and reconcile docs that assumed the
+      unavailable names.
 - [ ] AC6 — Branch protection requires `lint`, `typecheck`, `test`, `build`
       checks before merge.
 

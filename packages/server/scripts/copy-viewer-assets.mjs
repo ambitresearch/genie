@@ -2,7 +2,7 @@
 /**
  * Postbuild step — mirror the byte-identical viewer shell into the server
  * package so `ui://genie/grid` remains executable without a runtime
- * `@genie/viewer` installation. The local Vite booter stays optional; only the
+ * `@ambitresearch/genie-viewer` installation. The local Vite booter stays optional; only the
  * three self-contained MCP App assets are packaged here.
  */
 import { cp, mkdir, rm } from "node:fs/promises";

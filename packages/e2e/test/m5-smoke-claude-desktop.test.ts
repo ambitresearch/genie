@@ -41,7 +41,7 @@ const requireBuiltServer = process.env.GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE === "1
 if (requireBuiltServer && !hasBuiltServer) {
   throw new Error(
     "GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE=1 but packages/server/dist/cli.js is missing. " +
-      "Build @genie/server before running the Claude Desktop smoke suite.",
+      "Build @ambitresearch/genie before running the Claude Desktop smoke suite.",
   );
 }
 
@@ -74,7 +74,7 @@ describe("Claude Desktop guide contracts", () => {
   it("uses the planned scoped package and supplies valid-length placeholders for every required startup secret", () => {
     const snippet = [...CLAUDE_DESKTOP_DOC.matchAll(/```json\n([\s\S]*?)\n```/g)]
       .map((match) => match[1])
-      .find((block) => block?.includes('"@genie/server"'));
+      .find((block) => block?.includes('"@ambitresearch/genie"'));
     expect(snippet).toBeDefined();
 
     const config = JSON.parse(snippet ?? "{}") as {
@@ -85,14 +85,15 @@ describe("Claude Desktop guide contracts", () => {
     const genie = config.mcpServers.genie;
 
     expect(genie.command).toBe("npx");
-    expect(genie.args).toEqual(["-y", "@genie/server", "--transport", "stdio"]);
+    expect(genie.args).toEqual(["-y", "@ambitresearch/genie", "--transport", "stdio"]);
     expect(genie.env.GENIE_LLM_API_KEY?.length).toBeGreaterThanOrEqual(16);
     expect(genie.env.OAUTH_HS256_KEY?.length).toBeGreaterThanOrEqual(32);
     expect(genie.env.GENIE_HOME).toBe("/absolute/path/to/.genie");
     expect(genie.env.GENIE_KITS_ROOT).toBe("/absolute/path/to/.genie/kits");
     expect(genie.env.GENIE_PROJECTS_ROOT).toBe("/absolute/path/to/.genie/projects");
     expect(CLAUDE_DESKTOP_DOC).toContain("verified M5-05 bundle landed");
-    expect(CLAUDE_DESKTOP_DOC).toContain("unrelated package");
+    expect(CLAUDE_DESKTOP_DOC).toContain("bare `genie` npm package");
+    expect(CLAUDE_DESKTOP_DOC).toContain("`@genie` scope are owned by unrelated npm users");
   });
 
   it("documents the actual bootstrap requirement instead of promising read-only startup without secrets", () => {
@@ -174,7 +175,7 @@ describe("Claude Desktop guide contracts", () => {
 
   it("preserves the M2 JUnit report when the self-hosted canary runs this suite", () => {
     expect(CI_WORKFLOW).toContain(
-      "CI=false VITEST_JUNIT=0 pnpm --filter @genie/e2e test:e2e:claude-desktop",
+      "CI=false VITEST_JUNIT=0 pnpm --filter @ambitresearch/genie-e2e test:e2e:claude-desktop",
     );
   });
 });

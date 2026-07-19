@@ -1,5 +1,5 @@
 {
-  "name": "@genie/server",
+  "name": "@ambitresearch/genie",
   "version": "1.2.0",
   "type": "module",
   "description": "genie MCP server — harness-agnostic AI UI-component generation.",
@@ -53,7 +53,7 @@
   "license": "MIT",
   "author": "Roshan Gautam",
   "devDependencies": {
-    "@genie/viewer": "workspace:*",
+    "@ambitresearch/genie-viewer": "workspace:*",
     "@types/jsdom": "^21.1.7",
     "@types/json-schema": "^7.0.15",
     "@types/micromatch": "^4.0.10",

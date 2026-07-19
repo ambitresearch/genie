@@ -1,5 +1,5 @@
 /**
- * Tests for M4-02 (DRO-264) — the `@genie/viewer` Vite multi-page config
+ * Tests for M4-02 (DRO-264) — the `@ambitresearch/genie-viewer` Vite multi-page config
  * (`packages/viewer/src/config.ts`).
  *
  * The config logic lives in a pure factory (`createViewerConfig`) plus helpers

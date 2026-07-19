@@ -44,7 +44,7 @@ importers:
 
   packages/e2e:
     dependencies:
-      '@genie/server':
+      '@ambitresearch/genie':
         specifier: workspace:*
         version: link:../server
       '@modelcontextprotocol/sdk':
@@ -54,12 +54,12 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0
     devDependencies:
+      '@ambitresearch/genie-viewer':
+        specifier: workspace:*
+        version: link:../viewer
       '@continuedev/cli':
         specifier: 1.5.47
         version: 1.5.47(picomatch@4.0.4)
-      '@genie/viewer':
-        specifier: workspace:*
-        version: link:../viewer
       '@types/node':
         specifier: ^26.0.0
         version: 26.0.0
@@ -155,7 +155,7 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
-      '@genie/viewer':
+      '@ambitresearch/genie-viewer':
         specifier: workspace:*
         version: link:../viewer
       '@types/jsdom':

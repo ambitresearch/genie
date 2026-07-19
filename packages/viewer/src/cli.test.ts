@@ -30,8 +30,10 @@
  *   - `buildProgram`'s static shape (name/usage) is asserted directly,
  *     independent of a parse.
  */
-import { fileURLToPath } from "node:url";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 import type { InlineConfig, ViteDevServer } from "vite";
@@ -39,6 +41,7 @@ import type { InlineConfig, ViteDevServer } from "vite";
 import {
   buildProgram,
   DEFAULT_PORT,
+  isDirectExecution,
   parsePort,
   runCli,
   VIEWER_VERSION,
@@ -48,6 +51,10 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VIEWER_PKG = resolve(HERE, "..");
+const CLI_SOURCE = resolve(HERE, "cli.ts");
+const VIEWER_PACKAGE = JSON.parse(readFileSync(resolve(VIEWER_PKG, "package.json"), "utf8")) as {
+  version: string;
+};
 
 /**
  * Fake {@link CliDeps} that captures the Vite config a boot would receive
@@ -125,6 +132,10 @@ describe("parsePort", () => {
 });
 
 describe("buildProgram", () => {
+  it("keeps the CLI version synchronized with the package version", () => {
+    expect(VIEWER_VERSION).toBe(VIEWER_PACKAGE.version);
+  });
+
   it("names the program genie-viewer", () => {
     const io = createRecordingIO();
     expect(buildProgram(io).name()).toBe("genie-viewer");
@@ -133,6 +144,31 @@ describe("buildProgram", () => {
   it("sets the AC6-mandated usage string", () => {
     const io = createRecordingIO();
     expect(buildProgram(io).usage()).toBe("<kit-dir> [--port N]");
+  });
+});
+
+describe("isDirectExecution", () => {
+  it("recognizes the module's canonical path as direct execution", () => {
+    expect(isDirectExecution(CLI_SOURCE, pathToFileURL(CLI_SOURCE).href)).toBe(true);
+  });
+
+  it("recognizes an installed package-bin symlink as direct execution", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "genie-viewer-bin-"));
+    try {
+      const binPath = resolve(dir, "genie-viewer");
+      symlinkSync(CLI_SOURCE, binPath);
+      expect(isDirectExecution(binPath, pathToFileURL(CLI_SOURCE).href)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an imported module and a missing argv path", () => {
+    expect(isDirectExecution(CLI_SOURCE, import.meta.url)).toBe(false);
+    expect(isDirectExecution(undefined, pathToFileURL(CLI_SOURCE).href)).toBe(false);
+    expect(isDirectExecution(resolve(HERE, "missing-cli.ts"), pathToFileURL(CLI_SOURCE).href)).toBe(
+      false,
+    );
   });
 });
 
@@ -151,18 +187,18 @@ describe("runCli", () => {
     expect(io.out()).toContain("Usage: genie-viewer <kit-dir> [--port N]");
   });
 
-  it("--version prints VIEWER_VERSION and exits 0", async () => {
+  it("--version prints the package version and exits 0", async () => {
     const io = createRecordingIO();
     const code = await runCli(["--version"], io);
     expect(code).toBe(0);
-    expect(io.out().trim()).toBe(VIEWER_VERSION);
+    expect(io.out().trim()).toBe(VIEWER_PACKAGE.version);
   });
 
   it("-v is a shorthand for --version", async () => {
     const io = createRecordingIO();
     const code = await runCli(["-v"], io);
     expect(code).toBe(0);
-    expect(io.out().trim()).toBe(VIEWER_VERSION);
+    expect(io.out().trim()).toBe(VIEWER_PACKAGE.version);
   });
 
   it("a bare invocation (no kit-dir) does not throw and prints help", async () => {

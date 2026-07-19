@@ -138,8 +138,8 @@ the dedicated command. Run it from a clean checkout with:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm --filter @genie/e2e test:e2e:continue
+pnpm --filter @ambitresearch/genie-e2e test:e2e:continue
 ```
 
-That command builds `@genie/viewer` and `@genie/server` first and fails if
+That command builds `@ambitresearch/genie-viewer` and `@ambitresearch/genie` first and fails if
 either the built server or the pinned Continue CLI is unavailable.

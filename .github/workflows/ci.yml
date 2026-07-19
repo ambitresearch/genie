@@ -194,7 +194,7 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
       - name: Install Playwright Chromium
-        run: pnpm --filter @genie/e2e exec playwright install --with-deps chromium
+        run: pnpm --filter @ambitresearch/genie-e2e exec playwright install --with-deps chromium
 
       - name: Run OIDC provider integration walk (AC1-AC7)
         # GENIE_REQUIRE_DOCKER makes the suite FAIL (not skip) if no daemon is
@@ -203,7 +203,7 @@ jobs:
         env:
           VITEST_JUNIT: "1"
           GENIE_REQUIRE_DOCKER: "1"
-        run: pnpm --filter @genie/e2e test:e2e:oidc
+        run: pnpm --filter @ambitresearch/genie-e2e test:e2e:oidc
 
       - name: Upload test report
         if: ${{ !cancelled() }}
@@ -256,13 +256,13 @@ jobs:
         # etc.) ubuntu-latest doesn't ship by default — the exact gap this
         # suite's own doc comment works around with a private lib root when
         # run in a sandboxed dev workspace; a real CI runner just apt-gets it.
-        run: pnpm --filter @genie/viewer exec playwright install --with-deps chromium
+        run: pnpm --filter @ambitresearch/genie-viewer exec playwright install --with-deps chromium
 
       - name: Run viewer accessibility audit (AC1-AC7)
         env:
           VITEST_JUNIT: "1"
           GENIE_REQUIRE_A11Y_BROWSER: "1"
-        run: pnpm --filter @genie/viewer test:a11y
+        run: pnpm --filter @ambitresearch/genie-viewer test:a11y
 
       # M4-07 (DRO-269) — real-Chromium CSP + sandbox probes for the
       # `ui://genie/grid` payload. Same runner already has Chromium installed
@@ -321,23 +321,23 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Build @genie/server + @genie/viewer
+      - name: Build @ambitresearch/genie + @ambitresearch/genie-viewer
         # The E2E suite imports the compiled viewer package (createViewerConfig)
         # for vehicle (b) and the server's manifest compiler + grid-resource for
         # vehicle (c). Build both so those imports resolve to real dist output.
-        run: pnpm -r --filter @genie/server --filter @genie/viewer build
+        run: pnpm -r --filter @ambitresearch/genie --filter @ambitresearch/genie-viewer build
 
       - name: Install Playwright Chromium
         # --with-deps pulls the OS package closure (libglib/libnss/fontconfig
         # etc.) ubuntu-latest doesn't ship by default; a real CI runner apt-gets
-        # it. Installed from @genie/e2e (where playwright is now a devDependency).
-        run: pnpm --filter @genie/e2e exec playwright install --with-deps chromium
+        # it. Installed from @ambitresearch/genie-e2e (where playwright is now a devDependency).
+        run: pnpm --filter @ambitresearch/genie-e2e exec playwright install --with-deps chromium
 
       - name: Run viewer E2E gate (AC1-AC4, AC7, AC8)
         env:
           VITEST_JUNIT: "1"
           GENIE_REQUIRE_VIEWER_E2E: "1"
-        run: pnpm --filter @genie/e2e test:e2e:viewer
+        run: pnpm --filter @ambitresearch/genie-e2e test:e2e:viewer
 
       - name: Upload vehicle screenshots (AC7)
         if: ${{ !cancelled() }}
@@ -448,9 +448,9 @@ jobs:
             echo "Skipping Claude Desktop live-generation smoke: LLM secrets are not configured."
             exit 0
           fi
-          pnpm --filter @genie/server build
+          pnpm --filter @ambitresearch/genie build
           GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE=1 \
-            CI=false VITEST_JUNIT=0 pnpm --filter @genie/e2e test:e2e:claude-desktop
+            CI=false VITEST_JUNIT=0 pnpm --filter @ambitresearch/genie-e2e test:e2e:claude-desktop
 
       # AC7 — the per-component `.html` samples + summary.json this suite
       # writes to reports/m2-generation/ (empty/absent when AC2 skipped the
@@ -512,17 +512,17 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
       - name: Build preview viewer
-        # `previewLocality: local` boots @genie/viewer's compiled entrypoint.
+        # `previewLocality: local` boots @ambitresearch/genie-viewer's compiled entrypoint.
         # A clean checkout has no dist/ until this build runs; without it the
         # Docker smoke can return only file:// fallback text and cannot capture
         # the required reachable preview screenshot.
-        run: pnpm --filter @genie/viewer build
+        run: pnpm --filter @ambitresearch/genie-viewer build
 
       - name: Install Playwright Chromium
         # The smoke captures the returned preview URL with real Chromium and
         # requires a rendered .ds-card. Install both the browser and its Linux
         # library closure, matching the dedicated viewer E2E job.
-        run: pnpm --filter @genie/e2e exec playwright install --with-deps chromium
+        run: pnpm --filter @ambitresearch/genie-e2e exec playwright install --with-deps chromium
 
       - name: Run M5-09 Claude Code smoke
         # GENIE_REQUIRE_DOCKER makes the AC4/AC6 leg FAIL (not skip) if the
@@ -654,8 +654,8 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Build @genie/server
-        run: pnpm --filter @genie/server build
+      - name: Build @ambitresearch/genie
+        run: pnpm --filter @ambitresearch/genie build
 
       - name: Install Codex CLI
         # Public npm package; no auth needed just to exercise `codex mcp
@@ -668,7 +668,7 @@ jobs:
       - name: Run Codex CLI harness smoke (AC1, AC2, AC3 doc, AC4, AC6)
         env:
           VITEST_JUNIT: "1"
-        run: pnpm --filter @genie/e2e test:e2e:codex
+        run: pnpm --filter @ambitresearch/genie-e2e test:e2e:codex
 
       - name: Upload test report
         if: ${{ !cancelled() }}
@@ -702,8 +702,8 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Build @genie/server
-        run: pnpm --filter @genie/server build
+      - name: Build @ambitresearch/genie
+        run: pnpm --filter @ambitresearch/genie build
 
       - name: Install Codex CLI
         run: npm install -g @openai/codex@0.144.5
@@ -715,7 +715,7 @@ jobs:
           GENIE_LLM_BASE_URL: ${{ secrets.GENIE_CODEX_SMOKE_LLM_BASE_URL }}
           GENIE_LLM_API_KEY: ${{ secrets.GENIE_CODEX_SMOKE_LLM_API_KEY }}
           GENIE_SMOKE_LLM_MODEL: ${{ vars.GENIE_SMOKE_MODEL }}
-        run: pnpm --filter @genie/e2e test:e2e:codex
+        run: pnpm --filter @ambitresearch/genie-e2e test:e2e:codex
 
       - name: Upload live test report
         if: ${{ !cancelled() }}
@@ -780,7 +780,7 @@ jobs:
         env:
           VITEST_JUNIT: "1"
           GENIE_REQUIRE_DOCKER: "1"
-        run: pnpm --filter @genie/e2e test:e2e:docker
+        run: pnpm --filter @ambitresearch/genie-e2e test:e2e:docker
 
       - name: Build both release platforms without pushing (AC5)
         run: |
@@ -812,7 +812,7 @@ jobs:
 
   # ── Continue CLI harness smoke (M5-15 / DRO-287) ────────────────────────────
   # Runs the published, pinned `cn -p` agent against a deterministic loopback
-  # model. The package command builds @genie/viewer + @genie/server and sets
+  # model. The package command builds @ambitresearch/genie-viewer + @ambitresearch/genie and sets
   # GENIE_REQUIRE_CONTINUE=1, so neither a missing dist/ nor a missing Continue
   # CLI can turn a clean checkout green through a skipped suite.
   continue-smoke:
@@ -841,7 +841,7 @@ jobs:
       - name: Run Continue CLI headless harness smoke (AC1-AC5)
         env:
           VITEST_JUNIT: "1"
-        run: pnpm --filter @genie/e2e test:e2e:continue
+        run: pnpm --filter @ambitresearch/genie-e2e test:e2e:continue
 
       - name: Upload Continue smoke report
         if: ${{ !cancelled() }}
@@ -878,14 +878,14 @@ jobs:
           pnpm install --frozen-lockfile \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Build @genie/server
-        run: pnpm --filter @genie/server build
+      - name: Build @ambitresearch/genie
+        run: pnpm --filter @ambitresearch/genie build
 
       - name: Run Claude Desktop supplemental stdio smoke
         env:
           GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE: "1"
           VITEST_JUNIT: "1"
-        run: pnpm --filter @genie/e2e test:e2e:claude-desktop
+        run: pnpm --filter @ambitresearch/genie-e2e test:e2e:claude-desktop
 
       - name: Upload test report
         if: ${{ !cancelled() }}

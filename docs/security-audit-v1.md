@@ -194,8 +194,8 @@ pinned to a full 40-character commit SHA with a `# vX.Y.Z` provenance comment
 supply-chain findings), with the proposed `trustPolicy: no-downgrade` omission
 justified because it is not a real pnpm 10.34 setting.
 
-`.github/workflows/release.yml` already published `@genie/server` and
-`@genie/viewer` with npm provenance and signed both container images keyless
+`.github/workflows/release.yml` already published `@ambitresearch/genie` and
+`@ambitresearch/genie-viewer` with npm provenance and signed both container images keyless
 with cosign; issue #207 added the remaining gap — CycloneDX SBOM generation
 (npm packages attached as release assets, container images via
 `sbom: true` + `provenance: mode=max` attestations) — and documented the full
@@ -217,7 +217,7 @@ Re-audit evidence after the final SSRF changes:
 pnpm exec vitest run packages/server/src/tools/conjure.test.ts  # 56 passed
 pnpm exec vitest run packages/server/src/ui/grid-resource.test.ts \
   packages/server/src/middleware/plan-guard.test.ts             # 74 passed
-pnpm --filter @genie/server typecheck                           # clean
+pnpm --filter @ambitresearch/genie typecheck                           # clean
 pnpm exec eslint packages/server/src/tools/conjure.ts \
   packages/server/src/tools/conjure.test.ts                     # clean
 go run github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.1 \
