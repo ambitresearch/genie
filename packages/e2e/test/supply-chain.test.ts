@@ -3,7 +3,10 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { selectPackageClosure } from "../../../scripts/generate-package-sbom.mjs";
+import {
+  collectPnpmOptionalDependencyEdges,
+  selectPackageClosure,
+} from "../../../scripts/generate-package-sbom.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const workflowsRoot = resolve(repoRoot, ".github/workflows");
@@ -97,7 +100,9 @@ describe("supply-chain policy", () => {
       releasePlease.indexOf("Create the CI-gated GitHub release"),
     );
     expect(releasePlease).toContain('npm --userconfig "$npmrc" whoami');
-    expect(releasePlease).toContain('org ls ambitresearch "$npm_user"');
+    expect(releasePlease).toContain("org ls ambitresearch --json");
+    expect(releasePlease).toContain("JSON.parse(process.env.ORG_MEMBERS)");
+    expect(releasePlease).toContain("Object.hasOwn(members, npmUser)");
     expect(releasePlease).toContain("access list packages @ambitresearch");
     expect(releasePlease).toContain('docker --config "$docker_config" login docker.io');
     expect(releasePlease.indexOf("Validate production registry authentication")).toBeLessThan(
@@ -148,12 +153,15 @@ describe("supply-chain policy", () => {
       description: "fixture",
       license: "MIT",
       dependencies: { direct: "1.0.0", "@scope/other": "2.0.0" },
+      optionalDependencies: { "root-optional": "5.0.0" },
       devDependencies: { "dev-only": "3.0.0" },
     };
     const rootRef = "pkg:npm/@ambitresearch/example@1.2.3";
     const directRef = "pkg:npm/direct@1.0.0";
     const scopedRef = "pkg:npm/@scope/other@2.0.0";
     const transitiveRef = "pkg:npm/transitive@4.0.0";
+    const platformRef = "pkg:npm/@scope/platform@4.0.0";
+    const rootOptionalRef = "pkg:npm/root-optional@5.0.0";
     const devRef = "pkg:npm/dev-only@3.0.0";
     const component = (ref: string, group: string, name: string, version: string) => ({
       "bom-ref": ref,
@@ -174,6 +182,8 @@ describe("supply-chain policy", () => {
         component(directRef, "", "direct", "1.0.0"),
         component(scopedRef, "@scope", "other", "2.0.0"),
         component(transitiveRef, "", "transitive", "4.0.0"),
+        component(platformRef, "@scope", "platform", "4.0.0"),
+        component(rootOptionalRef, "", "root-optional", "5.0.0"),
         component(devRef, "", "dev-only", "3.0.0"),
       ],
       dependencies: [
@@ -181,21 +191,77 @@ describe("supply-chain policy", () => {
         { ref: directRef, dependsOn: [transitiveRef] },
         { ref: scopedRef, dependsOn: [] },
         { ref: transitiveRef, dependsOn: [] },
+        { ref: platformRef, dependsOn: [] },
+        { ref: rootOptionalRef, dependsOn: [] },
         { ref: devRef, dependsOn: [] },
       ],
     };
 
-    const bom = selectPackageClosure(workspaceBom, manifest);
+    const optionalEdges = collectPnpmOptionalDependencyEdges(
+      workspaceBom,
+      {
+        importers: {
+          "packages/example": {
+            optionalDependencies: { "root-optional": { version: "5.0.0" } },
+          },
+        },
+        snapshots: {
+          "direct@1.0.0": {
+            optionalDependencies: { "@scope/platform": "4.0.0" },
+          },
+        },
+      },
+      manifest,
+      "packages/example",
+    );
+    expect(() =>
+      collectPnpmOptionalDependencyEdges(
+        { ...workspaceBom, components: workspaceBom.components.slice(1) },
+        {
+          snapshots: {
+            "direct@1.0.0": {
+              optionalDependencies: { "@scope/platform": "4.0.0" },
+            },
+          },
+        },
+        manifest,
+        "packages/example",
+      ),
+    ).toThrow(/no component for optional dependency parent direct@1\.0\.0/);
+    expect(() =>
+      collectPnpmOptionalDependencyEdges(
+        {
+          ...workspaceBom,
+          components: workspaceBom.components.filter((entry) => entry["bom-ref"] !== platformRef),
+        },
+        {
+          snapshots: {
+            "direct@1.0.0": {
+              optionalDependencies: { "@scope/platform": "4.0.0" },
+            },
+          },
+        },
+        manifest,
+        "packages/example",
+      ),
+    ).toThrow(/no component for optional dependency @scope\/platform@4\.0\.0/);
+    const bom = selectPackageClosure(workspaceBom, manifest, optionalEdges);
     expect(`${bom.metadata.component.group}/${bom.metadata.component.name}`).toBe(manifest.name);
     expect(bom.metadata.component.version).toBe(manifest.version);
-    expect(bom.dependencies[0].dependsOn).toEqual([scopedRef, directRef].sort());
+    expect(bom.dependencies[0].dependsOn).toEqual([scopedRef, directRef, rootOptionalRef].sort());
     expect(bom.components.map((entry: { "bom-ref": string }) => entry["bom-ref"])).toEqual(
-      [directRef, scopedRef, transitiveRef].sort(),
+      [directRef, scopedRef, transitiveRef, platformRef, rootOptionalRef].sort(),
     );
+    expect(
+      bom.dependencies.find((entry: { ref: string }) => entry.ref === directRef)?.dependsOn,
+    ).toEqual([platformRef, transitiveRef].sort());
     expect(JSON.stringify(bom)).not.toContain("dev-only");
-    expect(readFileSync(sbomScript, "utf8")).toContain('"--no-recurse"');
-    expect(readFileSync(sbomScript, "utf8")).toContain('"--no-install-deps"');
-    expect(readFileSync(sbomScript, "utf8")).toContain('"--strict"');
+    const generator = readFileSync(sbomScript, "utf8");
+    expect(generator).toContain('"--no-recurse"');
+    expect(generator).toContain('"--no-install-deps"');
+    expect(generator).toContain('"--fail-on-error"');
+    expect(generator).not.toContain('"--required-only"');
+    expect(generator).toContain('"--strict"');
   });
 
   it("fails closed when the workspace SBOM is stale or incomplete", () => {

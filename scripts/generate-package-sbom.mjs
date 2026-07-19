@@ -3,9 +3,10 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { parse } from "yaml";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const scriptPath = fileURLToPath(import.meta.url);
@@ -21,6 +22,7 @@ function generatePackageSbom([packageDirArg, outputArg]) {
   }
 
   const packageDir = resolve(repoRoot, packageDirArg);
+  const packageRelativeDir = relative(repoRoot, packageDir).replaceAll("\\", "/");
   const packageJsonPath = join(packageDir, "package.json");
   const outputPath = isAbsolute(outputArg) ? outputArg : resolve(repoRoot, outputArg);
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
@@ -38,7 +40,7 @@ function generatePackageSbom([packageDirArg, outputArg]) {
         cdxgenBin,
         "-t",
         "pnpm",
-        "--required-only",
+        "--fail-on-error",
         "--no-babel",
         "--no-install-deps",
         "--no-recurse",
@@ -56,7 +58,14 @@ function generatePackageSbom([packageDirArg, outputArg]) {
     );
 
     const workspaceBom = JSON.parse(readFileSync(workspaceBomPath, "utf8"));
-    const packageBom = selectPackageClosure(workspaceBom, packageJson);
+    const lockfile = parse(readFileSync(join(repoRoot, "pnpm-lock.yaml"), "utf8"));
+    const optionalEdges = collectPnpmOptionalDependencyEdges(
+      workspaceBom,
+      lockfile,
+      packageJson,
+      packageRelativeDir,
+    );
+    const packageBom = selectPackageClosure(workspaceBom, packageJson, optionalEdges);
     writeFileSync(outputPath, `${JSON.stringify(packageBom, null, 2)}\n`);
 
     execFileSync(
@@ -79,7 +88,66 @@ function generatePackageSbom([packageDirArg, outputArg]) {
   }
 }
 
-export function selectPackageClosure(workspaceBom, manifest) {
+export function collectPnpmOptionalDependencyEdges(
+  workspaceBom,
+  lockfile,
+  manifest,
+  packageRelativeDir,
+) {
+  // cdxgen 12.7.1 emits pnpm optional components but omits their dependency edges.
+  const componentsByIdentity = new Map(
+    [
+      ...(workspaceBom.components ?? []),
+      ...(workspaceBom.metadata?.component?.components ?? []),
+    ].map((component) => [
+      `${componentName(component)}\0${component.version}`,
+      component["bom-ref"],
+    ]),
+  );
+  const optionalEdges = new Map();
+  const addEdges = (parentRef, dependencies, parentName) => {
+    const entries = Object.entries(dependencies ?? {});
+    if (!entries.length) return;
+    if (!parentRef) {
+      throw new Error(
+        `Workspace SBOM has no component for optional dependency parent ${parentName}`,
+      );
+    }
+    const refs = entries.map(([name, value]) => {
+      const version = lockfileDependencyVersion(value);
+      const ref = componentsByIdentity.get(`${name}\0${version}`);
+      if (!ref) {
+        throw new Error(
+          `Workspace SBOM has no component for optional dependency ${name}@${version}`,
+        );
+      }
+      return ref;
+    });
+    if (refs.length) optionalEdges.set(parentRef, refs);
+  };
+
+  const packageRoot = (workspaceBom.metadata?.component?.components ?? []).find(
+    (component) => componentName(component) === manifest.name,
+  );
+  addEdges(
+    packageRoot?.["bom-ref"],
+    lockfile.importers?.[packageRelativeDir]?.optionalDependencies,
+    `${manifest.name}@${manifest.version}`,
+  );
+
+  for (const [snapshotKey, snapshot] of Object.entries(lockfile.snapshots ?? {})) {
+    if (!snapshot?.optionalDependencies) continue;
+    const { name, version } = lockfilePackageIdentity(snapshotKey);
+    addEdges(
+      componentsByIdentity.get(`${name}\0${version}`),
+      snapshot.optionalDependencies,
+      `${name}@${version}`,
+    );
+  }
+  return optionalEdges;
+}
+
+export function selectPackageClosure(workspaceBom, manifest, additionalEdges = new Map()) {
   const packageRoot = (workspaceBom.metadata?.component?.components ?? []).find(
     (component) => componentName(component) === manifest.name,
   );
@@ -109,9 +177,12 @@ export function selectPackageClosure(workspaceBom, manifest) {
     ...Object.keys(manifest.optionalDependencies ?? {}),
     ...Object.keys(manifest.peerDependencies ?? {}),
   ]);
-  const directRefs = (packageDependency.dependsOn ?? []).filter((ref) =>
-    runtimeNames.has(packageNameFromPurl(ref)),
-  );
+  const directRefs = [
+    ...new Set([
+      ...(packageDependency.dependsOn ?? []),
+      ...(additionalEdges.get(packageRoot["bom-ref"]) ?? []),
+    ]),
+  ].filter((ref) => runtimeNames.has(packageNameFromPurl(ref)));
   const foundRuntimeNames = new Set(directRefs.map(packageNameFromPurl));
   const missing = [...runtimeNames].filter((name) => !foundRuntimeNames.has(name));
   if (missing.length) {
@@ -133,7 +204,10 @@ export function selectPackageClosure(workspaceBom, manifest) {
       throw new Error(`Workspace SBOM component ${ref} has no dependency graph entry`);
     }
     includedRefs.add(ref);
-    for (const dependencyRef of dependency.dependsOn ?? []) {
+    for (const dependencyRef of new Set([
+      ...(dependency.dependsOn ?? []),
+      ...(additionalEdges.get(ref) ?? []),
+    ])) {
       if (!includedRefs.has(dependencyRef)) queue.push(dependencyRef);
     }
   }
@@ -158,7 +232,12 @@ export function selectPackageClosure(workspaceBom, manifest) {
     { ref: root["bom-ref"], dependsOn: [...directRefs].sort() },
     ...[...includedRefs].sort().map((ref) => ({
       ref,
-      dependsOn: (dependenciesByRef.get(ref)?.dependsOn ?? [])
+      dependsOn: [
+        ...new Set([
+          ...(dependenciesByRef.get(ref)?.dependsOn ?? []),
+          ...(additionalEdges.get(ref) ?? []),
+        ]),
+      ]
         .filter((dependencyRef) => includedRefs.has(dependencyRef))
         .sort(),
     })),
@@ -191,6 +270,25 @@ function packageNameFromPurl(ref) {
   const value = ref.slice(prefix.length);
   const versionSeparator = value.lastIndexOf("@");
   return decodeURIComponent(versionSeparator > 0 ? value.slice(0, versionSeparator) : value);
+}
+
+function lockfileDependencyVersion(value) {
+  const resolved = typeof value === "object" && value !== null ? value.version : value;
+  if (
+    typeof resolved !== "string" ||
+    resolved.startsWith("link:") ||
+    resolved.startsWith("file:")
+  ) {
+    throw new Error(`Unsupported optional dependency resolution: ${JSON.stringify(value)}`);
+  }
+  return resolved.split("(")[0].replace(/^npm:[^@]+@/, "");
+}
+
+function lockfilePackageIdentity(snapshotKey) {
+  const key = snapshotKey.split("(")[0];
+  const separator = key.lastIndexOf("@");
+  if (separator <= 0) throw new Error(`Invalid pnpm snapshot key: ${snapshotKey}`);
+  return { name: key.slice(0, separator), version: key.slice(separator + 1) };
 }
 
 function scrubEnvironment(environment) {

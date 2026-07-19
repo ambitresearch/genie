@@ -61,8 +61,10 @@ check:
 - **npm SBOMs**: a CycloneDX JSON SBOM is generated for each package with
   `@cyclonedx/cdxgen` (a lockfile-pinned, integrity-hashed devDependency invoked by
   `scripts/generate-package-sbom.mjs`; it reads the root `pnpm-lock.yaml` once in
-  non-recursive, no-install mode, then re-roots the selected package's manifest-declared
-  runtime dependency closure), signed and verified with cosign, and
+  non-recursive, no-install mode, fails if any dependency extractor errors, then re-roots
+  the unfiltered graph to the selected package's manifest-declared runtime dependency
+  closure; the wrapper restores pnpm optional-dependency edges that cdxgen emits as
+  components without graph links), signed and verified with cosign, and
   attached to that package's GitHub Release with its `.sig` bundle
   (`genie-server-sbom.cdx.json`, `genie-viewer-sbom.cdx.json`). The SBOM is generated
   before `npm publish` (so a tooling failure surfaces before the irreversible publish) and

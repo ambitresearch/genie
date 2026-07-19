@@ -202,7 +202,15 @@ jobs:
           printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$npmrc"
 
           npm_user=$(npm --userconfig "$npmrc" whoami --registry=https://registry.npmjs.org)
-          npm --userconfig "$npmrc" org ls ambitresearch "$npm_user" --json >/dev/null
+          org_members=$(npm --userconfig "$npmrc" org ls ambitresearch --json)
+          ORG_MEMBERS="$org_members" NPM_USER="$npm_user" node -e '
+            const members = JSON.parse(process.env.ORG_MEMBERS);
+            const npmUser = process.env.NPM_USER;
+            if (!members || Array.isArray(members) || !Object.hasOwn(members, npmUser)) {
+              console.error(`npm user ${npmUser} is not a member of @ambitresearch`);
+              process.exit(1);
+            }
+          '
           npm --userconfig "$npmrc" access list packages @ambitresearch --json >/dev/null
           printf '%s' "$DOCKERHUB_TOKEN" \
             | docker --config "$docker_config" login docker.io \

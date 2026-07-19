@@ -199,9 +199,9 @@ once, signs and locally verifies that exact tarball and its CycloneDX SBOM, then
 publishes the same tarball. It also signs and verifies `genie.mcpb` and both
 container image digests. Container builds carry SPDX SBOM and max-provenance
 attestations. Package SBOM generation re-roots cdxgen's non-recursive root
-lockfile graph to each manifest-declared production closure; focused replay
-produced 162 server components and 45 viewer components with strict schema/deep
-validation clean. `.github/workflows/ci.yml` additionally runs digest-pinned
+lockfile graph to each manifest-declared production closure and restores its
+optional-dependency edges; focused replay produced 213 server components and 110
+viewer components with strict schema/deep validation clean. `.github/workflows/ci.yml` additionally runs digest-pinned
 Gitleaks against full Git history; its allowlist contains exact deterministic
 fixture values rather than path, commit, or rule-wide exclusions.
 
