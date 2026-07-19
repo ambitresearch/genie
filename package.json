@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@anthropic-ai/mcpb": "2.1.2",
+    "@cyclonedx/cdxgen": "12.7.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.0.0",
     "eslint": "^10.5.0",
@@ -28,7 +29,14 @@
     "tsx": "^4.22.4",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.62.0",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "yaml": "2.9.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "external-editor>tmp": "0.2.7",
+      "typescript": "$typescript"
+    }
   },
   "license": "MIT",
   "author": "Roshan Gautam",

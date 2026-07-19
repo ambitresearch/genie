@@ -37,7 +37,7 @@ jobs:
           - package: "@ambitresearch/genie-viewer"
             dir: packages/viewer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           # `workflow_run` otherwise checks out whichever commit is currently
           # at main, not necessarily the commit that completed CI.
@@ -45,10 +45,10 @@ jobs:
           persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -61,6 +61,11 @@ jobs:
 
       - name: Build ${{ matrix.package }}
         run: pnpm --filter ${{ matrix.package }} build
+
+      - name: Generate CycloneDX SBOM (${{ matrix.package }})
+        run: |
+          node scripts/generate-package-sbom.mjs \
+            "${{ matrix.dir }}" "$RUNNER_TEMP/package-sbom.cdx.json"
 
       - name: Smoke packaged CLI entry point
         working-directory: ${{ matrix.dir }}
@@ -98,9 +103,16 @@ jobs:
         # notice so a future manifest regression breaks CI instead of
         # publishing a corrected-but-unintended package.
         run: |
-          set -o pipefail
-          npm publish --dry-run --provenance --access public 2>&1 | tee publish-dry-run.log
-          if grep -qi "auto-corrected" publish-dry-run.log; then
+          set -euo pipefail
+          tmp_dir=$(mktemp -d)
+          trap 'rm -rf "$tmp_dir"' EXIT
+          npm pack --json --pack-destination "$tmp_dir" . \
+            > "$tmp_dir/pack.json" \
+            2> >(tee "$tmp_dir/pack-stderr.log" >&2)
+          filename=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))[0].filename' "$tmp_dir/pack.json")
+          npm publish "$tmp_dir/$filename" --dry-run --provenance --access public \
+            2>&1 | tee "$tmp_dir/publish-dry-run.log"
+          if grep -qi "auto-corrected" "$tmp_dir/pack-stderr.log" "$tmp_dir/publish-dry-run.log"; then
             echo "::error::npm reported package.json auto-corrections during publish --dry-run. This means the published manifest would differ from the source manifest (e.g. an invalid bin/script field was silently dropped). Fix the manifest so no auto-correction is needed." >&2
             exit 1
           fi
@@ -132,6 +144,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
@@ -141,6 +155,10 @@ jobs:
             --jq '[.[] | select(.merged_at != null and (.head.ref | startswith("release-please--")))][0].number // empty')
 
           if [ -n "$pending_release_pr" ]; then
+            if [ "$current_sha" != "$TESTED_SHA" ]; then
+              echo "::error::A newer main commit ($current_sha) arrived after CI completed for release commit $TESTED_SHA. Wait for the newer main CI completion before creating tags."
+              exit 1
+            fi
             visibility=$(gh api "repos/${{ github.repository }}" --jq '.visibility')
             if [ "$visibility" != "public" ]; then
               echo "::error::npm provenance requires a public source repository; ${GITHUB_REPOSITORY} is currently '$visibility'. Make the repository public, then rerun CI for $TESTED_SHA."
@@ -148,6 +166,10 @@ jobs:
             fi
             if [ -z "$NPM_TOKEN" ]; then
               echo "::error::The NPM_TOKEN repository secret is not configured. Add a publish-scoped npm token, then rerun CI for $TESTED_SHA."
+              exit 1
+            fi
+            if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+              echo "::error::DOCKERHUB_USERNAME and DOCKERHUB_TOKEN must both be configured before creating a release. Add both repository secrets, then rerun CI for $TESTED_SHA."
               exit 1
             fi
             echo "create_release=true" >> "$GITHUB_OUTPUT"
@@ -162,8 +184,40 @@ jobs:
             echo "update_pr=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # These non-destructive probes catch missing/revoked credentials and npm
+      # scope-membership mistakes. Registry write scopes cannot be proven
+      # without mutating a package/image; the publish jobs remain authoritative.
+      - name: Validate production registry authentication
+        if: steps.head.outputs.create_release == 'true'
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          npmrc=$(mktemp)
+          docker_config=$(mktemp -d)
+          trap 'rm -f "$npmrc"; rm -rf "$docker_config"' EXIT
+          chmod 600 "$npmrc"
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$npmrc"
+
+          npm_user=$(npm --userconfig "$npmrc" whoami --registry=https://registry.npmjs.org)
+          org_members=$(npm --userconfig "$npmrc" org ls ambitresearch --json)
+          ORG_MEMBERS="$org_members" NPM_USER="$npm_user" node -e '
+            const members = JSON.parse(process.env.ORG_MEMBERS);
+            const npmUser = process.env.NPM_USER;
+            if (!members || Array.isArray(members) || !Object.hasOwn(members, npmUser)) {
+              console.error(`npm user ${npmUser} is not a member of @ambitresearch`);
+              process.exit(1);
+            }
+          '
+          npm --userconfig "$npmrc" access list packages @ambitresearch --json >/dev/null
+          printf '%s' "$DOCKERHUB_TOKEN" \
+            | docker --config "$docker_config" login docker.io \
+                --username "$DOCKERHUB_USERNAME" --password-stdin
+
       - name: Create the CI-gated GitHub release
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         if: steps.head.outputs.create_release == 'true'
         id: release
         with:
@@ -172,7 +226,7 @@ jobs:
           skip-github-pull-request: true
 
       - name: Open or update the release PR
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         if: steps.head.outputs.update_pr == 'true'
         with:
           config-file: release-please-config.json
@@ -226,18 +280,19 @@ jobs:
     if: needs.release-please.outputs.server_released == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # attach the SBOM asset to the server release
       id-token: write # OIDC — required for `--provenance` (AC2)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-please.outputs.server_tag }}
+          persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -253,8 +308,58 @@ jobs:
       - name: Build @ambitresearch/genie
         run: pnpm --filter @ambitresearch/genie build
 
+      - name: Generate CycloneDX SBOM
+        run: |
+          mkdir -p artifacts/server
+          node scripts/generate-package-sbom.mjs \
+            packages/server artifacts/server/genie-server-sbom.cdx.json
+
+      - name: Pack the exact npm artifact
+        id: artifact
+        run: |
+          set -euo pipefail
+          npm pack --json --pack-destination artifacts/server ./packages/server \
+            > artifacts/server/pack.json
+          filename=$(node -p 'JSON.parse(require("node:fs").readFileSync("artifacts/server/pack.json", "utf8"))[0].filename')
+          tarball="artifacts/server/$filename"
+          test -f "$tarball"
+          rm artifacts/server/pack.json
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Sign and verify npm artifact and SBOM
+        env:
+          TARBALL: ${{ steps.artifact.outputs.tarball }}
+          SBOM: artifacts/server/genie-server-sbom.cdx.json
+          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for artifact in "$TARBALL" "$SBOM"; do
+            cosign sign-blob --yes --bundle "$artifact.sig" "$artifact"
+            cosign verify-blob --bundle "$artifact.sig" \
+              --certificate-identity="$CERTIFICATE_IDENTITY" \
+              --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+              --certificate-github-workflow-sha="$SIGNING_SHA" \
+              "$artifact"
+          done
+
+      - name: Attach signed artifacts to the server release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ needs.release-please.outputs.server_tag }}
+          files: |
+            artifacts/server/*.tgz
+            artifacts/server/*.tgz.sig
+            artifacts/server/*-sbom.cdx.json
+            artifacts/server/*-sbom.cdx.json.sig
+
       - name: Publish @ambitresearch/genie (public, provenance)
-        working-directory: packages/server
         # AC3 — NODE_AUTH_TOKEN sourced from the NPM_TOKEN repo secret; npm's
         # own tooling reads this env var during `npm publish` when a registry
         # requires auth (set above via setup-node's registry-url).
@@ -264,7 +369,8 @@ jobs:
         # the Ambit Research-owned fallback is recorded in M0-04 / CLAUDE.md.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+          TARBALL: ${{ steps.artifact.outputs.tarball }}
+        run: npm publish "$TARBALL" --provenance --access public
 
   publish-viewer:
     name: publish @ambitresearch/genie-viewer (npm)
@@ -272,18 +378,19 @@ jobs:
     if: needs.release-please.outputs.viewer_released == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # attach the SBOM asset to the viewer release
       id-token: write # OIDC — required for `--provenance` (AC2)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-please.outputs.viewer_tag }}
+          persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: pnpm
@@ -299,13 +406,64 @@ jobs:
       - name: Build @ambitresearch/genie-viewer
         run: pnpm --filter @ambitresearch/genie-viewer build
 
+      - name: Generate CycloneDX SBOM
+        run: |
+          mkdir -p artifacts/viewer
+          node scripts/generate-package-sbom.mjs \
+            packages/viewer artifacts/viewer/genie-viewer-sbom.cdx.json
+
+      - name: Pack the exact npm artifact
+        id: artifact
+        run: |
+          set -euo pipefail
+          npm pack --json --pack-destination artifacts/viewer ./packages/viewer \
+            > artifacts/viewer/pack.json
+          filename=$(node -p 'JSON.parse(require("node:fs").readFileSync("artifacts/viewer/pack.json", "utf8"))[0].filename')
+          tarball="artifacts/viewer/$filename"
+          test -f "$tarball"
+          rm artifacts/viewer/pack.json
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Sign and verify npm artifact and SBOM
+        env:
+          TARBALL: ${{ steps.artifact.outputs.tarball }}
+          SBOM: artifacts/viewer/genie-viewer-sbom.cdx.json
+          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for artifact in "$TARBALL" "$SBOM"; do
+            cosign sign-blob --yes --bundle "$artifact.sig" "$artifact"
+            cosign verify-blob --bundle "$artifact.sig" \
+              --certificate-identity="$CERTIFICATE_IDENTITY" \
+              --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+              --certificate-github-workflow-sha="$SIGNING_SHA" \
+              "$artifact"
+          done
+
+      - name: Attach signed artifacts to the viewer release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ needs.release-please.outputs.viewer_tag }}
+          files: |
+            artifacts/viewer/*.tgz
+            artifacts/viewer/*.tgz.sig
+            artifacts/viewer/*-sbom.cdx.json
+            artifacts/viewer/*-sbom.cdx.json.sig
+
       - name: Publish @ambitresearch/genie-viewer (public, provenance)
-        working-directory: packages/viewer
         # AC5 — `@ambitresearch/genie-viewer` publishes scoped + public via the same
         # publishConfig pattern as the server package above.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+          TARBALL: ${{ steps.artifact.outputs.tarball }}
+        run: npm publish "$TARBALL" --provenance --access public
 
   # M5-05 / DRO-277 AC6 — attach the macOS Claude Desktop bundle to every
   # server GitHub Release. Build from the release tag so the bundle version
@@ -317,16 +475,18 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-please.outputs.server_tag }}
+          persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -337,16 +497,37 @@ jobs:
       - name: Build Claude Desktop bundle
         run: pnpm bundle:mcpb
 
-      - name: Attach bundle to the server release
-        uses: softprops/action-gh-release@v2
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Sign and verify Claude Desktop bundle
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle dist/genie.mcpb.sig dist/genie.mcpb
+          cosign verify-blob --bundle dist/genie.mcpb.sig \
+            --certificate-identity="$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+            --certificate-github-workflow-sha="$SIGNING_SHA" \
+            dist/genie.mcpb
+
+      - name: Attach signed bundle to the server release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.release-please.outputs.server_tag }}
-          files: dist/genie.mcpb
+          files: |
+            dist/genie.mcpb
+            dist/genie.mcpb.sig
 
-  # M5-07 / DRO-279 — publish each container registry independently so a
-  # Docker Hub credential failure cannot block the built-in-token GHCR path.
-  # Both jobs build amd64 + arm64 from the CI-verified server release tag and
-  # sign that registry's digest with GitHub OIDC (no stored signing key).
+  # M5-07 / DRO-279 — publish each registry in its own retryable job after the
+  # pre-tag credential gate succeeds. Both jobs build amd64 + arm64 from the
+  # CI-verified server release tag and sign that registry's digest with GitHub
+  # OIDC (no stored signing key).
   docker-publish-ghcr:
     name: publish GHCR image (multi-arch, signed)
     needs: [publish-dry-run, release-please, verify-release]
@@ -357,15 +538,16 @@ jobs:
       packages: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-please.outputs.server_tag }}
+          persist-credentials: false
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Derive image version
         id: tags
@@ -378,31 +560,64 @@ jobs:
             *) echo "::error::Unexpected server release tag: $SERVER_TAG"; exit 1 ;;
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "staging=staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push multi-arch image
+      - name: Build and push staging multi-arch image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/roshangautam/genie:${{ steps.tags.outputs.version }}
-            ghcr.io/roshangautam/genie:latest
+          # Supply-chain (issue #207 / M6-04): attach an SPDX SBOM and a
+          # max-detail SLSA provenance attestation to the pushed image so the
+          # image manifest carries its own bill of materials + build metadata.
+          sbom: true
+          provenance: mode=max
+          tags: ghcr.io/roshangautam/genie:${{ steps.tags.outputs.staging }}
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
 
       - name: Sign GHCR image digest (keyless)
         run: cosign sign --yes "ghcr.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+
+      - name: Verify GHCR image signature
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          cosign verify \
+            --certificate-identity="$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+            --certificate-github-workflow-sha="$SIGNING_SHA" \
+            "ghcr.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+
+      - name: Promote verified GHCR digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          image=ghcr.io/roshangautam/genie
+          docker buildx imagetools create \
+            --tag "$image:$VERSION" \
+            --tag "$image:latest" \
+            --metadata-file promotion.json \
+            "$image@$BUILD_DIGEST"
+          promoted_digest=$(node -p 'JSON.parse(require("node:fs").readFileSync("promotion.json", "utf8"))["containerimage.descriptor"].digest')
+          test "$promoted_digest" = "$BUILD_DIGEST"
 
   docker-publish-dockerhub:
     name: publish Docker Hub image (multi-arch, signed)
@@ -413,15 +628,16 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-please.outputs.server_tag }}
+          persist-credentials: false
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Derive image version
         id: tags
@@ -434,28 +650,60 @@ jobs:
             *) echo "::error::Unexpected server release tag: $SERVER_TAG"; exit 1 ;;
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "staging=staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: docker.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push multi-arch image
+      - name: Build and push staging multi-arch image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            docker.io/roshangautam/genie:${{ steps.tags.outputs.version }}
-            docker.io/roshangautam/genie:latest
+          # Supply-chain (issue #207 / M6-04): SBOM + max provenance attestation,
+          # matching the GHCR image above.
+          sbom: true
+          provenance: mode=max
+          tags: docker.io/roshangautam/genie:${{ steps.tags.outputs.staging }}
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
 
       - name: Sign Docker Hub image digest (keyless)
         run: cosign sign --yes "docker.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+
+      - name: Verify Docker Hub image signature
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          cosign verify \
+            --certificate-identity="$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+            --certificate-github-workflow-sha="$SIGNING_SHA" \
+            "docker.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+
+      - name: Promote verified Docker Hub digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          image=docker.io/roshangautam/genie
+          docker buildx imagetools create \
+            --tag "$image:$VERSION" \
+            --tag "$image:latest" \
+            --metadata-file promotion.json \
+            "$image@$BUILD_DIGEST"
+          promoted_digest=$(node -p 'JSON.parse(require("node:fs").readFileSync("promotion.json", "utf8"))["containerimage.descriptor"].digest')
+          test "$promoted_digest" = "$BUILD_DIGEST"

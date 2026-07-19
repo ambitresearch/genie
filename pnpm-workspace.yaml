@@ -4,3 +4,36 @@ packages:
   - "packages/e2e"
 allowBuilds:
   esbuild: true
+
+# Supply-chain hardening (M6-03 re-audit follow-up, issue #207).
+# See docs/supply-chain.md for the full threat model and rationale.
+
+# Reject non-registry transitive dependencies (git/tarball/http/link specifiers
+# introduced by a subdependency). All first-party links are workspace:* direct
+# deps, which remain allowed; only *exotic subdeps* are blocked. Defaults true in
+# pnpm 11 but is set explicitly here so the policy is pinned under pnpm 10.x too.
+blockExoticSubdeps: true
+
+# Cooldown: refuse to install any published version younger than 7 days (10080
+# minutes). Blunts the "publish malicious patch, hope CI pulls it before takedown"
+# window on fresh installs / lockfile updates. Does NOT apply to
+# --frozen-lockfile installs (all CI legs), so it cannot break reproducible CI.
+minimumReleaseAge: 10080
+
+# The @cline/cli-* platform binaries are an exactly-pinned, fast-moving E2E test
+# dependency (packages/e2e). They are pinned to an exact version in that
+# package's manifest and are dev/test-only, never shipped, so the cooldown adds
+# no supply-chain value there but would otherwise block routine lockfile
+# maintenance whenever a new cline release is <7 days old. Exclude them from the
+# cooldown; every other dependency still honours minimumReleaseAge.
+minimumReleaseAgeExclude:
+  - "@cline/cli-darwin-arm64"
+  - "@cline/cli-darwin-x64"
+  - "@cline/cli-linux-arm64"
+  - "@cline/cli-linux-x64"
+  - "@cline/cli-windows-arm64"
+  - "@cline/cli-windows-x64"
+
+# Reject a package release when its registry trust evidence is weaker than an
+# earlier release. Added in pnpm 10.21; the repository pins pnpm 10.34.4.
+trustPolicy: no-downgrade

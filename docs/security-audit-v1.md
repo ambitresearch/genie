@@ -5,8 +5,10 @@ SSRF finding is fixed and regression-tested. Real-browser CSP and sandbox
 probes passed. Dependency scanning found no known vulnerabilities.
 Prompt-injection probes observed no system-prompt leak, but generated tool
 output remains untrusted and schema validation is not a confidentiality
-control. Open supply-chain findings are tracked in GitHub issue #207 and block
-the GA tag, but not closure of this completed audit-and-remediation issue.
+control. PR #210 implements the supply-chain remediation tracked by GitHub
+issue #207 (SHA-pinned actions, pnpm install policy, secret scanning, signed
+release artifacts, SBOM generation, and `docs/supply-chain.md`). Merge and
+first-live-release evidence remain pending.
 
 Evidence in this report is limited to commands and outputs that were observed.
 The current re-audit was run on PR #189 after its SSRF follow-up changes.
@@ -34,18 +36,18 @@ Result: **0 known vulnerabilities in the current lockfile via OSV Scanner.**
 
 ## AC2 - OWASP Top 10 Review
 
-| Category                         | Status                | Evidence / residual risk                                                                                                                                                                                                                                                                        |
-| -------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A01 Broken Access Control        | Mitigated             | `withPlanGuard` centralizes plan presence, expiry, operation mode, and path checks. `plan-guard.test.ts` passed 19/19.                                                                                                                                                                          |
-| A02 Cryptographic Failures       | N/A - not exposed     | The server does not store credentials or implement application crypto. Endpoint credentials remain environment / host configuration.                                                                                                                                                            |
-| A03 Injection                    | Reviewed              | No shell-execution API was found in server source. Semgrep identified one browser `postMessage("*")` finding, discussed below; no server injection finding was reported.                                                                                                                        |
-| A04 Insecure Design              | Reviewed              | Plan and write/delete operations are separate; generated output cannot write without a later plan-guarded call. Model output is nevertheless untrusted data at the MCP host boundary.                                                                                                           |
-| A05 Security Misconfiguration    | Mitigated             | Embedded CSP uses `default-src 'none'`, hash-pinned script/style, `connect-src 'none'`, `object-src 'none'`, `base-uri 'none'`, and `form-action 'none'`. Real Chromium probes passed 12/12 in CI.                                                                                              |
-| A06 Vulnerable Components        | Clean in current scan | OSV Scanner reported no issues across 543 lockfile packages.                                                                                                                                                                                                                                    |
-| A07 Identification/Auth Failures | N/A - not exposed     | Authentication belongs to the MCP transport/harness; this package exposes no user-account surface.                                                                                                                                                                                              |
-| A08 Software/Data Integrity      | Open findings         | Semgrep reported mutable GitHub Action tags and missing pnpm trust-policy settings. GitHub issue #69 (M6-04 / DRO-292) is closed, but this checkout contains no release signing/SBOM workflow and the new findings are not covered by its recorded evidence. Follow-up: #207.                   |
-| A09 Logging/Monitoring Failures  | Reviewed              | Plan-guard rejection logs go to stderr and omit file contents. Generation logs include model, usage, latency, component name, and prompt hash.                                                                                                                                                  |
-| A10 SSRF                         | Fixed in this PR      | Every `refUrl` hop is syntactically checked, resolved, classified as globally routable unicast, and connected through the exact validated address. Redirects are manual and bounded. IPv4-mapped IPv6, unspecified, link-local, multicast, private, loopback, and CGNAT addresses are rejected. |
+| Category                         | Status                | Evidence / residual risk                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A01 Broken Access Control        | Mitigated             | `withPlanGuard` centralizes plan presence, expiry, operation mode, and path checks. `plan-guard.test.ts` passed 19/19.                                                                                                                                                                                                                                                             |
+| A02 Cryptographic Failures       | N/A - not exposed     | The server does not store credentials or implement application crypto. Endpoint credentials remain environment / host configuration.                                                                                                                                                                                                                                               |
+| A03 Injection                    | Reviewed              | No shell-execution API was found in server source. Semgrep identified one browser `postMessage("*")` finding, discussed below; no server injection finding was reported.                                                                                                                                                                                                           |
+| A04 Insecure Design              | Reviewed              | Plan and write/delete operations are separate; generated output cannot write without a later plan-guarded call. Model output is nevertheless untrusted data at the MCP host boundary.                                                                                                                                                                                              |
+| A05 Security Misconfiguration    | Mitigated             | Embedded CSP uses `default-src 'none'`, hash-pinned script/style, `connect-src 'none'`, `object-src 'none'`, `base-uri 'none'`, and `form-action 'none'`. Real Chromium probes passed 12/12 in CI.                                                                                                                                                                                 |
+| A06 Vulnerable Components        | Clean in current scan | OSV Scanner reported no issues across 761 lockfile packages.                                                                                                                                                                                                                                                                                                                       |
+| A07 Identification/Auth Failures | N/A - not exposed     | Authentication belongs to the MCP transport/harness; this package exposes no user-account surface.                                                                                                                                                                                                                                                                                 |
+| A08 Software/Data Integrity      | Addressed in #210     | Every third-party action is SHA-pinned with a version comment; pnpm enforces exotic-subdependency, release-age, and trust-downgrade policy; full Git history is secret-scanned; and `release.yml` signs and verifies release blobs and image digests while publishing npm provenance and CycloneDX SBOMs. First-live-release evidence remains pending. See `docs/supply-chain.md`. |
+| A09 Logging/Monitoring Failures  | Reviewed              | Plan-guard rejection logs go to stderr and omit file contents. Generation logs include model, usage, latency, component name, and prompt hash.                                                                                                                                                                                                                                     |
+| A10 SSRF                         | Fixed in this PR      | Every `refUrl` hop is syntactically checked, resolved, classified as globally routable unicast, and connected through the exact validated address. Redirects are manual and bounded. IPv4-mapped IPv6, unspecified, link-local, multicast, private, loopback, and CGNAT addresses are rejected.                                                                                    |
 
 SAST replay:
 
@@ -183,18 +185,37 @@ The final fix:
 
 No separate issue is needed because this P1 is fixed in PR #189.
 
-### Open Supply-Chain Findings
+### Supply-Chain Findings — remediation in #210
 
-Semgrep's action pinning and pnpm trust-policy findings are still open in this
-checkout. `.github/workflows/release.yml` now publishes `@ambitresearch/genie` and
-`@ambitresearch/genie-viewer` with npm provenance, satisfying the implemented portion of
-GitHub issue #69 (M6-04 / DRO-292). The repository still lacks the issue's
-cosign signatures, SBOM generation, real-release verification, and
-`docs/supply-chain.md`. A follow-up must reconcile that partially completed,
-closed issue with the remaining repository state before GA.
+PR #210 addresses the action-pinning and pnpm-policy findings tracked by issue
+#207. Every third-party action is pinned to a full 40-character commit SHA with
+its reviewed `# vX.Y.Z` source release, and `pnpm-workspace.yaml` enforces
+`blockExoticSubdeps: true`, `minimumReleaseAge: 10080`, and
+`trustPolicy: no-downgrade` under the repository-pinned pnpm 10.34.4.
 
-Follow-up filed: GitHub issue #207, `security(ci): close supply-chain gaps
-found by M6-03 re-audit`.
+`.github/workflows/release.yml` publishes `@ambitresearch/genie` and
+`@ambitresearch/genie-viewer` with npm provenance. It packs each npm artifact
+once, signs and locally verifies that exact tarball and its CycloneDX SBOM, then
+publishes the same tarball. It also signs and verifies `genie.mcpb` and both
+container image digests. Container builds carry SPDX SBOM and max-provenance
+attestations. Package SBOM generation re-roots cdxgen's non-recursive root
+lockfile graph to each manifest-declared production closure and restores its
+optional-dependency edges; focused replay produced 213 server components and 110
+viewer components with strict schema/deep validation clean. `.github/workflows/ci.yml` additionally runs digest-pinned
+Gitleaks against full Git history; its allowlist contains exact deterministic
+fixture values rather than path, commit, or rule-wide exclusions.
+
+This reconciles the implementation scope of issue #69 (M6-04 / DRO-292), which
+was reopened until production evidence exists from the first live release after
+the repository is public and the required npm and registry credentials exist.
+
+The one remaining OWASP-scan finding is the viewer's `postMessage(targetOrigin:
+"*")`, which is retained as the documented host-protocol residual risk described
+under AC2 (A08 now Fixed), not a supply-chain gap.
+
+Follow-up implementation: PR #210 for GitHub issue #207, `security(ci): close
+supply-chain gaps found by M6-03 re-audit`. Close only after merge and green
+post-merge CI.
 
 ## AC6 - Re-audit / Sign-off
 
@@ -211,11 +232,16 @@ go run github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.1 \
   scan source -r .                                              # no issues, 543 packages
 ```
 
-The final Semgrep replay was **not clean**: its 28 findings are documented
-above rather than omitted. The local Chromium probe replay passed 12/12. The
-full suite was also run, but two unrelated tests repeatedly exceeded Vitest's
-5-second timeout (`packages/server/src/cli.test.ts` and the fresh-kit browser
-case in `packages/server/src/create_kit.test.ts`); focused security tests,
-lint, typecheck, and build passed. The M6-03 audit and fixes are signed off for
-merge and issue #68 closure. GitHub issue #207's A08 findings remain an explicit
-blocker for the GA tag until resolved or accepted with evidence.
+The M6-03-era Semgrep replay reported 28 findings: 27 supply-chain findings and
+the viewer `postMessage("*")` residual risk. The PR #210 replay reduced Semgrep
+to that one accepted finding. OSV Scanner found no vulnerabilities across 761
+lockfile packages after pinning `tmp@0.2.7`; Gitleaks 8.30.1 scanned 391 commits
+with no findings after applying the exact fixture-token allowlist. Lint,
+typecheck, build, Actionlint, focused supply-chain tests, MCPB packaging, and
+strict/deep package-SBOM validation passed. The local full test run reached 1845
+passing tests but retained pre-existing timing failures in the watcher and
+100-ms viewer HMR benchmark; neither implementation is changed by #210, and
+their prior exact-head CI jobs were green. PR CI remains the clean-run merge
+gate. Production signature, provenance, and transparency-log evidence must be
+captured from the first live release. Issue #207 remains open until this
+follow-up merges with green CI.
