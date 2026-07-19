@@ -77,7 +77,9 @@ check:
   CI-verified release tag. `docker/build-push-action` is configured with `sbom: true`
   and `provenance: mode=max`, so each pushed image manifest carries an embedded
   SPDX SBOM and a max-detail SLSA provenance attestation. Each image digest is then
-  signed and locally verified keyless with cosign using GitHub OIDC — no long-lived
+  pushed under a unique, unpromoted staging tag, signed and locally verified keyless
+  with cosign using GitHub OIDC, and only then promoted to the release version and
+  `latest` tags. Promotion metadata must report the exact signed digest. No long-lived
   signing key is stored.
 - **Claude Desktop bundle** (`genie.mcpb`): built from the release tag, signed and locally
   verified keyless, then attached to the server GitHub Release with its

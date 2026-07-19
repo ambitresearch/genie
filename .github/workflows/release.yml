@@ -552,6 +552,7 @@ jobs:
             *) echo "::error::Unexpected server release tag: $SERVER_TAG"; exit 1 ;;
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "staging=staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -560,7 +561,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push multi-arch image
+      - name: Build and push staging multi-arch image
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
@@ -573,9 +574,7 @@ jobs:
           # image manifest carries its own bill of materials + build metadata.
           sbom: true
           provenance: mode=max
-          tags: |
-            ghcr.io/roshangautam/genie:${{ steps.tags.outputs.version }}
-            ghcr.io/roshangautam/genie:latest
+          tags: ghcr.io/roshangautam/genie:${{ steps.tags.outputs.staging }}
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -596,6 +595,21 @@ jobs:
             --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
             --certificate-github-workflow-sha="$SIGNING_SHA" \
             "ghcr.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+
+      - name: Promote verified GHCR digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          image=ghcr.io/roshangautam/genie
+          docker buildx imagetools create \
+            --tag "$image:$VERSION" \
+            --tag "$image:latest" \
+            --metadata-file promotion.json \
+            "$image@$BUILD_DIGEST"
+          promoted_digest=$(node -p 'JSON.parse(require("node:fs").readFileSync("promotion.json", "utf8"))["containerimage.descriptor"].digest')
+          test "$promoted_digest" = "$BUILD_DIGEST"
 
   docker-publish-dockerhub:
     name: publish Docker Hub image (multi-arch, signed)
@@ -628,6 +642,7 @@ jobs:
             *) echo "::error::Unexpected server release tag: $SERVER_TAG"; exit 1 ;;
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "staging=staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
@@ -636,7 +651,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push multi-arch image
+      - name: Build and push staging multi-arch image
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
@@ -648,9 +663,7 @@ jobs:
           # matching the GHCR image above.
           sbom: true
           provenance: mode=max
-          tags: |
-            docker.io/roshangautam/genie:${{ steps.tags.outputs.version }}
-            docker.io/roshangautam/genie:latest
+          tags: docker.io/roshangautam/genie:${{ steps.tags.outputs.staging }}
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -671,3 +684,18 @@ jobs:
             --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
             --certificate-github-workflow-sha="$SIGNING_SHA" \
             "docker.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+
+      - name: Promote verified Docker Hub digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          image=docker.io/roshangautam/genie
+          docker buildx imagetools create \
+            --tag "$image:$VERSION" \
+            --tag "$image:latest" \
+            --metadata-file promotion.json \
+            "$image@$BUILD_DIGEST"
+          promoted_digest=$(node -p 'JSON.parse(require("node:fs").readFileSync("promotion.json", "utf8"))["containerimage.descriptor"].digest')
+          test "$promoted_digest" = "$BUILD_DIGEST"

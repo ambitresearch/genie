@@ -47,6 +47,7 @@ describe("supply-chain policy", () => {
 
     for (const { file, source } of workflowFiles) {
       const usesEntries = collectUses(parse(source));
+      const parsedCounts = new Map<string, number>();
       for (const uses of usesEntries) {
         if (uses.startsWith("./")) continue;
         const separator = uses.lastIndexOf("@");
@@ -54,15 +55,24 @@ describe("supply-chain policy", () => {
         const action = uses.slice(0, separator);
         const reviewed = reviewedActions.get(action);
         expect(reviewed, `${file}: unreviewed third-party action ${action}`).toBeDefined();
-        const [sha, version] = reviewed!;
+        const [sha] = reviewed!;
         expect(uses, `${file}: ${action}`).toBe(`${action}@${sha}`);
-        expect(source, `${file}: provenance annotation for ${action}`).toMatch(
-          new RegExp(
-            `^\\s*(?:-\\s*)?uses:\\s*["']?${escapeRegex(uses)}["']?\\s+#\\s+${escapeRegex(version)}\\s*$`,
-            "m",
-          ),
-        );
+        parsedCounts.set(action, (parsedCounts.get(action) ?? 0) + 1);
         seen.add(action);
+      }
+
+      for (const [action, [sha, version]] of reviewedActions) {
+        const annotatedCount = [
+          ...source.matchAll(
+            new RegExp(
+              `^\\s*(?:-\\s*)?uses:\\s*["']?${escapeRegex(`${action}@${sha}`)}["']?\\s+#\\s+${escapeRegex(version)}\\s*$`,
+              "gm",
+            ),
+          ),
+        ].length;
+        expect(annotatedCount, `${file}: annotated occurrences for ${action}`).toBe(
+          parsedCounts.get(action) ?? 0,
+        );
       }
     }
 
@@ -272,10 +282,21 @@ describe("supply-chain policy", () => {
       const source = job(release, name, nextName);
       expect(source).toContain("cosign sign --yes");
       expect(source).toContain("cosign verify");
+      expect(source).toContain("staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}");
+      expect(source).toContain("docker buildx imagetools create");
+      expect(source).toContain("--metadata-file promotion.json");
+      expect(source).toContain('test "$promoted_digest" = "$BUILD_DIGEST"');
       expect(source).toContain('--certificate-identity="$CERTIFICATE_IDENTITY"');
       expect(source).toContain('--certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER"');
       expect(source).toContain("SIGNING_SHA: ${{ github.sha }}");
       expect(source).toContain('--certificate-github-workflow-sha="$SIGNING_SHA"');
+      const build = source.indexOf("Build and push staging multi-arch image");
+      const sign = source.indexOf("cosign sign --yes");
+      const verify = source.indexOf("cosign verify");
+      const promote = source.indexOf("docker buildx imagetools create");
+      expect(build).toBeLessThan(sign);
+      expect(sign).toBeLessThan(verify);
+      expect(verify).toBeLessThan(promote);
     }
   });
 
