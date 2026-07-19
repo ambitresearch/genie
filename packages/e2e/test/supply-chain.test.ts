@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import { selectPackageClosure } from "../../../scripts/generate-package-sbom.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
@@ -16,6 +17,22 @@ const workflowFiles = readdirSync(workflowsRoot)
   .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))
   .map((file) => ({ file, source: readFileSync(resolve(workflowsRoot, file), "utf8") }));
 
+const reviewedActions = new Map(
+  Object.entries({
+    "actions/checkout": ["34e114876b0b11c390a56381ad16ebd13914f8d5", "v4.3.1"],
+    "actions/setup-node": ["49933ea5288caeca8642d1e84afbd3f7d6820020", "v4.4.0"],
+    "actions/upload-artifact": ["ea165f8d65b6e75b540449e92b4886f43607fa02", "v4.6.2"],
+    "docker/build-push-action": ["10e90e3645eae34f1e60eeb005ba3a3d33f178e8", "v6.19.2"],
+    "docker/login-action": ["c94ce9fb468520275223c153574b00df6fe4bcc9", "v3.7.0"],
+    "docker/setup-buildx-action": ["8d2750c68a42422c14e847fe6c8ac0403b4cbd6f", "v3.12.0"],
+    "docker/setup-qemu-action": ["c7c53464625b32c7a7e944ae62b3e17d2b600130", "v3.7.0"],
+    "googleapis/release-please-action": ["5c625bfb5d1ff62eadeeb3772007f7f66fdcf071", "v4.4.1"],
+    "pnpm/action-setup": ["b906affcce14559ad1aafd4ab0e942779e9f58b1", "v4.3.0"],
+    "sigstore/cosign-installer": ["6f9f17788090df1f26f669e9d70d6ae9567deba6", "v4.1.2"],
+    "softprops/action-gh-release": ["3bb12739c298aeb8a4eeaf626c5b8d85266b0e65", "v2.6.2"],
+  } as Record<string, readonly [string, string]>),
+);
+
 function job(source: string, name: string, nextName?: string): string {
   const start = source.indexOf(`  ${name}:`);
   expect(start, `${name} job`).toBeGreaterThanOrEqual(0);
@@ -26,17 +43,30 @@ function job(source: string, name: string, nextName?: string): string {
 
 describe("supply-chain policy", () => {
   it("pins every third-party workflow action to a reviewed commit", () => {
-    const usesPattern = /^\s*(?:-\s*)?uses:\s*([^@\s]+)@([^\s#]+)(?:\s+#\s+(\S+))?\s*$/gm;
+    const seen = new Set<string>();
 
     for (const { file, source } of workflowFiles) {
-      for (const match of source.matchAll(usesPattern)) {
-        const [, action, ref, version] = match;
-        if (!action || !ref) throw new Error(`${file}: malformed uses entry`);
-        if (action.startsWith("./")) continue;
-        expect(ref, `${file}: ${action}`).toMatch(/^[0-9a-f]{40}$/);
-        expect(version, `${file}: ${action}`).toMatch(/^v\d+\.\d+\.\d+$/);
+      const usesEntries = collectUses(parse(source));
+      for (const uses of usesEntries) {
+        if (uses.startsWith("./")) continue;
+        const separator = uses.lastIndexOf("@");
+        expect(separator, `${file}: malformed uses entry ${uses}`).toBeGreaterThan(0);
+        const action = uses.slice(0, separator);
+        const reviewed = reviewedActions.get(action);
+        expect(reviewed, `${file}: unreviewed third-party action ${action}`).toBeDefined();
+        const [sha, version] = reviewed!;
+        expect(uses, `${file}: ${action}`).toBe(`${action}@${sha}`);
+        expect(source, `${file}: provenance annotation for ${action}`).toMatch(
+          new RegExp(
+            `^\\s*(?:-\\s*)?uses:\\s*["']?${escapeRegex(uses)}["']?\\s+#\\s+${escapeRegex(version)}\\s*$`,
+            "m",
+          ),
+        );
+        seen.add(action);
       }
     }
+
+    expect([...seen].sort()).toEqual([...reviewedActions.keys()].sort());
   });
 
   it("enforces registry age, source, and trust-downgrade checks", () => {
@@ -271,3 +301,19 @@ describe("supply-chain policy", () => {
     ]);
   });
 });
+
+function collectUses(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(collectUses);
+  if (value === null || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([key, child]) => {
+    if (key === "uses") {
+      if (typeof child !== "string") throw new Error("workflow uses entry must be a string");
+      return [child];
+    }
+    return collectUses(child);
+  });
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
