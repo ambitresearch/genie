@@ -128,8 +128,12 @@ export function selectPackageClosure(workspaceBom, manifest) {
     if (!componentsByRef.has(ref)) {
       throw new Error(`Workspace SBOM dependency ${ref} has no component record`);
     }
+    const dependency = dependenciesByRef.get(ref);
+    if (!dependency) {
+      throw new Error(`Workspace SBOM component ${ref} has no dependency graph entry`);
+    }
     includedRefs.add(ref);
-    for (const dependencyRef of dependenciesByRef.get(ref)?.dependsOn ?? []) {
+    for (const dependencyRef of dependency.dependsOn ?? []) {
       if (!includedRefs.has(dependencyRef)) queue.push(dependencyRef);
     }
   }

@@ -44,8 +44,10 @@ integrity evidence. Before release-please creates any tag or GitHub Release, one
 preflight checks public repository visibility plus npm and Docker Hub credentials;
 it then authenticates to npm, confirms that account's `ambitresearch` organization
 membership, lists the scope package access visible to the token, and performs a Docker
-Hub login before release creation. Missing or invalid credentials therefore cannot leave
-a partially published release:
+Hub login before release creation. These non-destructive probes catch missing or revoked
+credentials and npm membership mistakes, but cannot prove registry write scopes without
+mutating a package or image. The publish jobs remain the authoritative authorization
+check:
 
 - **npm packages** (`@ambitresearch/genie`, `@ambitresearch/genie-viewer`): each package
   is packed once, signed keyless with `cosign sign-blob`, verified locally against this
@@ -74,7 +76,7 @@ a partially published release:
 - **Container images** (GHCR + Docker Hub): built multi-arch (amd64/arm64) from the
   CI-verified release tag. `docker/build-push-action` is configured with `sbom: true`
   and `provenance: mode=max`, so each pushed image manifest carries an embedded
-  CycloneDX SBOM and a max-detail SLSA provenance attestation. Each image digest is then
+  SPDX SBOM and a max-detail SLSA provenance attestation. Each image digest is then
   signed and locally verified keyless with cosign using GitHub OIDC — no long-lived
   signing key is stored.
 - **Claude Desktop bundle** (`genie.mcpb`): built from the release tag, signed and locally
@@ -90,7 +92,8 @@ a partially published release:
 - Container signature:
   `cosign verify <image>@<digest> --certificate-identity 'https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
 - Image SBOM/provenance: `docker buildx imagetools inspect <image> --format '{{ json .SBOM }}'`
-  and `… '{{ json .Provenance }}'`, or `cosign download sbom <image>@<digest>`.
+  and `… '{{ json .Provenance }}'`. To extract the in-toto SPDX predicate:
+  `cosign download attestation --predicate-type https://spdx.dev/Document --platform linux/amd64 <image>@<digest> | jq -r '.payload' | base64 --decode | jq '.predicate'`.
 
 ## 3. pnpm install policy
 

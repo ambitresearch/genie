@@ -184,7 +184,10 @@ jobs:
             echo "update_pr=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Validate production registry credentials
+      # These non-destructive probes catch missing/revoked credentials and npm
+      # scope-membership mistakes. Registry write scopes cannot be proven
+      # without mutating a package/image; the publish jobs remain authoritative.
+      - name: Validate production registry authentication
         if: steps.head.outputs.create_release == 'true'
         env:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -565,7 +568,7 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          # Supply-chain (issue #207 / M6-04): attach a CycloneDX SBOM and a
+          # Supply-chain (issue #207 / M6-04): attach an SPDX SBOM and a
           # max-detail SLSA provenance attestation to the pushed image so the
           # image manifest carries its own bill of materials + build metadata.
           sbom: true

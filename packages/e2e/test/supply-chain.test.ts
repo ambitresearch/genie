@@ -60,7 +60,7 @@ describe("supply-chain policy", () => {
     expect(releasePlease).toContain('org ls ambitresearch "$npm_user"');
     expect(releasePlease).toContain("access list packages @ambitresearch");
     expect(releasePlease).toContain('docker --config "$docker_config" login docker.io');
-    expect(releasePlease.indexOf("Validate production registry credentials")).toBeLessThan(
+    expect(releasePlease.indexOf("Validate production registry authentication")).toBeLessThan(
       releasePlease.indexOf("Create the CI-gated GitHub release"),
     );
   });
