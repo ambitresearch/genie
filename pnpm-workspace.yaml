@@ -14,17 +14,17 @@ allowBuilds:
 # pnpm 11 but is set explicitly here so the policy is pinned under pnpm 10.x too.
 blockExoticSubdeps: true
 
-# Cooldown: refuse to install any published version younger than 3 days (4320
+# Cooldown: refuse to install any published version younger than 7 days (10080
 # minutes). Blunts the "publish malicious patch, hope CI pulls it before takedown"
 # window on fresh installs / lockfile updates. Does NOT apply to
 # --frozen-lockfile installs (all CI legs), so it cannot break reproducible CI.
-minimumReleaseAge: 4320
+minimumReleaseAge: 10080
 
 # The @cline/cli-* platform binaries are an exactly-pinned, fast-moving E2E test
 # dependency (packages/e2e). They are pinned to an exact version in that
 # package's manifest and are dev/test-only, never shipped, so the cooldown adds
 # no supply-chain value there but would otherwise block routine lockfile
-# maintenance whenever a new cline release is <3 days old. Exclude them from the
+# maintenance whenever a new cline release is <7 days old. Exclude them from the
 # cooldown; every other dependency still honours minimumReleaseAge.
 minimumReleaseAgeExclude:
   - "@cline/cli-darwin-arm64"
@@ -34,11 +34,6 @@ minimumReleaseAgeExclude:
   - "@cline/cli-windows-arm64"
   - "@cline/cli-windows-x64"
 
-# trustPolicy / trustPolicyIgnoreAfter is intentionally NOT set. The issue's
-# proposed `trustPolicy: no-downgrade` is not a real pnpm 10.34 setting (pnpm
-# exposes only the numeric `trustPolicyIgnoreAfter`). The equivalent
-# downgrade/tamper protection is already provided by the committed
-# pnpm-lock.yaml (lockfileVersion 9.0, every dep integrity-pinned to a
-# sha512 registry tarball) plus `--frozen-lockfile` in every CI leg and npm
-# provenance on our own published packages. Revisit if pnpm ships a first-class
-# no-downgrade trust policy.
+# Reject a package release when its registry trust evidence is weaker than an
+# earlier release. Added in pnpm 10.21; the repository pins pnpm 10.34.4.
+trustPolicy: no-downgrade

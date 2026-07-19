@@ -189,10 +189,11 @@ Changesets) to manage versioning automatically. Reserve the npm package name
 - [ ] AC4 — `release-please` (or Changesets) PR is opened by the bot whenever
       Conventional Commits land on `main`.
 - [ ] AC5 — npm name `genie` is registered (publish empty
-      0.0.0-placeholder). **If `genie` is taken** (unverified at issue-write time
-      — `npm view genie` was blocked by a sandbox cert error), fall back in order:
-      `@genie/server` (scoped) → `genie`. Record the chosen name in `CLAUDE.md`
-      and reconcile any docs that assumed bare `genie`.
+      0.0.0-placeholder). **Reconciled after registry verification:** bare `genie`
+      and the `@genie` scope belong to unrelated npm users, so publish the server
+      as `@ambitresearch/genie` and the viewer as `@ambitresearch/genie-viewer`.
+      Record the chosen names in `CLAUDE.md` and reconcile docs that assumed the
+      unavailable names.
 - [ ] AC6 — Branch protection requires `lint`, `typecheck`, `test`, `build`
       checks before merge.
 
@@ -2207,27 +2208,27 @@ This issue produces visual output (reference context). Validate per [`AGENTS.md`
 - [ ] Manual verification.
 - [ ] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.","type:feature,area:mcp-server,priority:P1-high,size:M",M3 — @genie Validator + Manifest,,Todo,High,5h
-[M4-01] @genie/viewer package scaffold,"## Summary
-Create the second pnpm workspace package `@genie/viewer`. Owns
+[M4-01] @ambitresearch/genie-viewer package scaffold,"## Summary
+Create the second pnpm workspace package `@ambitresearch/genie-viewer`. Owns
 the static viewer assets (`index.html`, `viewer.js`, `viewer.css`), the Vite
 config, and the CLI binary `genie-viewer`. M4-02 … M4-10 fill it
 in.
 
 ## Context
 - Research report §3.4: ""Adopt the bundled-skill file layout verbatim … plus
-  a tiny Vite-backed viewer (`@genie/viewer`) watches the
+  a tiny Vite-backed viewer (`@ambitresearch/genie-viewer`) watches the
   directory and renders the same files in a grid with HMR.""
 - §7 step 5: ""Build the preview viewer … Vite multi-page entry, chokidar
   watch, iframe grid renderer, HMR-driven card refresh via `postMessage`.""
 
 ## Acceptance Criteria
 - [ ] AC1 — Directory `packages/viewer/` exists with its own
-      `package.json` (`@genie/viewer`, `version: 0.0.0`).
+      `package.json` (`@ambitresearch/genie-viewer`, `version: 0.0.0`).
 - [ ] AC2 — Listed in `pnpm-workspace.yaml`.
 - [ ] AC3 — Declares `vite`, `chokidar`, `@types/node` as devDeps; `commander`
       as runtime dep.
 - [ ] AC4 — `package.json` exports the `genie-viewer` bin.
-- [ ] AC5 — `pnpm --filter @genie/viewer build` produces
+- [ ] AC5 — `pnpm --filter @ambitresearch/genie-viewer build` produces
       `packages/viewer/dist/` containing the CLI + static assets.
 - [ ] AC6 — Bin script greets with `Usage: genie-viewer <kit-dir>
       [--port N]`.
@@ -2265,7 +2266,7 @@ This issue produces visual output (reference context). Validate per [`AGENTS.md`
 ## Definition of Done
 - [ ] Tests added — placeholder.
 - [ ] Docs updated — viewer README.
-- [ ] Manual verification — `npx genie-viewer --help`.
+- [ ] Manual verification — `npx @ambitresearch/genie-viewer --help`.
 - [ ] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.","type:feature,area:viewer,priority:P0-critical,size:M",M4 — Preview Viewer (Vite + ui://),,Todo,Urgent,5h
 [M4-02] Vite multi-page config (each preview.html as entry point),"## Summary
@@ -2660,7 +2661,7 @@ given kit directory, prints the URL, opens the system browser (unless
 `--no-open`), exits cleanly on Ctrl-C.
 
 ## Context
-- Research report §3.4 + §7 step 5: `npx genie-viewer
+- Research report §3.4 + §7 step 5: `npx @ambitresearch/genie-viewer
   ui_kits/<kit>`.
 
 ## Acceptance Criteria
@@ -2723,7 +2724,7 @@ preview accessibility; the viewer must not block it.
   passes.
 
 ## Acceptance Criteria
-- [ ] AC1 — `pnpm --filter @genie/viewer test:a11y` runs axe-core
+- [ ] AC1 — `pnpm --filter @ambitresearch/genie-viewer test:a11y` runs axe-core
       against the viewer shell.
 - [ ] AC2 — Zero critical or serious violations (only `moderate` or `minor`
       acceptable, with a justification doc per case).
@@ -3102,24 +3103,48 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 - [ ] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.","type:infra,area:mcpb,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
 [M5-06] npm publish pipeline (release-please + provenance),"## Summary
-Publish `genie` (server) and `@genie/viewer` to
-npm on every release-please-generated release tag. Enable `--provenance`
-(npm supply-chain attestation). Reserve scope `@genie`.
+Publish `@ambitresearch/genie` and `@ambitresearch/genie-viewer` to
+npm on every release-please-generated release. Enable `--provenance`
+(npm supply-chain attestation). Use the Ambit Research-owned scope
+`@ambitresearch`.
 
 ## Context
 - INDEX.md: distribution = npm + `.mcpb` + Docker.
-- Research report §7 step 1 + §5 prior art (Framelink uses `npx
-  figma-developer-mcp`).
+- Research report §7 step 1 + §5 prior art (Framelink uses `npx figma-developer-mcp`).
+- M0-04 fallback (recorded in `CLAUDE.md` hard rule 7): the bare `genie` name
+  and the `@genie` scope are owned by unrelated npm users. The server therefore
+  publishes as **`@ambitresearch/genie`** and the viewer as
+  **`@ambitresearch/genie-viewer`** under the Ambit Research-owned scope.
+- npm provenance requires a public source repository. The release workflow
+  fails before `npm publish` while this repository is private; repository
+  visibility and the `NPM_TOKEN` secret are operator prerequisites for the
+  first live release.
 
 ## Acceptance Criteria
-- [ ] AC1 — `.github/workflows/release.yml` triggers on tag `v*`.
-- [ ] AC2 — Workflow publishes both packages with `--provenance` flag set.
-- [ ] AC3 — `NODE_AUTH_TOKEN` sourced from GitHub Actions `NPM_TOKEN`
+- [x] AC1 — the release workflow's publish jobs fire deterministically off
+      every release-please-created release. **Reconciled wording:**
+      `release-please-config.json` sets `include-component-in-tag: true`, so
+      tags are `server-vX.Y.Z` / `viewer-vX.Y.Z`, not a
+      bare `v*`. `.github/workflows/release.yml` creates each release only
+      after the merged release PR's CI completes successfully, then gates
+      publish on release-please's per-package `release_created` output. This
+      avoids a separate `on: push: tags: v*` workflow, which would not fire
+      for tags created with `GITHUB_TOKEN`.
+- [x] AC2 — Workflow publishes both packages with `--provenance` flag set.
+- [x] AC3 — `NODE_AUTH_TOKEN` sourced from GitHub Actions `NPM_TOKEN`
       secret with publish scope.
-- [ ] AC4 — Server publishes as `genie` (root scope, public).
-- [ ] AC5 — Viewer publishes as `@genie/viewer` (scoped, public).
-- [ ] AC6 — Publish step is gated on M0-04 CI green.
-- [ ] AC7 — Release notes auto-generated by `release-please`.
+- [x] AC4 — Server publishes as `@ambitresearch/genie` (scoped, public) — see the
+      M0-04 fallback under Context.
+- [x] AC5 — Viewer publishes as `@ambitresearch/genie-viewer` (scoped, public).
+- [x] AC6 — Publish is completion-driven by the M0-04 `CI` workflow:
+      `.github/workflows/release.yml` handles `workflow_run: completed` for
+      `CI` on `main`, proceeds only for a successful `push` run, and preserves
+      each main-push CI run from concurrency cancellation. Normal release PR
+      updates use `skip-github-release`; after that PR merges, its own green CI
+      completion runs release creation alone. The production jobs then require
+      the package dry-run and `verify-release`, which proves each tag targets
+      that same CI-tested SHA before publish.
+- [x] AC7 — Release notes auto-generated by `release-please`.
 
 ## Implementation Notes
 - File: `.github/workflows/release.yml`.
@@ -3143,11 +3168,14 @@ Do not merge with open review comments. Do not leave `main` red. The issue close
 when the PR is merged, the reviewer approved, CI is green, and every AC has evidence.
 
 ## Definition of Done
-- [ ] Tests added — dry-run publish on a non-prod tag.
-- [ ] Docs updated.
-- [ ] Manual verification — release published, `npm view genie`
-      shows the right version.
-- [ ] No new ESLint/TS errors.
+- [x] Tests added — `publish-dry-run` runs the production command shape for
+      both packages on every PR and successful main CI completion.
+- [x] Docs updated.
+- [ ] Manual verification — dry-run publish + clean tarball install verified
+      locally for both packages; real release publish and provenance
+      verification remain pending repository visibility becoming public,
+      `NPM_TOKEN` provisioning, and the first tagged release after merge.
+- [x] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.","type:infra,area:ci,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
 [M5-07] Docker image (multi-arch amd64/arm64),"## Summary
 Build a multi-arch Docker image `roshangautam/genie` for

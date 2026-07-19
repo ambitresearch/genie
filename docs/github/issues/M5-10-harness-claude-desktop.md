@@ -21,7 +21,7 @@ install (M5-05).
 ## Acceptance Criteria
 
 - [x] AC1 — `docs/harness/claude-desktop.md` includes the snippet (stdio
-      transport via `npx -y @genie/server`). The original bare `genie` name
+      transport via `npx -y @ambitresearch/genie`). The original bare `genie` name
       is occupied by an unrelated npm package; M5-06 owns publishing the
       scoped package.
 - [x] AC2 — Documents current Linux beta support: Ubuntu 22.04 LTS+ or

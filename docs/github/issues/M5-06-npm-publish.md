@@ -8,18 +8,19 @@ estimate: "5h"
 
 ## Summary
 
-Publish `@genie/server` and `@genie/viewer` to
+Publish `@ambitresearch/genie` and `@ambitresearch/genie-viewer` to
 npm on every release-please-generated release. Enable `--provenance`
-(npm supply-chain attestation). Reserve scope `@genie`.
+(npm supply-chain attestation). Use the Ambit Research-owned scope
+`@ambitresearch`.
 
 ## Context
 
 - INDEX.md: distribution = npm + `.mcpb` + Docker.
 - Research report §7 step 1 + §5 prior art (Framelink uses `npx figma-developer-mcp`).
 - M0-04 fallback (recorded in `CLAUDE.md` hard rule 7): the bare `genie` name
-  is already registered on npm by an unrelated package, so the server
-  publishes as **`@genie/server`** instead of bare `genie` — both packages
-  are scoped under `@genie`.
+  and the `@genie` scope are owned by unrelated npm users. The server therefore
+  publishes as **`@ambitresearch/genie`** and the viewer as
+  **`@ambitresearch/genie-viewer`** under the Ambit Research-owned scope.
 - npm provenance requires a public source repository. The release workflow
   fails before `npm publish` while this repository is private; repository
   visibility and the `NPM_TOKEN` secret are operator prerequisites for the
@@ -39,9 +40,9 @@ npm on every release-please-generated release. Enable `--provenance`
 - [x] AC2 — Workflow publishes both packages with `--provenance` flag set.
 - [x] AC3 — `NODE_AUTH_TOKEN` sourced from GitHub Actions `NPM_TOKEN`
       secret with publish scope.
-- [x] AC4 — Server publishes as `@genie/server` (scoped, public) — see the
+- [x] AC4 — Server publishes as `@ambitresearch/genie` (scoped, public) — see the
       M0-04 fallback under Context.
-- [x] AC5 — Viewer publishes as `@genie/viewer` (scoped, public).
+- [x] AC5 — Viewer publishes as `@ambitresearch/genie-viewer` (scoped, public).
 - [x] AC6 — Publish is completion-driven by the M0-04 `CI` workflow:
       `.github/workflows/release.yml` handles `workflow_run: completed` for
       `CI` on `main`, proceeds only for a successful `push` run, and preserves

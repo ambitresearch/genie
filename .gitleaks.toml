@@ -1,0 +1,21 @@
+title = "genie secret scanning"
+
+[extend]
+useDefault = true
+
+# These are public, deterministic test credentials. Match only the extracted
+# values so new secrets in the same files, rules, or commits still fail closed.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Known deterministic test credentials"
+  condition = "OR"
+  regexTarget = "secret"
+  regexes = [
+    '''^genie-e2e-alice-pw$''',
+    '''^genie-e2e-mallory-pw$''',
+    '''^hs256-abcdefghijklmnopqrstuvwxyz$''',
+    '''^sk-0123456789abcdef$''',
+    '''^VALID_HS256_KEY$''',
+  ]

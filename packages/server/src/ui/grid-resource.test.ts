@@ -10,7 +10,7 @@
  *
  * Every collaborator (manifest compiler, asset reader, preview reader) is
  * injected, so the suite drives all branches WITHOUT compiling a real kit,
- * importing Vite, or reading `@genie/viewer` off disk — mirroring how
+ * importing Vite, or reading `@ambitresearch/genie-viewer` off disk — mirroring how
  * `preview.test.ts` fakes the viewer booter.
  */
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";

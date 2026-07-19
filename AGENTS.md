@@ -149,7 +149,7 @@ satisfied with evidence, docs updated if behavior changed. Anything less stays o
 | Default branch | `main` (protected: 1 review + status checks) |
 | Branch naming | `<type>/<issue-id>-<slug>` |
 | Commits | Conventional Commits |
-| npm scope | `@genie/*` (e.g. `@genie/viewer`) |
+| npm packages | `@ambitresearch/genie` · `@ambitresearch/genie-viewer` |
 | Issue backlog | `docs/github/issues/` |
 | Mock map | `docs/github/MOCK-MAP.md` |
 | Design mocks | `docs/designs/design-6/*.svg` |

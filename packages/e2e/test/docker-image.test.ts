@@ -101,7 +101,7 @@ describe("Dockerfile (M5-07 static ACs)", () => {
   });
 
   it("stages production dependencies from the frozen pnpm lockfile", () => {
-    expect(dockerfile).toMatch(/pnpm --filter @genie\/server deploy --prod --legacy \/out/);
+    expect(dockerfile).toMatch(/pnpm --filter @ambitresearch\/genie deploy --prod --legacy \/out/);
     expect(dockerfile).not.toMatch(/\bnpm (?:ci|install)\b/);
   });
 
@@ -288,8 +288,8 @@ describe("Docker release and CI workflows", () => {
   });
 
   it("builds both release platforms in PR CI before publishing", () => {
-    expect(ci).toMatch(/docker\/setup-qemu-action@v3/);
-    expect(ci).toMatch(/docker\/setup-buildx-action@v3/);
+    expect(ci).toMatch(/docker\/setup-qemu-action@[0-9a-f]{40} # v3\.7\.0/);
+    expect(ci).toMatch(/docker\/setup-buildx-action@[0-9a-f]{40} # v3\.12\.0/);
     expect(ci).toMatch(/docker buildx build --platform linux\/amd64,linux\/arm64/);
     expect(ci).toMatch(/docker buildx build --platform linux\/arm64 --load/);
     expect(ci).toMatch(/test "\$size" -lt 200000000/);
@@ -410,7 +410,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
     expect(stdout.trim()).toBe("/data/kits,/data/projects,/data/reports");
   });
 
-  it("scaffolds viewer assets when create_kit runs without @genie/viewer", async () => {
+  it("scaffolds viewer assets when create_kit runs without @ambitresearch/genie-viewer", async () => {
     const { stdout } = await execFileAsync("docker", [
       "run",
       "--rm",

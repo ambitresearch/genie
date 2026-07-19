@@ -9,11 +9,11 @@
  * mandated vehicles (`file://` / `localhost` Vite / `ui://genie/grid`) had
  * anything to render for it. This module is the fix's shared read half: it
  * loads the three files' bytes from the shell copied into the server package,
- * falling back to `@genie/viewer`'s `static/` directory during source
+ * falling back to `@ambitresearch/genie-viewer`'s `static/` directory during source
  * development, so both stores can copy them into a new kit's root.
  *
  * ── Optional-peer pattern (mirrors `preview.ts` / `validate/render.ts`) ──────
- * `@genie/viewer` is a workspace devDependency of `@genie/server`, not a
+ * `@ambitresearch/genie-viewer` is a workspace devDependency of `@ambitresearch/genie`, not a
  * runtime dependency. Production reads `dist/ui/viewer-static`, mirrored by
  * `copy-viewer-assets.mjs`; source development resolves the optional package
  * through `import.meta.resolve` with a non-literal specifier. If neither
@@ -51,11 +51,11 @@ function logStderr(payload: Record<string, unknown>): void {
 }
 
 /**
- * Resolve `@genie/viewer`'s `static/` directory via its `package.json`
+ * Resolve `@ambitresearch/genie-viewer`'s `static/` directory via its `package.json`
  * (rather than a hardcoded `../../../viewer/static` relative climb), so
  * resolution is correct whether this runs under `tsx` (monorepo source) or a
  * packaged `dist/` build where the two packages may not share the same
- * relative layout. Returns `undefined` if `@genie/viewer` cannot be resolved
+ * relative layout. Returns `undefined` if `@ambitresearch/genie-viewer` cannot be resolved
  * (not installed, pruned, etc.) rather than throwing — the caller degrades to
  * "no viewer assets to copy," not a hard failure.
  */
@@ -63,7 +63,7 @@ function resolveViewerPackageStaticDir(): string | undefined {
   // Non-literal specifier: keeps `tsc` from resolving the optional dep at
   // build time, exactly as `preview.ts`'s `defaultViewerBooter` does for the
   // same package.
-  const specifier = "@genie/viewer/package.json";
+  const specifier = "@ambitresearch/genie-viewer/package.json";
   try {
     const pkgJsonUrl = import.meta.resolve(specifier);
     return join(dirname(fileURLToPath(pkgJsonUrl)), "static");

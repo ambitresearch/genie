@@ -16,7 +16,7 @@ preview accessibility; the viewer must not block it.
   passes.
 
 ## Acceptance Criteria
-- [ ] AC1 — `pnpm --filter @genie/viewer test:a11y` runs axe-core
+- [ ] AC1 — `pnpm --filter @ambitresearch/genie-viewer test:a11y` runs axe-core
       against the viewer shell.
 - [ ] AC2 — Zero critical or serious violations (only `moderate` or `minor`
       acceptable, with a justification doc per case).

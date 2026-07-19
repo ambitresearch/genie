@@ -1,4 +1,4 @@
-# @genie/viewer
+# @ambitresearch/genie-viewer
 
 Vite-backed live preview + UI-kit browser for genie. Watches a kit directory
 (`.genie/manifest.json` + `components/`) and renders the same cards genie's
@@ -28,14 +28,14 @@ the full M4 breakdown.
 
 ```bash
 # Boot a live preview of a synced kit (opens your browser at the URL):
-npx genie-viewer ui_kits/acme
+npx @ambitresearch/genie-viewer ui_kits/acme
 #   Preview: http://127.0.0.1:5173
 
 # Pick a port (falls back to the next free one, with a warning, if it's taken):
-npx genie-viewer ui_kits/acme --port 5180
+npx @ambitresearch/genie-viewer ui_kits/acme --port 5180
 
 # Headless / CI — print the URL but don't open a browser:
-npx genie-viewer ui_kits/acme --no-open
+npx @ambitresearch/genie-viewer ui_kits/acme --no-open
 ```
 
 Press **Ctrl-C** to stop: the watcher and dev server shut down within a second.
@@ -48,7 +48,7 @@ Press **Ctrl-C** to stop: the watcher and dev server shut down within a second.
 ## Usage
 
 ```bash
-npx genie-viewer <kit-dir> [--port N] [--no-open]
+npx @ambitresearch/genie-viewer <kit-dir> [--port N] [--no-open]
 ```
 
 ```
@@ -79,14 +79,14 @@ CLI above wraps this; to drive Vite yourself (e.g. debugging the config):
 
 ```bash
 # Point the serve script at a kit (set GENIE_KIT_ROOT — see note below):
-GENIE_KIT_ROOT=/path/to/kit pnpm --filter @genie/viewer serve
+GENIE_KIT_ROOT=/path/to/kit pnpm --filter @ambitresearch/genie-viewer serve
 
 # ...with an explicit port too:
-GENIE_KIT_ROOT=/path/to/kit GENIE_VIEWER_PORT=5180 pnpm --filter @genie/viewer serve
+GENIE_KIT_ROOT=/path/to/kit GENIE_VIEWER_PORT=5180 pnpm --filter @ambitresearch/genie-viewer serve
 ```
 
 > **Why `GENIE_KIT_ROOT` is required here:** the kit root defaults to
-> `process.cwd()`, but `pnpm --filter @genie/viewer` runs the script with the
+> `process.cwd()`, but `pnpm --filter @ambitresearch/genie-viewer` runs the script with the
 > working directory set to the _viewer package_ (`packages/viewer`), not the
 > directory you invoked it from — so without `GENIE_KIT_ROOT` it would try to
 > serve the package dir (which has no kit `index.html`). Only a bare `vite`
@@ -113,10 +113,10 @@ root `vite.config.ts` is a thin env-reading shim over it.
 ## Development
 
 ```bash
-pnpm --filter @genie/viewer build       # tsc → dist/
-pnpm --filter @genie/viewer typecheck   # tsc --noEmit
-pnpm --filter @genie/viewer dev         # tsx watch src/cli.ts
-pnpm --filter @genie/viewer serve       # vite (multi-page kit dev server)
+pnpm --filter @ambitresearch/genie-viewer build       # tsc → dist/
+pnpm --filter @ambitresearch/genie-viewer typecheck   # tsc --noEmit
+pnpm --filter @ambitresearch/genie-viewer dev         # tsx watch src/cli.ts
+pnpm --filter @ambitresearch/genie-viewer serve       # vite (multi-page kit dev server)
 ```
 
 Tests live alongside sources (`src/**/*.test.ts`) and run via the workspace

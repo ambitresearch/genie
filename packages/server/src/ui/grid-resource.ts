@@ -86,7 +86,7 @@ export type ManifestCompiler = (kitDir: string) => Promise<Manifest>;
 /** The three static assets the embedded shell is assembled from. */
 export type ViewerAssetName = "index.html" | "viewer.js" | "viewer.css";
 
-/** Reads one `@genie/viewer` static asset's text (default: from disk). */
+/** Reads one `@ambitresearch/genie-viewer` static asset's text (default: from disk). */
 export type AssetReader = (name: ViewerAssetName) => Promise<string>;
 
 /** Reads a preview file's raw bytes for the `data:` fallback, or null. */
@@ -114,7 +114,7 @@ export interface GridResourceOptions {
   kitsRoot: string;
   /** Manifest compiler seam (default wraps M3-03 `compileManifest`). */
   compile?: ManifestCompiler;
-  /** Static-asset reader seam (default reads `@genie/viewer/static`). */
+  /** Static-asset reader seam (default reads `@ambitresearch/genie-viewer/static`). */
   readAsset?: AssetReader;
   /** Preview-bytes reader for the `data:` fallback (default reads from disk). */
   readPreviewBytes?: PreviewReader;
@@ -539,7 +539,7 @@ const defaultCompile: ManifestCompiler = async (kitDir) => {
 /**
  * Default asset reader: prefer the viewer assets copied beside the compiled
  * server module by `copy-viewer-assets.mjs`. This guarantees the published
- * server's tool-result shell remains executable even when `@genie/viewer` is
+ * server's tool-result shell remains executable even when `@ambitresearch/genie-viewer` is
  * not installed at runtime. Source/tsx development falls back to resolving the
  * workspace viewer package without creating a build-time import edge. Results
  * are cached per process.
@@ -557,7 +557,7 @@ function makeDefaultAssetReader(): AssetReader {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
-      const pkgJson = require.resolve("@genie/viewer/package.json");
+      const pkgJson = require.resolve("@ambitresearch/genie-viewer/package.json");
       const staticDir = resolve(dirname(pkgJson), "static");
       text = await readFile(join(staticDir, name), "utf8");
     }

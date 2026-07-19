@@ -19,6 +19,7 @@ export default tseslint.config(
       // scripts/bundle-mcpb.mjs) — same carve-out as the per-package scripts/
       // above, just at the repo root instead of inside a workspace package.
       "scripts/**",
+      ".genie/**",
       ".remember/**",
       ".claude/**",
       ".paperclip-runtime/**",

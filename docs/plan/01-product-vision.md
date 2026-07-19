@@ -575,7 +575,7 @@ Anthropic, and the bridge handles round-tripping.
 | 1 | The M1 genie tool surface works end-to-end against a local FS | Kit verbs plus `list_projects`, `get_project`, `create_project`, `delete_project`, `bind_kit`, and `conjure_screen` pass smoke tests in 7 harnesses |
 | 2 | `conjure` produces a card that lands in the store and validates | `M2` release; demo video of Sonnet 4.6 generating an `acme.Button` variant in Cursor |
 | 3 | `@genie` validator and manifest compiler ship and are covered by genie's own regex test fixtures | `M3` release; CI matrix runs the `@genie` regex against genie's fixture suite |
-| 4 | Vite-backed preview viewer with HMR ships as `@genie/viewer` | `npx genie-viewer ui_kits/<kit>` renders the grid at `http://localhost:5173` |
+| 4 | Vite-backed preview viewer with HMR ships as `@ambitresearch/genie-viewer` | `npx @ambitresearch/genie-viewer ui_kits/<kit>` renders the grid at `http://localhost:5173` |
 | 5 | Auth + distribution complete: local stdio install, OAuth DCR for supported HTTP harnesses, static bearer for the rest, `.mcpb` bundle for Claude Desktop | `M5` release; one-command install in all 7 harnesses |
 | 6 | First wave of public adoption | 1,000 GitHub stars; 100 weekly active component-store mutations |
 | 7 | Reference self-hosted deployment documented end-to-end | `docs/06-operations-runbook.md` plus a self-hosting tutorial blog post |
@@ -610,7 +610,7 @@ one.
 | # | Outcome | Concrete artifact |
 |---|---|---|
 | 1 | The `@genie` marker and genie's kit/project protocol are referenced by at least two unrelated MCP servers | Citation in the public MCP registry; cross-server interop demos |
-| 2 | A canonical Storybook adapter ships (greenfield gap noted in research — no Storybook MCP exists today) | `@genie/storybook-adapter` v1.0 |
+| 2 | A canonical Storybook adapter ships (greenfield gap noted in research — no Storybook MCP exists today) | `@ambitresearch/genie-storybook-adapter` v1.0 |
 | 3 | First-class adapters for Tailwind v5, shadcn/ui registry, Material UI, Chakra | Four adapter packages, all maintained |
 | 4 | Canvas-side generation R&D ships — inline-comment edit protocol, region-targeted refinement | v3.0 release; the part Anthropic hides becomes openly specified |
 | 5 | Adoption signal: 25,000 weekly active mutations, presence in three Top-10 UI-platform org workflows | Public usage report |
@@ -861,7 +861,7 @@ bet, even for teams who eventually need to migrate to hosted Claude Design.
 | 1 | The 7-harness smoke test passes on every release | 100% green for ≥ 12 consecutive monthly releases | CI matrix in GitHub Actions; per-harness screenshots in `tests/screenshots/` |
 | 2 | Weekly active component-store mutations | ≥ 2,500 distinct (repo, week, harness) triples by end of month 12 | Anonymized telemetry from self-hosted deployments (opt-in) + public GitHub event sampling |
 | 3 | Non-Claude-Code harness share of mutations | ≥ 40% of mutations originate from Codex CLI / Copilot / Cursor / Cline / Continue / Claude Desktop combined | Same telemetry segmentation |
-| 4 | Median `preview` latency | ≤ 600 ms p50, ≤ 1500 ms p95 | Built-in `@genie/viewer` telemetry; OTel traces in reference deployment |
+| 4 | Median `preview` latency | ≤ 600 ms p50, ≤ 1500 ms p95 | Built-in `@ambitresearch/genie-viewer` telemetry; OTel traces in reference deployment |
 | 5 | `validate` failure rate per project per week | ≤ 3% | Aggregated from `validate` calls |
 | 6 | Public adopter case studies | ≥ 3 named external teams with public blog post, talk, or testimonial | Tracked in `docs/case-studies/` |
 | 7 | npm download trajectory | ≥ 1,000 weekly downloads of `genie` by month 12 | npmtrends.com snapshots |
@@ -890,7 +890,7 @@ The GA shipping checklist. v1.0 ships when all 15 items are checked.
       reproducibly across runs.
 - [ ] **The configured LLM endpoint routes through `design-default` alias by default**
       with environment-driven override.
-- [ ] **Vite-backed viewer ships as `@genie/viewer`** with HMR on
+- [ ] **Vite-backed viewer ships as `@ambitresearch/genie-viewer`** with HMR on
       `preview.html` saves; opens to a grouped card grid.
 - [ ] **`ui://genie/grid` resource registers and renders in Claude
       and VS Code (Stable, Jan 2026 milestone)** — manual screenshot suite

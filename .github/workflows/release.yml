@@ -30,11 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        package: ["@genie/server", "@genie/viewer"]
+        package: ["@ambitresearch/genie", "@ambitresearch/genie-viewer"]
         include:
-          - package: "@genie/server"
+          - package: "@ambitresearch/genie"
             dir: packages/server
-          - package: "@genie/viewer"
+          - package: "@ambitresearch/genie-viewer"
             dir: packages/viewer
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -45,7 +45,7 @@ jobs:
           persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.2.0
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -62,6 +62,32 @@ jobs:
       - name: Build ${{ matrix.package }}
         run: pnpm --filter ${{ matrix.package }} build
 
+      - name: Generate CycloneDX SBOM (${{ matrix.package }})
+        run: |
+          node scripts/generate-package-sbom.mjs \
+            "${{ matrix.dir }}" "$RUNNER_TEMP/package-sbom.cdx.json"
+
+      - name: Smoke packaged CLI entry point
+        working-directory: ${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          BIN_NAME=$(node -p 'const p = require("./package.json"); typeof p.bin === "string" ? p.name.split("/").pop() : Object.keys(p.bin)[0]')
+          BIN_TARGET=$(node -p 'const p = require("./package.json"); typeof p.bin === "string" ? p.bin : p.bin[Object.keys(p.bin)[0]]')
+          PACKAGE_VERSION=$(node -p 'require("./package.json").version')
+          expected="$PACKAGE_VERSION"
+          if [ "$BIN_NAME" = "genie" ]; then
+            expected="genie $PACKAGE_VERSION"
+          fi
+
+          tmp_dir=$(mktemp -d)
+          trap 'rm -rf "$tmp_dir"' EXIT
+          ln -s "$PWD/$BIN_TARGET" "$tmp_dir/$BIN_NAME"
+          actual=$(node "$tmp_dir/$BIN_NAME" --version)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::$BIN_NAME --version returned '$actual'; expected '$expected'." >&2
+            exit 1
+          fi
+
       - name: npm publish --dry-run (${{ matrix.package }})
         working-directory: ${{ matrix.dir }}
         # No registry-url/NODE_AUTH_TOKEN is configured for this job — the
@@ -77,9 +103,16 @@ jobs:
         # notice so a future manifest regression breaks CI instead of
         # publishing a corrected-but-unintended package.
         run: |
-          set -o pipefail
-          npm publish --dry-run --provenance --access public 2>&1 | tee publish-dry-run.log
-          if grep -qi "auto-corrected" publish-dry-run.log; then
+          set -euo pipefail
+          tmp_dir=$(mktemp -d)
+          trap 'rm -rf "$tmp_dir"' EXIT
+          npm pack --json --pack-destination "$tmp_dir" . \
+            > "$tmp_dir/pack.json" \
+            2> >(tee "$tmp_dir/pack-stderr.log" >&2)
+          filename=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))[0].filename' "$tmp_dir/pack.json")
+          npm publish "$tmp_dir/$filename" --dry-run --provenance --access public \
+            2>&1 | tee "$tmp_dir/publish-dry-run.log"
+          if grep -qi "auto-corrected" "$tmp_dir/pack-stderr.log" "$tmp_dir/publish-dry-run.log"; then
             echo "::error::npm reported package.json auto-corrections during publish --dry-run. This means the published manifest would differ from the source manifest (e.g. an invalid bin/script field was silently dropped). Fix the manifest so no auto-correction is needed." >&2
             exit 1
           fi
@@ -111,6 +144,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
@@ -120,6 +155,10 @@ jobs:
             --jq '[.[] | select(.merged_at != null and (.head.ref | startswith("release-please--")))][0].number // empty')
 
           if [ -n "$pending_release_pr" ]; then
+            if [ "$current_sha" != "$TESTED_SHA" ]; then
+              echo "::error::A newer main commit ($current_sha) arrived after CI completed for release commit $TESTED_SHA. Wait for the newer main CI completion before creating tags."
+              exit 1
+            fi
             visibility=$(gh api "repos/${{ github.repository }}" --jq '.visibility')
             if [ "$visibility" != "public" ]; then
               echo "::error::npm provenance requires a public source repository; ${GITHUB_REPOSITORY} is currently '$visibility'. Make the repository public, then rerun CI for $TESTED_SHA."
@@ -127,6 +166,10 @@ jobs:
             fi
             if [ -z "$NPM_TOKEN" ]; then
               echo "::error::The NPM_TOKEN repository secret is not configured. Add a publish-scoped npm token, then rerun CI for $TESTED_SHA."
+              exit 1
+            fi
+            if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+              echo "::error::DOCKERHUB_USERNAME and DOCKERHUB_TOKEN must both be configured before creating a release. Add both repository secrets, then rerun CI for $TESTED_SHA."
               exit 1
             fi
             echo "create_release=true" >> "$GITHUB_OUTPUT"
@@ -140,6 +183,27 @@ jobs:
             echo "create_release=false" >> "$GITHUB_OUTPUT"
             echo "update_pr=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Validate production registry credentials
+        if: steps.head.outputs.create_release == 'true'
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          npmrc=$(mktemp)
+          docker_config=$(mktemp -d)
+          trap 'rm -f "$npmrc"; rm -rf "$docker_config"' EXIT
+          chmod 600 "$npmrc"
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$npmrc"
+
+          npm_user=$(npm --userconfig "$npmrc" whoami --registry=https://registry.npmjs.org)
+          npm --userconfig "$npmrc" org ls ambitresearch "$npm_user" --json >/dev/null
+          npm --userconfig "$npmrc" access list packages @ambitresearch --json >/dev/null
+          printf '%s' "$DOCKERHUB_TOKEN" \
+            | docker --config "$docker_config" login docker.io \
+                --username "$DOCKERHUB_USERNAME" --password-stdin
 
       - name: Create the CI-gated GitHub release
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
@@ -181,11 +245,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$SERVER_RELEASED" = "true" ] && [ "$SERVER_SHA" != "$TESTED_SHA" ]; then
-            echo "::error::@genie/server release targets $SERVER_SHA, but CI succeeded for $TESTED_SHA."
+            echo "::error::@ambitresearch/genie release targets $SERVER_SHA, but CI succeeded for $TESTED_SHA."
             exit 1
           fi
           if [ "$VIEWER_RELEASED" = "true" ] && [ "$VIEWER_SHA" != "$TESTED_SHA" ]; then
-            echo "::error::@genie/viewer release targets $VIEWER_SHA, but CI succeeded for $TESTED_SHA."
+            echo "::error::@ambitresearch/genie-viewer release targets $VIEWER_SHA, but CI succeeded for $TESTED_SHA."
             exit 1
           fi
 
@@ -200,7 +264,7 @@ jobs:
   # (`include-component-in-tag: true`), not a bare `v*`. Each publish job is
   # gated on release-please's own per-package `release_created` output.
   publish-server:
-    name: publish @genie/server (npm)
+    name: publish @ambitresearch/genie (npm)
     needs: [publish-dry-run, release-please, verify-release]
     if: needs.release-please.outputs.server_released == 'true'
     runs-on: ubuntu-latest
@@ -211,9 +275,10 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-please.outputs.server_tag }}
+          persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.2.0
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -229,48 +294,75 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Build @genie/server
-        run: pnpm --filter @genie/server build
+      - name: Build @ambitresearch/genie
+        run: pnpm --filter @ambitresearch/genie build
 
-      # Supply-chain (issue #207 / M6-04): emit a CycloneDX SBOM for the
-      # package and attach it to the GitHub release as a durable, downloadable
-      # bill of materials. cdxgen is used (not cyclonedx-npm) because this is a
-      # pnpm workspace with only pnpm-lock.yaml and `workspace:*` specifiers —
-      # the npm-lock-based generator cannot read it. It is a lockfile-pinned
-      # devDependency (integrity-hashed, installed by the `--frozen-lockfile`
-      # step above) and run via `pnpm exec`, so the SBOM tool is subject to the
-      # same integrity guarantees as the rest of the tree. `--required-only`
-      # restricts the SBOM to the shipped runtime deps. Generated BEFORE the
-      # `npm publish` below so a tooling failure surfaces before the
-      # irreversible publish, keeping the release's artifacts consistent. Output
-      # goes to a workspace-level dir (not inside packages/server) so it can
-      # never be swept into the published npm tarball.
       - name: Generate CycloneDX SBOM
-        env:
-          FETCH_LICENSE: "false"
-        run: pnpm exec cdxgen -t pnpm --required-only --spec-version 1.6 -o sbom/genie-server-sbom.cdx.json packages/server
+        run: |
+          mkdir -p artifacts/server
+          node scripts/generate-package-sbom.mjs \
+            packages/server artifacts/server/genie-server-sbom.cdx.json
 
-      - name: Publish @genie/server (public, provenance)
-        working-directory: packages/server
+      - name: Pack the exact npm artifact
+        id: artifact
+        run: |
+          set -euo pipefail
+          npm pack --json --pack-destination artifacts/server ./packages/server \
+            > artifacts/server/pack.json
+          filename=$(node -p 'JSON.parse(require("node:fs").readFileSync("artifacts/server/pack.json", "utf8"))[0].filename')
+          tarball="artifacts/server/$filename"
+          test -f "$tarball"
+          rm artifacts/server/pack.json
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Sign and verify npm artifact and SBOM
+        env:
+          TARBALL: ${{ steps.artifact.outputs.tarball }}
+          SBOM: artifacts/server/genie-server-sbom.cdx.json
+          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for artifact in "$TARBALL" "$SBOM"; do
+            cosign sign-blob --yes --bundle "$artifact.sig" "$artifact"
+            cosign verify-blob --bundle "$artifact.sig" \
+              --certificate-identity="$CERTIFICATE_IDENTITY" \
+              --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+              --certificate-github-workflow-sha="$SIGNING_SHA" \
+              "$artifact"
+          done
+
+      - name: Attach signed artifacts to the server release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ needs.release-please.outputs.server_tag }}
+          files: |
+            artifacts/server/*.tgz
+            artifacts/server/*.tgz.sig
+            artifacts/server/*-sbom.cdx.json
+            artifacts/server/*-sbom.cdx.json.sig
+
+      - name: Publish @ambitresearch/genie (public, provenance)
         # AC3 — NODE_AUTH_TOKEN sourced from the NPM_TOKEN repo secret; npm's
         # own tooling reads this env var during `npm publish` when a registry
         # requires auth (set above via setup-node's registry-url).
         # AC4 — `publishConfig.access: public` in packages/server/package.json
-        # publishes the scoped `@genie/server` package publicly (the root
-        # `genie` name is already registered by an unrelated npm package —
-        # documented fallback recorded on M0-04 / CLAUDE.md).
+        # publishes the scoped `@ambitresearch/genie` package publicly. Both
+        # bare `genie` and the `@genie` scope belong to unrelated npm users;
+        # the Ambit Research-owned fallback is recorded in M0-04 / CLAUDE.md.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
-
-      - name: Attach SBOM to the server release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
-        with:
-          tag_name: ${{ needs.release-please.outputs.server_tag }}
-          files: sbom/genie-server-sbom.cdx.json
+          TARBALL: ${{ steps.artifact.outputs.tarball }}
+        run: npm publish "$TARBALL" --provenance --access public
 
   publish-viewer:
-    name: publish @genie/viewer (npm)
+    name: publish @ambitresearch/genie-viewer (npm)
     needs: [publish-dry-run, release-please, verify-release]
     if: needs.release-please.outputs.viewer_released == 'true'
     runs-on: ubuntu-latest
@@ -281,9 +373,10 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-please.outputs.viewer_tag }}
+          persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.2.0
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -299,33 +392,67 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Build @genie/viewer
-        run: pnpm --filter @genie/viewer build
+      - name: Build @ambitresearch/genie-viewer
+        run: pnpm --filter @ambitresearch/genie-viewer build
 
-      # Supply-chain (issue #207 / M6-04): CycloneDX SBOM attached to the
-      # viewer release, matching the server job above (lockfile-pinned cdxgen
-      # via `pnpm exec`, package-scoped, runtime deps only). Generated BEFORE
-      # `npm publish` so a tooling failure surfaces before the irreversible
-      # publish, and written to a workspace-level dir (not inside
-      # packages/viewer) so it cannot be swept into the published npm tarball.
       - name: Generate CycloneDX SBOM
-        env:
-          FETCH_LICENSE: "false"
-        run: pnpm exec cdxgen -t pnpm --required-only --spec-version 1.6 -o sbom/genie-viewer-sbom.cdx.json packages/viewer
+        run: |
+          mkdir -p artifacts/viewer
+          node scripts/generate-package-sbom.mjs \
+            packages/viewer artifacts/viewer/genie-viewer-sbom.cdx.json
 
-      - name: Publish @genie/viewer (public, provenance)
-        working-directory: packages/viewer
-        # AC5 — `@genie/viewer` publishes scoped + public via the same
-        # publishConfig pattern as the server package above.
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+      - name: Pack the exact npm artifact
+        id: artifact
+        run: |
+          set -euo pipefail
+          npm pack --json --pack-destination artifacts/viewer ./packages/viewer \
+            > artifacts/viewer/pack.json
+          filename=$(node -p 'JSON.parse(require("node:fs").readFileSync("artifacts/viewer/pack.json", "utf8"))[0].filename')
+          tarball="artifacts/viewer/$filename"
+          test -f "$tarball"
+          rm artifacts/viewer/pack.json
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
 
-      - name: Attach SBOM to the viewer release
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Sign and verify npm artifact and SBOM
+        env:
+          TARBALL: ${{ steps.artifact.outputs.tarball }}
+          SBOM: artifacts/viewer/genie-viewer-sbom.cdx.json
+          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for artifact in "$TARBALL" "$SBOM"; do
+            cosign sign-blob --yes --bundle "$artifact.sig" "$artifact"
+            cosign verify-blob --bundle "$artifact.sig" \
+              --certificate-identity="$CERTIFICATE_IDENTITY" \
+              --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+              --certificate-github-workflow-sha="$SIGNING_SHA" \
+              "$artifact"
+          done
+
+      - name: Attach signed artifacts to the viewer release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.release-please.outputs.viewer_tag }}
-          files: sbom/genie-viewer-sbom.cdx.json
+          files: |
+            artifacts/viewer/*.tgz
+            artifacts/viewer/*.tgz.sig
+            artifacts/viewer/*-sbom.cdx.json
+            artifacts/viewer/*-sbom.cdx.json.sig
+
+      - name: Publish @ambitresearch/genie-viewer (public, provenance)
+        # AC5 — `@ambitresearch/genie-viewer` publishes scoped + public via the same
+        # publishConfig pattern as the server package above.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TARBALL: ${{ steps.artifact.outputs.tarball }}
+        run: npm publish "$TARBALL" --provenance --access public
 
   # M5-05 / DRO-277 AC6 — attach the macOS Claude Desktop bundle to every
   # server GitHub Release. Build from the release tag so the bundle version
@@ -337,13 +464,15 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-please.outputs.server_tag }}
+          persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.2.0
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -357,16 +486,37 @@ jobs:
       - name: Build Claude Desktop bundle
         run: pnpm bundle:mcpb
 
-      - name: Attach bundle to the server release
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Sign and verify Claude Desktop bundle
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle dist/genie.mcpb.sig dist/genie.mcpb
+          cosign verify-blob --bundle dist/genie.mcpb.sig \
+            --certificate-identity="$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+            --certificate-github-workflow-sha="$SIGNING_SHA" \
+            dist/genie.mcpb
+
+      - name: Attach signed bundle to the server release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.release-please.outputs.server_tag }}
-          files: dist/genie.mcpb
+          files: |
+            dist/genie.mcpb
+            dist/genie.mcpb.sig
 
-  # M5-07 / DRO-279 — publish each container registry independently so a
-  # Docker Hub credential failure cannot block the built-in-token GHCR path.
-  # Both jobs build amd64 + arm64 from the CI-verified server release tag and
-  # sign that registry's digest with GitHub OIDC (no stored signing key).
+  # M5-07 / DRO-279 — publish each registry in its own retryable job after the
+  # pre-tag credential gate succeeds. Both jobs build amd64 + arm64 from the
+  # CI-verified server release tag and sign that registry's digest with GitHub
+  # OIDC (no stored signing key).
   docker-publish-ghcr:
     name: publish GHCR image (multi-arch, signed)
     needs: [publish-dry-run, release-please, verify-release]
@@ -380,6 +530,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-please.outputs.server_tag }}
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -424,10 +575,24 @@ jobs:
             ghcr.io/roshangautam/genie:latest
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
 
       - name: Sign GHCR image digest (keyless)
         run: cosign sign --yes "ghcr.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+
+      - name: Verify GHCR image signature
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          cosign verify \
+            --certificate-identity="$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+            --certificate-github-workflow-sha="$SIGNING_SHA" \
+            "ghcr.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
 
   docker-publish-dockerhub:
     name: publish Docker Hub image (multi-arch, signed)
@@ -441,6 +606,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ needs.release-please.outputs.server_tag }}
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -484,7 +650,21 @@ jobs:
             docker.io/roshangautam/genie:latest
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
 
       - name: Sign Docker Hub image digest (keyless)
         run: cosign sign --yes "docker.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+
+      - name: Verify Docker Hub image signature
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          cosign verify \
+            --certificate-identity="$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+            --certificate-github-workflow-sha="$SIGNING_SHA" \
+            "docker.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
