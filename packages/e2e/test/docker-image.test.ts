@@ -101,7 +101,9 @@ describe("Dockerfile (M5-07 static ACs)", () => {
   });
 
   it("stages production dependencies from the frozen pnpm lockfile", () => {
-    expect(dockerfile).toMatch(/pnpm --filter @ambitresearch\/genie deploy --prod --legacy \/out/);
+    expect(dockerfile).toMatch(
+      /pnpm --filter @ambitresearch\/genie deploy --prod --legacy --frozen-lockfile --config\.minimumReleaseAge=0 \/out/,
+    );
     expect(dockerfile).not.toMatch(/\bnpm (?:ci|install)\b/);
   });
 

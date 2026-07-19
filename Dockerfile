@@ -50,9 +50,12 @@ RUN node -e "const fs=require('node:fs');const entry=require.resolve('ts-morph',
     node -e "const {build}=require(require.resolve('esbuild',{paths:['/repo/packages/server']}));build({entryPoints:['/tmp/ts-morph-entry.mjs'],bundle:true,platform:'node',format:'esm',target:'node22',outfile:'/tmp/ts-morph-runtime.mjs',minify:true,legalComments:'inline'})"
 
 # Deploy the built server with production dependencies resolved from the frozen
-# workspace lockfile. `--legacy` is required because this workspace intentionally
-# does not use pnpm's injected-workspace-packages mode; the deployed runtime has
-# no workspace dependency after devDependencies are omitted.
+# workspace lockfile. Legacy deploy still performs a resolution pass, so disable
+# minimumReleaseAge for this command only; `--frozen-lockfile` keeps every
+# selected artifact pinned to the reviewed lockfile. `--legacy` is required
+# because this workspace intentionally does not use pnpm's injected-workspace-
+# packages mode; the deployed runtime has no workspace dependency after
+# devDependencies are omitted.
 #
 # Source maps, declarations, package tests/examples/docs, and duplicate
 # TypeScript source are build-time/publisher payload, not runtime inputs.
@@ -60,7 +63,7 @@ RUN node -e "const fs=require('node:fs');const entry=require.resolve('ts-morph',
 # below AC2's 200,000,000-byte ceiling. Optional dependencies stay installed because
 # esbuild's native per-platform binary is one of them and is required by the
 # preview bundler at runtime.
-RUN pnpm --filter @ambitresearch/genie deploy --prod --legacy /out && \
+RUN pnpm --filter @ambitresearch/genie deploy --prod --legacy --frozen-lockfile --config.minimumReleaseAge=0 /out && \
     node -e "const fs=require('node:fs');const path=require('node:path');const root='/out/node_modules/.pnpm';const dir=fs.readdirSync(root).find((name)=>name.startsWith('ts-morph@'));const commonDir=fs.readdirSync(root).find((name)=>name.startsWith('@ts-morph+common@'));if(!dir||!commonDir)throw new Error('deployed ts-morph graph not found');const packageRoot=path.join(root,dir,'node_modules/ts-morph');fs.copyFileSync('/tmp/ts-morph-runtime.mjs',path.join(packageRoot,'dist/runtime.mjs'));fs.copyFileSync(path.join(root,commonDir,'node_modules/@ts-morph/common/LICENSE'),path.join(packageRoot,'LICENSE.@ts-morph-common'));const file=path.join(packageRoot,'package.json');const manifest=JSON.parse(fs.readFileSync(file,'utf8'));manifest.type='module';manifest.main='./dist/runtime.mjs';manifest.exports={'.':'./dist/runtime.mjs'};fs.writeFileSync(file,JSON.stringify(manifest))" && \
     node packages/server/scripts/pack-ts-morph-runtime.mjs /out/node_modules/ts-morph/dist/runtime.mjs && \
     find /out/node_modules -type f \

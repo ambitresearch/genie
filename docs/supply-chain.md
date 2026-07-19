@@ -110,6 +110,9 @@ a partially published release:
   old will fail until that version matures; a maintainer bumping dependencies inside the
   window can add the specific package to `minimumReleaseAgeExclude` (below) or pass a
   one-off `--config.minimumReleaseAge=0` for a reviewed lockfile update.
+  Docker's legacy `pnpm deploy` also uses that command-local override because legacy
+  deploy performs a resolution pass; it simultaneously requires `--frozen-lockfile`, so
+  no version can differ from the reviewed lockfile.
 - **`minimumReleaseAgeExclude`** — exempts the `@cline/cli-*` platform binaries from the
   cooldown. They are an exactly-pinned, dev/test-only E2E dependency (`packages/e2e`) that
   tracks a fast-moving upstream and never ships in a published artifact, so the cooldown
