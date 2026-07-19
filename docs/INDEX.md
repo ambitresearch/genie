@@ -16,7 +16,7 @@ Generated 2026-06-21. All docs derive from the validated research report
 ## Source-of-truth facts (do not contradict)
 
 - Project name: **genie**
-- Repository: **roshangautam/genie** — **private**, to be created
+- Repository: **ambitresearch/genie** — **private pending public release**
 - License: **MIT**
 - Primary language: **TypeScript** (Node ≥ 22 LTS, ESM)
 - MCP SDK: **@modelcontextprotocol/sdk**

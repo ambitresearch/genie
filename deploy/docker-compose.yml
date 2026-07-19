@@ -13,7 +13,7 @@
 
 services:
   genie:
-    image: ghcr.io/roshangautam/genie:latest
+    image: ghcr.io/ambitresearch/genie:latest
     # Uncomment to build from local source instead of the published image:
     # build:
     #   context: ..

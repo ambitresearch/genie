@@ -335,7 +335,7 @@ jobs:
         env:
           TARBALL: ${{ steps.artifact.outputs.tarball }}
           SBOM: artifacts/server/genie-server-sbom.cdx.json
-          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_IDENTITY: https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main
           CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
           SIGNING_SHA: ${{ github.sha }}
         run: |
@@ -433,7 +433,7 @@ jobs:
         env:
           TARBALL: ${{ steps.artifact.outputs.tarball }}
           SBOM: artifacts/viewer/genie-viewer-sbom.cdx.json
-          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_IDENTITY: https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main
           CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
           SIGNING_SHA: ${{ github.sha }}
         run: |
@@ -504,7 +504,7 @@ jobs:
 
       - name: Sign and verify Claude Desktop bundle
         env:
-          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_IDENTITY: https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main
           CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
           SIGNING_SHA: ${{ github.sha }}
         run: |
@@ -582,7 +582,7 @@ jobs:
           # image manifest carries its own bill of materials + build metadata.
           sbom: true
           provenance: mode=max
-          tags: ghcr.io/roshangautam/genie:${{ steps.tags.outputs.staging }}
+          tags: ghcr.io/ambitresearch/genie:${{ steps.tags.outputs.staging }}
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -590,11 +590,11 @@ jobs:
           cosign-release: v3.1.2
 
       - name: Sign GHCR image digest (keyless)
-        run: cosign sign --yes "ghcr.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+        run: cosign sign --yes "ghcr.io/ambitresearch/genie@${{ steps.build.outputs.digest }}"
 
       - name: Verify GHCR image signature
         env:
-          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_IDENTITY: https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main
           CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
           SIGNING_SHA: ${{ github.sha }}
         run: |
@@ -602,7 +602,7 @@ jobs:
             --certificate-identity="$CERTIFICATE_IDENTITY" \
             --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
             --certificate-github-workflow-sha="$SIGNING_SHA" \
-            "ghcr.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+            "ghcr.io/ambitresearch/genie@${{ steps.build.outputs.digest }}"
 
       - name: Promote verified GHCR digest
         env:
@@ -610,7 +610,7 @@ jobs:
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
           set -euo pipefail
-          image=ghcr.io/roshangautam/genie
+          image=ghcr.io/ambitresearch/genie
           docker buildx imagetools create \
             --tag "$image:$VERSION" \
             --tag "$image:latest" \
@@ -683,7 +683,7 @@ jobs:
 
       - name: Verify Docker Hub image signature
         env:
-          CERTIFICATE_IDENTITY: https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_IDENTITY: https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main
           CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
           SIGNING_SHA: ${{ github.sha }}
         run: |

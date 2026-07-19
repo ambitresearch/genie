@@ -394,7 +394,7 @@ describe("AC2 — HtmlAdapter", () => {
         componentName: "Cased",
         group: "misc",
         source: [
-          '<x-counter></x-counter>',
+          "<x-counter></x-counter>",
           "<script>",
           // Valid: lowercase tag, real API — SHOULD surface.
           '  customElements.define("x-counter", class extends HTMLElement {});',
@@ -457,7 +457,7 @@ describe("AC3 — tracking-issue provenance (no remaining stubs in v2)", () => {
     // though both are now real adapters (DRO-616 / DRO-617); they must stay
     // genie-repo URLs for historical links and any framework added later.
     for (const url of [VUE_TRACKING_ISSUE, HTML_TRACKING_ISSUE]) {
-      expect(url).toMatch(/^https:\/\/github\.com\/roshangautam\/genie\/issues\/\d+$/);
+      expect(url).toMatch(/^https:\/\/github\.com\/ambitresearch\/genie\/issues\/\d+$/);
     }
   });
 });

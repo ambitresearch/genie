@@ -341,7 +341,7 @@ we merely make it legible to an LLM.
 
 ### 5.4 Pillar 4 — Open by default, MIT-licensed, plain TypeScript
 
-**What it means.** The repository at `roshangautam/genie` is
+**What it means.** The repository at `ambitresearch/genie` is
 MIT-licensed. The primary language is TypeScript (Node ≥ 22, ESM). The MCP
 implementation uses `@modelcontextprotocol/sdk` only — no proprietary forks, no
 private extensions. The protocol is the boundary; everything inside is open

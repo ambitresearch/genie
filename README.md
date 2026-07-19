@@ -4,7 +4,7 @@
 
 **AI UI-component generation, inside your coding agent, against your own UI kit.**
 
-[![CI](https://github.com/roshangautam/genie/actions/workflows/ci.yml/badge.svg)](https://github.com/roshangautam/genie/actions/workflows/ci.yml)
+[![CI](https://github.com/ambitresearch/genie/actions/workflows/ci.yml/badge.svg)](https://github.com/ambitresearch/genie/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.19.0-brightgreen.svg)](.nvmrc)
 
@@ -35,7 +35,7 @@ _inside_ a coding harness — are genuinely useful. See [`docs/plan/02-brd.md`](
 > Requires Node ≥ 22.19.0 and [pnpm](https://pnpm.io) (`corepack enable`).
 
 ```bash
-git clone https://github.com/roshangautam/genie.git
+git clone https://github.com/ambitresearch/genie.git
 cd genie
 pnpm install
 pnpm dev            # boots the MCP server on stdio
@@ -115,7 +115,7 @@ docker run -d --name genie -p 8080:8080 \
   -e GENIE_LLM_API_KEY \
   -e OAUTH_HS256_KEY="$(openssl rand -hex 32)" \
   -e GENIE_OAUTH_ISSUER=http://localhost:8080 \
-  ghcr.io/roshangautam/genie:latest
+  ghcr.io/ambitresearch/genie:latest
 health_status=
 for _ in $(seq 1 70); do
   health_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' genie)"
@@ -133,8 +133,8 @@ commented out by default). Published images are signed with keyless
 [cosign](https://docs.sigstore.dev/cosign/); verify with:
 
 ```bash
-cosign verify ghcr.io/roshangautam/genie:latest \
-  --certificate-identity='https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main' \
+cosign verify ghcr.io/ambitresearch/genie:latest \
+  --certificate-identity='https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com'
 ```
 

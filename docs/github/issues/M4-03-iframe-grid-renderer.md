@@ -65,9 +65,9 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the card grid + card anatomy.
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the card grid + card anatomy.
 
-**Supporting:** [`ref-genie-card.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-genie-card.svg).
+**Supporting:** [`ref-genie-card.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/ref-genie-card.svg).
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 

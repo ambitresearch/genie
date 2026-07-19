@@ -599,7 +599,7 @@ Epics map to milestones M0–M5 from the research report §7.
 - **Persona:** C
 - **Narrative:** As a Platform Engineer, I want a multi-arch container image, so I can deploy it to my self-hosted server or k8s cluster.
 - **Acceptance criteria:**
-  - Given `docker pull ghcr.io/roshangautam/genie:1.0`, Then both amd64 and arm64 variants resolve.
+  - Given `docker pull ghcr.io/ambitresearch/genie:1.0`, Then both amd64 and arm64 variants resolve.
   - Given `docker run -p 8780:8780 -e GENIE_LLM_BASE_URL=… ghcr.io/…`, Then the server starts in <2 s and `GET /healthz` returns 200.
   - Given the image, Then it runs as non-root UID 1000.
 - **Priority:** P0 · **Estimate:** M · **Milestone:** M5
@@ -1229,7 +1229,7 @@ pointing to the viewer entry. `peerDependencies`: none.
 `npx @modelcontextprotocol/mcpb pack`. Includes minimal vendored deps so
 double-click install on Claude Desktop works without npm.
 
-**FR-092 — Docker image.** `ghcr.io/roshangautam/genie:1.0`.
+**FR-092 — Docker image.** `ghcr.io/ambitresearch/genie:1.0`.
 Multi-arch (amd64, arm64). Non-root UID 1000. Base: distroless node 22.
 Exposes 8780/tcp.
 

@@ -6,7 +6,7 @@
 > but isn't a direct visual diff — use the mock for context + identity rules).
 >
 > Mocks live in `docs/designs/design-6/*.svg`. On GitHub they render at:
-> `https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/<file>.svg`
+> `https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/<file>.svg`
 > In a clone: open `docs/designs/design-6/<file>.svg` directly.
 >
 > **Validation protocol** for any issue with a Design Reference: see `AGENTS.md` §3.

@@ -1,5 +1,7 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -12,6 +14,15 @@ const repoRoot = resolve(import.meta.dirname, "../../..");
 const workflowsRoot = resolve(repoRoot, ".github/workflows");
 const ci = readFileSync(resolve(workflowsRoot, "ci.yml"), "utf8");
 const release = readFileSync(resolve(workflowsRoot, "release.yml"), "utf8");
+const runnerGuard = readFileSync(resolve(workflowsRoot, "runner-guard.yml"), "utf8");
+const rootPackage = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8"));
+const serverPackage = JSON.parse(
+  readFileSync(resolve(repoRoot, "packages/server/package.json"), "utf8"),
+);
+const viewerPackage = JSON.parse(
+  readFileSync(resolve(repoRoot, "packages/viewer/package.json"), "utf8"),
+);
+const mcpbManifest = JSON.parse(readFileSync(resolve(repoRoot, "mcpb/manifest.json"), "utf8"));
 const workspace = readFileSync(resolve(repoRoot, "pnpm-workspace.yaml"), "utf8");
 const gitleaks = readFileSync(resolve(repoRoot, ".gitleaks.toml"), "utf8");
 const sbomScript = resolve(repoRoot, "scripts/generate-package-sbom.mjs");
@@ -108,6 +119,99 @@ describe("supply-chain policy", () => {
     expect(releasePlease.indexOf("Validate production registry authentication")).toBeLessThan(
       releasePlease.indexOf("Create the CI-gated GitHub release"),
     );
+  });
+
+  it("uses the transferred repository identity for releases and usage accounting", () => {
+    const workflowIdentity =
+      "https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main";
+    expect(release.match(/CERTIFICATE_IDENTITY:/g)).toHaveLength(5);
+    expect([...release.matchAll(new RegExp(escapeRegex(workflowIdentity), "g"))]).toHaveLength(5);
+    expect(release).not.toContain("https://github.com/roshangautam/genie");
+
+    expect(runnerGuard).toContain("OWNER: ${{ github.repository_owner }}");
+    expect(runnerGuard).toContain("/organizations/${OWNER}/settings/billing/usage");
+    expect(runnerGuard).not.toContain("/users/${OWNER}/settings/billing/usage");
+    expect(runnerGuard).toContain("/repos/${OWNER}/${REPO}/actions/runners");
+    expect(runnerGuard).toContain('select(.status == "online")');
+    expect(runnerGuard).toContain('[ "${online_runners:-0}" -gt 0 ]');
+  });
+
+  it.each([
+    { used: 2_799, online: 0, expected: '["ubuntu-latest"]' },
+    { used: 2_799, online: 1, expected: '["ubuntu-latest"]' },
+    { used: 2_800, online: 0, expected: '["ubuntu-latest"]' },
+    { used: 2_800, online: 1, expected: '["self-hosted"]' },
+  ])(
+    "routes $used used minutes with $online online runners to $expected",
+    ({ used, online, expected }) => {
+      const workflow = parse(runnerGuard) as {
+        jobs: { guard: { steps: Array<{ run?: string }> } };
+      };
+      const script = workflow.jobs.guard.steps.find((step) => step.run)?.run;
+      expect(script).toBeDefined();
+
+      const fakeBin = mkdtempSync(join(tmpdir(), "genie-runner-guard-"));
+      const targetFile = join(fakeBin, "target");
+      try {
+        writeFileSync(
+          join(fakeBin, "date"),
+          '#!/bin/sh\ncase "$*" in *%Y*) echo 2026 ;; *) echo 7 ;; esac\n',
+        );
+        writeFileSync(
+          join(fakeBin, "gh"),
+          `#!/bin/sh
+if [ "$1" = api ]; then
+  case "$2" in
+    /organizations/*/settings/billing/usage*) echo "$FAKE_USED" ;;
+    /repos/*/actions/runners*) echo "$FAKE_ONLINE" ;;
+    /repos/*/actions/variables/RUNS_ON) echo '["stale"]' ;;
+    *) exit 1 ;;
+  esac
+elif [ "$1" = variable ] && [ "$2" = set ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = --body ]; then printf '%s' "$2" > "$FAKE_TARGET_FILE"; exit 0; fi
+    shift
+  done
+  exit 1
+else
+  exit 1
+fi
+`,
+        );
+        chmodSync(join(fakeBin, "date"), 0o755);
+        chmodSync(join(fakeBin, "gh"), 0o755);
+
+        execFileSync("/bin/bash", ["-c", script!], {
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            GH_TOKEN: "test-token",
+            OWNER: "ambitresearch",
+            REPO: "genie",
+            THRESHOLD: "2800",
+            FAKE_USED: String(used),
+            FAKE_ONLINE: String(online),
+            FAKE_TARGET_FILE: targetFile,
+          },
+          stdio: "pipe",
+        });
+
+        expect(readFileSync(targetFile, "utf8")).toBe(expected);
+      } finally {
+        rmSync(fakeBin, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("publishes source metadata from the Ambit Research repository", () => {
+    const gitUrl = "git+https://github.com/ambitresearch/genie.git";
+    expect(rootPackage.repository.url).toBe(gitUrl);
+    expect(serverPackage.repository.url).toBe(gitUrl);
+    expect(viewerPackage.repository.url).toBe(gitUrl);
+    expect(mcpbManifest.repository.url).toBe("https://github.com/ambitresearch/genie");
+    expect(mcpbManifest.homepage).toBe("https://github.com/ambitresearch/genie");
+    expect(mcpbManifest.documentation).toBe("https://github.com/ambitresearch/genie#readme");
+    expect(mcpbManifest.support).toBe("https://github.com/ambitresearch/genie/issues");
   });
 
   it("signs and verifies the exact npm tarballs and SBOMs before publishing", () => {

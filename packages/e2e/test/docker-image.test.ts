@@ -176,7 +176,7 @@ describe("Docker build context", () => {
 
 describe("deploy/docker-compose.yml (AC6)", () => {
   it("includes the genie MCP server service", () => {
-    expect(compose).toMatch(/genie:\s*\n\s*image: ghcr\.io\/roshangautam\/genie/);
+    expect(compose).toMatch(/genie:\s*\n\s*image: ghcr\.io\/ambitresearch\/genie/);
   });
 
   it("does not ship a git host sidecar by default", () => {
@@ -278,9 +278,21 @@ describe("Docker release and CI workflows", () => {
 
   it("pins cosign verification to the release workflow on main", () => {
     expect(readme).toContain(
-      "--certificate-identity='https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main'",
+      "--certificate-identity='https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main'",
     );
     expect(readme).not.toContain("--certificate-identity-regexp");
+  });
+
+  it("publishes GHCR under Ambit Research and retains the confirmed Docker Hub namespace", () => {
+    const ghcrJobStart = releaseWorkflow.indexOf("  docker-publish-ghcr:");
+    const dockerHubJobStart = releaseWorkflow.indexOf("  docker-publish-dockerhub:");
+    const ghcrJob = releaseWorkflow.slice(ghcrJobStart, dockerHubJobStart);
+    const dockerHubJob = releaseWorkflow.slice(dockerHubJobStart);
+
+    expect(ghcrJob).toContain("ghcr.io/ambitresearch/genie");
+    expect(ghcrJob).not.toContain("ghcr.io/roshangautam/genie");
+    expect(dockerHubJob).toContain("docker.io/roshangautam/genie");
+    expect(dockerHubJob).not.toContain("docker.io/ambitresearch/genie");
   });
 
   it("scopes fallback cleanup to this run and removes anonymous volumes", () => {

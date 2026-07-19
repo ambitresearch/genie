@@ -26,7 +26,7 @@ CSP) are non-negotiable.
 ## Dev setup
 
 ```bash
-git clone https://github.com/roshangautam/genie.git
+git clone https://github.com/ambitresearch/genie.git
 cd genie
 corepack enable                # or: npm i -g pnpm
 pnpm install

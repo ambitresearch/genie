@@ -143,7 +143,7 @@ satisfied with evidence, docs updated if behavior changed. Anything less stays o
 
 | Thing | Value |
 |---|---|
-| Repo | `roshangautam/genie` (private) |
+| Repo | `ambitresearch/genie` (private pending public release) |
 | Implementer agents | Claude · Codex · Copilot (any can be assigned an issue) |
 | PR reviewer | **Copilot** (only agent GitHub lets you *request* as reviewer) |
 | Default branch | `main` (protected: 1 review + status checks) |

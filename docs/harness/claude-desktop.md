@@ -18,7 +18,7 @@ The recommended way to register genie in Claude Desktop is the packaged
 installs and registers the server for you, and you never hand-edit JSON.
 
 > **Current status:** the verified M5-05 bundle landed in
-> [PR #203](https://github.com/roshangautam/genie/pull/203). Prefer the `.mcpb`
+> [PR #203](https://github.com/ambitresearch/genie/pull/203). Prefer the `.mcpb`
 > on macOS once it is attached to a GitHub Release. The M5-05 v1 bundle is
 > macOS-only; Windows and Linux users must use the manual JSON configuration
 > below until their platforms are supported. On macOS, JSON remains the "if

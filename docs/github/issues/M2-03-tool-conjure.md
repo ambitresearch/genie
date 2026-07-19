@@ -73,9 +73,9 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`00-front-door.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/00-front-door.svg) — the GENERATE moment — accent applies here.
+**Primary mock:** [`00-front-door.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/00-front-door.svg) — the GENERATE moment — accent applies here.
 
-**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
+**Supporting:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 

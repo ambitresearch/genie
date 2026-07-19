@@ -12,11 +12,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/roshangautam/genie"
+    "url": "https://github.com/ambitresearch/genie"
   },
-  "homepage": "https://github.com/roshangautam/genie",
-  "documentation": "https://github.com/roshangautam/genie#readme",
-  "support": "https://github.com/roshangautam/genie/issues",
+  "homepage": "https://github.com/ambitresearch/genie",
+  "documentation": "https://github.com/ambitresearch/genie#readme",
+  "support": "https://github.com/ambitresearch/genie/issues",
   "license": "MIT",
   "server": {
     "type": "node",

@@ -7,18 +7,18 @@ estimate: "2h"
 ---
 
 ## Summary
-Create `roshangautam/genie` on GitHub, ship MIT LICENSE,
+Record and verify the transferred `ambitresearch/genie` GitHub repository, MIT LICENSE,
 CONTRIBUTING, CODE_OF_CONDUCT, SECURITY.md, CODEOWNERS, and a README that
 points at the docs/ tree. This is the legal and social entry point for the
 project.
 
 ## Context
-- INDEX.md: "License: MIT", "Repository: roshangautam/genie".
+- INDEX.md: "License: MIT", "Repository: ambitresearch/genie".
 - Open-source comparators (`GLips/Figma-Context-MCP`,
   `Jpisnice/shadcn-ui-mcp-server`) both ship the same docset.
 
 ## Acceptance Criteria
-- [ ] AC1 — Repo exists at `roshangautam/genie`, default branch
+- [ ] AC1 — Repo exists at `ambitresearch/genie`, default branch
       `main`, branch protection on (1 review + status checks required).
 - [ ] AC2 — `LICENSE` file is the standard MIT text with year 2026 and
       copyright "Roshan Gautam".
@@ -34,9 +34,9 @@ project.
       (CI · npm · license), quickstart, and links into `INDEX.md`.
 
 ## Implementation Notes
-- Use `gh repo create roshangautam/genie --private` (per
-  INDEX.md §Source-of-truth — repo is **private, to be created**; any future
-  visibility change is a separate decision).
+- Verify the transferred repository with `gh repo view ambitresearch/genie`.
+  It remains **private pending public release** per INDEX.md; any visibility
+  change is a separate release decision.
 - Pull templates from `github.com/github/docs` or
   `github.com/anthropics/skills` for COC.
 - Do NOT enable `Discussions` yet — pre-launch noise.
@@ -62,7 +62,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 ## Definition of Done
 - [ ] Tests added — N/A.
 - [ ] Docs updated — yes, the docs themselves.
-- [ ] Manual verification — `gh repo view roshangautam/genie`
+- [ ] Manual verification — `gh repo view ambitresearch/genie`
       shows the new repo with all six docs present.
 - [ ] No new ESLint/TS errors — N/A.
 - [ ] Reviewed by 1 maintainer.

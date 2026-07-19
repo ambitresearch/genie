@@ -3,7 +3,7 @@
 # Idempotent: re-runs skip anything that already exists.
 #
 # Usage:
-#   ./CREATE-ISSUES.sh                 # default repo roshangautam/genie
+#   ./CREATE-ISSUES.sh                 # default repo ambitresearch/genie
 #   REPO=other/repo ./CREATE-ISSUES.sh # override
 #
 # Requires:
@@ -13,7 +13,7 @@
 
 set -euo pipefail
 
-REPO="${REPO:-roshangautam/genie}"
+REPO="${REPO:-ambitresearch/genie}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ISSUES_DIR="$HERE/issues"
 
