@@ -2,15 +2,14 @@ name: Runner Guard (offload to self-hosted near quota)
 
 # Flips the repo variable RUNS_ON to `["self-hosted"]` once month-to-date GitHub
 # Actions minutes approach the included quota, and back to `["ubuntu-latest"]`
-# when a new billing month resets usage. The CI workflow reads it on its
-# ubuntu-latest matrix leg as
-# `${{ matrix.os == 'ubuntu-latest' && (vars.RUNS_ON || 'ubuntu-latest') || matrix.os }}`,
-# so a value of `["self-hosted"]` re-parses as a one-label runner array while the
-# macOS leg always stays on GitHub-hosted macos-latest.
+# when a new billing month resets usage or no online self-hosted runner exists.
+# The CI check matrix parses the JSON array with `fromJSON(vars.RUNS_ON ||
+# '["ubuntu-latest"]')`.
 #
 # Requires repo secret GH_GUARD_PAT: a fine-grained PAT owned by an
 # organization member, scoped to this repository, with
 #   - Organization permissions -> Administration: Read-only
+#   - Repository permissions -> Administration: Read-only
 #   - Repository permissions -> Variables: Read and write
 # The built-in GITHUB_TOKEN cannot read billing or manage variables, so a PAT is required.
 
@@ -51,8 +50,14 @@ jobs:
           used=$(gh api "/organizations/${OWNER}/settings/billing/usage?year=${Y}&month=${M}" \
                    --jq '[.usageItems[] | select(.product=="actions" and .unitType=="Minutes") | .quantity] | add // 0')
           used=${used%.*}
-          echo "Month-to-date Actions minutes: ${used} (threshold ${THRESHOLD})"
-          if [ "${used:-0}" -ge "${THRESHOLD}" ]; then target='["self-hosted"]'; else target='["ubuntu-latest"]'; fi
+          online_runners=$(gh api "/repos/${OWNER}/${REPO}/actions/runners?per_page=100" \
+            --jq '[.runners[] | select(.status == "online")] | length' 2>/dev/null || echo 0)
+          echo "Month-to-date Actions minutes: ${used} (threshold ${THRESHOLD}); online self-hosted runners: ${online_runners}"
+          if [ "${used:-0}" -ge "${THRESHOLD}" ] && [ "${online_runners:-0}" -gt 0 ]; then
+            target='["self-hosted"]'
+          else
+            target='["ubuntu-latest"]'
+          fi
           cur=$(gh api "/repos/${OWNER}/${REPO}/actions/variables/RUNS_ON" --jq '.value' 2>/dev/null || echo "")
           echo "Current RUNS_ON='${cur:-<unset>}' -> target='${target}'"
           if [ "${cur}" != "${target}" ]; then

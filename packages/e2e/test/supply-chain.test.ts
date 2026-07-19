@@ -129,6 +129,9 @@ describe("supply-chain policy", () => {
     expect(runnerGuard).toContain("OWNER: ${{ github.repository_owner }}");
     expect(runnerGuard).toContain("/organizations/${OWNER}/settings/billing/usage");
     expect(runnerGuard).not.toContain("/users/${OWNER}/settings/billing/usage");
+    expect(runnerGuard).toContain("/repos/${OWNER}/${REPO}/actions/runners");
+    expect(runnerGuard).toContain('select(.status == "online")');
+    expect(runnerGuard).toContain('[ "${online_runners:-0}" -gt 0 ]');
   });
 
   it("publishes source metadata from the Ambit Research repository", () => {
