@@ -20,7 +20,7 @@
 | **License**                  | MIT                                                                                                                                                      |
 | **Primary language**         | TypeScript (Node ≥ 22, ESM)                                                                                                                              |
 | **Distribution**             | npm · `.mcpb` bundle · Docker image                                                                                                                      |
-| **Repository**               | `github.com/roshangautam/genie`                                                                                                                          |
+| **Repository**               | `github.com/ambitresearch/genie`                                                                                                                         |
 
 > **Authority note.** This RFC is the engineering source-of-truth. Where it disagrees with the PRD on a technical detail (file paths, schema shapes, transports, retry policy, etc.), this RFC wins; raise a PRD amendment. Where it disagrees with the PRD on a _user-visible_ behaviour (which surfaces exist, what the user can do), the PRD wins; raise an RFC revision.
 
@@ -74,7 +74,7 @@
    - Implement OAuth 2.0 Dynamic Client Registration (RFC 7591) per the MCP 2025-06-18 authorization spec for Streamable HTTP deployments on supporting harnesses; static bearer for other HTTP harnesses.
    - Keep local first-run install on stdio, where the harness launches the `genie` process directly.
    - No service ever sees a long-lived password.
-8. **G-8 — Distribution matrix.** Ship `npm install -g genie`, a signed `.mcpb` bundle, and a `ghcr.io/roshangautam/genie` Docker image, all from one repo, on every release.
+8. **G-8 — Distribution matrix.** Ship `npm install -g genie`, a signed `.mcpb` bundle, and a `ghcr.io/ambitresearch/genie` Docker image, all from one repo, on every release.
 9. **G-9 — Observability by default.** Prometheus metrics endpoint at `/metrics`, structured JSON logs, OpenTelemetry trace export to OTLP/HTTP, and a published Grafana dashboard JSON.
 
 ### 3.2 Non-goals (numbered, explicit)
@@ -1522,7 +1522,7 @@ The component supports four visual variants and three sizes...
 
 The JSON Schema sent to the configured LLM endpoint as `response_format.json_schema` for
 `conjure`/`refine` (M2-02, tracking issue
-[DRO-249](https://github.com/roshangautam/genie/issues/26)). **Canonical source is code, not
+[DRO-249](https://github.com/ambitresearch/genie/issues/26)). **Canonical source is code, not
 this doc:** `packages/server/src/llm/schema.ts` exports `COMPONENT_SCHEMA` (as
 `const satisfies JSONSchema7`) plus the `ValidatedComponent` type inferred from it via
 `json-schema-to-ts`; the JSON below is a snapshot for readability; docs drift from the
@@ -2765,7 +2765,7 @@ flowchart TD
 ```yaml
 services:
   genie:
-    image: ghcr.io/roshangautam/genie:0.4.2
+    image: ghcr.io/ambitresearch/genie:0.4.2
     restart: unless-stopped
     ports: ["8780:8780"]
     environment:

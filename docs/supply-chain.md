@@ -92,9 +92,9 @@ check:
 - npm provenance: `npm audit signatures` after install, or inspect the provenance
   attestation on the package's npmjs.com page.
 - Release blobs: download an artifact and its `.sig` bundle, then run
-  `cosign verify-blob --bundle <artifact>.sig --certificate-identity 'https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main' --certificate-oidc-issuer https://token.actions.githubusercontent.com <artifact>`.
+  `cosign verify-blob --bundle <artifact>.sig --certificate-identity 'https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main' --certificate-oidc-issuer https://token.actions.githubusercontent.com <artifact>`.
 - Container signature:
-  `cosign verify <image>@<digest> --certificate-identity 'https://github.com/roshangautam/genie/.github/workflows/release.yml@refs/heads/main' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
+  `cosign verify <image>@<digest> --certificate-identity 'https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
 - Image SBOM/provenance: `docker buildx imagetools inspect <image> --format '{{ json .SBOM }}'`
   and `… '{{ json .Provenance }}'`. To extract the in-toto SPDX predicate:
   `cosign download attestation --predicate-type https://spdx.dev/Document --platform linux/amd64 <image>@<digest> | jq -r '.payload' | base64 --decode | jq '.predicate'`.

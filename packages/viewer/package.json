@@ -5,7 +5,7 @@
   "description": "genie preview viewer — Vite-backed UI-kit grid (M4). Multi-page dev config (M4-02): each components/**/preview.html is a Vite entry point.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/roshangautam/genie.git",
+    "url": "git+https://github.com/ambitresearch/genie.git",
     "directory": "packages/viewer"
   },
   "publishConfig": {

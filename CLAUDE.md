@@ -68,5 +68,5 @@ app to open.
   JPEG compression washes out the cream palette.
 - `git` operations in this environment may need the MacOS-MCP shell tool (the sandbox blocks
   `.git` writes from the Bash tool).
-- This repo currently lives in the **private** GitHub repo `roshangautam/genie`;
+- This repo currently lives in the **private** GitHub repo `ambitresearch/genie`;
   DRO-278 release publishing remains blocked until the repository is public.

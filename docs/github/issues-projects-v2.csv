@@ -53,18 +53,18 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 - [ ] No new ESLint/TS errors — N/A.
 - [ ] Reviewed by 1 maintainer.","type:docs,area:docs,priority:P0-critical,size:S",M0 — Discovery & Scaffold,,Todo,Urgent,3h
 "[M0-02] Initialize repo, MIT LICENSE, governance docs","## Summary
-Create `roshangautam/genie` on GitHub, ship MIT LICENSE,
+Create `ambitresearch/genie` on GitHub, ship MIT LICENSE,
 CONTRIBUTING, CODE_OF_CONDUCT, SECURITY.md, CODEOWNERS, and a README that
 points at the docs/ tree. This is the legal and social entry point for the
 project.
 
 ## Context
-- INDEX.md: ""License: MIT"", ""Repository: roshangautam/genie"".
+- INDEX.md: ""License: MIT"", ""Repository: ambitresearch/genie"".
 - Open-source comparators (`GLips/Figma-Context-MCP`,
   `Jpisnice/shadcn-ui-mcp-server`) both ship the same docset.
 
 ## Acceptance Criteria
-- [ ] AC1 — Repo exists at `roshangautam/genie`, default branch
+- [ ] AC1 — Repo exists at `ambitresearch/genie`, default branch
       `main`, branch protection on (1 review + status checks required).
 - [ ] AC2 — `LICENSE` file is the standard MIT text with year 2026 and
       copyright ""Roshan Gautam"".
@@ -80,7 +80,7 @@ project.
       (CI · npm · license), quickstart, and links into `INDEX.md`.
 
 ## Implementation Notes
-- Use `gh repo create roshangautam/genie --private` (per
+- Use `gh repo create ambitresearch/genie --private` (per
   INDEX.md §Source-of-truth — repo is **private, to be created**; any future
   visibility change is a separate decision).
 - Pull templates from `github.com/github/docs` or
@@ -108,7 +108,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 ## Definition of Done
 - [ ] Tests added — N/A.
 - [ ] Docs updated — yes, the docs themselves.
-- [ ] Manual verification — `gh repo view roshangautam/genie`
+- [ ] Manual verification — `gh repo view ambitresearch/genie`
       shows the new repo with all six docs present.
 - [ ] No new ESLint/TS errors — N/A.
 - [ ] Reviewed by 1 maintainer.","type:chore,area:ci,priority:P0-critical,size:S",M0 — Discovery & Scaffold,,Todo,Urgent,2h
@@ -795,7 +795,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`ref-genie-card.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-genie-card.svg) — advisory telemetry on validation states.
+**Primary mock:** [`ref-genie-card.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/ref-genie-card.svg) — advisory telemetry on validation states.
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 
@@ -988,7 +988,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — response feeds the browser grouping.
+**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — response feeds the browser grouping.
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 
@@ -1469,9 +1469,9 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`00-front-door.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/00-front-door.svg) — the GENERATE moment — accent applies here.
+**Primary mock:** [`00-front-door.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/00-front-door.svg) — the GENERATE moment — accent applies here.
 
-**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
+**Supporting:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 
@@ -1540,7 +1540,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the REFINE moment — sliders + region rect.
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the REFINE moment — sliders + region rect.
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 
@@ -1874,7 +1874,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`ref-genie-card.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-genie-card.svg) — the @genie marker the card detail depends on.
+**Primary mock:** [`ref-genie-card.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/ref-genie-card.svg) — the @genie marker the card detail depends on.
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 
@@ -1994,9 +1994,9 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — cards group correctly in the grid.
+**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — cards group correctly in the grid.
 
-**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
+**Supporting:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 
@@ -2065,7 +2065,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`ref-genie-card.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-genie-card.svg) — the 4 @genie validation states.
+**Primary mock:** [`ref-genie-card.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/ref-genie-card.svg) — the 4 @genie validation states.
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 
@@ -2198,7 +2198,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — the ✓ synced status the browser shows.
+**Primary mock:** [`01-ui-kit-browser.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/01-ui-kit-browser.svg) — the ✓ synced status the browser shows.
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 
@@ -2259,7 +2259,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the surface everything renders into.
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the surface everything renders into.
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 
@@ -2319,7 +2319,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (reference context). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — each preview.html as a card entry point.
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — each preview.html as a card entry point.
 
 **Use the mock for:** correct output shape + the **identity rule** (clay/gilt accent ONLY on generate/refine; structure stays ink/neutral). See [`MOCK-MAP.md`](../MOCK-MAP.md).
 
@@ -2389,9 +2389,9 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the card grid + card anatomy.
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the card grid + card anatomy.
 
-**Supporting:** [`ref-genie-card.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-genie-card.svg).
+**Supporting:** [`ref-genie-card.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/ref-genie-card.svg).
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 
@@ -2451,7 +2451,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — a single card re-rendering in place on HMR.
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — a single card re-rendering in place on HMR.
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 
@@ -2517,9 +2517,9 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`03-embedded-modes.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — the inline ui:// grid payload.
+**Primary mock:** [`03-embedded-modes.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — the inline ui:// grid payload.
 
-**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
+**Supporting:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 
@@ -2585,7 +2585,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`03-embedded-modes.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — inline / fullscreen / pip framings.
+**Primary mock:** [`03-embedded-modes.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — inline / fullscreen / pip framings.
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 
@@ -2645,7 +2645,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`03-embedded-modes.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — hardened payload renders identically (G-5 byte-identical).
+**Primary mock:** [`03-embedded-modes.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — hardened payload renders identically (G-5 byte-identical).
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 
@@ -2702,9 +2702,9 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the booted viewer + empty state.
+**Primary mock:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg) — the booted viewer + empty state.
 
-**Supporting:** [`00-front-door.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/00-front-door.svg).
+**Supporting:** [`00-front-door.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/00-front-door.svg).
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 
@@ -2760,9 +2760,9 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`ref-foundations.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/ref-foundations.svg) — palette contrast + roles via axe-core.
+**Primary mock:** [`ref-foundations.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/ref-foundations.svg) — palette contrast + roles via axe-core.
 
-**Supporting:** [`02-preview-refine.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
+**Supporting:** [`02-preview-refine.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/02-preview-refine.svg).
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 
@@ -2821,7 +2821,7 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 
 This issue produces visual output (**pixel-diff target**). Validate per [`AGENTS.md`](../../../AGENTS.md) §3.
 
-**Primary mock:** [`03-embedded-modes.svg`](https://github.com/roshangautam/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — all 3 vehicles render byte-identical cards (G-5).
+**Primary mock:** [`03-embedded-modes.svg`](https://github.com/ambitresearch/genie/blob/main/docs/designs/design-6/03-embedded-modes.svg) — all 3 vehicles render byte-identical cards (G-5).
 
 **Validate:** screenshot your build, diff layout/hierarchy/spacing against the mock, and confirm the **identity rule** — clay/gilt accent (`#c87c5e`/`#ac5a40`) ONLY on generate/refine moments, structure stays ink/neutral. Verify colors with computed styles, not a JPEG.
 
@@ -3178,8 +3178,8 @@ when the PR is merged, the reviewer approved, CI is green, and every AC has evid
 - [x] No new ESLint/TS errors.
 - [ ] Reviewed by 1 maintainer.","type:infra,area:ci,priority:P0-critical,size:M",M5 — Auth + Distribution + Smoke Tests,,Todo,Urgent,5h
 [M5-07] Docker image (multi-arch amd64/arm64),"## Summary
-Build a multi-arch Docker image `roshangautam/genie` for
-amd64 + arm64. Published to Docker Hub + GitHub Container Registry on every
+Build multi-arch Docker images for amd64 + arm64. Publish
+`docker.io/roshangautam/genie` and `ghcr.io/ambitresearch/genie` on every
 release. Includes a `docker-compose.yml` reference for self-hosters.
 
 ## Context

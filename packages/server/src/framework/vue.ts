@@ -72,7 +72,7 @@ import { PREVIEW_GLOBAL_NAME } from "./react.js";
  * no longer a stub so historical links and the AC3 URL-shape assertion still
  * resolve.
  */
-export const VUE_TRACKING_ISSUE = "https://github.com/roshangautam/genie/issues/129";
+export const VUE_TRACKING_ISSUE = "https://github.com/ambitresearch/genie/issues/129";
 
 /**
  * The host-provided browser global the preview IIFE resolves Vue from. The M4

@@ -38,4 +38,4 @@ and the project aims to follow [Semantic Versioning](https://semver.org/) from 1
   - Design folder restructured to `docs/designs/design-1/` (canonical) with
     Copilot variants `design-2|3|4/` for later A/B.
 
-[Unreleased]: https://github.com/roshangautam/genie/commits/main
+[Unreleased]: https://github.com/ambitresearch/genie/commits/main

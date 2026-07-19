@@ -498,7 +498,7 @@ The project name **genie** is a strong position by construction:
   - It is evocative (a genie grants wishes; you describe a component and it appears) rather than referential.
   - Generic, pre-existing words are about the hardest names to attack on trademark grounds.
 - **It contains no Anthropic mark.**
-  - "Claude" and "Anthropic" appear nowhere in the name, the npm package, the Docker image, or the repository (`roshangautam/genie`).
+  - "Claude" and "Anthropic" appear nowhere in the name, the npm package, the Docker image, or the repository (`ambitresearch/genie`).
   - genie does not present itself as an official Anthropic surface, and the README names Claude Design as _inspiration_, not as something genie reproduces or affiliates with.
 - **The positioning is "independent open-source tool," not "hosted-product reproduction."**
   - genie is its own thing that happens to speak a compatible protocol — the way many tools speak HTTP or implement POSIX without inheriting another product's identity.
@@ -593,7 +593,7 @@ Eight to ten gates that must be true at T+0 to start the build, and at T+12 week
 | G-3  | Maintainer willing to spend spare time on M0-M5                            | ✓ (self-decided; no external commitment needed)                       |
 | G-4  | This BRD ratified by sponsor (v1.0 freeze)                                 | ✗ (currently v0.1 DRAFT — this gate)                                  |
 | G-5  | PRD and Tech Design / RFC drafted                                          | ⚠️ (PRD started, RFC pending)                                         |
-| G-6  | GitHub repo `roshangautam/genie` created and labeled                       | ✗ (in M0 scope)                                                       |
+| G-6  | GitHub repo `ambitresearch/genie` created and labeled                      | ✓                                                                     |
 | G-7  | Pre-launch legal memo confirming trademark posture and IP cleanliness      | ✗ (scheduled pre-M5)                                                  |
 | G-8  | All 7 Tier-0 harnesses verified MCP-functional in the testbed              | ✓ (research report's per-harness matrix is the verification artifact) |
 | G-9  | MCP-Apps stable spec dated 2026-01-26 confirmed live                       | ✓                                                                     |

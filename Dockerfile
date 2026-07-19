@@ -10,7 +10,7 @@
 # Build + push (multi-arch, CI):
 #   docker buildx build --platform linux/amd64,linux/arm64 \
 #     -t docker.io/roshangautam/genie:X.Y.Z \
-#     -t ghcr.io/roshangautam/genie:X.Y.Z \
+#     -t ghcr.io/ambitresearch/genie:X.Y.Z \
 #     --push .
 
 # ── Stage 1: build ────────────────────────────────────────────────────────────

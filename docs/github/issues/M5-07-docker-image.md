@@ -7,8 +7,8 @@ estimate: "5h"
 ---
 
 ## Summary
-Build a multi-arch Docker image `roshangautam/genie` for
-amd64 + arm64. Published to Docker Hub + GitHub Container Registry on every
+Build multi-arch Docker images for amd64 + arm64. Publish
+`docker.io/roshangautam/genie` and `ghcr.io/ambitresearch/genie` on every
 release. Includes a `docker-compose.yml` reference for self-hosters.
 
 ## Context

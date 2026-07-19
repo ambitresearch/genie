@@ -62,7 +62,7 @@ import { PREVIEW_GLOBAL_NAME } from "./react.js";
  * provenance and referenced by the conformance suite's URL-shape assertion).
  * Retained now that HTML is no longer a stub so historical links still resolve.
  */
-export const HTML_TRACKING_ISSUE = "https://github.com/roshangautam/genie/issues/130";
+export const HTML_TRACKING_ISSUE = "https://github.com/ambitresearch/genie/issues/130";
 
 /**
  * Matches a `customElements.define("tag-name", …)` registration in the source,

@@ -12,6 +12,15 @@ const repoRoot = resolve(import.meta.dirname, "../../..");
 const workflowsRoot = resolve(repoRoot, ".github/workflows");
 const ci = readFileSync(resolve(workflowsRoot, "ci.yml"), "utf8");
 const release = readFileSync(resolve(workflowsRoot, "release.yml"), "utf8");
+const runnerGuard = readFileSync(resolve(workflowsRoot, "runner-guard.yml"), "utf8");
+const rootPackage = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8"));
+const serverPackage = JSON.parse(
+  readFileSync(resolve(repoRoot, "packages/server/package.json"), "utf8"),
+);
+const viewerPackage = JSON.parse(
+  readFileSync(resolve(repoRoot, "packages/viewer/package.json"), "utf8"),
+);
+const mcpbManifest = JSON.parse(readFileSync(resolve(repoRoot, "mcpb/manifest.json"), "utf8"));
 const workspace = readFileSync(resolve(repoRoot, "pnpm-workspace.yaml"), "utf8");
 const gitleaks = readFileSync(resolve(repoRoot, ".gitleaks.toml"), "utf8");
 const sbomScript = resolve(repoRoot, "scripts/generate-package-sbom.mjs");
@@ -108,6 +117,29 @@ describe("supply-chain policy", () => {
     expect(releasePlease.indexOf("Validate production registry authentication")).toBeLessThan(
       releasePlease.indexOf("Create the CI-gated GitHub release"),
     );
+  });
+
+  it("uses the transferred repository identity for releases and usage accounting", () => {
+    const workflowIdentity =
+      "https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main";
+    expect(release.match(/CERTIFICATE_IDENTITY:/g)).toHaveLength(5);
+    expect([...release.matchAll(new RegExp(escapeRegex(workflowIdentity), "g"))]).toHaveLength(5);
+    expect(release).not.toContain("https://github.com/roshangautam/genie");
+
+    expect(runnerGuard).toContain("OWNER: ${{ github.repository_owner }}");
+    expect(runnerGuard).toContain("/organizations/${OWNER}/settings/billing/usage");
+    expect(runnerGuard).not.toContain("/users/${OWNER}/settings/billing/usage");
+  });
+
+  it("publishes source metadata from the Ambit Research repository", () => {
+    const gitUrl = "git+https://github.com/ambitresearch/genie.git";
+    expect(rootPackage.repository.url).toBe(gitUrl);
+    expect(serverPackage.repository.url).toBe(gitUrl);
+    expect(viewerPackage.repository.url).toBe(gitUrl);
+    expect(mcpbManifest.repository.url).toBe("https://github.com/ambitresearch/genie");
+    expect(mcpbManifest.homepage).toBe("https://github.com/ambitresearch/genie");
+    expect(mcpbManifest.documentation).toBe("https://github.com/ambitresearch/genie#readme");
+    expect(mcpbManifest.support).toBe("https://github.com/ambitresearch/genie/issues");
   });
 
   it("signs and verifies the exact npm tarballs and SBOMs before publishing", () => {

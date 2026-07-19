@@ -8,20 +8,21 @@ name: Runner Guard (offload to self-hosted near quota)
 # so a value of `["self-hosted"]` re-parses as a one-label runner array while the
 # macOS leg always stays on GitHub-hosted macos-latest.
 #
-# Requires repo secret GH_GUARD_PAT: a fine-grained PAT (account-level) with
-#   - Account permissions -> Plan: Read-only
+# Requires repo secret GH_GUARD_PAT: a fine-grained PAT owned by an
+# organization member, scoped to this repository, with
+#   - Organization permissions -> Administration: Read-only
 #   - Repository permissions -> Variables: Read and write
 # The built-in GITHUB_TOKEN cannot read billing or manage variables, so a PAT is required.
 
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       threshold:
-        description: 'Minutes at which to offload to self-hosted'
+        description: "Minutes at which to offload to self-hosted"
         required: false
-        default: '2800'
+        default: "2800"
 
 permissions:
   contents: read
@@ -37,8 +38,8 @@ jobs:
       - name: Decide runner from month-to-date Actions minutes
         env:
           GH_TOKEN: ${{ secrets.GH_GUARD_PAT }}
-          OWNER: roshangautam
-          REPO: genie
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
           THRESHOLD: ${{ github.event.inputs.threshold || '2800' }}
         run: |
           set -euo pipefail
@@ -47,7 +48,7 @@ jobs:
             exit 0
           fi
           Y=$(date -u +%Y); M=$(date -u +%-m)
-          used=$(gh api "/users/${OWNER}/settings/billing/usage?year=${Y}&month=${M}" \
+          used=$(gh api "/organizations/${OWNER}/settings/billing/usage?year=${Y}&month=${M}" \
                    --jq '[.usageItems[] | select(.product=="actions" and .unitType=="Minutes") | .quantity] | add // 0')
           used=${used%.*}
           echo "Month-to-date Actions minutes: ${used} (threshold ${THRESHOLD})"
