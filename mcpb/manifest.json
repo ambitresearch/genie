@@ -3,7 +3,7 @@
   "manifest_version": "0.4",
   "name": "genie",
   "display_name": "genie",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Harness-agnostic MCP server for AI UI-component generation — live preview + UI-kit browser, direct in Claude Desktop.",
   "long_description": "genie generates and refines UI components against your own component library (\"UI kit\") without leaving the harness. This bundle runs genie's MCP server over stdio inside Claude Desktop. Configure an OpenAI-compatible LLM endpoint (base URL + API key) on first run — genie has no default endpoint and never bundles a key.",
   "author": {
@@ -23,7 +23,11 @@
     "entry_point": "server/dist/cli.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/server/dist/cli.js", "--transport", "stdio"],
+      "args": [
+        "${__dirname}/server/dist/cli.js",
+        "--transport",
+        "stdio"
+      ],
       "env": {
         "GENIE_HOME": "${HOME}/.genie",
         "GENIE_KITS_ROOT": "${HOME}/.genie/kits",
@@ -58,7 +62,9 @@
     }
   },
   "compatibility": {
-    "platforms": ["darwin"],
+    "platforms": [
+      "darwin"
+    ],
     "runtimes": {
       "node": ">=22"
     }
