@@ -1,5 +1,7 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -133,6 +135,73 @@ describe("supply-chain policy", () => {
     expect(runnerGuard).toContain('select(.status == "online")');
     expect(runnerGuard).toContain('[ "${online_runners:-0}" -gt 0 ]');
   });
+
+  it.each([
+    { used: 2_799, online: 0, expected: '["ubuntu-latest"]' },
+    { used: 2_799, online: 1, expected: '["ubuntu-latest"]' },
+    { used: 2_800, online: 0, expected: '["ubuntu-latest"]' },
+    { used: 2_800, online: 1, expected: '["self-hosted"]' },
+  ])(
+    "routes $used used minutes with $online online runners to $expected",
+    ({ used, online, expected }) => {
+      const workflow = parse(runnerGuard) as {
+        jobs: { guard: { steps: Array<{ run?: string }> } };
+      };
+      const script = workflow.jobs.guard.steps.find((step) => step.run)?.run;
+      expect(script).toBeDefined();
+
+      const fakeBin = mkdtempSync(join(tmpdir(), "genie-runner-guard-"));
+      const targetFile = join(fakeBin, "target");
+      try {
+        writeFileSync(
+          join(fakeBin, "date"),
+          '#!/bin/sh\ncase "$*" in *%Y*) echo 2026 ;; *) echo 7 ;; esac\n',
+        );
+        writeFileSync(
+          join(fakeBin, "gh"),
+          `#!/bin/sh
+if [ "$1" = api ]; then
+  case "$2" in
+    /organizations/*/settings/billing/usage*) echo "$FAKE_USED" ;;
+    /repos/*/actions/runners*) echo "$FAKE_ONLINE" ;;
+    /repos/*/actions/variables/RUNS_ON) echo '["stale"]' ;;
+    *) exit 1 ;;
+  esac
+elif [ "$1" = variable ] && [ "$2" = set ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = --body ]; then printf '%s' "$2" > "$FAKE_TARGET_FILE"; exit 0; fi
+    shift
+  done
+  exit 1
+else
+  exit 1
+fi
+`,
+        );
+        chmodSync(join(fakeBin, "date"), 0o755);
+        chmodSync(join(fakeBin, "gh"), 0o755);
+
+        execFileSync("/bin/bash", ["-c", script!], {
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            GH_TOKEN: "test-token",
+            OWNER: "ambitresearch",
+            REPO: "genie",
+            THRESHOLD: "2800",
+            FAKE_USED: String(used),
+            FAKE_ONLINE: String(online),
+            FAKE_TARGET_FILE: targetFile,
+          },
+          stdio: "pipe",
+        });
+
+        expect(readFileSync(targetFile, "utf8")).toBe(expected);
+      } finally {
+        rmSync(fakeBin, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("publishes source metadata from the Ambit Research repository", () => {
     const gitUrl = "git+https://github.com/ambitresearch/genie.git";
