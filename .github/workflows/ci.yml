@@ -756,14 +756,24 @@ jobs:
           retention-days: 7
 
   # ── Docker image build smoke test (M5-07 / DRO-279) ──────────────────────────
-  # Builds and exercises the native runtime image, then performs a no-push
-  # buildx build for both release platforms so QEMU/native-dependency failures
-  # are caught before release publication (AC2-AC5).
+  # Builds and exercises the runtime image on native amd64 and arm64 runners.
+  # Native runners avoid QEMU process crashes while still proving both release
+  # platforms and their architecture-specific dependencies before publication.
   docker-build-smoke:
-    name: docker image build smoke
+    name: docker image build smoke (${{ matrix.arch }})
     if: github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -782,9 +792,6 @@ jobs:
             || pnpm install --frozen-lockfile --package-import-method=hardlink \
             || pnpm install --frozen-lockfile --package-import-method=hardlink
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
@@ -800,23 +807,18 @@ jobs:
           GENIE_REQUIRE_DOCKER: "1"
         run: pnpm --filter @ambitresearch/genie-e2e test:e2e:docker
 
-      - name: Build both release platforms without pushing (AC5)
+      - name: Build native release platform and assert size (AC2/AC5)
         run: |
-          docker buildx build --platform linux/amd64,linux/arm64 \
-            --output=type=oci,dest=/tmp/genie-multiarch.tar .
-
-      - name: Assert ARM64 image size (AC2)
-        run: |
-          docker buildx build --platform linux/arm64 --load \
-            -t genie:docker-image-test-arm64 .
-          size="$(docker image inspect genie:docker-image-test-arm64 --format '{{.Size}}')"
+          docker buildx build --platform ${{ matrix.platform }} --load \
+            -t genie:docker-image-test-${{ matrix.arch }} .
+          size="$(docker image inspect genie:docker-image-test-${{ matrix.arch }} --format '{{.Size}}')"
           test "$size" -lt 200000000
 
       - name: Upload test report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: test-report-docker-image
+          name: test-report-docker-image-${{ matrix.arch }}
           path: reports/junit.xml
           if-no-files-found: warn
           retention-days: 7
