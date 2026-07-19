@@ -289,15 +289,18 @@ describe("Docker release and CI workflows", () => {
     expect(ci).not.toMatch(/docker rm -f genie-docker-image-test/);
   });
 
-  it("builds both release platforms in PR CI before publishing", () => {
-    expect(ci).toMatch(/docker\/setup-qemu-action@[0-9a-f]{40} # v3\.7\.0/);
-    expect(ci).toMatch(/docker\/setup-buildx-action@[0-9a-f]{40} # v3\.12\.0/);
-    expect(ci).toMatch(/docker buildx build --platform linux\/amd64,linux\/arm64/);
-    expect(ci).toMatch(/docker buildx build --platform linux\/arm64 --load/);
+  it("builds both release platforms on matching native CI runners before publishing", () => {
+    const dockerJob = ci.slice(ci.indexOf("  docker-build-smoke:"));
+    expect(dockerJob).toMatch(/- runner: ubuntu-24\.04\s+platform: linux\/amd64\s+arch: amd64/);
+    expect(dockerJob).toMatch(/- runner: ubuntu-24\.04-arm\s+platform: linux\/arm64\s+arch: arm64/);
+    expect(dockerJob).toContain("runs-on: ${{ matrix.runner }}");
+    expect(dockerJob).toMatch(/docker\/setup-buildx-action@[0-9a-f]{40} # v3\.12\.0/);
+    expect(dockerJob).not.toContain("docker/setup-qemu-action@");
+    expect(dockerJob).toContain("docker buildx build --platform ${{ matrix.platform }} --load");
     expect(ci).toMatch(/test "\$size" -lt 200000000/);
   });
 
-  it("gives the emulated multi-arch gate enough time to finish", () => {
+  it("gives each native architecture gate enough time to finish", () => {
     const dockerJob = ci.slice(ci.indexOf("  docker-build-smoke:"));
     expect(dockerJob).toMatch(/timeout-minutes: 30/);
   });
