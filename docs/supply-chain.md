@@ -43,7 +43,7 @@ being adopted before merging.
 ## 2. Published-artifact signing and attestation
 
 `.github/workflows/release.yml` publishes four artifact classes, each with its own
-integrity evidence. Before release-please creates any tag or GitHub Release, one
+integrity evidence. Before release-please creates any tag or draft GitHub Release, one
 preflight checks public repository visibility plus npm and Docker Hub credentials;
 it then authenticates to npm, confirms that account's `ambitresearch` organization
 membership, lists the scope package access visible to the token, and performs a Docker
@@ -89,6 +89,13 @@ check:
 - **Claude Desktop bundle** (`genie.mcpb`): built from the release tag, signed and locally
   verified keyless, then attached to the server GitHub Release with its
   `genie.mcpb.sig` bundle.
+
+Release Please deliberately creates draft component releases. Signed blobs and SBOMs attach
+to those drafts before npm publication; container jobs then read back each promoted version
+tag and require its digest to match the signed build digest. The finalizer fails closed unless
+every applicable job succeeded, every expected asset is attached, and the exact npm versions
+are live. Only then does it publish the GitHub Releases. This sequencing prevents GitHub's
+immutable-release setting from locking an empty release before its assets arrive.
 
 ### Verifying a release
 
