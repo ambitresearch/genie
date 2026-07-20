@@ -687,7 +687,7 @@ jobs:
           # matching the GHCR image above.
           sbom: true
           provenance: mode=max
-          tags: docker.io/roshangautam/genie:${{ steps.tags.outputs.staging }}
+          tags: docker.io/ambitresearch/genie:${{ steps.tags.outputs.staging }}
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -695,7 +695,7 @@ jobs:
           cosign-release: v3.1.2
 
       - name: Sign Docker Hub image digest (keyless)
-        run: cosign sign --yes "docker.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+        run: cosign sign --yes "docker.io/ambitresearch/genie@${{ steps.build.outputs.digest }}"
 
       - name: Verify Docker Hub image signature
         env:
@@ -707,7 +707,7 @@ jobs:
             --certificate-identity="$CERTIFICATE_IDENTITY" \
             --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
             --certificate-github-workflow-sha="$SIGNING_SHA" \
-            "docker.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+            "docker.io/ambitresearch/genie@${{ steps.build.outputs.digest }}"
 
       - name: Promote verified Docker Hub digest
         env:
@@ -715,7 +715,7 @@ jobs:
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
           set -euo pipefail
-          image=docker.io/roshangautam/genie
+          image=docker.io/ambitresearch/genie
           docker buildx imagetools create \
             --tag "$image:$VERSION" \
             --tag "$image:latest" \
@@ -732,7 +732,7 @@ jobs:
           set -euo pipefail
           for tag in "$VERSION" latest; do
             published_digest=$(docker buildx imagetools inspect \
-              "docker.io/roshangautam/genie:$tag" \
+              "docker.io/ambitresearch/genie:$tag" \
               | awk '$1 == "Digest:" { print $2; exit }')
             test "$published_digest" = "$BUILD_DIGEST"
           done
