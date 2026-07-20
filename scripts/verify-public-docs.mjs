@@ -31,6 +31,7 @@ export const PUBLIC_MARKDOWN_FILES = [
 ];
 
 const retainedNonSiteMarkdown = new Set(["docs/designs/design-6/design.md"]);
+const generatedSourcePaths = [/^docs\/(?:\.deliverables|\.vitepress)(?:\/|$)/];
 const binaryExtensions = new Set([
   ".avif",
   ".eot",
@@ -94,7 +95,11 @@ async function filesUnder(root, predicate, options = {}) {
 
 export function unexpectedMarkdownFiles(markdownFiles) {
   const allowed = new Set([...PUBLIC_MARKDOWN_FILES, ...retainedNonSiteMarkdown]);
-  return markdownFiles.filter((path) => !allowed.has(path)).sort();
+  return markdownFiles
+    .filter(
+      (path) => !allowed.has(path) && !generatedSourcePaths.some((pattern) => pattern.test(path)),
+    )
+    .sort();
 }
 
 export function forbiddenMatches(path, content) {
@@ -126,9 +131,9 @@ export function forbiddenArtifactPath(path) {
 }
 
 export async function verifyPublicDocs(root = repoRoot) {
-  const markdown = (
-    await filesUnder(resolve(root, "docs"), (path) => path.endsWith(".md"), { skipHidden: true })
-  ).map((path) => relative(root, path).replaceAll("\\", "/"));
+  const markdown = (await filesUnder(resolve(root, "docs"), (path) => path.endsWith(".md"))).map(
+    (path) => relative(root, path).replaceAll("\\", "/"),
+  );
   const unexpected = unexpectedMarkdownFiles(markdown);
   if (unexpected.length > 0) {
     throw new Error(

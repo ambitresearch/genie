@@ -29,6 +29,24 @@ describe("public documentation boundary", () => {
     expect(unexpectedMarkdownFiles([...PUBLIC_MARKDOWN_FILES])).toEqual([]);
   });
 
+  it.each(["docs/.vitepress/cache/index.md", "docs/.deliverables/staging/notes.md"])(
+    "ignores explicit generated Markdown path %s",
+    (path) => {
+      expect(unexpectedMarkdownFiles([...PUBLIC_MARKDOWN_FILES, path])).toEqual([]);
+    },
+  );
+
+  it("rejects Markdown hidden below the docs root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "genie-public-docs-hidden-source-"));
+    tempRoots.push(root);
+    const hiddenMarkdown = join(root, "docs/.internal/notes.md");
+    await mkdir(join(hiddenMarkdown, ".."), { recursive: true });
+    await mkdir(join(root, "docs/.vitepress/dist"), { recursive: true });
+    await writeFile(hiddenMarkdown, "internal notes");
+
+    await expect(verifyPublicDocs(root)).rejects.toThrow("Unexpected Markdown");
+  });
+
   it.each([
     ["private host", "connect to homeassistant.local"],
     ["private address", "connect to 192.168.1.180"],
