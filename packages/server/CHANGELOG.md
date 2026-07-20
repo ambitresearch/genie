@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/ambitresearch/genie/compare/server-v1.3.0...server-v1.3.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **release:** ship package verification guidance ([#69](https://github.com/ambitresearch/genie/issues/69)) ([#223](https://github.com/ambitresearch/genie/issues/223)) ([762c0ab](https://github.com/ambitresearch/genie/commit/762c0ab3d429d0189a63616fd5625d63bb5a41e0))
+
 ## [1.3.0](https://github.com/ambitresearch/genie/compare/server-v1.2.0...server-v1.3.0) (2026-07-20)
 
 

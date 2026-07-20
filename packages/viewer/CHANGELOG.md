@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/ambitresearch/genie/compare/viewer-v0.1.0...viewer-v0.1.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **release:** ship package verification guidance ([#69](https://github.com/ambitresearch/genie/issues/69)) ([#223](https://github.com/ambitresearch/genie/issues/223)) ([762c0ab](https://github.com/ambitresearch/genie/commit/762c0ab3d429d0189a63616fd5625d63bb5a41e0))
+
 ## 0.1.0 (2026-07-20)
 
 
