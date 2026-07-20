@@ -31,7 +31,17 @@ const readmePath = join(repoRoot, "README.md");
 const MAX_BYTES = 30 * 1024 * 1024;
 
 function hasChangelogVersionHeading(changelog: string, version: string): boolean {
-  return changelog.includes(`## ${version}`) || changelog.includes(`## [${version}](`);
+  const plainHeading = `## ${version}`;
+  const linkedHeading = `## [${version}](`;
+
+  return changelog
+    .split(/\r?\n/)
+    .some(
+      (line) =>
+        line === plainHeading ||
+        line.startsWith(`${plainHeading} `) ||
+        line.startsWith(linkedHeading),
+    );
 }
 
 describe("release changelog version headings", () => {
@@ -42,6 +52,7 @@ describe("release changelog version headings", () => {
     expect(hasChangelogVersionHeading("## 0.1.0 (2026-07-20)", "0.1.0")).toBe(true);
     expect(hasChangelogVersionHeading(linkedChangelog, "0.1.1")).toBe(true);
     expect(hasChangelogVersionHeading(linkedChangelog, "0.1.2")).toBe(false);
+    expect(hasChangelogVersionHeading("## 0.1.10 (2026-07-20)", "0.1.1")).toBe(false);
   });
 });
 
