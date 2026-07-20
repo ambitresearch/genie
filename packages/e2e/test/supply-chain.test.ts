@@ -243,6 +243,7 @@ fi
     );
     expect(dryRun).toContain("npm pack --json");
     expect(dryRun).toContain('npm publish "$tmp_dir/$filename" --dry-run');
+    expect(dryRun).toContain("--provenance --access public --tag ci");
 
     for (const [name, nextName, packageName] of [
       ["publish-server", "publish-viewer", "@ambitresearch/genie"],

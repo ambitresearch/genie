@@ -95,10 +95,11 @@ jobs:
         # dry run cannot write to the registry. npm still consults public
         # metadata and rejects an already-published version even in dry-run
         # mode. Rewrite only the ephemeral checkout's package version to a
-        # unique prerelease before packing; the real publish path continues
-        # to use the release tag's version. Provenance attestation itself is
-        # skipped in --dry-run mode; the live gate below separately requires
-        # a public source repository.
+        # unique prerelease before packing and pass an explicit non-production
+        # dist-tag, which npm requires for prerelease versions. The real publish
+        # path continues to use the release tag's version. Provenance attestation
+        # itself is skipped in --dry-run mode; the live gate below separately
+        # requires a public source repository.
         # Regression guard: npm's publish-time manifest normalization can
         # silently rewrite/strip fields (e.g. it removed a `./`-prefixed
         # `bin` target in the past — see DRO-278 review) while still
@@ -115,7 +116,7 @@ jobs:
             > "$tmp_dir/pack.json" \
             2> >(tee "$tmp_dir/pack-stderr.log" >&2)
           filename=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))[0].filename' "$tmp_dir/pack.json")
-          npm publish "$tmp_dir/$filename" --dry-run --provenance --access public \
+          npm publish "$tmp_dir/$filename" --dry-run --provenance --access public --tag ci \
             2>&1 | tee "$tmp_dir/publish-dry-run.log"
           if grep -qi "auto-corrected" "$tmp_dir/pack-stderr.log" "$tmp_dir/publish-dry-run.log"; then
             echo "::error::npm reported package.json auto-corrections during publish --dry-run. This means the published manifest would differ from the source manifest (e.g. an invalid bin/script field was silently dropped). Fix the manifest so no auto-correction is needed." >&2
