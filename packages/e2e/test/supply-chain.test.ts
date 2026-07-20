@@ -490,6 +490,7 @@ fi
 
   it("keeps component releases draft until every applicable publish path succeeds", () => {
     expect(releasePleaseConfig.draft).toBe(true);
+    expect(releasePleaseConfig["force-tag-creation"]).toBe(true);
 
     const finalize = job(release, "finalize-releases");
     for (const dependency of [
