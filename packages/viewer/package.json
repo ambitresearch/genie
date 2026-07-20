@@ -1,6 +1,6 @@
 {
   "name": "@ambitresearch/genie-viewer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "genie preview viewer — Vite-backed UI-kit grid (M4). Multi-page dev config (M4-02): each components/**/preview.html is a Vite entry point.",
   "repository": {
