@@ -7,6 +7,16 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      server_tag:
+        description: Existing draft server release tag to recover (for example, server-v1.3.1)
+        required: true
+        type: string
+      viewer_tag:
+        description: Existing draft viewer release tag to verify and finalize (for example, viewer-v0.1.1)
+        required: true
+        type: string
 
 # Default to read-only for every job (GitHub's recommended hardening —
 # https://docs.github.com/actions/security-guides/automatic-token-authentication#modifying-the-permissions-for-the-github_token).
@@ -809,12 +819,12 @@ jobs:
           verify_release() {
             tag=$1
             shift
-            draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.draft')
+            draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
             if [ "$draft" != "true" ] && [ "$GITHUB_RUN_ATTEMPT" = "1" ]; then
               echo "::error::Release $tag was published before finalization."
               exit 1
             fi
-            assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[].name')
+            assets=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
             for asset in "$@"; do
               if ! printf '%s\n' "$assets" | grep -Fqx "$asset"; then
                 echo "::error::Release $tag is missing $asset; keeping releases draft."
@@ -860,7 +870,7 @@ jobs:
           set -euo pipefail
           publish_release() {
             tag=$1
-            if [ "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.draft')" = "true" ]; then
+            if [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = "true" ]; then
               gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
             else
               echo "Release $tag is already published; verifying the retry."
@@ -880,7 +890,446 @@ jobs:
         run: |
           set -euo pipefail
           verify_published() {
-            test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$1" --jq '.draft')" = "false"
+            test "$(gh release view "$1" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = "false"
           }
           if [ "$SERVER_RELEASED" = "true" ]; then verify_published "$SERVER_TAG"; fi
           if [ "$VIEWER_RELEASED" = "true" ]; then verify_published "$VIEWER_TAG"; fi
+
+  # Manual recovery is deliberately separate from the normal Release Please
+  # path. It is only for a release where npm and signed GitHub assets already
+  # succeeded but one or both container registries did not. Running from main
+  # preserves the documented keyless certificate identity; the guard refuses
+  # mutable inputs other than an existing pair of draft component releases.
+  recovery-guard:
+    name: validate manual draft-release recovery
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require main and matching draft component releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_TAG: ${{ github.event.inputs.server_tag }}
+          VIEWER_TAG: ${{ github.event.inputs.viewer_tag }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Release recovery must be dispatched from refs/heads/main so the Cosign certificate identity remains stable."
+            exit 1
+          fi
+          case "$SERVER_TAG" in
+            server-v*) ;;
+            *) echo "::error::Unexpected server release tag: $SERVER_TAG"; exit 1 ;;
+          esac
+          case "$VIEWER_TAG" in
+            viewer-v*) ;;
+            *) echo "::error::Unexpected viewer release tag: $VIEWER_TAG"; exit 1 ;;
+          esac
+
+          verify_draft_release() {
+            tag=$1
+            draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
+            immutable=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isImmutable --jq '.isImmutable')
+            if [ "$draft" != "true" ]; then
+              echo "::error::Release $tag is not a draft; recovery cannot mutate a published release." >&2
+              exit 1
+            fi
+            if [ "$immutable" != "false" ]; then
+              echo "::error::Release $tag is immutable; recovery requires a mutable draft." >&2
+              exit 1
+            fi
+
+            target=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')
+            tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq '.sha')
+            target_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$target" --jq '.sha')
+            if [ "$tag_sha" != "$target_sha" ]; then
+              echo "::error::Release $tag targets $target_sha, but its tag resolves to $tag_sha." >&2
+              exit 1
+            fi
+            printf '%s' "$tag_sha"
+          }
+
+          server_sha=$(verify_draft_release "$SERVER_TAG")
+          viewer_sha=$(verify_draft_release "$VIEWER_TAG")
+          if [ "$server_sha" != "$viewer_sha" ]; then
+            echo "::error::Recovery tags must be the component pair from one release commit ($server_sha != $viewer_sha)."
+            exit 1
+          fi
+          echo "Validated mutable draft releases at $server_sha."
+
+  recovery-docker-publish-ghcr:
+    name: recover GHCR image (multi-arch, signed)
+    needs: recovery-guard
+    if: github.event_name == 'workflow_dispatch' && needs.recovery-guard.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.inputs.server_tag }}
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Derive recovery image tags
+        id: tags
+        env:
+          SERVER_TAG: ${{ github.event.inputs.server_tag }}
+        run: |
+          set -euo pipefail
+          case "$SERVER_TAG" in
+            server-v*) version="${SERVER_TAG#server-v}" ;;
+            *) echo "::error::Unexpected server release tag: $SERVER_TAG"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "staging=recovery-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rebuild and push staging multi-arch image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          sbom: true
+          provenance: mode=max
+          tags: ghcr.io/ambitresearch/genie:${{ steps.tags.outputs.staging }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Sign and verify recovered GHCR digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          CERTIFICATE_IDENTITY: https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image=ghcr.io/ambitresearch/genie
+          cosign sign --yes "$image@$BUILD_DIGEST"
+          cosign verify \
+            --certificate-identity="$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+            --certificate-github-workflow-sha="$SIGNING_SHA" \
+            "$image@$BUILD_DIGEST"
+
+      - name: Verify recovered GHCR platforms
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect \
+            "ghcr.io/ambitresearch/genie@$BUILD_DIGEST" --raw > manifest.json
+          node <<'NODE'
+          const manifest = JSON.parse(require("node:fs").readFileSync("manifest.json", "utf8"));
+          const platforms = new Set(
+            (manifest.manifests ?? []).map(({ platform = {} }) => `${platform.os}/${platform.architecture}`),
+          );
+          for (const required of ["linux/amd64", "linux/arm64"]) {
+            if (!platforms.has(required)) throw new Error(`Missing required platform: ${required}`);
+          }
+          NODE
+
+      - name: Promote verified GHCR recovery digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          image=ghcr.io/ambitresearch/genie
+          docker buildx imagetools create \
+            --tag "$image:$VERSION" \
+            --tag "$image:latest" \
+            --metadata-file promotion.json \
+            "$image@$BUILD_DIGEST"
+          promoted_digest=$(node -p 'JSON.parse(require("node:fs").readFileSync("promotion.json", "utf8"))["containerimage.descriptor"].digest')
+          test "$promoted_digest" = "$BUILD_DIGEST"
+
+      - name: Verify live GHCR recovery tags
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          for tag in "$VERSION" latest; do
+            published_digest=$(docker buildx imagetools inspect \
+              "ghcr.io/ambitresearch/genie:$tag" \
+              | awk '$1 == "Digest:" { print $2; exit }')
+            test "$published_digest" = "$BUILD_DIGEST"
+          done
+
+  recovery-docker-publish-dockerhub:
+    name: recover Docker Hub image (multi-arch, signed)
+    needs: recovery-guard
+    if: github.event_name == 'workflow_dispatch' && needs.recovery-guard.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.inputs.server_tag }}
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Derive recovery image tags
+        id: tags
+        env:
+          SERVER_TAG: ${{ github.event.inputs.server_tag }}
+        run: |
+          set -euo pipefail
+          case "$SERVER_TAG" in
+            server-v*) version="${SERVER_TAG#server-v}" ;;
+            *) echo "::error::Unexpected server release tag: $SERVER_TAG"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "staging=recovery-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Rebuild and push staging multi-arch image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          sbom: true
+          provenance: mode=max
+          tags: docker.io/ambitresearch/genie:${{ steps.tags.outputs.staging }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Sign and verify recovered Docker Hub digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          CERTIFICATE_IDENTITY: https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          SIGNING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image=docker.io/ambitresearch/genie
+          cosign sign --yes "$image@$BUILD_DIGEST"
+          cosign verify \
+            --certificate-identity="$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+            --certificate-github-workflow-sha="$SIGNING_SHA" \
+            "$image@$BUILD_DIGEST"
+
+      - name: Verify recovered Docker Hub platforms
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect \
+            "docker.io/ambitresearch/genie@$BUILD_DIGEST" --raw > manifest.json
+          node <<'NODE'
+          const manifest = JSON.parse(require("node:fs").readFileSync("manifest.json", "utf8"));
+          const platforms = new Set(
+            (manifest.manifests ?? []).map(({ platform = {} }) => `${platform.os}/${platform.architecture}`),
+          );
+          for (const required of ["linux/amd64", "linux/arm64"]) {
+            if (!platforms.has(required)) throw new Error(`Missing required platform: ${required}`);
+          }
+          NODE
+
+      - name: Promote verified Docker Hub recovery digest
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          image=docker.io/ambitresearch/genie
+          docker buildx imagetools create \
+            --tag "$image:$VERSION" \
+            --tag "$image:latest" \
+            --metadata-file promotion.json \
+            "$image@$BUILD_DIGEST"
+          promoted_digest=$(node -p 'JSON.parse(require("node:fs").readFileSync("promotion.json", "utf8"))["containerimage.descriptor"].digest')
+          test "$promoted_digest" = "$BUILD_DIGEST"
+
+      - name: Verify live Docker Hub recovery tags
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          for tag in "$VERSION" latest; do
+            published_digest=$(docker buildx imagetools inspect \
+              "docker.io/ambitresearch/genie:$tag" \
+              | awk '$1 == "Digest:" { print $2; exit }')
+            test "$published_digest" = "$BUILD_DIGEST"
+          done
+
+  recovery-finalize-releases:
+    name: verify recovery and finalize component releases
+    needs:
+      - recovery-guard
+      - recovery-docker-publish-ghcr
+      - recovery-docker-publish-dockerhub
+    if: >-
+      always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Require every recovery job
+        env:
+          GUARD_RESULT: ${{ needs.recovery-guard.result }}
+          GHCR_RESULT: ${{ needs.recovery-docker-publish-ghcr.result }}
+          DOCKERHUB_RESULT: ${{ needs.recovery-docker-publish-dockerhub.result }}
+        run: |
+          set -euo pipefail
+          require_success() {
+            if [ "$2" != "success" ]; then
+              echo "::error::$1 did not succeed (result: $2); keeping releases draft."
+              exit 1
+            fi
+          }
+          require_success "recovery-guard" "$GUARD_RESULT"
+          require_success "recovery-docker-publish-ghcr" "$GHCR_RESULT"
+          require_success "recovery-docker-publish-dockerhub" "$DOCKERHUB_RESULT"
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Verify existing npm provenance and signed release assets
+        env:
+          CERTIFICATE_IDENTITY: https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main
+          CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+          GH_TOKEN: ${{ github.token }}
+          SERVER_TAG: ${{ github.event.inputs.server_tag }}
+          VIEWER_TAG: ${{ github.event.inputs.viewer_tag }}
+        run: |
+          set -euo pipefail
+          tmp_root=$(mktemp -d)
+          trap 'rm -rf "$tmp_root"' EXIT
+
+          verify_release() {
+            tag=$1
+            shift
+            draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
+            immutable=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isImmutable --jq '.isImmutable')
+            if [ "$draft" != "true" ] && [ "$GITHUB_RUN_ATTEMPT" = "1" ]; then
+              echo "::error::Release $tag was published before recovery finalization."
+              exit 1
+            fi
+            if [ "$draft" = "true" ] && [ "$immutable" != "false" ]; then
+              echo "::error::Draft release $tag unexpectedly became immutable."
+              exit 1
+            fi
+
+            assets=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            for artifact in "$@"; do
+              for asset in "$artifact" "$artifact.sig"; do
+                if ! printf '%s\n' "$assets" | grep -Fqx "$asset"; then
+                  echo "::error::Release $tag is missing $asset; keeping releases draft."
+                  exit 1
+                fi
+              done
+            done
+
+            dir="$tmp_root/$tag"
+            mkdir -p "$dir"
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$dir"
+            for artifact in "$@"; do
+              cosign verify-blob --bundle "$dir/$artifact.sig" \
+                --certificate-identity="$CERTIFICATE_IDENTITY" \
+                --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+                "$dir/$artifact"
+            done
+          }
+          verify_npm() {
+            package=$1
+            version=$2
+            published=$(npm view "$package@$version" version)
+            test "$published" = "$version"
+            predicate=$(npm view "$package@$version" dist.attestations.provenance.predicateType)
+            test "$predicate" = "https://slsa.dev/provenance/v1"
+          }
+
+          server_version=${SERVER_TAG#server-v}
+          server_tarball="ambitresearch-genie-$server_version.tgz"
+          verify_release "$SERVER_TAG" \
+            "$server_tarball" \
+            genie-server-sbom.cdx.json \
+            genie.mcpb
+          verify_npm @ambitresearch/genie "$server_version"
+
+          viewer_version=${VIEWER_TAG#viewer-v}
+          viewer_tarball="ambitresearch-genie-viewer-$viewer_version.tgz"
+          verify_release "$VIEWER_TAG" \
+            "$viewer_tarball" \
+            genie-viewer-sbom.cdx.json
+          verify_npm @ambitresearch/genie-viewer "$viewer_version"
+
+      - name: Publish recovered component releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_TAG: ${{ github.event.inputs.server_tag }}
+          VIEWER_TAG: ${{ github.event.inputs.viewer_tag }}
+        run: |
+          set -euo pipefail
+          publish_release() {
+            tag=$1
+            if [ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = "true" ]; then
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+            else
+              echo "Release $tag is already published; verifying the retry."
+            fi
+          }
+          publish_release "$SERVER_TAG"
+          publish_release "$VIEWER_TAG"
+
+      - name: Verify recovered releases are published and immutable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_TAG: ${{ github.event.inputs.server_tag }}
+          VIEWER_TAG: ${{ github.event.inputs.viewer_tag }}
+        run: |
+          set -euo pipefail
+          for tag in "$SERVER_TAG" "$VIEWER_TAG"; do
+            test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = "false"
+            test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isImmutable --jq '.isImmutable')" = "true"
+          done

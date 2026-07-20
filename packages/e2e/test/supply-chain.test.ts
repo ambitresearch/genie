@@ -130,8 +130,8 @@ describe("supply-chain policy", () => {
   it("uses the transferred repository identity for releases and usage accounting", () => {
     const workflowIdentity =
       "https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main";
-    expect(release.match(/CERTIFICATE_IDENTITY:/g)).toHaveLength(5);
-    expect([...release.matchAll(new RegExp(escapeRegex(workflowIdentity), "g"))]).toHaveLength(5);
+    expect(release.match(/CERTIFICATE_IDENTITY:/g)).toHaveLength(8);
+    expect([...release.matchAll(new RegExp(escapeRegex(workflowIdentity), "g"))]).toHaveLength(8);
     expect(release).not.toContain("https://github.com/roshangautam/genie");
 
     expect(runnerGuard).toContain("OWNER: ${{ github.repository_owner }}");
@@ -516,6 +516,8 @@ fi
     expect(finalize).toContain("genie-server-sbom.cdx.json");
     expect(finalize).toContain("genie-viewer-sbom.cdx.json");
     expect(finalize).toContain("genie.mcpb");
+    expect(finalize).toContain("gh release view");
+    expect(finalize).not.toContain("releases/tags/$tag");
 
     for (const [name, nextName] of [
       ["publish-server", "publish-viewer"],
@@ -546,6 +548,86 @@ fi
       expect(source).toContain('for tag in "$VERSION" latest');
       expect(source).toContain('test "$published_digest" = "$BUILD_DIGEST"');
     }
+  });
+
+  it("recovers incomplete draft releases from main without republishing npm", () => {
+    const parsed = parse(release) as {
+      on?: {
+        workflow_dispatch?: {
+          inputs?: Record<string, { required?: boolean; type?: string }>;
+        };
+      };
+    };
+    expect(parsed.on?.workflow_dispatch?.inputs).toMatchObject({
+      server_tag: { required: true, type: "string" },
+      viewer_tag: { required: true, type: "string" },
+    });
+
+    const guard = job(release, "recovery-guard", "recovery-docker-publish-ghcr");
+    expect(guard).toContain("github.event_name == 'workflow_dispatch'");
+    expect(guard).toContain("refs/heads/main");
+    expect(guard).toContain("server-v*");
+    expect(guard).toContain("viewer-v*");
+    expect(guard).toContain("isDraft");
+    expect(guard).toContain("isImmutable");
+    expect(guard).toContain("gh release view");
+    expect(guard).not.toContain("releases/tags/$tag");
+
+    for (const [name, nextName, image] of [
+      [
+        "recovery-docker-publish-ghcr",
+        "recovery-docker-publish-dockerhub",
+        "ghcr.io/ambitresearch/genie",
+      ],
+      [
+        "recovery-docker-publish-dockerhub",
+        "recovery-finalize-releases",
+        "docker.io/ambitresearch/genie",
+      ],
+    ] as const) {
+      const source = job(release, name, nextName);
+      expect(source).toContain("needs: recovery-guard");
+      expect(source).toContain("ref: ${{ github.event.inputs.server_tag }}");
+      expect(source).toContain("platforms: linux/amd64,linux/arm64");
+      expect(source).toContain("sbom: true");
+      expect(source).toContain("provenance: mode=max");
+      expect(source).toContain(image);
+      expect(source).toContain("recovery-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}");
+      expect(source).toContain("cosign sign --yes");
+      expect(source).toContain("cosign verify");
+      expect(source).toContain("docker buildx imagetools create");
+      expect(source).toContain('test "$promoted_digest" = "$BUILD_DIGEST"');
+      expect(source).toContain("linux/amd64");
+      expect(source).toContain("linux/arm64");
+      expect(source).toContain('for tag in "$VERSION" latest');
+      expect(source).toContain('test "$published_digest" = "$BUILD_DIGEST"');
+    }
+
+    const finalize = job(release, "recovery-finalize-releases");
+    expect(finalize).toContain("always()");
+    expect(finalize).toContain("needs.recovery-guard.result");
+    expect(finalize).toContain("needs.recovery-docker-publish-ghcr.result");
+    expect(finalize).toContain("needs.recovery-docker-publish-dockerhub.result");
+    expect(finalize).toContain("npm view");
+    expect(finalize).toContain("dist.attestations.provenance.predicateType");
+    expect(finalize).toContain("gh release download");
+    expect(finalize).toContain("gh release view");
+    expect(finalize).not.toContain("releases/tags/$tag");
+    expect(finalize).toContain("cosign verify-blob --bundle");
+    expect(finalize).toContain("genie-server-sbom.cdx.json");
+    expect(finalize).toContain("genie-viewer-sbom.cdx.json");
+    expect(finalize).toContain("genie.mcpb");
+
+    const recovery = release.slice(release.indexOf("  recovery-guard:"));
+    expect(recovery).not.toContain("npm publish");
+    expect(recovery).not.toContain("softprops/action-gh-release");
+    expect(recovery).not.toContain("gh release upload");
+    const verify = finalize.indexOf("Verify existing npm provenance and signed release assets");
+    const publish = finalize.indexOf(
+      'gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false',
+    );
+    expect(verify).toBeGreaterThanOrEqual(0);
+    expect(verify).toBeLessThan(publish);
   });
 
   it("runs a digest-pinned full-history secret scan with exact fixture tokens only", () => {
