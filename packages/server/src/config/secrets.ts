@@ -11,7 +11,7 @@
  * Bootstrap contract (AC2): `loadSecrets()` throws `SecretValidationError`
  * with one message per problem when any *required* secret is:
  *   - missing (unset, and absent from a `--secrets-from` file if provided);
- *   - shorter than `MIN_SECRET_LENGTH` (16) characters;
+ *   - shorter than its required minimum length;
  *   - present verbatim anywhere in `process.argv` (a value passed as a CLI
  *     flag is visible to `ps`/shell history on every other local user, so a
  *     secret leaking into argv is treated as fatal, not just discouraged).
@@ -27,10 +27,10 @@ import { readFileSync, statSync } from "node:fs";
 
 /** Every secret env var genie recognises, and whether it's required to boot. */
 export const SECRET_DEFINITIONS = [
-  { key: "GENIE_LLM_API_KEY", required: true },
-  { key: "OAUTH_HS256_KEY", required: true },
-  { key: "GENIE_GIT_TOKEN", required: false },
-  { key: "OAUTH_CLIENT_SECRET", required: false },
+  { key: "GENIE_LLM_API_KEY", required: true, minLength: 16 },
+  { key: "OAUTH_HS256_KEY", required: true, minLength: 32 },
+  { key: "GENIE_GIT_TOKEN", required: false, minLength: 0 },
+  { key: "OAUTH_CLIENT_SECRET", required: false, minLength: 0 },
 ] as const;
 
 /** Union of every secret key name genie knows about. */
@@ -138,9 +138,9 @@ export function loadSecrets(options: LoadSecretsOptions = {}): LoadedSecret[] {
       continue;
     }
 
-    if (def.required && value.length < MIN_SECRET_LENGTH) {
+    if (def.required && value.length < def.minLength) {
       problems.push(
-        `${def.key} must be at least ${MIN_SECRET_LENGTH} characters (got ${value.length}).`,
+        `${def.key} must be at least ${def.minLength} characters (got ${value.length}).`,
       );
     }
 
