@@ -236,8 +236,14 @@ fi
     const dryRun = job(release, "publish-dry-run", "release-please");
     expect(dryRun).toContain("Generate CycloneDX SBOM");
     expect(dryRun).toContain("node scripts/generate-package-sbom.mjs");
+    expect(dryRun).toContain('ci_version="0.0.0-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"');
+    expect(dryRun).toContain('npm pkg set "version=$ci_version"');
+    expect(dryRun.indexOf('npm pkg set "version=$ci_version"')).toBeLessThan(
+      dryRun.indexOf("npm pack --json"),
+    );
     expect(dryRun).toContain("npm pack --json");
     expect(dryRun).toContain('npm publish "$tmp_dir/$filename" --dry-run');
+    expect(dryRun).toContain("--provenance --access public --tag ci");
 
     for (const [name, nextName, packageName] of [
       ["publish-server", "publish-viewer", "@ambitresearch/genie"],

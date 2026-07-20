@@ -283,7 +283,7 @@ describe("Docker release and CI workflows", () => {
     expect(readme).not.toContain("--certificate-identity-regexp");
   });
 
-  it("publishes GHCR under Ambit Research and retains the confirmed Docker Hub namespace", () => {
+  it("publishes both registries under the Ambit Research namespace", () => {
     const ghcrJobStart = releaseWorkflow.indexOf("  docker-publish-ghcr:");
     const dockerHubJobStart = releaseWorkflow.indexOf("  docker-publish-dockerhub:");
     const ghcrJob = releaseWorkflow.slice(ghcrJobStart, dockerHubJobStart);
@@ -291,8 +291,11 @@ describe("Docker release and CI workflows", () => {
 
     expect(ghcrJob).toContain("ghcr.io/ambitresearch/genie");
     expect(ghcrJob).not.toContain("ghcr.io/roshangautam/genie");
-    expect(dockerHubJob).toContain("docker.io/roshangautam/genie");
-    expect(dockerHubJob).not.toContain("docker.io/ambitresearch/genie");
+    expect(dockerHubJob).toContain("docker.io/ambitresearch/genie");
+    expect(dockerHubJob).not.toContain("docker.io/roshangautam/genie");
+    expect(readme).toContain("docker.io/ambitresearch/genie:latest");
+    expect(dockerfile).toContain("docker.io/ambitresearch/genie:X.Y.Z");
+    expect(dockerfile).not.toContain("docker.io/roshangautam/genie");
   });
 
   it("scopes fallback cleanup to this run and removes anonymous volumes", () => {

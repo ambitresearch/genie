@@ -131,6 +131,8 @@ done
 curl --fail http://localhost:8080/health
 ```
 
+The equivalent Docker Hub image is `docker.io/ambitresearch/genie:latest`.
+
 See [`deploy/docker-compose.yml`](./deploy/docker-compose.yml) for a
 self-hoster reference compose file (kit-root volume + env examples included,
 commented out by default). Published images are signed with keyless

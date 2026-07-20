@@ -20,10 +20,11 @@ permissions:
 
 jobs:
   # ── Dry-run publish test (M5-06 DoD: "dry-run publish on a non-prod tag") ──
-  # Runs on every PR and every successful main CI completion. It never touches
-  # the real registry (no registry-url/NODE_AUTH_TOKEN configured, and
-  # `--dry-run` never contacts npm for the publish itself). Exercises the exact
-  # command shape (`--provenance --access public`) the real publish jobs run.
+  # Runs on every PR and every successful main CI completion. It never writes
+  # to the real registry (no registry-url/NODE_AUTH_TOKEN configured). Current
+  # npm still checks public registry metadata during `--dry-run`, so the packed
+  # manifest uses a unique CI-only prerelease version. The job exercises the
+  # exact command shape (`--provenance --access public`) the real publish jobs run.
   publish-dry-run:
     name: publish dry-run (non-prod, ${{ matrix.package }})
     if: github.event_name == 'pull_request' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')
@@ -90,12 +91,15 @@ jobs:
 
       - name: npm publish --dry-run (${{ matrix.package }})
         working-directory: ${{ matrix.dir }}
-        # No registry-url/NODE_AUTH_TOKEN is configured for this job — the
-        # dry run never authenticates against, or contacts, the real
-        # registry for the publish step (npm still resolves metadata from
-        # the default registry, which is fine unauthenticated). Provenance
-        # attestation itself is skipped in --dry-run mode by npm; the live
-        # gate below separately requires a public source repository.
+        # No registry-url/NODE_AUTH_TOKEN is configured for this job, so the
+        # dry run cannot write to the registry. npm still consults public
+        # metadata and rejects an already-published version even in dry-run
+        # mode. Rewrite only the ephemeral checkout's package version to a
+        # unique prerelease before packing and pass an explicit non-production
+        # dist-tag, which npm requires for prerelease versions. The real publish
+        # path continues to use the release tag's version. Provenance attestation
+        # itself is skipped in --dry-run mode; the live gate below separately
+        # requires a public source repository.
         # Regression guard: npm's publish-time manifest normalization can
         # silently rewrite/strip fields (e.g. it removed a `./`-prefixed
         # `bin` target in the past — see DRO-278 review) while still
@@ -106,11 +110,13 @@ jobs:
           set -euo pipefail
           tmp_dir=$(mktemp -d)
           trap 'rm -rf "$tmp_dir"' EXIT
+          ci_version="0.0.0-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          npm pkg set "version=$ci_version"
           npm pack --json --pack-destination "$tmp_dir" . \
             > "$tmp_dir/pack.json" \
             2> >(tee "$tmp_dir/pack-stderr.log" >&2)
           filename=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))[0].filename' "$tmp_dir/pack.json")
-          npm publish "$tmp_dir/$filename" --dry-run --provenance --access public \
+          npm publish "$tmp_dir/$filename" --dry-run --provenance --access public --tag ci \
             2>&1 | tee "$tmp_dir/publish-dry-run.log"
           if grep -qi "auto-corrected" "$tmp_dir/pack-stderr.log" "$tmp_dir/publish-dry-run.log"; then
             echo "::error::npm reported package.json auto-corrections during publish --dry-run. This means the published manifest would differ from the source manifest (e.g. an invalid bin/script field was silently dropped). Fix the manifest so no auto-correction is needed." >&2
@@ -687,7 +693,7 @@ jobs:
           # matching the GHCR image above.
           sbom: true
           provenance: mode=max
-          tags: docker.io/roshangautam/genie:${{ steps.tags.outputs.staging }}
+          tags: docker.io/ambitresearch/genie:${{ steps.tags.outputs.staging }}
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -695,7 +701,7 @@ jobs:
           cosign-release: v3.1.2
 
       - name: Sign Docker Hub image digest (keyless)
-        run: cosign sign --yes "docker.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+        run: cosign sign --yes "docker.io/ambitresearch/genie@${{ steps.build.outputs.digest }}"
 
       - name: Verify Docker Hub image signature
         env:
@@ -707,7 +713,7 @@ jobs:
             --certificate-identity="$CERTIFICATE_IDENTITY" \
             --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
             --certificate-github-workflow-sha="$SIGNING_SHA" \
-            "docker.io/roshangautam/genie@${{ steps.build.outputs.digest }}"
+            "docker.io/ambitresearch/genie@${{ steps.build.outputs.digest }}"
 
       - name: Promote verified Docker Hub digest
         env:
@@ -715,7 +721,7 @@ jobs:
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
           set -euo pipefail
-          image=docker.io/roshangautam/genie
+          image=docker.io/ambitresearch/genie
           docker buildx imagetools create \
             --tag "$image:$VERSION" \
             --tag "$image:latest" \
@@ -732,7 +738,7 @@ jobs:
           set -euo pipefail
           for tag in "$VERSION" latest; do
             published_digest=$(docker buildx imagetools inspect \
-              "docker.io/roshangautam/genie:$tag" \
+              "docker.io/ambitresearch/genie:$tag" \
               | awk '$1 == "Digest:" { print $2; exit }')
             test "$published_digest" = "$BUILD_DIGEST"
           done
