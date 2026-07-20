@@ -102,6 +102,15 @@ describe("loadSecrets — AC2: too-short required secret", () => {
 
     expect(() => loadSecrets({ env, argv: [] })).toThrow(/OAUTH_HS256_KEY.*at least 32/);
   });
+
+  it("accepts an OAUTH_HS256_KEY exactly 32 characters long", () => {
+    const env = {
+      GENIE_LLM_API_KEY: VALID_LLM_KEY,
+      OAUTH_HS256_KEY: "o".repeat(32),
+    };
+
+    expect(() => loadSecrets({ env, argv: [] })).not.toThrow();
+  });
 });
 
 describe("loadSecrets — AC2: secret leaked into argv", () => {
