@@ -1,5 +1,13 @@
-import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -60,6 +68,235 @@ function job(source: string, name: string, nextName?: string): string {
   expect(end, `${nextName ?? "end"} boundary`).toBeGreaterThan(start);
   return source.slice(start, end);
 }
+
+function releaseStep(jobName: string, stepName: string): string {
+  const workflow = parse(release) as {
+    jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+  };
+  const script = workflow.jobs[jobName]?.steps?.find((step) => step.name === stepName)?.run;
+  expect(script, `${jobName}: ${stepName}`).toBeDefined();
+  return script!;
+}
+
+function runReleaseStep(
+  jobName: string,
+  stepName: string,
+  options: {
+    commands?: Record<string, string>;
+    env?: Record<string, string>;
+  } = {},
+): { status: number; stdout: string; stderr: string; log: string } {
+  const fakeBin = mkdtempSync(join(tmpdir(), "genie-release-step-"));
+  const logFile = join(fakeBin, "commands.log");
+  try {
+    for (const [name, source] of Object.entries(options.commands ?? {})) {
+      const path = join(fakeBin, name);
+      writeFileSync(path, source.endsWith("\n") ? source : `${source}\n`);
+      chmodSync(path, 0o755);
+    }
+
+    const result = spawnSync("/bin/bash", ["-c", releaseStep(jobName, stepName)], {
+      cwd: fakeBin,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        FAKE_LOG: logFile,
+        GITHUB_REPOSITORY: "ambitresearch/genie",
+        GITHUB_RUN_ATTEMPT: "1",
+        ...options.env,
+      },
+    });
+    return {
+      status: result.status ?? 1,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      log: existsSync(logFile) ? readFileSync(logFile, "utf8") : "",
+    };
+  } finally {
+    rmSync(fakeBin, { recursive: true, force: true });
+  }
+}
+
+const recoveryGuardCommands = {
+  npm: [
+    "#!/bin/sh",
+    'case "$2" in',
+    "  @ambitresearch/genie) printf '%s\\n' \"$FAKE_SERVER_LATEST\" ;;",
+    "  @ambitresearch/genie-viewer) printf '%s\\n' \"$FAKE_VIEWER_LATEST\" ;;",
+    "  *) exit 64 ;;",
+    "esac",
+  ].join("\n"),
+  gh: [
+    "#!/bin/sh",
+    'if [ "$1" = release ] && [ "$2" = view ]; then',
+    "  tag=$3",
+    "  shift 3",
+    "  field=",
+    '  while [ "$#" -gt 0 ]; do',
+    '    if [ "$1" = --json ]; then field=$2; break; fi',
+    "    shift",
+    "  done",
+    '  case "$tag:$field" in',
+    '    "$SERVER_TAG:isDraft") printf \'%s\\n\' "$FAKE_SERVER_DRAFT" ;;',
+    '    "$SERVER_TAG:isImmutable") printf \'%s\\n\' "$FAKE_SERVER_IMMUTABLE" ;;',
+    "    \"$SERVER_TAG:targetCommitish\") printf '%s\\n' server-target ;;",
+    '    "$VIEWER_TAG:isDraft") printf \'%s\\n\' "$FAKE_VIEWER_DRAFT" ;;',
+    '    "$VIEWER_TAG:isImmutable") printf \'%s\\n\' "$FAKE_VIEWER_IMMUTABLE" ;;',
+    "    \"$VIEWER_TAG:targetCommitish\") printf '%s\\n' viewer-target ;;",
+    "    *) exit 65 ;;",
+    "  esac",
+    'elif [ "$1" = api ]; then',
+    "  endpoint=$2",
+    '  if [ "$endpoint" = "repos/$GITHUB_REPOSITORY/commits/$SERVER_TAG" ]; then',
+    "    printf '%s\\n' \"$FAKE_SERVER_TAG_SHA\"",
+    '  elif [ "$endpoint" = "repos/$GITHUB_REPOSITORY/commits/server-target" ]; then',
+    "    printf '%s\\n' \"$FAKE_SERVER_TARGET_SHA\"",
+    '  elif [ "$endpoint" = "repos/$GITHUB_REPOSITORY/commits/$VIEWER_TAG" ]; then',
+    "    printf '%s\\n' \"$FAKE_VIEWER_TAG_SHA\"",
+    '  elif [ "$endpoint" = "repos/$GITHUB_REPOSITORY/commits/viewer-target" ]; then',
+    "    printf '%s\\n' \"$FAKE_VIEWER_TARGET_SHA\"",
+    "  else",
+    "    exit 66",
+    "  fi",
+    "else",
+    "  exit 67",
+    "fi",
+  ].join("\n"),
+};
+
+const recoveryGuardEnv = {
+  GITHUB_REF: "refs/heads/main",
+  SERVER_TAG: "server-v1.3.1",
+  VIEWER_TAG: "viewer-v0.1.1",
+  FAKE_SERVER_LATEST: "1.3.1",
+  FAKE_VIEWER_LATEST: "0.1.1",
+  FAKE_SERVER_DRAFT: "true",
+  FAKE_SERVER_IMMUTABLE: "false",
+  FAKE_VIEWER_DRAFT: "true",
+  FAKE_VIEWER_IMMUTABLE: "false",
+  FAKE_SERVER_TAG_SHA: "sha-shared",
+  FAKE_SERVER_TARGET_SHA: "sha-shared",
+  FAKE_VIEWER_TAG_SHA: "sha-shared",
+  FAKE_VIEWER_TARGET_SHA: "sha-shared",
+};
+
+const dockerPlatformCommand = [
+  "#!/bin/sh",
+  'printf \'docker %s\\n\' "$*" >> "$FAKE_LOG"',
+  'test "$*" = "buildx imagetools inspect $EXPECTED_IMAGE@$BUILD_DIGEST --raw"',
+  "printf '%s\\n' \"$FAKE_MANIFEST\"",
+].join("\n");
+
+const dockerPromotionCommand = [
+  "#!/bin/sh",
+  'printf \'docker %s\\n\' "$*" >> "$FAKE_LOG"',
+  'test "$*" = "buildx imagetools create --tag $EXPECTED_IMAGE:$VERSION --tag $EXPECTED_IMAGE:latest --metadata-file promotion.json $EXPECTED_IMAGE@$BUILD_DIGEST"',
+  'printf \'{"containerimage.descriptor":{"digest":"%s"}}\' "$FAKE_PROMOTION_DIGEST" > promotion.json',
+].join("\n");
+
+const dockerLiveTagCommand = [
+  "#!/bin/sh",
+  'printf \'docker %s\\n\' "$*" >> "$FAKE_LOG"',
+  'test "$1" = buildx',
+  'test "$2" = imagetools',
+  'test "$3" = inspect',
+  'case "$4" in',
+  '  "$EXPECTED_IMAGE:$VERSION") digest=$FAKE_VERSION_DIGEST ;;',
+  '  "$EXPECTED_IMAGE:latest") digest=$FAKE_LATEST_DIGEST ;;',
+  "  *) exit 64 ;;",
+  "esac",
+  "printf 'Name: fixture\\nDigest: %s\\n' \"$digest\"",
+].join("\n");
+
+const recoveryFinalizeGhCommand = [
+  "#!/bin/sh",
+  'if [ "$1" = release ] && [ "$2" = view ]; then',
+  "  tag=$3",
+  "  shift 3",
+  "  field=",
+  '  while [ "$#" -gt 0 ]; do',
+  '    if [ "$1" = --json ]; then field=$2; break; fi',
+  "    shift",
+  "  done",
+  '  case "$tag:$field" in',
+  '    "$SERVER_TAG:isDraft") printf \'%s\\n\' "$FAKE_SERVER_DRAFT" ;;',
+  '    "$SERVER_TAG:isImmutable") printf \'%s\\n\' "$FAKE_SERVER_IMMUTABLE" ;;',
+  '    "$SERVER_TAG:assets") printf \'%s\\n\' "$FAKE_SERVER_ASSETS" ;;',
+  '    "$VIEWER_TAG:isDraft") printf \'%s\\n\' "$FAKE_VIEWER_DRAFT" ;;',
+  '    "$VIEWER_TAG:isImmutable") printf \'%s\\n\' "$FAKE_VIEWER_IMMUTABLE" ;;',
+  '    "$VIEWER_TAG:assets") printf \'%s\\n\' "$FAKE_VIEWER_ASSETS" ;;',
+  "    *) exit 65 ;;",
+  "  esac",
+  'elif [ "$1" = release ] && [ "$2" = download ]; then',
+  "  tag=$3",
+  "  shift 3",
+  "  dir=",
+  '  while [ "$#" -gt 0 ]; do',
+  '    if [ "$1" = --dir ]; then dir=$2; break; fi',
+  "    shift",
+  "  done",
+  '  mkdir -p "$dir"',
+  '  if [ "$tag" = "$SERVER_TAG" ]; then assets=$FAKE_SERVER_ASSETS; else assets=$FAKE_VIEWER_ASSETS; fi',
+  '  for asset in $assets; do : > "$dir/$asset"; done',
+  'elif [ "$1" = release ] && [ "$2" = edit ]; then',
+  '  printf \'edit %s\\n\' "$3" >> "$FAKE_LOG"',
+  '  if [ "${FAKE_EDIT_FAIL_TAG:-}" = "$3" ]; then exit 42; fi',
+  "else",
+  "  exit 66",
+  "fi",
+].join("\n");
+
+const recoveryFinalizeNpmCommand = [
+  "#!/bin/sh",
+  'printf \'npm %s|%s|%s\\n\' "$1" "$2" "$3" >> "$FAKE_LOG"',
+  'case "$2:$3" in',
+  "  @ambitresearch/genie@*:version) printf '%s\\n' \"${2##*@}\" ;;",
+  "  @ambitresearch/genie-viewer@*:version) printf '%s\\n' \"${2##*@}\" ;;",
+  "  @ambitresearch/genie@*:dist.attestations.provenance.predicateType)",
+  "    printf '%s\\n' \"$FAKE_SERVER_PROVENANCE\" ;;",
+  "  @ambitresearch/genie-viewer@*:dist.attestations.provenance.predicateType)",
+  "    printf '%s\\n' \"$FAKE_VIEWER_PROVENANCE\" ;;",
+  "  *) exit 64 ;;",
+  "esac",
+].join("\n");
+
+const recoveryFinalizeCosignCommand = [
+  "#!/bin/sh",
+  'printf \'cosign %s\\n\' "$*" >> "$FAKE_LOG"',
+  'test "${FAKE_COSIGN_FAIL:-0}" = 0',
+].join("\n");
+
+const serverRecoveryAssets = [
+  "ambitresearch-genie-1.3.1.tgz",
+  "ambitresearch-genie-1.3.1.tgz.sig",
+  "genie-server-sbom.cdx.json",
+  "genie-server-sbom.cdx.json.sig",
+  "genie.mcpb",
+  "genie.mcpb.sig",
+].join("\n");
+const viewerRecoveryAssets = [
+  "ambitresearch-genie-viewer-0.1.1.tgz",
+  "ambitresearch-genie-viewer-0.1.1.tgz.sig",
+  "genie-viewer-sbom.cdx.json",
+  "genie-viewer-sbom.cdx.json.sig",
+].join("\n");
+
+const recoveryFinalizeEnv = {
+  SERVER_TAG: "server-v1.3.1",
+  VIEWER_TAG: "viewer-v0.1.1",
+  CERTIFICATE_IDENTITY:
+    "https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main",
+  CERTIFICATE_OIDC_ISSUER: "https://token.actions.githubusercontent.com",
+  FAKE_SERVER_DRAFT: "true",
+  FAKE_SERVER_IMMUTABLE: "false",
+  FAKE_VIEWER_DRAFT: "true",
+  FAKE_VIEWER_IMMUTABLE: "false",
+  FAKE_SERVER_ASSETS: serverRecoveryAssets,
+  FAKE_VIEWER_ASSETS: viewerRecoveryAssets,
+  FAKE_SERVER_PROVENANCE: "https://slsa.dev/provenance/v1",
+  FAKE_VIEWER_PROVENANCE: "https://slsa.dev/provenance/v1",
+};
 
 describe("supply-chain policy", () => {
   it("pins every third-party workflow action to a reviewed commit", () => {
@@ -639,6 +876,352 @@ fi
     );
     expect(verify).toBeGreaterThanOrEqual(0);
     expect(verify).toBeLessThan(publish);
+  });
+
+  it.each([
+    { name: "accepts the current mutable component pair", env: {}, status: 0 },
+    {
+      name: "rejects a non-main dispatch",
+      env: { GITHUB_REF: "refs/heads/fix/release" },
+      status: 1,
+    },
+    {
+      name: "rejects a malformed server tag",
+      env: { SERVER_TAG: "v1.3.1" },
+      status: 1,
+    },
+    {
+      name: "rejects a malformed viewer tag",
+      env: { VIEWER_TAG: "v0.1.1" },
+      status: 1,
+    },
+    {
+      name: "rejects a server version that is not npm latest",
+      env: { FAKE_SERVER_LATEST: "1.4.0" },
+      status: 1,
+    },
+    {
+      name: "rejects a viewer version that is not npm latest",
+      env: { FAKE_VIEWER_LATEST: "0.2.0" },
+      status: 1,
+    },
+    {
+      name: "rejects an already-published server release",
+      env: { FAKE_SERVER_DRAFT: "false" },
+      status: 1,
+    },
+    {
+      name: "rejects an immutable server draft",
+      env: { FAKE_SERVER_IMMUTABLE: "true" },
+      status: 1,
+    },
+    {
+      name: "rejects an already-published viewer release",
+      env: { FAKE_VIEWER_DRAFT: "false" },
+      status: 1,
+    },
+    {
+      name: "rejects an immutable viewer draft",
+      env: { FAKE_VIEWER_IMMUTABLE: "true" },
+      status: 1,
+    },
+    {
+      name: "rejects a server release whose tag and target disagree",
+      env: { FAKE_SERVER_TARGET_SHA: "sha-other" },
+      status: 1,
+    },
+    {
+      name: "rejects a viewer release whose tag and target disagree",
+      env: { FAKE_VIEWER_TARGET_SHA: "sha-other" },
+      status: 1,
+    },
+    {
+      name: "rejects component tags from different commits",
+      env: { FAKE_VIEWER_TAG_SHA: "sha-other", FAKE_VIEWER_TARGET_SHA: "sha-other" },
+      status: 1,
+    },
+  ])("executes the recovery guard and $name", ({ env, status }) => {
+    const result = runReleaseStep(
+      "recovery-guard",
+      "Require main and matching draft component releases",
+      {
+        commands: recoveryGuardCommands,
+        env: { ...recoveryGuardEnv, ...env },
+      },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(status);
+  });
+
+  it.each([
+    {
+      jobName: "recovery-docker-publish-ghcr",
+      image: "ghcr.io/ambitresearch/genie",
+      platformStep: "Verify recovered GHCR platforms",
+      promotionStep: "Promote verified GHCR recovery digest",
+      liveStep: "Verify live GHCR recovery tags",
+    },
+    {
+      jobName: "recovery-docker-publish-dockerhub",
+      image: "docker.io/ambitresearch/genie",
+      platformStep: "Verify recovered Docker Hub platforms",
+      promotionStep: "Promote verified Docker Hub recovery digest",
+      liveStep: "Verify live Docker Hub recovery tags",
+    },
+  ])(
+    "$jobName executes platform and digest checks before accepting promotion",
+    ({ jobName, image, platformStep, promotionStep, liveStep }) => {
+      const fullManifest = JSON.stringify({
+        manifests: [
+          { platform: { os: "linux", architecture: "amd64" } },
+          { platform: { os: "linux", architecture: "arm64" } },
+        ],
+      });
+      const incompleteManifest = JSON.stringify({
+        manifests: [{ platform: { os: "linux", architecture: "amd64" } }],
+      });
+      const expectedDigest = "sha256:expected";
+
+      const platform = runReleaseStep(jobName, platformStep, {
+        commands: { docker: dockerPlatformCommand },
+        env: {
+          BUILD_DIGEST: expectedDigest,
+          EXPECTED_IMAGE: image,
+          FAKE_MANIFEST: fullManifest,
+        },
+      });
+      expect(platform.status).toBe(0);
+      expect(platform.log).toBe(
+        `docker buildx imagetools inspect ${image}@${expectedDigest} --raw\n`,
+      );
+      expect(
+        runReleaseStep(jobName, platformStep, {
+          commands: { docker: dockerPlatformCommand },
+          env: {
+            BUILD_DIGEST: expectedDigest,
+            EXPECTED_IMAGE: image,
+            FAKE_MANIFEST: incompleteManifest,
+          },
+        }).status,
+      ).not.toBe(0);
+
+      const promotion = runReleaseStep(jobName, promotionStep, {
+        commands: { docker: dockerPromotionCommand },
+        env: {
+          BUILD_DIGEST: expectedDigest,
+          EXPECTED_IMAGE: image,
+          VERSION: "1.3.1",
+          FAKE_PROMOTION_DIGEST: expectedDigest,
+        },
+      });
+      expect(promotion.status).toBe(0);
+      expect(promotion.log).toBe(
+        `docker buildx imagetools create --tag ${image}:1.3.1 --tag ${image}:latest --metadata-file promotion.json ${image}@${expectedDigest}\n`,
+      );
+      expect(
+        runReleaseStep(jobName, promotionStep, {
+          commands: { docker: dockerPromotionCommand },
+          env: {
+            BUILD_DIGEST: expectedDigest,
+            EXPECTED_IMAGE: image,
+            VERSION: "1.3.1",
+            FAKE_PROMOTION_DIGEST: "sha256:wrong",
+          },
+        }).status,
+      ).not.toBe(0);
+
+      const live = runReleaseStep(jobName, liveStep, {
+        commands: { docker: dockerLiveTagCommand },
+        env: {
+          BUILD_DIGEST: expectedDigest,
+          EXPECTED_IMAGE: image,
+          VERSION: "1.3.1",
+          FAKE_VERSION_DIGEST: expectedDigest,
+          FAKE_LATEST_DIGEST: expectedDigest,
+        },
+      });
+      expect(live.status).toBe(0);
+      expect(live.log).toBe(
+        [
+          `docker buildx imagetools inspect ${image}:1.3.1`,
+          `docker buildx imagetools inspect ${image}:latest`,
+          "",
+        ].join("\n"),
+      );
+      expect(
+        runReleaseStep(jobName, liveStep, {
+          commands: { docker: dockerLiveTagCommand },
+          env: {
+            BUILD_DIGEST: expectedDigest,
+            EXPECTED_IMAGE: image,
+            VERSION: "1.3.1",
+            FAKE_VERSION_DIGEST: expectedDigest,
+            FAKE_LATEST_DIGEST: "sha256:wrong",
+          },
+        }).status,
+      ).not.toBe(0);
+    },
+  );
+
+  it("keeps releases draft when any recovery prerequisite fails", () => {
+    const step = "Require every recovery job";
+    const successful = {
+      GUARD_RESULT: "success",
+      GHCR_RESULT: "success",
+      DOCKERHUB_RESULT: "success",
+    };
+    expect(runReleaseStep("recovery-finalize-releases", step, { env: successful }).status).toBe(0);
+
+    for (const failed of Object.keys(successful)) {
+      const result = runReleaseStep("recovery-finalize-releases", step, {
+        env: { ...successful, [failed]: "failure" },
+      });
+      expect(result.status, failed).not.toBe(0);
+      expect(`${result.stdout}\n${result.stderr}`).toContain("keeping releases draft");
+    }
+  });
+
+  it("executes provenance and signed-asset verification and fails closed", () => {
+    const step = "Verify existing npm provenance and signed release assets";
+    const commands = {
+      gh: recoveryFinalizeGhCommand,
+      npm: recoveryFinalizeNpmCommand,
+      cosign: recoveryFinalizeCosignCommand,
+    };
+    const valid = runReleaseStep("recovery-finalize-releases", step, {
+      commands,
+      env: recoveryFinalizeEnv,
+    });
+    expect(valid.status, `${valid.stdout}\n${valid.stderr}`).toBe(0);
+    const cosignCalls = valid.log.split("\n").filter((line) => line.startsWith("cosign "));
+    const verifiedArtifacts = [
+      { tag: "server-v1.3.1", artifact: "ambitresearch-genie-1.3.1.tgz" },
+      { tag: "server-v1.3.1", artifact: "genie-server-sbom.cdx.json" },
+      { tag: "server-v1.3.1", artifact: "genie.mcpb" },
+      { tag: "viewer-v0.1.1", artifact: "ambitresearch-genie-viewer-0.1.1.tgz" },
+      { tag: "viewer-v0.1.1", artifact: "genie-viewer-sbom.cdx.json" },
+    ];
+    expect(cosignCalls).toHaveLength(verifiedArtifacts.length);
+    for (const { tag, artifact } of verifiedArtifacts) {
+      const call = cosignCalls.find((line) => line.includes(`/${tag}/${artifact}.sig`));
+      expect(call, `${tag}/${artifact}`).toBeDefined();
+      expect(call).toContain(`--certificate-identity=${recoveryFinalizeEnv.CERTIFICATE_IDENTITY}`);
+      expect(call).toContain(
+        `--certificate-oidc-issuer=${recoveryFinalizeEnv.CERTIFICATE_OIDC_ISSUER}`,
+      );
+      expect(call?.endsWith(`/${tag}/${artifact}`)).toBe(true);
+    }
+
+    const missingSignature = runReleaseStep("recovery-finalize-releases", step, {
+      commands,
+      env: {
+        ...recoveryFinalizeEnv,
+        FAKE_SERVER_ASSETS: serverRecoveryAssets.replace("\ngenie.mcpb.sig", ""),
+      },
+    });
+    expect(missingSignature.status).not.toBe(0);
+    expect(`${missingSignature.stdout}\n${missingSignature.stderr}`).toContain(
+      "missing genie.mcpb.sig; keeping releases draft",
+    );
+
+    const invalidProvenance = runReleaseStep("recovery-finalize-releases", step, {
+      commands,
+      env: { ...recoveryFinalizeEnv, FAKE_VIEWER_PROVENANCE: "invalid" },
+    });
+    expect(
+      invalidProvenance.status,
+      `${invalidProvenance.stdout}\n${invalidProvenance.stderr}\n${invalidProvenance.log}`,
+    ).not.toBe(0);
+    const invalidSignature = runReleaseStep("recovery-finalize-releases", step, {
+      commands,
+      env: { ...recoveryFinalizeEnv, FAKE_COSIGN_FAIL: "1" },
+    });
+    expect(
+      invalidSignature.status,
+      `${invalidSignature.stdout}\n${invalidSignature.stderr}\n${invalidSignature.log}`,
+    ).not.toBe(0);
+  });
+
+  it("retries finalization without republishing an already-published component", () => {
+    const verificationStep = "Verify existing npm provenance and signed release assets";
+    const verificationCommands = {
+      gh: recoveryFinalizeGhCommand,
+      npm: recoveryFinalizeNpmCommand,
+      cosign: recoveryFinalizeCosignCommand,
+    };
+    const partiallyPublishedEnv = {
+      ...recoveryFinalizeEnv,
+      FAKE_SERVER_DRAFT: "false",
+      FAKE_VIEWER_DRAFT: "true",
+    };
+    const firstAttempt = runReleaseStep("recovery-finalize-releases", verificationStep, {
+      commands: verificationCommands,
+      env: { ...partiallyPublishedEnv, GITHUB_RUN_ATTEMPT: "1" },
+    });
+    expect(firstAttempt.status).not.toBe(0);
+    expect(`${firstAttempt.stdout}\n${firstAttempt.stderr}`).toContain(
+      "published before recovery finalization",
+    );
+
+    const laterAttempt = runReleaseStep("recovery-finalize-releases", verificationStep, {
+      commands: verificationCommands,
+      env: { ...partiallyPublishedEnv, GITHUB_RUN_ATTEMPT: "2" },
+    });
+    expect(laterAttempt.status, `${laterAttempt.stdout}\n${laterAttempt.stderr}`).toBe(0);
+
+    const retry = runReleaseStep(
+      "recovery-finalize-releases",
+      "Publish recovered component releases",
+      {
+        commands: { gh: recoveryFinalizeGhCommand },
+        env: {
+          ...recoveryFinalizeEnv,
+          FAKE_SERVER_DRAFT: "false",
+          FAKE_VIEWER_DRAFT: "true",
+        },
+      },
+    );
+    expect(retry.status, `${retry.stdout}\n${retry.stderr}`).toBe(0);
+    expect(retry.log).not.toContain("edit server-v1.3.1");
+    expect(retry.log).toContain("edit viewer-v0.1.1");
+
+    const editFailure = runReleaseStep(
+      "recovery-finalize-releases",
+      "Publish recovered component releases",
+      {
+        commands: { gh: recoveryFinalizeGhCommand },
+        env: {
+          ...recoveryFinalizeEnv,
+          FAKE_EDIT_FAIL_TAG: "viewer-v0.1.1",
+        },
+      },
+    );
+    expect(editFailure.status).not.toBe(0);
+
+    const immutableStep = "Verify recovered releases are published and immutable";
+    expect(
+      runReleaseStep("recovery-finalize-releases", immutableStep, {
+        commands: { gh: recoveryFinalizeGhCommand },
+        env: {
+          ...recoveryFinalizeEnv,
+          FAKE_SERVER_DRAFT: "false",
+          FAKE_SERVER_IMMUTABLE: "true",
+          FAKE_VIEWER_DRAFT: "false",
+          FAKE_VIEWER_IMMUTABLE: "true",
+        },
+      }).status,
+    ).toBe(0);
+    expect(
+      runReleaseStep("recovery-finalize-releases", immutableStep, {
+        commands: { gh: recoveryFinalizeGhCommand },
+        env: {
+          ...recoveryFinalizeEnv,
+          FAKE_SERVER_DRAFT: "false",
+          FAKE_SERVER_IMMUTABLE: "true",
+          FAKE_VIEWER_DRAFT: "false",
+          FAKE_VIEWER_IMMUTABLE: "false",
+        },
+      }).status,
+    ).not.toBe(0);
   });
 
   it("runs a digest-pinned full-history secret scan with exact fixture tokens only", () => {
