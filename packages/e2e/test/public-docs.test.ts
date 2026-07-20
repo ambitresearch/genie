@@ -55,6 +55,9 @@ describe("public documentation surface", () => {
   it("keeps the Pages workflow least-privileged and SHA-pinned", () => {
     const workflow = readRootFile(".github/workflows/docs.yml");
 
+    expect(workflow).toContain(
+      "  build:\n    permissions:\n      contents: read\n      pages: read",
+    );
     expect(workflow).toContain("pages: write");
     expect(workflow).toContain("id-token: write");
     expect(workflow).toContain("pnpm docs:build");
