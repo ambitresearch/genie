@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0](https://github.com/ambitresearch/genie/compare/server-v1.2.0...server-v1.3.0) (2026-07-20)
+
+
+### Features
+
+* **harness:** Cursor smoke test + OAuth block + 40-tool-cap finding (DRO-285) ([#194](https://github.com/ambitresearch/genie/issues/194)) ([7626189](https://github.com/ambitresearch/genie/commit/7626189ad9cacb9126392f62dbcbf30ebfd07ece))
+* **release:** npm publish pipeline for @ambitresearch/genie + @ambitresearch/genie-viewer (M5-06, DRO-278) ([3c7ab2e](https://github.com/ambitresearch/genie/commit/3c7ab2efbde3a49fa9c93ec3f30fc3fecd187502))
+
+
+### Bug Fixes
+
+* **release:** bootstrap viewer first release ([#211](https://github.com/ambitresearch/genie/issues/211)) ([ac0e2b5](https://github.com/ambitresearch/genie/commit/ac0e2b5d1221fc54950519d1d310411fc5ae1978))
+* **release:** migrate packages to Ambit Research ([#213](https://github.com/ambitresearch/genie/issues/213)) ([de44af9](https://github.com/ambitresearch/genie/commit/de44af92cc92decf72c5d96c4fca0d4dfbe028de))
+* **release:** synchronize CLI package versions ([#212](https://github.com/ambitresearch/genie/issues/212)) ([d4952d2](https://github.com/ambitresearch/genie/commit/d4952d2f4cec34f2e39fbf014ae8c4deced22db7))
+* **server:** complete security re-audit and SSRF hardening (M6-03, DRO-291) ([#189](https://github.com/ambitresearch/genie/issues/189)) ([a4e73e7](https://github.com/ambitresearch/genie/commit/a4e73e7e58b9867c8476c3b7d3c721298d843776))
+
 ## [1.2.0](https://github.com/roshangautam/genie/compare/server-v1.1.0...server-v1.2.0) (2026-07-14)
 
 
