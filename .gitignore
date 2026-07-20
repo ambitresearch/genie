@@ -6,6 +6,8 @@ package-lock.json
 dist/
 *.tsbuildinfo
 coverage/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
 
 # ── .mcpb bundle staging (M5-05, DRO-277) ─────────────────
 # Transient deploy tree assembled by scripts/bundle-mcpb.mjs before packing;
@@ -24,6 +26,7 @@ reports/
 
 # ── Private session memory (not part of the project) ──────
 .remember/
+.omo/
 
 # ── Claude Code local config (machine-specific) ───────────
 .claude/

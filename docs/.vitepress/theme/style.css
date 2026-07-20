@@ -1,0 +1,109 @@
+:root {
+  --vp-c-brand-1: #345197;
+  --vp-c-brand-2: #29447f;
+  --vp-c-brand-3: #203765;
+  --vp-c-bg: #faf8f5;
+  --vp-c-bg-alt: #f3f0ea;
+  --vp-c-bg-elv: #f3f0ea;
+  --vp-c-bg-soft: #f3f0ea;
+  --vp-c-text-1: #171614;
+  --vp-c-text-2: #57524e;
+  --vp-c-divider: #dad7d2;
+  --genie-focus: #345197;
+  --genie-chrome-bg: #171614;
+  --genie-chrome-fg: #faf8f5;
+}
+
+.dark {
+  --vp-c-brand-1: #9fb8f5;
+  --vp-c-brand-2: #b7c8f5;
+  --vp-c-brand-3: #d4def8;
+  --vp-c-bg: #171614;
+  --vp-c-bg-alt: #24211f;
+  --vp-c-bg-elv: #24211f;
+  --vp-c-bg-soft: #24211f;
+  --vp-c-text-1: #faf8f5;
+  --vp-c-text-2: #c7c0b8;
+  --vp-c-divider: #514b46;
+  --genie-focus: #9fb8f5;
+}
+
+.VPNavBar,
+.VPNavBar.has-sidebar .content-body {
+  color: var(--genie-chrome-fg);
+  background: var(--genie-chrome-bg) !important;
+}
+
+.VPNavBar .VPNavBarTitle .title,
+.VPNavBar .VPNavBarMenuLink,
+.VPNavBar .VPNavBarMenuGroup .button,
+.VPNavBar .VPNavBarSearch .DocSearch-Button,
+.VPNavBar .VPNavBarSearch .VPNavBarSearchButton,
+.VPNavBar .VPNavBarAppearance,
+.VPNavBar .VPSocialLinks,
+.VPNavBar .VPNavBarHamburger {
+  color: var(--genie-chrome-fg);
+}
+
+.VPDoc h1,
+.VPDoc h2 {
+  letter-spacing: -0.025em;
+}
+
+.guide-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  gap: 1rem;
+  margin-block: 2rem;
+}
+
+.guide-card {
+  display: grid;
+  gap: 0.7rem;
+  min-block-size: 10rem;
+  padding: 1.5rem;
+  color: var(--vp-c-text-1) !important;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 0.75rem;
+  background: var(--vp-c-bg-alt);
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease;
+}
+
+.guide-card:hover {
+  border-color: var(--vp-c-text-2);
+  transform: translateY(-2px);
+}
+
+.guide-card:focus-visible {
+  border-color: var(--genie-focus);
+  outline: 2px solid var(--genie-focus);
+  outline-offset: 3px;
+}
+
+.guide-card--start {
+  border-color: var(--vp-c-brand-1);
+}
+
+.guide-card strong {
+  font-size: 1.35rem;
+}
+
+.guide-card__eyebrow {
+  color: var(--vp-c-text-2);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guide-card {
+    transition: none;
+  }
+
+  .guide-card:hover {
+    transform: none;
+  }
+}

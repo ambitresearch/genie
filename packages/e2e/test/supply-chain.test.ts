@@ -34,6 +34,9 @@ const workflowFiles = readdirSync(workflowsRoot)
 const reviewedActions = new Map(
   Object.entries({
     "actions/checkout": ["34e114876b0b11c390a56381ad16ebd13914f8d5", "v4.3.1"],
+    "actions/configure-pages": ["983d7736d9b0ae728b81ab479565c72886d7745b", "v5.0.0"],
+    "actions/deploy-pages": ["d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e", "v4.0.5"],
+    "actions/upload-pages-artifact": ["7b1f4a764d45c48632c6b24a0339c27f5614fb0b", "v4.0.0"],
     "actions/setup-node": ["49933ea5288caeca8642d1e84afbd3f7d6820020", "v4.4.0"],
     "actions/upload-artifact": ["ea165f8d65b6e75b540449e92b4886f43607fa02", "v4.6.2"],
     "docker/build-push-action": ["10e90e3645eae34f1e60eeb005ba3a3d33f178e8", "v6.19.2"],
