@@ -105,7 +105,7 @@ export interface FullScanInput {
 }
 
 /** Default "thin" gate (AC4) when a component's `meta.json` doesn't specify
- * `renderCheck.minHeight` — `docs/plan/04-tech-design-rfc.md` §7.3 / PRD FR-051. */
+ * `renderCheck.minHeight`. */
 const DEFAULT_MIN_HEIGHT = 80;
 
 /** Render viewport used for both the thin-height measurement and the

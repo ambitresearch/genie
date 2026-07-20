@@ -2,7 +2,7 @@
  * LLM client wrapper (M2-01) — genie's single point of contact with the
  * operator's configured OpenAI-compatible chat-completions endpoint.
  *
- * Per D-H (`docs/plan/00-decisions.md`): genie calls a **configurable**
+ * genie calls a **configurable**
  * OpenAI-compatible endpoint. LiteLLM is the reference gateway, but Ollama /
  * OpenAI / vLLM / any compatible endpoint work the same way — no provider URL
  * or API key is ever hardcoded here. Both come from env vars

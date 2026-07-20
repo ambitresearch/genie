@@ -1,9 +1,8 @@
 # Changelog
 
 All notable changes to genie are recorded here. This file is the project-level
-history; per-document changelogs live in each doc's own header (e.g. BRD §1.3,
-PRD §1). Once releases begin, [release-please](https://github.com/googleapis/release-please)
-manages versioned entries from Conventional Commits.
+history; [release-please](https://github.com/googleapis/release-please) manages
+versioned package entries from Conventional Commits.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/),
 and the project aims to follow [Semantic Versioning](https://semver.org/) from 1.0.
@@ -19,8 +18,8 @@ and the project aims to follow [Semantic Versioning](https://semver.org/) from 1
   Vitest 4 requires Node ≥ 20 (`node:util` `styleText`). Rather than pin every
   tool to an older line indefinitely, the floor was raised to the current LTS.
   pnpm is pinned to 10.34.4 (which still supports Node ≥ 18.12) for now; the CI
-  matrix now tests Node 22 and 24 on Ubuntu and macOS. Updated across all plan
-  docs, INDEX, milestones, the M0-03/M0-04 issues, README, and CONTRIBUTING.
+  matrix now tests Node 22 and 24 on Ubuntu and macOS. Updated across the
+  repository configuration, README, and CONTRIBUTING.
 
 ### Added
 
@@ -30,12 +29,11 @@ and the project aims to follow [Semantic Versioning](https://semver.org/) from 1
     end-to-end: `initialize → tools/list → tools/call ping → "pong"`.
   - pnpm workspace (`server` / `viewer` / `e2e`), TypeScript strict/ESM/NodeNext,
     ESLint flat config, Prettier, Vitest. `pnpm i / dev / build / test / lint /
-    typecheck` all green.
+typecheck` all green.
   - CI (GitHub Actions): lint/typecheck/test/build matrix + release-please.
   - Governance: LICENSE (MIT), NOTICE, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT,
     root README.
-  - `docs/traceability.md` — research claims → milestones matrix (M0-01).
-  - Design folder restructured to `docs/designs/design-1/` (canonical) with
-    Copilot variants `design-2|3|4/` for later A/B.
+  - Early research and design experiments were completed before the public-docs
+    tree was curated for users and contributors.
 
 [Unreleased]: https://github.com/ambitresearch/genie/commits/main

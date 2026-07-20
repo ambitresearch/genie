@@ -9,7 +9,7 @@ details are worth calling out:
   keep `type` explicit because it makes the intended transport unambiguous to a
   reader. If omitted, a `command` entry selects stdio; a URL entry tries
   Streamable HTTP and then falls back to SSE.
-- **Continue interpolates secrets as `${{ secrets.NAME }}`.** For remote MCP
+- **Continue interpolates secrets as <code v-pre>${{ secrets.NAME }}</code>.** For remote MCP
   authentication, put the resulting header under `requestOptions.headers`.
   Continue resolves the placeholder from its secrets sources at config-load
   time; never put a literal token in the YAML.
@@ -41,7 +41,7 @@ mcpServers:
 ```
 
 `type: streamable-http` is explicit here to document intent, not because the
-current schema demands it. `${{ secrets.GENIE_TOKEN }}` resolves from
+current schema demands it. <code v-pre>${{ secrets.GENIE_TOKEN }}</code> resolves from
 Continue's secret sources, including a matching environment variable for local
 CLI use. Never hardcode a bearer token in `requestOptions.headers`.
 
@@ -67,7 +67,7 @@ mcpServers:
 The explicit `type: stdio` is likewise optional. The LLM base URL must end in
 `/v1`; route both values through Continue secrets rather than literal YAML
 values. The genie server also requires `OAUTH_HS256_KEY` at startup; provide it
-through the process environment or add another `${{ secrets.NAME }}` entry.
+through the process environment or add another <code v-pre>${{ secrets.NAME }}</code> entry.
 
 ## MCP only works in agent mode
 
@@ -122,7 +122,7 @@ not mount an inline grid; open the returned URL to view the generated component.
 not a generic MCP SDK stand-in. The test:
 
 1. Parses the canonical YAML blocks above and checks their explicit transport
-   values and unresolved `${{ secrets.NAME }}` placeholders.
+   values and unresolved <code v-pre>${{ secrets.NAME }}</code> placeholders.
 2. Starts `@continuedev/cli@1.5.47` as `cn -p` with a temporary config derived
    from the stdio block above. Continue itself loads the config, starts genie's
    built server, exposes its MCP tools, and invokes them through its headless

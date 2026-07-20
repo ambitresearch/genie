@@ -3,7 +3,7 @@
 > **Read this first, every issue.** This is the canonical SDLC every agent follows
 > when working a genie issue. Individual issues link here and add only their own
 > acceptance criteria + a compact Definition of Done. When the workflow changes, it
-> changes *here* — not in 66 issues.
+> changes _here_ — not in 66 issues.
 >
 > Compatible with Copilot/Cursor/Codex/Claude Code agent runners that auto-read a
 > root `AGENTS.md`. If your runner doesn't, the delegating issue will point you here.
@@ -14,7 +14,8 @@
 
 1. **Read the issue fully** — Summary, Acceptance Criteria (AC), Design Reference, DoD.
 2. **Read `CLAUDE.md`** (repo root) for project context + the hard rules below.
-3. **Read the linked design/plan docs** the issue references (`docs/plan/`, `docs/designs/design-6/`).
+3. **Read the linked public developer docs and design references** the issue names
+   (`docs/developer/`, `docs/designs/design-6/`).
 4. **Restate the task** in your PR-to-be description: what you're building, which ACs
    you'll satisfy, what's explicitly out of scope.
 5. If the issue is **ambiguous, contradicts existing patterns, or the data model is
@@ -69,7 +70,7 @@ Put on the reviewer's hat and try to **break your own change** before a peer see
 - Did you leave debug logs, TODOs, dead code, or a widened scope?
 - Are the **hard rules** (below) all intact? Secrets, interop terms, identity rule?
 - Run the **full** test suite + linter/typecheck, not just your new tests. Green?
-- If a `codex` CLI or a second agent is available, ask for an adversarial pass *now*
+- If a `codex` CLI or a second agent is available, ask for an adversarial pass _now_
   and fix what it finds before the PR exists.
 
 Only when you can't find anything left to fix do you open the PR.
@@ -86,15 +87,15 @@ Only when you can't find anything left to fix do you open the PR.
 ## 7. Peer-AI review loop (stay in the loop until approved)
 
 **The designated PR reviewer is GitHub Copilot** — it's the only agent GitHub lets you
-formally *request* as a reviewer. Claude and Codex can be *assigned the implementation
-work* on an issue, but the review request always goes to Copilot.
+formally _request_ as a reviewer. Claude and Codex can be _assigned the implementation
+work_ on an issue, but the review request always goes to Copilot.
 
 - **Request Copilot review** on the PR (GitHub → Reviewers → Copilot, or
   `gh pr edit <n> --add-reviewer @copilot`). This is mandatory, not optional.
 - **Address every comment.** Reply on the thread, push fixes, re-request review.
 - **Do not merge with open comments.** Iterate until Copilot leaves **zero unresolved
   comments and an explicit approval.** Silence is not approval.
-- **Self-review guard:** if *you* are Copilot and you implemented this PR, you cannot be
+- **Self-review guard:** if _you_ are Copilot and you implemented this PR, you cannot be
   your own reviewer — request a human review from Roshan instead, and say so on the PR.
 - If you and the reviewer deadlock, escalate to Roshan on the thread — don't merge to
   break a tie.
@@ -126,7 +127,7 @@ satisfied with evidence, docs updated if behavior changed. Anything less stays o
    its own 13 verbs, `@genie`, `.genie/`, and `genie://`; Anthropic shapes belong
    only in explanatory prose or a future opt-in interop bridge.
 2. **Terminology:** the user's component library is a **"UI kit"** (not "design
-   system"). genie's *own* locked visual language *is* its "design system." Starter
+   system"). genie's _own_ locked visual language _is_ its "design system." Starter
    templates are **"blueprints."**
 3. **Identity / accent rule:** clay/gilt accent (`#c87c5e` / `#ac5a40`) appears **only**
    on generation + refine moments. Structure (chrome, browser, layout) stays
@@ -141,16 +142,16 @@ satisfied with evidence, docs updated if behavior changed. Anything less stays o
 
 ## Conventions quick-ref
 
-| Thing | Value |
-|---|---|
-| Repo | `ambitresearch/genie` (private pending public release) |
-| Implementer agents | Claude · Codex · Copilot (any can be assigned an issue) |
-| PR reviewer | **Copilot** (only agent GitHub lets you *request* as reviewer) |
-| Default branch | `main` (protected: 1 review + status checks) |
-| Branch naming | `<type>/<issue-id>-<slug>` |
-| Commits | Conventional Commits |
-| npm packages | `@ambitresearch/genie` · `@ambitresearch/genie-viewer` |
-| Issue backlog | `docs/github/issues/` |
-| Mock map | `docs/github/MOCK-MAP.md` |
-| Design mocks | `docs/designs/design-6/*.svg` |
-| Co-author trailer | `Co-Authored-By: Claude <noreply@anthropic.com>` |
+| Thing              | Value                                                          |
+| ------------------ | -------------------------------------------------------------- |
+| Repo               | `ambitresearch/genie` (public)                                 |
+| Implementer agents | Claude · Codex · Copilot (any can be assigned an issue)        |
+| PR reviewer        | **Copilot** (only agent GitHub lets you _request_ as reviewer) |
+| Default branch     | `main` (protected: 1 review + status checks)                   |
+| Branch naming      | `<type>/<issue-id>-<slug>`                                     |
+| Commits            | Conventional Commits                                           |
+| npm packages       | `@ambitresearch/genie` · `@ambitresearch/genie-viewer`         |
+| Issue backlog      | GitHub Issues                                                  |
+| Public docs        | `docs/user/` · `docs/developer/`                               |
+| Design mocks       | `docs/designs/design-6/*.svg`                                  |
+| Co-author trailer  | `Co-Authored-By: Claude <noreply@anthropic.com>`               |

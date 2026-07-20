@@ -2,8 +2,8 @@
  * M3-05 (DRO-261) — genie's 5-step atomic write-sequence orchestrator.
  *
  * `runAtomicSync` sequences one sync commit as five ordered, stop-on-first-
- * failure steps (D0 / `docs/plan/00-decisions.md` — "the atomic write sequence
- * is load-bearing and unchanged in shape"):
+ * failure steps. The atomic write sequence is load-bearing and unchanged in
+ * shape:
  *
  *   1. Write the `.genie/recompile` sentinel FIRST, to fence the manifest/copy
  *      machinery — a consumer that sees the sentinel knows a sync is mid-flight

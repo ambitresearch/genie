@@ -1,6 +1,6 @@
 /**
  * Tests for M3-02's chokidar watcher (`packages/server/src/watch/watcher.ts`),
- * tracking issue DRO-258 (spec `docs/github/issues/M3-02-chokidar-watcher.md`).
+ * watcher acceptance contract.
  *
  * Covers every AC:
  *   - AC1 — `startWatcher(projectRoot, onChange)` is exported and callable.

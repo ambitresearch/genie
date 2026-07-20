@@ -2,8 +2,8 @@
 
 Vite-backed live preview + UI-kit browser for genie. Watches a kit directory
 (`.genie/manifest.json` + `components/`) and renders the same cards genie's
-MCP tools produce, in a grid, with HMR — see the research report §3.4 and
-§7 step 5 linked from [`docs/github/`](../../docs/github).
+MCP tools produce, in a grid, with per-card HMR. See the public
+[Developer Guide](../../docs/developer/architecture.md) for the system context.
 
 ## Status: live grid + per-card HMR (M4-04 / M4-08)
 
@@ -19,10 +19,10 @@ Ctrl-C. The grid renderer and per-card HMR refresh are wired end to end.
 | M4-08               | dev-server boot: URL print, port fallback, open, Ctrl-C  |
 | M4-03               | iframe grid renderer                                     |
 | M4-04 (this change) | WebSocket + trusted `postMessage` per-card HMR           |
-| M4-05…M4-10         | UI-kit file browser, refine pane, polish                 |
+| M4-05…M4-10         | Embedded delivery, accessibility, and E2E verification   |
 
-See the issue backlog in [`docs/github/issues/`](../../docs/github/issues) for
-the full M4 breakdown.
+See the public [Developer Guide](../../docs/developer/) for architecture and
+contribution guidance.
 
 ## Quickstart
 

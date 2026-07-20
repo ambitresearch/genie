@@ -50,9 +50,8 @@ import { compareComponents, MANIFEST_PATH } from "../store/manifest.js";
 /**
  * One compiled card (AC2–AC5). Matches `../store/manifest.ts`'s
  * `ComponentEntry` six required fields exactly, plus the two optional
- * `meta.json`-sourced fields the RFC's `manifestEntry`/`meta.json` shapes
- * already define (`subtitle`, `tags` — see `llm/schema.ts`'s
- * `manifestEntry` and `docs/plan/04-tech-design-rfc.md` §7.3).
+ * `meta.json`-sourced fields already defined by `llm/schema.ts`'s
+ * `manifestEntry` (`subtitle`, `tags`).
  */
 export interface ManifestCard {
   name: string;

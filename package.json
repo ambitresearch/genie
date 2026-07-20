@@ -16,6 +16,10 @@
     "lint": "eslint .",
     "typecheck": "pnpm -r typecheck",
     "bundle:mcpb": "node scripts/bundle-mcpb.mjs",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "docs:verify": "node scripts/verify-public-docs.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -29,6 +33,7 @@
     "tsx": "^4.22.4",
     "typescript": "^5.9.0",
     "typescript-eslint": "^8.62.0",
+    "vitepress": "2.0.0-alpha.18",
     "vitest": "^4.1.9",
     "yaml": "2.9.0"
   },

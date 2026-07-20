@@ -4,8 +4,7 @@
 # non-root, multi-arch image built from the repo-root Dockerfile.
 #
 # No git host (e.g. Gitea) sidecar ships by default — genie's LocalFs store
-# works standalone; add a git host only if you use genie's GitHostStore
-# (docs/plan/04-tech-design-rfc.md §"GitHostKitStore").
+# works standalone; add a git host only if you use genie's GitHostStore.
 #
 # Quickstart:
 #   cp .env.example .env   # fill in the required LLM + OAuth values

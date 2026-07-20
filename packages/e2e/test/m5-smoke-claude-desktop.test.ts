@@ -155,7 +155,9 @@ describe("Claude Desktop guide contracts", () => {
   });
 
   it("links the completed guide from the top-level Claude Desktop entry point", () => {
-    expect(ROOT_README).toContain("[Claude Desktop guide](./docs/harness/claude-desktop.md)");
+    expect(ROOT_README).toContain(
+      "[Claude Desktop guide](https://ambitresearch.github.io/genie/harness/claude-desktop/)",
+    );
     expect(ROOT_README).not.toContain("debugging guide will land separately in M5-10");
   });
 

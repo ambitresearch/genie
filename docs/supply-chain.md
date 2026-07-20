@@ -16,8 +16,11 @@ being force-moved to a malicious commit cannot silently enter a build.
 | Action                             | Pinned commit                              | Version |
 | ---------------------------------- | ------------------------------------------ | ------- |
 | `actions/checkout`                 | `34e114876b0b11c390a56381ad16ebd13914f8d5` | v4.3.1  |
+| `actions/configure-pages`          | `983d7736d9b0ae728b81ab479565c72886d7745b` | v5.0.0  |
+| `actions/deploy-pages`             | `d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e` | v4.0.5  |
 | `actions/setup-node`               | `49933ea5288caeca8642d1e84afbd3f7d6820020` | v4.4.0  |
 | `actions/upload-artifact`          | `ea165f8d65b6e75b540449e92b4886f43607fa02` | v4.6.2  |
+| `actions/upload-pages-artifact`    | `7b1f4a764d45c48632c6b24a0339c27f5614fb0b` | v4.0.0  |
 | `pnpm/action-setup`                | `b906affcce14559ad1aafd4ab0e942779e9f58b1` | v4.3.0  |
 | `googleapis/release-please-action` | `5c625bfb5d1ff62eadeeb3772007f7f66fdcf071` | v4.4.1  |
 | `softprops/action-gh-release`      | `3bb12739c298aeb8a4eeaf626c5b8d85266b0e65` | v2.6.2  |
@@ -95,8 +98,8 @@ check:
   `cosign verify-blob --bundle <artifact>.sig --certificate-identity 'https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main' --certificate-oidc-issuer https://token.actions.githubusercontent.com <artifact>`.
 - Container signature:
   `cosign verify <image>@<digest> --certificate-identity 'https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
-- Image SBOM/provenance: `docker buildx imagetools inspect <image> --format '{{ json .SBOM }}'`
-  and `… '{{ json .Provenance }}'`. To extract the in-toto SPDX predicate:
+- Image SBOM/provenance: <code v-pre>docker buildx imagetools inspect &lt;image&gt; --format '{{ json .SBOM }}'</code>
+  and <code v-pre>… '{{ json .Provenance }}'</code>. To extract the in-toto SPDX predicate:
   `cosign download attestation --predicate-type https://spdx.dev/Document --platform linux/amd64 <image>@<digest> | jq -r '.payload' | base64 --decode | jq '.predicate'`.
 
 ## 3. pnpm install policy
@@ -155,8 +158,8 @@ exclusions, so another secret in the same test files still fails the gate.
 
 - **Tool-output trust boundary**: `conjure` returns model-controlled content. It is
   treated as untrusted data at the MCP host boundary — never concatenated into privileged
-  prompts, and persisted only through the separate plan-guarded write flow. See
-  `docs/security-audit-v1.md` (AC3).
+  prompts, and persisted only through the separate plan-guarded write flow. See the
+  public [security model](developer/security.md).
 - **`postMessage("*")` in the viewer**: the embedded viewer posts MCP-App protocol
   notifications to its parent with `targetOrigin: "*"`. No file contents, secrets, or
   generated payloads are sent — only initialize/size/ping/teardown protocol data. Pinning
@@ -164,6 +167,6 @@ exclusions, so another secret in the same test files still fails the gate.
 
 ## References
 
-- `docs/security-audit-v1.md` — M6-03 security audit and remediation.
+- `docs/developer/security.md` — public security model and reporting boundary.
 - GitHub issue #207 / PR #210 — supply-chain remediation documented here.
 - GitHub issue #69 (M6-04 / DRO-292) — release signing scope reconciled here.

@@ -270,7 +270,7 @@ jobs:
   # If one package fails after the release is created, use Actions' "Re-run
   # failed jobs" operation. It retains this successful job's outputs and only
   # retries the failed package path, avoiding a duplicate publish of its sibling.
-  # AC1 (reconciled — see docs/github/issues/M5-06-npm-publish.md): tags are
+  # Release Please component tags are
   # `server-vX.Y.Z` / `viewer-vX.Y.Z`
   # (`include-component-in-tag: true`), not a bare `v*`. Each publish job is
   # gated on release-please's own per-package `release_created` output.

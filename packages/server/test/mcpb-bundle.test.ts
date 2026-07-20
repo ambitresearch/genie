@@ -156,7 +156,9 @@ describe("mcpb bundle manifest (AC1)", () => {
   it("links the completed M5-10 Claude Desktop guide", () => {
     const readme = readFileSync(readmePath, "utf8");
     expect(readme).toContain("Claude Desktop users on macOS can install genie");
-    expect(readme).toContain("[Claude Desktop guide](./docs/harness/claude-desktop.md)");
+    expect(readme).toContain(
+      "[Claude Desktop guide](https://ambitresearch.github.io/genie/harness/claude-desktop/)",
+    );
     expect(readme).not.toContain("debugging guide will land separately in M5-10");
   });
 });
