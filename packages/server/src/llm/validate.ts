@@ -39,7 +39,7 @@ export type { ErrorObject } from "ajv";
 
 /**
  * AC4 — the canonical `@genie` first-line marker regex from
- * `docs/plan/00-decisions.md` §D-B. Every generated `<Name>.html` preview
+ * Every generated `<Name>.html` preview
  * must open with a comment matching this pattern so the manifest compiler
  * (M3-03) and the validate tool (M3-04) can register / verify the card
  * without re-parsing the component's JSX.

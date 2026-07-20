@@ -1,7 +1,7 @@
 # genie — reference LiteLLM proxy config (M2-05 / DRO-252)
 #
-# This is a REFERENCE example, not a required dependency. Per D-H
-# (docs/plan/00-decisions.md), genie calls a configurable OpenAI-compatible
+# This is a REFERENCE example, not a required dependency. genie calls a
+# configurable OpenAI-compatible
 # `/chat/completions` endpoint (`GENIE_LLM_BASE_URL` / `GENIE_LLM_API_KEY`,
 # see packages/server/src/llm/client.ts). LiteLLM is the reference gateway
 # because it fronts Anthropic / OpenAI / Ollama behind one such endpoint and
@@ -78,8 +78,7 @@ model_list:
 # `upperbound_key_generate_params` is a ceiling a request can't exceed, not a
 # value applied when the request omits the field. The values below are
 # therefore the exact body every MCP-server caller's key must be created
-# with — see the `/key/generate` call in the runbook (docs/plan/
-# 06-operations-runbook.md §7.1) — and `upperbound_key_generate_params` pins
+# with, and `upperbound_key_generate_params` pins
 # that ceiling in config so a future `/key/generate` call can't accidentally
 # grant a larger budget or looser rate limit than this reference intends.
 litellm_settings:

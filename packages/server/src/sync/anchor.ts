@@ -1,8 +1,8 @@
 /**
  * M3-06 (DRO-262) — genie's own `.genie/sync.json` verification anchor.
  *
- * `.genie/sync.json` is the LAST file the atomic sync sequence writes (D-C /
- * `docs/plan/00-decisions.md`): it records the source/render hashes and the
+ * `.genie/sync.json` is the LAST file the atomic sync sequence writes: it
+ * records the source/render hashes and the
  * `@genie`-validated component list for whatever the sync just wrote, so the
  * *next* sync can diff against it and repair a half-completed prior run. A
  * mid-plan failure must leave this file unwritten (or stale) — never

@@ -10,9 +10,13 @@
 
 </div>
 
-> **Status: scaffold (M1 in progress).** The server boots and speaks MCP, with a built-in
-> `ping` tool plus early M1 tools including `mcp__genie__list_files`. The remaining surfaces — generation, validator,
-> preview viewer — land in M1–M4. See [`docs/plan/`](./docs/plan) for the roadmap.
+> **Status: public preview.** The 20-tool MCP workflow, model-backed component
+> generation, plan-gated writes, validation, live preview, auth, and distribution
+> pipelines are implemented. The first `@ambitresearch` public package release is pending.
+
+[User Guide](https://ambitresearch.github.io/genie/user/) ·
+[Developer Guide](https://ambitresearch.github.io/genie/developer/) ·
+[Releases](https://github.com/ambitresearch/genie/releases)
 
 ---
 
@@ -27,8 +31,8 @@ idea, built on public protocol surfaces. **Not** affiliated with Anthropic. MIT,
 self-hostable, model-agnostic via any OpenAI-compatible endpoint; LiteLLM works as
 the reference gateway.
 
-It's a solo, AI-assisted experiment to find out whether MCP-Apps — rich UI rendered
-_inside_ a coding harness — are genuinely useful. See [`docs/plan/02-brd.md`](./docs/plan/02-brd.md).
+It's a solo, AI-assisted experiment to find out whether MCP Apps — rich UI rendered
+_inside_ a coding harness — are genuinely useful.
 
 ## Quickstart
 
@@ -50,7 +54,7 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ping","arguments":{}}}' \
   | node packages/server/dist/cli.js --transport stdio
-# → "pong — genie 0.0.0"
+# → "pong — genie 1.2.0"
 ```
 
 `mcp__genie__list_files` reads UI kit roots from `GENIE_KITS_ROOT` or
@@ -156,7 +160,7 @@ To build the bundle locally: `pnpm bundle:mcpb` (builds `@ambitresearch/genie`,
 stages a production-only deploy, and packs `dist/genie.mcpb` via
 `@anthropic-ai/mcpb`). See `mcpb/manifest.json` for the bundle manifest and
 `scripts/bundle-mcpb.mjs` for the packaging steps. See the
-[Claude Desktop guide](./docs/harness/claude-desktop.md) for manual JSON
+[Claude Desktop guide](https://ambitresearch.github.io/genie/harness/claude-desktop/) for manual JSON
 configuration, remote connectors, debugging, and smoke-test evidence.
 
 ## Repository layout
@@ -164,13 +168,12 @@ configuration, remote connectors, debugging, and smoke-test evidence.
 ```
 packages/
   server/     @ambitresearch/genie — the MCP server (this is the product)
-  viewer/     @ambitresearch/genie-viewer — Vite preview viewer (M4 in progress; CLI + multi-page config + grid renderer, booted on demand by the `preview` tool)
-  e2e/        @ambitresearch/genie-e2e — harness smoke tests (M5, placeholder)
+  viewer/     @ambitresearch/genie-viewer — Vite preview viewer and embedded grid assets
+  e2e/        @ambitresearch/genie-e2e — protocol, harness, browser, auth, and release tests
 docs/
-  plan/       vision, BRD, PRD, tech-design RFC, launch plan, ops runbook
-  designs/    locked design system + SVG surface mockups
-  github/     M0–M6 issue backlog (agent-delegation-ready)
-  research/   Skybridge framework evaluation
+  user/       installation, harness, workflow, and troubleshooting guides
+  developer/  architecture, contribution, security, release, and design guides
+  harness/    tested per-harness registration references
 AGENTS.md     the SDLC contract every contributor (human or AI) follows
 ```
 

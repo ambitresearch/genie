@@ -9,7 +9,7 @@ export default tseslint.config(
     // `packages/*/scripts/**` (build/postbuild Node CLI scripts, e.g. M2-02's
     // emit-component-schema.mjs) follows the same "scripts" carve-out this
     // comment already names — it just previously only had an instance under
-    // docs/github/scripts/, which **/dist/** below doesn't reach.
+    // root scripts, which **/dist/** below doesn't reach.
     ignores: [
       "**/dist/**",
       "**/node_modules/**",

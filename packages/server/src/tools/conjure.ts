@@ -193,8 +193,7 @@ export function isSafeRefUrl(raw: string): boolean {
  * addresses unsafe, or the lookup failed). Exported so both the fetch-time
  * guard and its regression tests share one resolution path.
  *
- * DNS-rebinding guard (M6-03 follow-up, fixes the gap the audit flagged in
- * `docs/security-audit-v1.md`): {@link isSafeRefUrl} is a *syntactic*
+ * DNS-rebinding guard: {@link isSafeRefUrl} is a *syntactic*
  * pre-filter on the hostname as typed — it cannot catch an attacker-controlled
  * DNS name that resolves to a private/loopback/link-local address (the
  * classic SSRF/DNS-rebinding bypass: `evil.example.com` passes the hostname

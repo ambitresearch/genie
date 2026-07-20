@@ -1,6 +1,6 @@
 /**
  * Tests for M3-03's manifest compiler (`packages/server/src/manifest/compiler.ts`),
- * tracking issue DRO-259 (spec `docs/github/issues/M3-03-manifest-compiler.md`).
+ * manifest compiler acceptance contract.
  *
  * ── Schema note ───────────────────────────────────────────────────────────────
  * The issue's own AC4 literal text says the root key is `cards` with an object

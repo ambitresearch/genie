@@ -8,8 +8,8 @@
 **Read `.claude/TASKS.md` if it exists.** It's the local, gitignored scratchpad holding
 our live plan — what's done, in progress, pending, parked. It is the source of truth for
 "what are we doing right now." Update it as work moves; it is _not_ committed (intentionally
-local). The formal, committed plan lives in `docs/plan/` and the issue backlog in
-`docs/github/issues/` — those are the durable spec; `TASKS.md` is the fast working pad.
+local). GitHub issues and pull requests are the durable work record; `TASKS.md` is the
+fast working pad.
 
 ## What genie is
 
@@ -29,14 +29,10 @@ app to open.
 
 ## Repo map
 
-- `docs/designs/design-6/` — **canonical** SVG mockups (warm-instrument; Newsreader/Inter/JetBrains
-  Mono; clay accent `#c87c5e`), `design.md` (locked design system), `tokens.css` (source of truth
-  for tokens). `_*.html` files are local scratch tooling. `docs/designs/design-1|2|3|4|5/` are
-  prior variants kept for reference — not canonical.
-- `docs/plan/` — product vision, BRD, PRD, tech-design RFC, GTM, ops runbook (the formal spec).
-- `docs/github/` — M0–M5 issue backlog, labels, milestones (the build plan).
-- `docs/research/` — external evaluations (e.g. Skybridge framework verdict).
-- `docs/research-artifacts/` — raw deep-research reports.
+- `docs/user/` — public installation, harness, workflow, and troubleshooting guide.
+- `docs/developer/` — public architecture, contribution, security, release, and design guide.
+- `docs/designs/design-6/` — canonical Warm Instrument SVG references and `tokens.css`.
+- `docs/harness/` — tested registration and behavior references for each coding harness.
 
 ## Hard rules — do not break
 
@@ -52,9 +48,8 @@ app to open.
 4. **SVG mockups hardcode hex** — they do NOT consume `tokens.css`. 1440×980 canvas.
 5. **Secrets are never hardcoded.** Keep as `user_config` / env: `HA_AGENT_KEY`,
    `HONCHO_API_KEY`, `TRUENAS_API_KEY`, LLM endpoint keys. Nothing secret enters the repo.
-6. **Skybridge is parked, not adopted** — gated on a spike before M4 (RFC §15.8;
-   verdict in `docs/research/skybridge.md` §8). Don't build on it until the spike clears
-   genie's CSP + G-5 constraints.
+6. **Skybridge is parked, not adopted.** Do not build the viewer on it without a new,
+   explicit proposal that proves genie's CSP + G-5 constraints.
 7. **npm package names (M0-04 fallback, recorded here per that issue's AC5):** both
    the bare `genie` package and the `@genie` scope belong to unrelated npm users. The
    Ambit Research-owned packages are **`@ambitresearch/genie`** (server) and
@@ -68,5 +63,4 @@ app to open.
   JPEG compression washes out the cream palette.
 - `git` operations in this environment may need the MacOS-MCP shell tool (the sandbox blocks
   `.git` writes from the Bash tool).
-- This repo currently lives in the **private** GitHub repo `ambitresearch/genie`;
-  DRO-278 release publishing remains blocked until the repository is public.
+- This repository is public at `ambitresearch/genie`.

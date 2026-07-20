@@ -1,8 +1,8 @@
 /**
  * M3-02 (DRO-258) — chokidar watcher for a project/kit's component tree.
  *
- * Watches the four glob groups a kit's on-disk layout defines (`docs/plan/
- * 04-tech-design-rfc.md` §6.6): component preview/source files, token files,
+ * Watches the four glob groups a kit's on-disk layout defines: component
+ * preview/source files, token files,
  * the import-closure root stylesheet, and the per-kit `meta.json`. On any
  * change it classifies the touched paths by which group they belong to,
  * debounces a 100 ms window PER classification (AC3), and hands the caller

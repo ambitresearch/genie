@@ -99,18 +99,14 @@ describe("Claude plugin artifacts", () => {
     const copilot = readFileSync(resolve(ROOT, "docs/harness/copilot.md"), "utf8");
     const overview = readFileSync(resolve(ROOT, "docs/harness/README.md"), "utf8");
     const skill = readFileSync(resolve(ROOT, "packages/plugin/skills/genie/SKILL.md"), "utf8");
-    const design = readFileSync(
-      resolve(ROOT, "docs/superpowers/specs/2026-07-05-genie-chat-invocation-design.md"),
-      "utf8",
-    );
+    const publicHarnessGuide = readFileSync(resolve(ROOT, "docs/user/harnesses.md"), "utf8");
 
     expect(cursor).toContain("~/.cursor/skills/genie");
     expect(codex).toContain("~/.agents/skills/genie");
     expect(copilot).toContain("~/.copilot/skills/genie");
     expect(overview).not.toContain("Only Claude Code / Claude Desktop / claude.ai do");
-    expect(design).not.toContain("Cursor, Codex CLI, and Copilot have no equivalent");
-    expect(design).toContain("source checkout");
-    expect(design).not.toContain("Ship `SKILL.md` + command files inside the npm/`.mcpb` package");
+    expect(publicHarnessGuide).toContain("Portable Agent Skill");
+    expect(publicHarnessGuide).toContain("packages/plugin/skills/genie");
     expect(overview).toContain("local stdio");
     expect(overview).toContain("HTTP defaults to remote");
     expect(overview).toContain("--preview-locality local");

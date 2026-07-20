@@ -1,8 +1,8 @@
 /**
  * M3-01 (DRO-257) — genie's own first-line `@genie` marker validator.
  *
- * This is genie's **registration contract** for a component preview file
- * (`docs/plan/00-decisions.md` §D-B): every `<Name>.html` / `preview.html`
+ * This is genie's **registration contract** for a component preview file:
+ * every `<Name>.html` / `preview.html`
  * must open with a comment matching {@link MARKER_REGEX}, e.g.
  *
  *   <!-- @genie group="actions" viewport="400x200" -->
@@ -27,8 +27,7 @@
  */
 
 /**
- * AC2 — the canonical `@genie` first-line marker regex (`docs/plan/
- * 00-decisions.md` §D-B). This is now the single source of truth for the
+ * AC2 — the canonical `@genie` first-line marker regex. This is the single source of truth for the
  * pattern: `../llm/validate.ts`'s `MARKER_REGEX_M2_07` re-exports this
  * constant (it previously carried its own temporary duplicate literal,
  * shipped ahead of this issue landing) rather than redefining it.
@@ -50,7 +49,7 @@ export type MarkerValidationResult =
  * marker. `path` is carried through into the failure result (not used for
  * validation itself) so a caller batching many files can report exactly
  * which one failed, matching the `[MARKER_MISSING] <relpath>` build-failure
- * shape the spec and `docs/plan/03-prd.md`'s `ERR_MARKER_MISSING` describe.
+ * shape the `ERR_MARKER_MISSING` contract describes.
  *
  * Uses `content.split("\n", 1)[0]` per the spec's implementation note — the
  * `limit` argument means `split` stops after producing one element, so this
@@ -79,8 +78,7 @@ export interface MarkerViewport {
  * `undefined` when the line has no `viewport` attribute, or its value isn't
  * the strict `<digits>x<digits>` shape (e.g. a named token like `"desktop"`
  * — `list_components`/the manifest compiler keep that case as an opaque
- * string rather than a decomposed size, per `docs/plan/04-tech-design-rfc.md`
- * §9.20 and M1-15's own AC5 note).
+ * string rather than a decomposed size).
  *
  * Deliberately independent of {@link validateMarker}: a caller can ask "does
  * this line have a parseable viewport" without first requiring the whole
