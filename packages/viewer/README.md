@@ -121,3 +121,12 @@ pnpm --filter @ambitresearch/genie-viewer serve       # vite (multi-page kit dev
 
 Tests live alongside sources (`src/**/*.test.ts`) and run via the workspace
 root's `pnpm test` (vitest).
+
+## Release verification
+
+Releases include npm provenance plus signed tarballs and SBOMs. After installing the
+package, run `npm audit signatures` to check its registry signature and provenance. For
+release downloads, use `cosign verify-blob` with the adjacent `.sig` bundle.
+
+The [supply-chain verification guide](https://github.com/ambitresearch/genie/blob/main/docs/supply-chain.md#verifying-a-release)
+contains the complete certificate identity and issuer commands.

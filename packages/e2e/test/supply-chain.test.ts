@@ -220,6 +220,18 @@ fi
     expect(mcpbManifest.support).toBe("https://github.com/ambitresearch/genie/issues");
   });
 
+  it("ships release-verification guidance in both npm packages", () => {
+    const verificationGuide =
+      "https://github.com/ambitresearch/genie/blob/main/docs/supply-chain.md#verifying-a-release";
+
+    for (const packagePath of ["packages/server", "packages/viewer"]) {
+      const readme = readFileSync(resolve(repoRoot, packagePath, "README.md"), "utf8");
+      expect(readme, packagePath).toContain(verificationGuide);
+      expect(readme, packagePath).toContain("npm audit signatures");
+      expect(readme, packagePath).toContain("cosign verify-blob");
+    }
+  });
+
   it("signs and verifies the exact npm tarballs and SBOMs before publishing", () => {
     const dryRun = job(release, "publish-dry-run", "release-please");
     expect(dryRun).toContain("Generate CycloneDX SBOM");
