@@ -59,6 +59,7 @@ describe("public documentation surface", () => {
     expect(workflow).toContain("id-token: write");
     expect(workflow).toContain("pnpm docs:build");
     expect(workflow).toContain("pnpm docs:verify");
+    expect(workflow).toContain("group: pages-${{ github.ref }}");
     expect(workflow).toContain("path: docs/.vitepress/dist");
     expect(workflow).toContain("actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b");
     expect(workflow).toContain(
@@ -103,5 +104,14 @@ describe("public documentation surface", () => {
     expect(notFound).toContain(
       "[Developer Guide](https://ambitresearch.github.io/genie/developer/)",
     );
+  });
+
+  it("documents storage and release sequencing accurately", () => {
+    expect(readRootFile("docs/user/installation.md")).toContain(
+      "| `GENIE_HOME`          | `.genie` below the working directory.",
+    );
+    const releases = readRootFile("docs/developer/releases.md");
+    expect(releases).toContain("GitHub component tags already exist at this point");
+    expect(releases).toContain("without a tag-promotion phase");
   });
 });

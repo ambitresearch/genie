@@ -61,7 +61,7 @@ file passed with `--secrets-from`. Never commit them.
 
 | Variable              | Default                                        |
 | --------------------- | ---------------------------------------------- |
-| `GENIE_HOME`          | Process-specific persisted state root.         |
+| `GENIE_HOME`          | `.genie` below the working directory.          |
 | `GENIE_KITS_ROOT`     | `.genie/kits` below the working directory.     |
 | `GENIE_PROJECTS_ROOT` | `.genie/projects` below the working directory. |
 | `GENIE_REPORTS_DIR`   | `.genie/reports` below the working directory.  |
