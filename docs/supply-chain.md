@@ -97,6 +97,19 @@ every applicable job succeeded, every expected asset is attached, and the exact 
 are live. Only then does it publish the GitHub Releases. This sequencing prevents GitHub's
 immutable-release setting from locking an empty release before its assets arrive.
 
+If a production attempt publishes npm and attaches the signed blobs but a container registry
+fails, dispatch the Release workflow manually from `main` with the existing server and viewer
+draft tags. This guarded recovery is not a second package-publish path: it refuses non-draft,
+immutable, mismatched, historical, or non-`main` inputs; never runs `npm publish`; and never
+uploads or replaces release assets. Normal production and recovery runs share one non-cancelling
+lock, and both input versions must still match npm `latest` before registry tags can move. It
+rebuilds and signs both registry images from the exact server tag,
+requires amd64 and arm64 plus promoted-tag digest equality, then downloads and cryptographically
+verifies every existing blob bundle and checks both npm SLSA provenance records. Both drafts are
+published only after the two independent registry jobs pass. See
+[Recovering an incomplete production release](developer/releases.md#recovering-an-incomplete-production-release)
+for the operator procedure.
+
 ### Verifying a release
 
 - npm provenance: `npm audit signatures` after install, or inspect the provenance
