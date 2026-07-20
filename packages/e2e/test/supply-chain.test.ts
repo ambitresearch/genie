@@ -552,6 +552,10 @@ fi
 
   it("recovers incomplete draft releases from main without republishing npm", () => {
     const parsed = parse(release) as {
+      concurrency?: {
+        group?: string;
+        "cancel-in-progress"?: boolean;
+      };
       on?: {
         workflow_dispatch?: {
           inputs?: Record<string, { required?: boolean; type?: string }>;
@@ -562,6 +566,9 @@ fi
       server_tag: { required: true, type: "string" },
       viewer_tag: { required: true, type: "string" },
     });
+    expect(parsed.concurrency?.["cancel-in-progress"]).toBe(false);
+    expect(parsed.concurrency?.group).toContain("github.event_name == 'pull_request'");
+    expect(parsed.concurrency?.group).toContain("release-production");
 
     const guard = job(release, "recovery-guard", "recovery-docker-publish-ghcr");
     expect(guard).toContain("github.event_name == 'workflow_dispatch'");
@@ -572,6 +579,10 @@ fi
     expect(guard).toContain("isImmutable");
     expect(guard).toContain("gh release view");
     expect(guard).not.toContain("releases/tags/$tag");
+    expect(guard).toContain("npm view @ambitresearch/genie dist-tags.latest");
+    expect(guard).toContain("npm view @ambitresearch/genie-viewer dist-tags.latest");
+    expect(guard).toContain('test "$server_latest" = "$server_version"');
+    expect(guard).toContain('test "$viewer_latest" = "$viewer_version"');
 
     for (const [name, nextName, image] of [
       [

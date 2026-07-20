@@ -28,6 +28,13 @@ on:
 permissions:
   contents: read
 
+# Normal production releases and manual recovery both mutate the version and
+# latest registry tags. Keep those paths under one non-cancelling lock while
+# allowing unrelated PR dry-runs to proceed independently.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('release-pr-{0}', github.event.pull_request.number) || 'release-production' }}
+  cancel-in-progress: false
+
 jobs:
   # ── Dry-run publish test (M5-06 DoD: "dry-run publish on a non-prod tag") ──
   # Runs on every PR and every successful main CI completion. It never writes
@@ -907,6 +914,11 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
       - name: Require main and matching draft component releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -926,6 +938,19 @@ jobs:
             viewer-v*) ;;
             *) echo "::error::Unexpected viewer release tag: $VIEWER_TAG"; exit 1 ;;
           esac
+
+          server_version=${SERVER_TAG#server-v}
+          viewer_version=${VIEWER_TAG#viewer-v}
+          server_latest=$(npm view @ambitresearch/genie dist-tags.latest)
+          viewer_latest=$(npm view @ambitresearch/genie-viewer dist-tags.latest)
+          if ! test "$server_latest" = "$server_version"; then
+            echo "::error::Server recovery version $server_version is not npm latest ($server_latest); refusing to repoint registry latest tags."
+            exit 1
+          fi
+          if ! test "$viewer_latest" = "$viewer_version"; then
+            echo "::error::Viewer recovery version $viewer_version is not npm latest ($viewer_latest); refusing to repoint registry latest tags."
+            exit 1
+          fi
 
           verify_draft_release() {
             tag=$1

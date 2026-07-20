@@ -27,6 +27,9 @@ succeeded, both component releases are still mutable drafts from the same releas
 one or both container registry jobs failed. Select the `main` branch and enter the existing
 `server-vX.Y.Z` and `viewer-vX.Y.Z` tags. A branch dispatch is rejected because it would change
 the keyless certificate identity from the documented `release.yml@refs/heads/main` identity.
+The workflow serializes normal production releases and recoveries under one non-cancelling lock,
+and the guard requires both input versions to remain the current npm `latest` versions. An older
+draft therefore cannot repoint either container registry's `latest` tag.
 
 The recovery path checks both drafts and their tag targets, checks out the exact server tag,
 then independently rebuilds amd64/arm64 images for GHCR and Docker Hub with SBOM and max
