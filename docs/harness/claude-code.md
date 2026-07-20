@@ -122,7 +122,7 @@ only works when explicitly supplied through both `--settings` and
 absolute path, as above) that prints Claude Code's own model-API key/token —
 a bare string, not JSON — to stdout. A real, ready-to-use implementation
 ships in this repo at
-[`docs/harness/scripts/anthropic-api-key-helper.sh`](./scripts/anthropic-api-key-helper.sh)
+[`docs/harness/scripts/anthropic-api-key-helper.sh`](https://github.com/ambitresearch/genie/blob/main/docs/harness/scripts/anthropic-api-key-helper.sh)
 (tracked as executable mode `100755`). Copy it, adjust the credential source
 for your environment, and point the top-level `apiKeyHelper` field at your
 copy. Claude Code has no `claude config set` shell subcommand; edit

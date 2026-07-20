@@ -24,8 +24,8 @@ Skill support carries the `conjure → plan → write_files → preview` workflo
 without it, tool descriptions are the fallback guidance. See
 [Install the Agent Skill](#install-the-agent-skill-optional) below — current
 Cline (`cline@3.0.42`, confirmed 2026-07-16) discovers portable `SKILL.md`
-packages via its own `skill` subcommand (`cline skill add <owner/repo> --skill
-<name> --agent cline`), which forwards to the open `skills` CLI and installs
+packages via its own `skill` subcommand (`cline skill add OWNER/REPO --skill
+NAME --agent cline`), which forwards to the open `skills` CLI and installs
 into the shared `.agents/skills` / `~/.agents/skills` convention the other
 harness guides ([codex.md](./codex.md), [cursor.md](./cursor.md)) also use.
 Cline ships frequent releases, so treat the exact version number as a

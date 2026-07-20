@@ -26,7 +26,7 @@ These are orthogonal, so harnesses fall into a grid:
 | Codex CLI                         |         **no**          |       **yes**       | Skill + **server-opened browser tab** + descriptions                                                 |
 | GitHub Copilot (host-dependent)   |  capability-dependent   |       **yes**       | Skill + inline grid when negotiated; local fallback browser + descriptions                           |
 | Continue IDE                      |           yes           |       **yes**       | Skill + inline MCP App + descriptions                                                                |
-| Continue CLI (`cn`)               |         **no**          |       **yes**       | Skill + text fallback; headless `cn -p`; `${{ secrets.NAME }}`                                       |
+| Continue CLI (`cn`)               |         **no**          |       **yes**       | Skill + text fallback; headless `cn -p`; <code v-pre>${{ secrets.NAME }}</code>                      |
 | Cline                             |         **no**          |       **yes**       | Skill (`cline skill add`) + descriptions; local-stdio viewer/`file://`, remote HTTP degrades to text |
 
 **Takeaways:**
@@ -45,7 +45,7 @@ These are orthogonal, so harnesses fall into a grid:
   hosts require the inline MCP App plus `GENIE_PREVIEWS_BASE_URL`. Disable local
   stdio auto-open with `GENIE_PREVIEW_NO_OPEN=1`.
 - On **Continue.dev**, MCP tools only load in agent mode, not chat/autocomplete,
-  and config secrets use `${{ secrets.NAME }}` interpolation. Current Continue
+  and config secrets use <code v-pre>${{ secrets.NAME }}</code> interpolation. Current Continue
   IDE builds include an MCP App renderer; the `cn` CLI remains text-only.
   Continue CLI loads Skills from
   `.continue/skills`, `.claude/skills`, and `~/.continue/skills`. Current
