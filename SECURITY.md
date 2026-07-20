@@ -2,7 +2,7 @@
 
 genie is a solo, best-effort open-source project. Security reports are taken
 seriously, but please set expectations accordingly: there is no SLA, and
-response is best-effort (see `docs/plan/06-operations-runbook.md` §11.1).
+response is best-effort.
 
 ## Reporting a vulnerability
 
@@ -24,11 +24,10 @@ in their own git-backed component store. It speaks to whatever LLM endpoint the
 operator configures (via LiteLLM or direct). The most security-relevant surfaces:
 
 - The MCP tool layer (path traversal, plan/write boundary enforcement).
-- The auth subsystem (OAuth/bearer — lands in M5).
-- The preview viewer's iframe sandbox + CSP (lands in M4).
-- Supply-chain integrity of published artifacts (npm provenance — M6).
+- The auth subsystem (OAuth, OIDC, and static Bearer tokens).
+- The preview viewer's iframe sandbox and CSP.
+- Supply-chain integrity of published artifacts and npm provenance.
 
 ## Supported versions
 
-Pre-1.0: only the latest release is supported. Once genie reaches 1.0, this
-policy will be updated with a support window.
+Only the latest release of each published package is supported.
