@@ -30,6 +30,21 @@ const releaseWorkflowPath = join(repoRoot, ".github", "workflows", "release.yml"
 const readmePath = join(repoRoot, "README.md");
 const MAX_BYTES = 30 * 1024 * 1024;
 
+function hasChangelogVersionHeading(changelog: string, version: string): boolean {
+  return changelog.includes(`## ${version}`) || changelog.includes(`## [${version}](`);
+}
+
+describe("release changelog version headings", () => {
+  it("recognizes bootstrap and Release Please linked headings", () => {
+    const linkedChangelog =
+      "## [0.1.1](https://github.com/ambitresearch/genie/compare/viewer-v0.1.0...viewer-v0.1.1)";
+
+    expect(hasChangelogVersionHeading("## 0.1.0 (2026-07-20)", "0.1.0")).toBe(true);
+    expect(hasChangelogVersionHeading(linkedChangelog, "0.1.1")).toBe(true);
+    expect(hasChangelogVersionHeading(linkedChangelog, "0.1.2")).toBe(false);
+  });
+});
+
 describe("mcpb bundle manifest (AC1)", () => {
   it("mcpb/manifest.json exists and declares the required fields", () => {
     expect(existsSync(manifestPath)).toBe(true);
@@ -117,7 +132,12 @@ describe("mcpb bundle manifest (AC1)", () => {
       expect(existsSync(viewerChangelogPath)).toBe(false);
     } else {
       expect(viewerReleaseVersion).toBe(viewerPackage.version);
-      expect(readFileSync(viewerChangelogPath, "utf8")).toContain(`## ${viewerPackage.version}`);
+      expect(
+        hasChangelogVersionHeading(
+          readFileSync(viewerChangelogPath, "utf8"),
+          viewerPackage.version,
+        ),
+      ).toBe(true);
     }
   });
 
