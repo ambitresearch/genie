@@ -353,6 +353,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.release-please.outputs.server_tag }}
+          draft: true
           files: |
             artifacts/server/*.tgz
             artifacts/server/*.tgz.sig
@@ -451,6 +452,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.release-please.outputs.viewer_tag }}
+          draft: true
           files: |
             artifacts/viewer/*.tgz
             artifacts/viewer/*.tgz.sig
@@ -520,6 +522,7 @@ jobs:
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.release-please.outputs.server_tag }}
+          draft: true
           files: |
             dist/genie.mcpb
             dist/genie.mcpb.sig
@@ -619,6 +622,19 @@ jobs:
           promoted_digest=$(node -p 'JSON.parse(require("node:fs").readFileSync("promotion.json", "utf8"))["containerimage.descriptor"].digest')
           test "$promoted_digest" = "$BUILD_DIGEST"
 
+      - name: Verify promoted release tag
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          for tag in "$VERSION" latest; do
+            published_digest=$(docker buildx imagetools inspect \
+              "ghcr.io/ambitresearch/genie:$tag" \
+              | awk '$1 == "Digest:" { print $2; exit }')
+            test "$published_digest" = "$BUILD_DIGEST"
+          done
+
   docker-publish-dockerhub:
     name: publish Docker Hub image (multi-arch, signed)
     needs: [publish-dry-run, release-please, verify-release]
@@ -707,3 +723,158 @@ jobs:
             "$image@$BUILD_DIGEST"
           promoted_digest=$(node -p 'JSON.parse(require("node:fs").readFileSync("promotion.json", "utf8"))["containerimage.descriptor"].digest')
           test "$promoted_digest" = "$BUILD_DIGEST"
+
+      - name: Verify promoted release tag
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.tags.outputs.version }}
+        run: |
+          set -euo pipefail
+          for tag in "$VERSION" latest; do
+            published_digest=$(docker buildx imagetools inspect \
+              "docker.io/roshangautam/genie:$tag" \
+              | awk '$1 == "Digest:" { print $2; exit }')
+            test "$published_digest" = "$BUILD_DIGEST"
+          done
+
+  # GitHub's immutable-release setting rejects asset uploads after publication.
+  # Release Please therefore creates drafts; this job publishes them only after
+  # every applicable package, bundle, and container path has succeeded and its
+  # live registry/release evidence is present.
+  finalize-releases:
+    name: finalize verified GitHub releases
+    needs:
+      - release-please
+      - publish-server
+      - publish-viewer
+      - publish-mcpb
+      - docker-publish-ghcr
+      - docker-publish-dockerhub
+    if: >-
+      always() &&
+      (needs.release-please.outputs.server_released == 'true' ||
+      needs.release-please.outputs.viewer_released == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Require every applicable publish job
+        env:
+          SERVER_RELEASED: ${{ needs.release-please.outputs.server_released }}
+          VIEWER_RELEASED: ${{ needs.release-please.outputs.viewer_released }}
+          SERVER_NPM_RESULT: ${{ needs.publish-server.result }}
+          VIEWER_NPM_RESULT: ${{ needs.publish-viewer.result }}
+          MCPB_RESULT: ${{ needs.publish-mcpb.result }}
+          GHCR_RESULT: ${{ needs.docker-publish-ghcr.result }}
+          DOCKERHUB_RESULT: ${{ needs.docker-publish-dockerhub.result }}
+        run: |
+          set -euo pipefail
+          require_success() {
+            if [ "$2" != "success" ]; then
+              echo "::error::$1 did not succeed (result: $2); keeping releases draft."
+              exit 1
+            fi
+          }
+
+          if [ "$SERVER_RELEASED" = "true" ]; then
+            require_success "publish-server" "$SERVER_NPM_RESULT"
+            require_success "publish-mcpb" "$MCPB_RESULT"
+            require_success "docker-publish-ghcr" "$GHCR_RESULT"
+            require_success "docker-publish-dockerhub" "$DOCKERHUB_RESULT"
+          fi
+          if [ "$VIEWER_RELEASED" = "true" ]; then
+            require_success "publish-viewer" "$VIEWER_NPM_RESULT"
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Verify draft release assets and live registries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_RELEASED: ${{ needs.release-please.outputs.server_released }}
+          SERVER_TAG: ${{ needs.release-please.outputs.server_tag }}
+          VIEWER_RELEASED: ${{ needs.release-please.outputs.viewer_released }}
+          VIEWER_TAG: ${{ needs.release-please.outputs.viewer_tag }}
+        run: |
+          set -euo pipefail
+          verify_release() {
+            tag=$1
+            shift
+            draft=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.draft')
+            if [ "$draft" != "true" ] && [ "$GITHUB_RUN_ATTEMPT" = "1" ]; then
+              echo "::error::Release $tag was published before finalization."
+              exit 1
+            fi
+            assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[].name')
+            for asset in "$@"; do
+              if ! printf '%s\n' "$assets" | grep -Fqx "$asset"; then
+                echo "::error::Release $tag is missing $asset; keeping releases draft."
+                exit 1
+              fi
+            done
+          }
+          verify_npm() {
+            package=$1
+            version=$2
+            published=$(npm view "$package@$version" version)
+            test "$published" = "$version"
+            predicate=$(npm view "$package@$version" dist.attestations.provenance.predicateType)
+            test "$predicate" = "https://slsa.dev/provenance/v1"
+          }
+
+          if [ "$SERVER_RELEASED" = "true" ]; then
+            version=${SERVER_TAG#server-v}
+            tarball="ambitresearch-genie-$version.tgz"
+            verify_release "$SERVER_TAG" \
+              "$tarball" "$tarball.sig" \
+              genie-server-sbom.cdx.json genie-server-sbom.cdx.json.sig \
+              genie.mcpb genie.mcpb.sig
+            verify_npm @ambitresearch/genie "$version"
+          fi
+          if [ "$VIEWER_RELEASED" = "true" ]; then
+            version=${VIEWER_TAG#viewer-v}
+            tarball="ambitresearch-genie-viewer-$version.tgz"
+            verify_release "$VIEWER_TAG" \
+              "$tarball" "$tarball.sig" \
+              genie-viewer-sbom.cdx.json genie-viewer-sbom.cdx.json.sig
+            verify_npm @ambitresearch/genie-viewer "$version"
+          fi
+
+      - name: Publish verified component releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_RELEASED: ${{ needs.release-please.outputs.server_released }}
+          SERVER_TAG: ${{ needs.release-please.outputs.server_tag }}
+          VIEWER_RELEASED: ${{ needs.release-please.outputs.viewer_released }}
+          VIEWER_TAG: ${{ needs.release-please.outputs.viewer_tag }}
+        run: |
+          set -euo pipefail
+          publish_release() {
+            tag=$1
+            if [ "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.draft')" = "true" ]; then
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+            else
+              echo "Release $tag is already published; verifying the retry."
+            fi
+          }
+
+          if [ "$SERVER_RELEASED" = "true" ]; then publish_release "$SERVER_TAG"; fi
+          if [ "$VIEWER_RELEASED" = "true" ]; then publish_release "$VIEWER_TAG"; fi
+
+      - name: Verify finalized releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SERVER_RELEASED: ${{ needs.release-please.outputs.server_released }}
+          SERVER_TAG: ${{ needs.release-please.outputs.server_tag }}
+          VIEWER_RELEASED: ${{ needs.release-please.outputs.viewer_released }}
+          VIEWER_TAG: ${{ needs.release-please.outputs.viewer_tag }}
+        run: |
+          set -euo pipefail
+          verify_published() {
+            test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$1" --jq '.draft')" = "false"
+          }
+          if [ "$SERVER_RELEASED" = "true" ]; then verify_published "$SERVER_TAG"; fi
+          if [ "$VIEWER_RELEASED" = "true" ]; then verify_published "$VIEWER_TAG"; fi

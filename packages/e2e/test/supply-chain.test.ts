@@ -14,6 +14,9 @@ const repoRoot = resolve(import.meta.dirname, "../../..");
 const workflowsRoot = resolve(repoRoot, ".github/workflows");
 const ci = readFileSync(resolve(workflowsRoot, "ci.yml"), "utf8");
 const release = readFileSync(resolve(workflowsRoot, "release.yml"), "utf8");
+const releasePleaseConfig = JSON.parse(
+  readFileSync(resolve(repoRoot, "release-please-config.json"), "utf8"),
+);
 const runnerGuard = readFileSync(resolve(workflowsRoot, "runner-guard.yml"), "utf8");
 const rootPackage = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8"));
 const serverPackage = JSON.parse(
@@ -470,6 +473,59 @@ fi
       expect(build).toBeLessThan(sign);
       expect(sign).toBeLessThan(verify);
       expect(verify).toBeLessThan(promote);
+    }
+  });
+
+  it("keeps component releases draft until every applicable publish path succeeds", () => {
+    expect(releasePleaseConfig.draft).toBe(true);
+
+    const finalize = job(release, "finalize-releases");
+    for (const dependency of [
+      "publish-server",
+      "publish-viewer",
+      "publish-mcpb",
+      "docker-publish-ghcr",
+      "docker-publish-dockerhub",
+    ]) {
+      expect(finalize).toContain(dependency);
+      expect(finalize).toContain(`needs.${dependency}.result`);
+    }
+    expect(finalize).toContain("always()");
+    expect(finalize).toContain("npm view");
+    expect(finalize).toContain("dist.attestations.provenance.predicateType");
+    expect(finalize).toContain("https://slsa.dev/provenance/v1");
+    expect(finalize).toContain("genie-server-sbom.cdx.json");
+    expect(finalize).toContain("genie-viewer-sbom.cdx.json");
+    expect(finalize).toContain("genie.mcpb");
+
+    for (const [name, nextName] of [
+      ["publish-server", "publish-viewer"],
+      ["publish-viewer", "publish-mcpb"],
+      ["publish-mcpb", "docker-publish-ghcr"],
+    ] as const) {
+      const source = job(release, name, nextName);
+      expect(source).toContain("softprops/action-gh-release");
+      expect(source).toContain("draft: true");
+    }
+
+    const verify = finalize.indexOf("Verify draft release assets and live registries");
+    const publish = finalize.indexOf(
+      'gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false',
+    );
+    expect(verify).toBeGreaterThanOrEqual(0);
+    expect(verify).toBeLessThan(publish);
+
+    for (const [name, nextName] of [
+      ["docker-publish-ghcr", "docker-publish-dockerhub"],
+      ["docker-publish-dockerhub", "finalize-releases"],
+    ] as const) {
+      const source = job(release, name, nextName);
+      expect(source.indexOf("Promote verified")).toBeLessThan(
+        source.indexOf("Verify promoted release tag"),
+      );
+      expect(source).toContain("docker buildx imagetools inspect");
+      expect(source).toContain('for tag in "$VERSION" latest');
+      expect(source).toContain('test "$published_digest" = "$BUILD_DIGEST"');
     }
   });
 
