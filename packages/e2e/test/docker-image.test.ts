@@ -294,6 +294,8 @@ describe("Docker release and CI workflows", () => {
     expect(dockerHubJob).toContain("docker.io/ambitresearch/genie");
     expect(dockerHubJob).not.toContain("docker.io/roshangautam/genie");
     expect(readme).toContain("docker.io/ambitresearch/genie:latest");
+    expect(dockerfile).toContain("docker.io/ambitresearch/genie:X.Y.Z");
+    expect(dockerfile).not.toContain("docker.io/roshangautam/genie");
   });
 
   it("scopes fallback cleanup to this run and removes anonymous volumes", () => {
