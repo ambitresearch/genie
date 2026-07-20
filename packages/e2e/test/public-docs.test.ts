@@ -110,7 +110,10 @@ describe("public documentation surface", () => {
   });
 
   it("documents storage and release sequencing accurately", () => {
-    expect(readRootFile("docs/user/installation.md")).toContain(
+    const installation = readRootFile("docs/user/installation.md");
+    expect(installation).toContain("Node.js 22.19 or newer for the npm/source path");
+    expect(installation).toContain("After the first public image release");
+    expect(installation).toContain(
       "| `GENIE_HOME`          | `.genie` below the working directory.",
     );
     const releases = readRootFile("docs/developer/releases.md");

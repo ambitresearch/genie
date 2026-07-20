@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 22 or newer for the npm/source path, or Docker.
+- Node.js 22.19 or newer for the npm/source path, or Docker.
 - An OpenAI-compatible model endpoint for `conjure` and `refine`.
 - A writable location for genie's state and UI kits.
 
@@ -27,7 +27,8 @@ node packages/server/dist/cli.js --transport stdio
 
 ## Docker
 
-Published images run the HTTP transport on port `8080`:
+After the first public image release, published images run the HTTP transport on port
+`8080`:
 
 ```bash
 docker run --rm -p 8080:8080 \
