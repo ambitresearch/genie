@@ -39,6 +39,12 @@ describe("public documentation boundary", () => {
     ["personal absolute path", "read /Users/alice/private.txt"],
     ["personal home without trailing slash", "read /Users/alice"],
     ["placeholder prefix collision", "read /Users/you-example/private.txt"],
+    ["Linux personal absolute path", "read /home/alice/private.txt"],
+    ["Linux personal home without trailing slash", "read /home/alice"],
+    ["Linux placeholder prefix collision", "read /home/you-example/private.txt"],
+    ["Windows personal absolute path", String.raw`read C:\Users\alice\private.txt`],
+    ["Windows personal home without trailing slash", String.raw`read C:\Users\alice`],
+    ["Windows placeholder prefix collision", String.raw`read C:\Users\you-example\private.txt`],
     ["repository token name", "export GITHUB_PERSONAL_ACCESS_TOKEN"],
     ["percent-encoded private host", "open https://192%2e168%2e1%2e180/path"],
     ["hexadecimal private host", "open http://0xc0.0xa8.0x1.0x1/path"],
@@ -46,16 +52,25 @@ describe("public documentation boundary", () => {
     ["integer host assignment", "host=3232235777"],
     ["integer hostname assignment", "hostname=3232235777"],
     ["integer connect target", "connect to 3232235777"],
+    ["IPv6 ULA host", "open http://[fd00::1]/path"],
+    ["IPv6 ULA fc00/7 host", "connect to fc12:3456::1"],
+    ["IPv6 link-local host", "open http://[fe80::1]/path"],
+    ["IPv6 upper link-local range", "hostname=febf::1"],
   ])("detects %s in the built artifact", (_name, content) => {
     expect(forbiddenMatches("docs/.vitepress/dist/index.html", content)).not.toEqual([]);
   });
 
-  it.each(["210.20.30.40", "110.20.30.40", "/Users/you/private.txt"])(
-    "does not reject public or documented placeholder value %s",
-    (content) => {
-      expect(forbiddenMatches("docs/.vitepress/dist/index.html", content)).toEqual([]);
-    },
-  );
+  it.each([
+    "210.20.30.40",
+    "110.20.30.40",
+    "/Users/you/private.txt",
+    "/home/you/private.txt",
+    String.raw`C:\Users\you\private.txt`,
+    "2001:db8::1",
+    "2606:4700:4700::1111",
+  ])("does not reject public or documented placeholder value %s", (content) => {
+    expect(forbiddenMatches("docs/.vitepress/dist/index.html", content)).toEqual([]);
+  });
 
   it.each(["designs/private.html", "research/notes.json", ".deliverables/debug.txt"])(
     "rejects forbidden built route %s",

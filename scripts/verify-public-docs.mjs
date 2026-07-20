@@ -52,6 +52,8 @@ const forbiddenContent = [
   /[a-z0-9-]+\.local\b/i,
   /[a-z0-9.-]+\.ts\.net\b/i,
   /\/Users\/(?!you(?:\/|$))[^/\s]+(?:\/|$)/,
+  /\/home\/(?!you(?:\/|$))[^/\s]+(?:\/|$)/,
+  /[a-z]:\\Users\\(?!you(?:\\|$))[^\\\s]+(?:\\|$)/i,
   /(?:GITHUB_PERSONAL_ACCESS_TOKEN|TRUENAS_API_KEY|HA_AGENT_KEY|HONCHO_API_KEY|shellprivatevars)/,
 ];
 
@@ -62,6 +64,10 @@ const privateIpv4Patterns = [
   /(?<![\d.])100\.(?:6[4-9]|[789]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}(?![\d.])/,
   /(?<![a-z0-9%])192%2e168%2e\d{1,3}%2e\d{1,3}(?![a-z0-9%])/i,
   /(?<![a-z0-9])0xc0\.0xa8\.(?:0x)?[\da-f]+\.(?:0x)?[\da-f]+(?![a-z0-9])/i,
+];
+const privateIpv6Patterns = [
+  /(?<![\da-f:])f[cd][\da-f]{2}(?::[\da-f]{0,4}){1,7}(?![\da-f:])/i,
+  /(?<![\da-f:])fe[89ab][\da-f](?::[\da-f]{0,4}){1,7}(?![\da-f:])/i,
 ];
 
 const integerHostPattern =
@@ -97,6 +103,11 @@ export function forbiddenMatches(path, content) {
     .map((pattern) => ({ path, pattern: pattern.source }));
   matches.push(
     ...privateIpv4Patterns
+      .filter((pattern) => pattern.test(content))
+      .map((pattern) => ({ path, pattern: pattern.source })),
+  );
+  matches.push(
+    ...privateIpv6Patterns
       .filter((pattern) => pattern.test(content))
       .map((pattern) => ({ path, pattern: pattern.source })),
   );
