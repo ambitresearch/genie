@@ -103,8 +103,8 @@ describe("mcpb bundle manifest (AC1)", () => {
       GENIE_REPORTS_DIR: "${HOME}/.genie/reports",
       GENIE_LLM_BASE_URL: "${user_config.llm_base_url}",
       GENIE_LLM_API_KEY: "${user_config.llm_api_key}",
-      OAUTH_HS256_KEY: "${user_config.oauth_hs256_key}",
     });
+    expect(manifest.server.mcp_config.env).not.toHaveProperty("OAUTH_HS256_KEY");
     expect(manifest.user_config.llm_base_url).toMatchObject({
       required: true,
     });
@@ -113,14 +113,9 @@ describe("mcpb bundle manifest (AC1)", () => {
       required: true,
       sensitive: true,
     });
-    expect(manifest.user_config.oauth_hs256_key).toMatchObject({
-      required: true,
-      sensitive: true,
-    });
+    expect(manifest.user_config).not.toHaveProperty("oauth_hs256_key");
     expect(manifest.user_config.llm_api_key.title).toMatch(/16\+ characters/i);
     expect(manifest.user_config.llm_api_key.description).toMatch(/at least 16 characters/i);
-    expect(manifest.user_config.oauth_hs256_key.title).toMatch(/32\+ characters/i);
-    expect(manifest.user_config.oauth_hs256_key.description).toMatch(/at least 32 characters/i);
     // This package-scoped release config needs a leading slash: release-please
     // otherwise resolves the path under packages/server instead of repo root.
     expect(releaseConfig.packages["packages/server"]["extra-files"]).toContainEqual({
@@ -283,6 +278,8 @@ describe("mcpb bundle output (AC2/AC3/AC4)", () => {
         const manifestArgs = packedManifest.server.mcp_config.args.map((arg: string) =>
           arg.replaceAll("${__dirname}", unpackDir),
         );
+        const smokeEnv = { ...process.env };
+        delete smokeEnv.OAUTH_HS256_KEY;
 
         const cli = spawnSync(packedManifest.server.mcp_config.command, manifestArgs, {
           cwd: unpackDir,
@@ -290,13 +287,12 @@ describe("mcpb bundle output (AC2/AC3/AC4)", () => {
           encoding: "utf8",
           timeout: 30_000,
           env: {
-            ...process.env,
+            ...smokeEnv,
             GENIE_HOME: join(unpackDir, ".genie"),
             GENIE_KITS_ROOT: join(unpackDir, ".genie", "kits"),
             GENIE_PROJECTS_ROOT: join(unpackDir, ".genie", "projects"),
             GENIE_LLM_BASE_URL: "https://example.invalid/v1",
             GENIE_LLM_API_KEY: "mcpb-smoke-not-a-real-key",
-            OAUTH_HS256_KEY: "mcpb-smoke-not-a-real-signing-key",
           },
         });
         expect(cli.error).toBeUndefined();

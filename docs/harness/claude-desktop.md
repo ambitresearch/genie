@@ -36,10 +36,6 @@ Claude Desktop reads its MCP server list from a JSON config file:
 
 Add genie under `mcpServers`:
 
-> **Publication gate:** `@ambitresearch/genie` is the planned package name but is not
-> yet published. The snippet below is the post-M5-06 configuration. Use the
-> source-checkout form described immediately after it today.
-
 ```json
 {
   "mcpServers": {
@@ -51,8 +47,7 @@ Add genie under `mcpServers`:
         "GENIE_KITS_ROOT": "/absolute/path/to/.genie/kits",
         "GENIE_PROJECTS_ROOT": "/absolute/path/to/.genie/projects",
         "GENIE_LLM_BASE_URL": "https://your-llm-endpoint.example.com/v1",
-        "GENIE_LLM_API_KEY": "replace-with-your-llm-api-key",
-        "OAUTH_HS256_KEY": "replace-with-at-least-32-random-characters"
+        "GENIE_LLM_API_KEY": "replace-with-your-llm-api-key"
       }
     }
   }
@@ -71,21 +66,17 @@ inherit an unexpected or unwritable working directory. Examples:
 - **Linux:** `/home/you/.genie`, `/home/you/.genie/kits`, and
   `/home/you/.genie/projects`
 
-The original M5-10 draft named the bare `genie` npm package, but that package
-and the `@genie` scope are owned by unrelated npm users. The current M5-06
-publishing contract uses `@ambitresearch/genie`. It is not yet published, so
-the `npx` command above is a post-M5-06 configuration and currently returns an
-npm 404. Do not substitute `npx -y genie`. For a source checkout today, build
-`@ambitresearch/genie` and replace the snippet's command with `node` and its args with
-`["/absolute/path/to/genie/packages/server/dist/cli.js", "--transport", "stdio"]`.
+The bare `genie` npm package and the `@genie` scope are owned by unrelated npm users.
+Use `@ambitresearch/genie`; do not substitute `npx -y genie`. For a source checkout,
+build `@ambitresearch/genie` and replace the snippet's command with `node` and its args
+with `["/absolute/path/to/genie/packages/server/dist/cli.js", "--transport", "stdio"]`.
 
 The current CLI calls `loadSecrets()` before it creates the stdio transport.
-`GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required before the server starts,
-including for `list_kits`. `GENIE_LLM_API_KEY` must contain at least 16
-characters. `OAUTH_HS256_KEY` must contain at least 32 characters to enable
-OAuth. `GENIE_LLM_BASE_URL` is also required when invoking generation tools
-such as `conjure`. Replace every placeholder before use; for example, generate
-a signing key with `openssl rand -hex 32`.
+`GENIE_LLM_API_KEY` is required before the server starts, including for `list_kits`.
+`GENIE_LLM_API_KEY` must contain at least 16 characters. `OAUTH_HS256_KEY` is optional and HTTP-only;
+when configured, it must contain at least 32 characters. `GENIE_LLM_BASE_URL` is also
+required when invoking generation tools such as `conjure`. Replace every placeholder
+before use.
 
 Manual local-server configuration has no separate secret prompt. Treat
 `claude_desktop_config.json` as sensitive, keep it owner-readable only

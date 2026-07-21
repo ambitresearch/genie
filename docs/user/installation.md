@@ -6,9 +6,25 @@
 - An OpenAI-compatible model endpoint for `conjure` and `refine`.
 - A writable location for genie's state and UI kits.
 
-## npm
+## Required secrets
 
-After the first public package release:
+Set the model endpoint and key before the first run:
+
+```bash
+export GENIE_LLM_BASE_URL="https://your-gateway.example/v1"
+export GENIE_LLM_API_KEY="replace-with-your-gateway-key"
+```
+
+| Variable            | Requirement            | Purpose                                         |
+| ------------------- | ---------------------- | ----------------------------------------------- |
+| `GENIE_LLM_API_KEY` | At least 16 characters | Authenticates to the configured model endpoint. |
+| `OAUTH_HS256_KEY`   | Optional; 32+ if set   | Enables token signing for the HTTP OAuth flow.  |
+
+`OAUTH_HS256_KEY` is not used by stdio. For HTTP OAuth, generate one with
+`openssl rand -hex 32`. Store secrets in environment variables or an owner-only file
+passed with `--secrets-from`; never commit them.
+
+## npm
 
 ```bash
 npx -y @ambitresearch/genie --transport stdio
@@ -27,8 +43,7 @@ node packages/server/dist/cli.js --transport stdio
 
 ## Docker
 
-After the first public image release, published images run the HTTP transport on port
-`8080`:
+Published images run the HTTP transport on port `8080`:
 
 ```bash
 docker run --rm -p 8080:8080 \
@@ -45,18 +60,8 @@ Check the server:
 curl --fail http://localhost:8080/health
 ```
 
-## Required secrets
-
-The CLI validates known required secrets before it starts:
-
-| Variable            | Requirement            | Purpose                                         |
-| ------------------- | ---------------------- | ----------------------------------------------- |
-| `GENIE_LLM_API_KEY` | At least 16 characters | Authenticates to the configured model endpoint. |
-| `OAUTH_HS256_KEY`   | At least 32 characters | Signs tokens issued by genie's OAuth server.    |
-
 `GENIE_LLM_BASE_URL` is required when calling `conjure` or `refine`; it must identify an
-OpenAI-compatible `/v1` endpoint. Store secrets in environment variables or an owner-only
-file passed with `--secrets-from`. Never commit them.
+OpenAI-compatible `/v1` endpoint.
 
 ## Storage locations
 

@@ -2,9 +2,10 @@
 
 ## The server exits before connecting
 
-Run `genie --help` and check required secrets. `GENIE_LLM_API_KEY` must contain at least
-16 characters and `OAUTH_HS256_KEY` at least 32. Keep diagnostic output on stderr;
-stdout is the stdio protocol stream.
+Follow [Installation and configuration](installation.md#required-secrets).
+`GENIE_LLM_API_KEY` must contain at least 16 characters. `OAUTH_HS256_KEY` is optional,
+HTTP-only, and must contain at least 32 characters when configured. Keep diagnostic output
+on stderr; stdout is the stdio protocol stream.
 
 ## `conjure` or `refine` reports missing LLM configuration
 
