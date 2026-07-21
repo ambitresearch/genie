@@ -5,7 +5,7 @@ title: genie — UI generation inside your coding agent
 description: Generate, preview, and safely apply components from your own UI kit without leaving your coding agent.
 ---
 
-<main class="genie-home">
+<div class="genie-home">
   <section class="genie-hero" aria-labelledby="genie-hero-title">
     <div class="genie-hero__content">
       <p class="genie-kicker"><span></span> Open source · MCP-native</p>
@@ -59,4 +59,4 @@ description: Generate, preview, and safely apply components from your own UI kit
       </a>
     </div>
   </section>
-</main>
+</div>

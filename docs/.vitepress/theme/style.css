@@ -359,6 +359,7 @@
   position: absolute;
   bottom: 24px;
   left: 50%;
+  transform: translateX(-50%);
   z-index: 4;
   display: inline-flex;
   gap: 10px;
