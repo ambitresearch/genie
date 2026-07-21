@@ -1,5 +1,6 @@
 import DefaultTheme from "vitepress/theme";
 import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/jetbrains-mono/wght.css";
 import "@fontsource-variable/newsreader/wght.css";
 import "@fontsource-variable/newsreader/wght-italic.css";
 import "./style.css";

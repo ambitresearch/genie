@@ -190,7 +190,8 @@
 .genie-section-label {
   margin: 0;
   color: var(--genie-home-ink-2);
-  font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-family:
+    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
   font-size: 0.68rem;
   font-weight: 650;
   letter-spacing: 0.1em;
@@ -312,7 +313,7 @@
   border-radius: 999px;
   color: #faf8f5 !important;
   background: rgb(23 22 20 / 62%);
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.61rem;
   font-weight: 650;
   letter-spacing: 0.08em;
@@ -382,7 +383,7 @@
 
 .genie-steps li > span {
   color: var(--genie-home-struct);
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.65rem;
   font-weight: 700;
   letter-spacing: 0.07em;
@@ -408,7 +409,7 @@
   border-radius: 4px;
   color: var(--genie-home-struct);
   background: rgb(52 81 151 / 9%);
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.82em;
 }
 
@@ -442,7 +443,7 @@
 
 .genie-paths span {
   color: var(--genie-home-ink-2);
-  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-family: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.62rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;

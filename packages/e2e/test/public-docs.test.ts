@@ -55,9 +55,11 @@ describe("public documentation surface", () => {
     expect(applyPosition).toBeLessThan(previewPosition);
     expect(home).toContain("generate proposed files");
     expect(theme).toContain('import "@fontsource-variable/inter/wght.css";');
+    expect(theme).toContain('import "@fontsource-variable/jetbrains-mono/wght.css";');
     expect(theme).toContain('import "@fontsource-variable/newsreader/wght.css";');
     expect(theme).toContain('import "@fontsource-variable/newsreader/wght-italic.css";');
     expect(packageJson.devDependencies?.["@fontsource-variable/inter"]).toBe("5.2.8");
+    expect(packageJson.devDependencies?.["@fontsource-variable/jetbrains-mono"]).toBe("5.2.8");
     expect(packageJson.devDependencies?.["@fontsource-variable/newsreader"]).toBe("5.2.10");
     expect(styles).toMatch(
       /font-family:\s*"Inter Variable",\s*Inter,\s*ui-sans-serif,\s*system-ui,\s*-apple-system,/,
@@ -65,6 +67,10 @@ describe("public documentation surface", () => {
     expect(styles).toContain(
       'font-family: "Newsreader Variable", Newsreader, Georgia, "Times New Roman", serif;',
     );
+    expect(styles).toMatch(
+      /font-family:\s*"JetBrains Mono Variable",\s*"JetBrains Mono",\s*ui-monospace,/,
+    );
+    expect(styles).not.toMatch(/font-family:\s*"JetBrains Mono",\s*ui-monospace,/);
     expect(styles).not.toMatch(/\.guide-(?:grid|card)/);
     expect(styles).not.toMatch(
       /\.genie-(?:workflow h2|steps h3|paths strong)[^{]*{[^}]*Newsreader/s,
