@@ -31,6 +31,18 @@ MCP-Apps host can render the grid inline. Local stdio hosts without inline suppo
 open the standalone viewer. HTTP defaults to remote preview locality and never opens a
 browser on the server machine.
 
+### Browse components
+
+The viewer groups components by category and shows each component's preview size.
+
+![The genie viewer showing a grid of UI kit components](/screenshots/viewer-component-grid.png)
+
+### Filter components
+
+Type a component name in the filter to narrow the grid while you work.
+
+![The genie viewer filtered to button components](/screenshots/viewer-filtered-components.png)
+
 ## Projects and screens
 
 Projects group screen work separately from UI kits. Use `create_project`, `bind_kit`,
