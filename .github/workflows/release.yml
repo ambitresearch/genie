@@ -911,8 +911,10 @@ jobs:
     name: validate manual draft-release recovery
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # GitHub hides draft releases from tokens without push-level contents
+    # access, even though this guard only reads their state.
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
