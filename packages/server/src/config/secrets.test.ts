@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  applyLoadedSecrets,
   loadSecrets,
   parseSecretsFile,
   auditLoadedSecrets,
@@ -172,6 +173,21 @@ describe("loadSecrets — AC6: --secrets-from file", () => {
       statFile: () => ({ mode: 0o100600 }),
     });
     expect(loaded.find((s) => s.key === "GENIE_LLM_API_KEY")?.value).toBe(VALID_LLM_KEY);
+  });
+
+  it("clears an inherited secret when the secrets file explicitly empties it", () => {
+    const env = { GENIE_LLM_API_KEY: VALID_LLM_KEY, OAUTH_HS256_KEY: VALID_HS256_KEY };
+    const loaded = loadSecrets({
+      env,
+      argv: [],
+      secretsFromPath: "/run/secrets/genie",
+      readFile: () => `GENIE_LLM_API_KEY=${VALID_LLM_KEY}\nOAUTH_HS256_KEY=`,
+      statFile: () => ({ mode: 0o100600 }),
+    });
+
+    applyLoadedSecrets(loaded, env);
+
+    expect(env.OAUTH_HS256_KEY).toBeUndefined();
   });
 
   it.each([0o100604, 0o100640, 0o100644])(

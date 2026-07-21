@@ -95,6 +95,7 @@ export function applyLoadedSecrets(
   secrets: readonly LoadedSecret[],
   env: NodeJS.ProcessEnv = process.env,
 ): void {
+  for (const { key } of SECRET_DEFINITIONS) delete env[key];
   for (const { key, value } of secrets) env[key] = value;
 }
 
