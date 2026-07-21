@@ -50,6 +50,8 @@ describe("public documentation surface", () => {
     const applyPosition = home.indexOf("02 / Apply");
     const previewPosition = home.indexOf("03 / Preview");
 
+    expect(home).toContain('<div class="genie-actions" role="group" aria-label="Get started">');
+    expect(home).toContain('<ol class="genie-steps" role="list">');
     expect(applyPosition).toBeGreaterThan(-1);
     expect(previewPosition).toBeGreaterThan(-1);
     expect(applyPosition).toBeLessThan(previewPosition);
@@ -71,6 +73,14 @@ describe("public documentation surface", () => {
       /font-family:\s*"JetBrains Mono Variable",\s*"JetBrains Mono",\s*ui-monospace,/,
     );
     expect(styles).not.toMatch(/font-family:\s*"JetBrains Mono",\s*ui-monospace,/);
+    expect(styles).toMatch(/\.genie-steps code[^}]*"JetBrains Mono Variable"/s);
+    expect(styles).not.toMatch(
+      /\.genie-(?:kicker|section-label|scroll|steps li > span|paths span)[^{]*{[^}]*JetBrains Mono/s,
+    );
+    expect(styles).toContain('url("/genie/images/genie-alpine-atmospheric.webp")');
+    expect(existsSync(resolve(ROOT, "docs/public/images/genie-alpine-atmospheric.webp"))).toBe(
+      true,
+    );
     expect(styles).not.toMatch(/\.guide-(?:grid|card)/);
     expect(styles).not.toMatch(
       /\.genie-(?:workflow h2|steps h3|paths strong)[^{]*{[^}]*Newsreader/s,

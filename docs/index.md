@@ -11,7 +11,7 @@ description: Generate, preview, and safely apply components from your own UI kit
       <p class="genie-kicker"><span></span> Open source · MCP-native</p>
       <h1 id="genie-hero-title">Your UI kit,<br><em>ready to answer.</em></h1>
       <p class="genie-deck">Describe the component in your coding agent. Genie generates proposed files from your UI kit, then waits for you to approve the plan before writing and previewing them.</p>
-      <div class="genie-actions" aria-label="Get started">
+      <div class="genie-actions" role="group" aria-label="Get started">
         <a class="genie-button genie-button--primary" href="user/installation">Install genie <span aria-hidden="true">→</span></a>
         <a class="genie-button genie-button--quiet" href="user/workflow">See the workflow</a>
       </div>
@@ -24,7 +24,7 @@ description: Generate, preview, and safely apply components from your own UI kit
       <h2 id="genie-workflow-title">Stay in your coding agent.<br>Keep control of every write.</h2>
       <p>Genie works where the conversation already happens. Generation stays separate from persistence, so a proposal becomes code only after you approve its plan.</p>
     </div>
-    <ol class="genie-steps">
+    <ol class="genie-steps" role="list">
       <li>
         <span>01 / Describe</span>
         <h3>Ask for the component</h3>
