@@ -23,19 +23,14 @@
     "entry_point": "server/dist/cli.js",
     "mcp_config": {
       "command": "node",
-      "args": [
-        "${__dirname}/server/dist/cli.js",
-        "--transport",
-        "stdio"
-      ],
+      "args": ["${__dirname}/server/dist/cli.js", "--transport", "stdio"],
       "env": {
         "GENIE_HOME": "${HOME}/.genie",
         "GENIE_KITS_ROOT": "${HOME}/.genie/kits",
         "GENIE_PROJECTS_ROOT": "${HOME}/.genie/projects",
         "GENIE_REPORTS_DIR": "${HOME}/.genie/reports",
         "GENIE_LLM_BASE_URL": "${user_config.llm_base_url}",
-        "GENIE_LLM_API_KEY": "${user_config.llm_api_key}",
-        "OAUTH_HS256_KEY": "${user_config.oauth_hs256_key}"
+        "GENIE_LLM_API_KEY": "${user_config.llm_api_key}"
       }
     }
   },
@@ -52,19 +47,10 @@
       "description": "API key for the configured LLM endpoint; must be at least 16 characters. Stored by Claude Desktop's OS keychain integration, never written into this bundle.",
       "required": true,
       "sensitive": true
-    },
-    "oauth_hs256_key": {
-      "type": "string",
-      "title": "OAuth signing key (32+ characters)",
-      "description": "Random secret; must be at least 32 characters to sign genie's OAuth tokens. Stored by Claude Desktop's OS keychain integration, never written into this bundle.",
-      "required": true,
-      "sensitive": true
     }
   },
   "compatibility": {
-    "platforms": [
-      "darwin"
-    ],
+    "platforms": ["darwin"],
     "runtimes": {
       "node": ">=22"
     }

@@ -66,8 +66,8 @@ mcpServers:
 
 The explicit `type: stdio` is likewise optional. The LLM base URL must end in
 `/v1`; route both values through Continue secrets rather than literal YAML
-values. The genie server also requires `OAUTH_HS256_KEY` at startup; provide it
-through the process environment or add another <code v-pre>${{ secrets.NAME }}</code> entry.
+values. `OAUTH_HS256_KEY` is optional and HTTP-only, so do not add it to this
+stdio configuration.
 
 ## MCP only works in agent mode
 

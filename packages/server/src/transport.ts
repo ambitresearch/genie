@@ -518,10 +518,9 @@ async function startHttp(
   // token exchange, so it must match how `claude mcp add` / `codex mcp
   // login` reach this process — override via GENIE_OAUTH_ISSUER for
   // reverse-proxy/tunnel deployments.
-  const oauthIssuer =
-    process.env.OAUTH_HS256_KEY !== undefined
-      ? (process.env.GENIE_OAUTH_ISSUER ?? `http://${normalizeListenHost(host)}:${port}`)
-      : undefined;
+  const oauthIssuer = process.env.OAUTH_HS256_KEY?.trim()
+    ? (process.env.GENIE_OAUTH_ISSUER ?? `http://${normalizeListenHost(host)}:${port}`)
+    : undefined;
   // OIDC relying-party mode is opt-in: only engages when GENIE_OIDC_ISSUER +
   // GENIE_OIDC_AUDIENCE are set (M5-04, DRO-276). Independent of oauthIssuer.
   const oidcVerifier = await tryCreateOidcVerifier(process.env);

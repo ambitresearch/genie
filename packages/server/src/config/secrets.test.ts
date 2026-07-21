@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  applyLoadedSecrets,
   loadSecrets,
   parseSecretsFile,
   auditLoadedSecrets,
@@ -24,6 +25,12 @@ describe("loadSecrets — happy path", () => {
     const loaded = loadSecrets({ env, argv: ["node", "cli.js"] });
     expect(loaded.map((s) => s.key).sort()).toEqual(["GENIE_LLM_API_KEY", "OAUTH_HS256_KEY"]);
     expect(loaded.find((s) => s.key === "GENIE_LLM_API_KEY")?.value).toBe(VALID_LLM_KEY);
+  });
+
+  it("starts without an OAuth signing key when OAuth is not configured", () => {
+    const loaded = loadSecrets({ env: { GENIE_LLM_API_KEY: VALID_LLM_KEY }, argv: [] });
+
+    expect(loaded.map((secret) => secret.key)).toEqual(["GENIE_LLM_API_KEY"]);
   });
 
   it("omits optional secrets that are unset", () => {
@@ -56,6 +63,9 @@ describe("loadSecrets — AC2: missing required secret", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(SecretValidationError);
       expect((err as SecretValidationError).problems.join(" ")).toMatch(/GENIE_LLM_API_KEY/);
+      expect((err as SecretValidationError).message).toContain(
+        "https://github.com/ambitresearch/genie/blob/main/docs/user/installation.md#required-secrets",
+      );
     }
   });
 
@@ -64,14 +74,14 @@ describe("loadSecrets — AC2: missing required secret", () => {
     expect(() => loadSecrets({ env, argv: [] })).toThrow(SecretValidationError);
   });
 
-  it("aggregates all problems, not just the first", () => {
+  it("does not report an absent optional OAuth signing key", () => {
     try {
       loadSecrets({ env: {}, argv: [] });
       expect.fail("expected throw");
     } catch (err) {
       const problems = (err as SecretValidationError).problems;
       expect(problems.some((p) => p.includes("GENIE_LLM_API_KEY"))).toBe(true);
-      expect(problems.some((p) => p.includes("OAUTH_HS256_KEY"))).toBe(true);
+      expect(problems.some((p) => p.includes("OAUTH_HS256_KEY"))).toBe(false);
     }
   });
 });
@@ -165,6 +175,21 @@ describe("loadSecrets — AC6: --secrets-from file", () => {
     expect(loaded.find((s) => s.key === "GENIE_LLM_API_KEY")?.value).toBe(VALID_LLM_KEY);
   });
 
+  it("clears an inherited secret when the secrets file explicitly empties it", () => {
+    const env = { GENIE_LLM_API_KEY: VALID_LLM_KEY, OAUTH_HS256_KEY: VALID_HS256_KEY };
+    const loaded = loadSecrets({
+      env,
+      argv: [],
+      secretsFromPath: "/run/secrets/genie",
+      readFile: () => `GENIE_LLM_API_KEY=${VALID_LLM_KEY}\nOAUTH_HS256_KEY=`,
+      statFile: () => ({ mode: 0o100600 }),
+    });
+
+    applyLoadedSecrets(loaded, env);
+
+    expect(env.OAUTH_HS256_KEY).toBeUndefined();
+  });
+
   it.each([0o100604, 0o100640, 0o100644])(
     "rejects a mounted secrets file readable by other local users (mode %o)",
     (mode) => {
@@ -236,6 +261,12 @@ describe("SECRET_DEFINITIONS", () => {
         "GENIE_GIT_TOKEN",
         "OAUTH_CLIENT_SECRET",
       ]),
+    );
+  });
+
+  it("treats the OAuth signing key as optional", () => {
+    expect(SECRET_DEFINITIONS.find((definition) => definition.key === "OAUTH_HS256_KEY")).toEqual(
+      expect.objectContaining({ required: false, minLength: 32 }),
     );
   });
 });

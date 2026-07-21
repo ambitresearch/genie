@@ -112,10 +112,13 @@ describe("public documentation surface", () => {
   it("documents storage and release sequencing accurately", () => {
     const installation = readRootFile("docs/user/installation.md");
     expect(installation).toContain("Node.js 22.19 or newer for the npm/source path");
-    expect(installation).toContain("After the first public image release");
+    expect(installation).toContain("Published images run the HTTP transport");
     expect(installation).toContain(
       "| `GENIE_HOME`          | `.genie` below the working directory.",
     );
+    const envExample = readRootFile(".env.example");
+    expect(envExample).toContain("Optional; OAuth is disabled when unset");
+    expect(envExample).toContain("Not used by stdio");
     const releases = readRootFile("docs/developer/releases.md");
     expect(releases).toContain("GitHub component tags already exist at this point");
     expect(releases).toContain("without a tag-promotion phase");

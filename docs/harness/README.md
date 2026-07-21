@@ -64,15 +64,15 @@ These are orthogonal, so harnesses fall into a grid:
 
 ## Server prerequisites (all harnesses)
 
-The current CLI validates its known required secrets before starting any
-transport. `GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required at startup,
-including for read-only tool calls. `GENIE_LLM_BASE_URL` is required only for
+The current CLI validates its known secrets before starting any transport.
+`GENIE_LLM_API_KEY` is required at startup, including for read-only tool calls.
+`OAUTH_HS256_KEY` is optional and HTTP-only. `GENIE_LLM_BASE_URL` is required only for
 `conjure` and `refine`; the current `conjure_screen` implementation is an
 offline deterministic scaffold:
 
 - `GENIE_LLM_BASE_URL` — the endpoint (must end in `/v1`).
 - `GENIE_LLM_API_KEY` — its key (at least 16 characters).
-- `OAUTH_HS256_KEY` — OAuth signing key (at least 32 characters).
+- `OAUTH_HS256_KEY` — optional HTTP OAuth signing key (at least 32 characters when set).
 
 Prefer environment variables or an owner-only mounted secrets file. Claude
 Desktop's manual local-server configuration is the exception: it has no

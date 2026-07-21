@@ -5,7 +5,7 @@ import { runTokenCli } from "./auth/token-cli.js";
 import type { Logger } from "pino";
 
 import { createRedactingLogger } from "./config/redact.js";
-import { auditLoadedSecrets, loadSecrets } from "./config/secrets.js";
+import { applyLoadedSecrets, auditLoadedSecrets, loadSecrets } from "./config/secrets.js";
 
 /** Minimal flag parser — no dependency needed for M0's tiny surface. */
 function parseArgs(argv: string[]): {
@@ -89,8 +89,9 @@ Env:
   GENIE_HOME                 Root for persisted state, incl. auth/tokens.json
   GENIE_KITS_ROOT            Directory where kit tools read/write UI kits
   GENIE_PROJECTS_ROOT        Directory where create_project writes project roots
+  GENIE_LLM_BASE_URL         OpenAI-compatible /v1 endpoint for conjure/refine
   GENIE_LLM_API_KEY          Required secret — LLM endpoint API key
-  OAUTH_HS256_KEY            Required secret — HS256 signing key for OAuth tokens
+  OAUTH_HS256_KEY            Optional HTTP OAuth signing key (32+ characters)
   GENIE_GIT_TOKEN            Optional secret — git host API token
   OAUTH_CLIENT_SECRET        Optional secret — OAuth confidential client secret
 
@@ -128,6 +129,7 @@ async function main(): Promise<void> {
   }
 
   const loadedSecrets = loadSecrets({ secretsFromPath: args.secretsFrom });
+  applyLoadedSecrets(loadedSecrets);
   logger = createRedactingLogger(loadedSecrets);
   auditLoadedSecrets(loadedSecrets, (line) => logger?.info(JSON.parse(line)));
 

@@ -87,7 +87,7 @@ describe("Claude Desktop guide contracts", () => {
     expect(genie.command).toBe("npx");
     expect(genie.args).toEqual(["-y", "@ambitresearch/genie", "--transport", "stdio"]);
     expect(genie.env.GENIE_LLM_API_KEY?.length).toBeGreaterThanOrEqual(16);
-    expect(genie.env.OAUTH_HS256_KEY?.length).toBeGreaterThanOrEqual(32);
+    expect(genie.env.OAUTH_HS256_KEY).toBeUndefined();
     expect(genie.env.GENIE_HOME).toBe("/absolute/path/to/.genie");
     expect(genie.env.GENIE_KITS_ROOT).toBe("/absolute/path/to/.genie/kits");
     expect(genie.env.GENIE_PROJECTS_ROOT).toBe("/absolute/path/to/.genie/projects");
@@ -96,12 +96,12 @@ describe("Claude Desktop guide contracts", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain("`@genie` scope are owned by unrelated npm users");
   });
 
-  it("documents the actual bootstrap requirement instead of promising read-only startup without secrets", () => {
+  it("documents the actual bootstrap and optional OAuth requirements", () => {
     expect(CLAUDE_DESKTOP_DOC).toContain(
-      "GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required before the server starts",
+      "`GENIE_LLM_API_KEY` is required before the server starts",
     );
     expect(CLAUDE_DESKTOP_DOC).toMatch(/`GENIE_LLM_API_KEY` must contain at least 16\s+characters/);
-    expect(CLAUDE_DESKTOP_DOC).toMatch(/`OAUTH_HS256_KEY` must contain at least 32 characters/);
+    expect(CLAUDE_DESKTOP_DOC).toMatch(/`OAUTH_HS256_KEY` is optional and HTTP-only/);
     expect(CLAUDE_DESKTOP_DOC).not.toMatch(/read tools work without an LLM configured/i);
   });
 
@@ -163,9 +163,8 @@ describe("Claude Desktop guide contracts", () => {
 
   it("keeps shared harness prerequisites consistent and links this guide", () => {
     expect(HARNESS_OVERVIEW).toContain("[claude-desktop.md](./claude-desktop.md)");
-    expect(HARNESS_OVERVIEW).toContain(
-      "`GENIE_LLM_API_KEY` and `OAUTH_HS256_KEY` are required at startup",
-    );
+    expect(HARNESS_OVERVIEW).toContain("`GENIE_LLM_API_KEY` is required at startup");
+    expect(HARNESS_OVERVIEW).toContain("`OAUTH_HS256_KEY` is optional and HTTP-only");
     expect(HARNESS_OVERVIEW).toMatch(
       /`GENIE_LLM_BASE_URL` is required only for\s+`conjure` and `refine`/,
     );
@@ -193,21 +192,24 @@ describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", ()
     tempDirs.push(genieHome);
     kitsRoot = await mkdtemp(join(tmpdir(), "genie-m5-claude-desktop-kits-"));
     tempDirs.push(kitsRoot);
+    const stdioEnv = cleanSecretEnv(
+      hasLlmEnv
+        ? {
+            GENIE_LLM_API_KEY: process.env.GENIE_LLM_API_KEY,
+            GENIE_LLM_BASE_URL: process.env.GENIE_LLM_BASE_URL,
+          }
+        : {
+            GENIE_LLM_API_KEY: "claude-desktop-smoke-test-not-a-real-secret-key",
+            GENIE_LLM_BASE_URL: "http://127.0.0.1:1/v1",
+          },
+    );
     const transport = new StdioClientTransport({
       command: "node",
       args: [SERVER_CLI, "--transport", "stdio"],
       env: {
-        ...(process.env as Record<string, string>),
+        ...(stdioEnv as Record<string, string>),
         GENIE_HOME: genieHome,
         GENIE_KITS_ROOT: kitsRoot,
-        // The current CLI validates both secrets before creating stdio.
-        OAUTH_HS256_KEY: "claude-desktop-smoke-test-not-a-real-secret",
-        ...(hasLlmEnv
-          ? {}
-          : {
-              GENIE_LLM_API_KEY: "claude-desktop-smoke-test-not-a-real-secret-key",
-              GENIE_LLM_BASE_URL: "http://127.0.0.1:1/v1",
-            }),
       },
     });
     client = new Client({ name: "m5-smoke-claude-desktop", version: "0" });
@@ -222,11 +224,7 @@ describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", ()
   it.each([
     {
       missing: "GENIE_LLM_API_KEY",
-      env: { OAUTH_HS256_KEY: "claude-desktop-smoke-test-not-a-real-secret" },
-    },
-    {
-      missing: "OAUTH_HS256_KEY",
-      env: { GENIE_LLM_API_KEY: "claude-desktop-smoke-test-not-a-real-key" },
+      env: {},
     },
   ])(
     "rejects Desktop startup when required secret $missing is absent",

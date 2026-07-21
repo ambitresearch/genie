@@ -9,7 +9,8 @@
  * disk, argv, or a log line.
  *
  * Bootstrap contract (AC2): `loadSecrets()` throws `SecretValidationError`
- * with one message per problem when any *required* secret is:
+ * with one message per problem when any required secret is missing or any
+ * configured secret is invalid:
  *   - missing (unset, and absent from a `--secrets-from` file if provided);
  *   - shorter than its required minimum length;
  *   - present verbatim anywhere in `process.argv` (a value passed as a CLI
@@ -28,7 +29,7 @@ import { readFileSync, statSync } from "node:fs";
 /** Every secret env var genie recognises, and whether it's required to boot. */
 export const SECRET_DEFINITIONS = [
   { key: "GENIE_LLM_API_KEY", required: true, minLength: 16 },
-  { key: "OAUTH_HS256_KEY", required: true, minLength: 32 },
+  { key: "OAUTH_HS256_KEY", required: false, minLength: 32 },
   { key: "GENIE_GIT_TOKEN", required: false, minLength: 0 },
   { key: "OAUTH_CLIENT_SECRET", required: false, minLength: 0 },
 ] as const;
@@ -38,6 +39,8 @@ export type SecretKey = (typeof SECRET_DEFINITIONS)[number]["key"];
 
 /** Minimum acceptable length for a required secret value (AC2). */
 export const MIN_SECRET_LENGTH = 16;
+const SECRET_SETUP_URL =
+  "https://github.com/ambitresearch/genie/blob/main/docs/user/installation.md#required-secrets";
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
@@ -48,7 +51,9 @@ export const MIN_SECRET_LENGTH = 16;
  */
 export class SecretValidationError extends Error {
   constructor(public readonly problems: readonly string[]) {
-    super(`Secret validation failed:\n  - ${problems.join("\n  - ")}`);
+    super(
+      `Secret validation failed:\n  - ${problems.join("\n  - ")}\n\nSetup: ${SECRET_SETUP_URL}`,
+    );
     this.name = "SecretValidationError";
   }
 }
@@ -85,6 +90,15 @@ export interface LoadedSecret {
   value: string;
 }
 
+/** Apply validated secrets to the runtime environment used by downstream services. */
+export function applyLoadedSecrets(
+  secrets: readonly LoadedSecret[],
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  for (const { key } of SECRET_DEFINITIONS) delete env[key];
+  for (const { key, value } of secrets) env[key] = value;
+}
+
 export interface LoadSecretsOptions {
   /** Environment to read from. Defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
@@ -104,8 +118,8 @@ export interface LoadSecretsOptions {
 /**
  * Load and validate every known secret (AC1/AC2). Reads from env only,
  * optionally overlaid by a `--secrets-from` file (AC6). Throws
- * `SecretValidationError` if any *required* secret is missing, too short, or
- * leaked into argv verbatim.
+ * `SecretValidationError` if any required secret is missing, any configured
+ * secret is too short, or a secret is leaked into argv verbatim.
  *
  * Returns only the secrets that were actually present (optional secrets are
  * omitted when unset) so callers can distinguish "not configured" from "".
@@ -138,7 +152,7 @@ export function loadSecrets(options: LoadSecretsOptions = {}): LoadedSecret[] {
       continue;
     }
 
-    if (def.required && value.length < def.minLength) {
+    if (value.length < def.minLength) {
       problems.push(
         `${def.key} must be at least ${def.minLength} characters (got ${value.length}).`,
       );
