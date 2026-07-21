@@ -616,29 +616,31 @@ jobs:
           cosign-release: v3.1.2
 
       - name: Sign GHCR image digest (keyless)
-        run: cosign sign --yes "ghcr.io/ambitresearch/genie@${{ steps.build.outputs.digest }}"
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/ambitresearch/genie@$BUILD_DIGEST"
 
       - name: Verify GHCR image signature
         env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
           CERTIFICATE_IDENTITY: https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main
           CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
           SIGNING_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           image=ghcr.io/ambitresearch/genie
-          digest=${{ steps.build.outputs.digest }}
           max_attempts=12
           for attempt in $(seq 1 "$max_attempts"); do
             if cosign verify \
               --certificate-identity="$CERTIFICATE_IDENTITY" \
               --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
               --certificate-github-workflow-sha="$SIGNING_SHA" \
-              "$image@$digest"; then
+              "$image@$BUILD_DIGEST"; then
               exit 0
             fi
             if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
           done
-          echo "::error::GHCR signature was not readable after $max_attempts attempts for $image@$digest"
+          echo "::error::GHCR signature was not readable after $max_attempts attempts for $image@$BUILD_DIGEST"
           exit 1
 
       - name: Promote verified GHCR digest
@@ -664,22 +666,31 @@ jobs:
           set -euo pipefail
           image=ghcr.io/ambitresearch/genie
           max_attempts=12
-          for tag in "$VERSION" latest; do
-            published_digest=
-            for attempt in $(seq 1 "$max_attempts"); do
+          version_digest=
+          latest_digest=
+          for attempt in $(seq 1 "$max_attempts"); do
+            for tag in "$VERSION" latest; do
+              published_digest=
               if output=$(docker buildx imagetools inspect "$image:$tag" 2>&1); then
                 published_digest=$(printf '%s\n' "$output" | awk '$1 == "Digest:" { print $2; exit }')
-              else
-                published_digest=
               fi
-              if [ "$published_digest" = "$BUILD_DIGEST" ]; then break; fi
-              if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+              case "$tag" in
+                "$VERSION") version_digest=$published_digest ;;
+                latest) latest_digest=$published_digest ;;
+              esac
             done
-            if [ "$published_digest" != "$BUILD_DIGEST" ]; then
-              echo "::error::$image:$tag expected $BUILD_DIGEST, observed ${published_digest:-unavailable} after $max_attempts attempts"
-              exit 1
+            if [ "$version_digest" = "$BUILD_DIGEST" ] && [ "$latest_digest" = "$BUILD_DIGEST" ]; then
+              exit 0
             fi
+            if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
           done
+          if [ "$version_digest" != "$BUILD_DIGEST" ]; then
+            echo "::error::$image:$VERSION expected $BUILD_DIGEST, observed ${version_digest:-unavailable} after $max_attempts attempts"
+          fi
+          if [ "$latest_digest" != "$BUILD_DIGEST" ]; then
+            echo "::error::$image:latest expected $BUILD_DIGEST, observed ${latest_digest:-unavailable} after $max_attempts attempts"
+          fi
+          exit 1
 
   docker-publish-dockerhub:
     name: publish Docker Hub image (multi-arch, signed)
@@ -741,29 +752,31 @@ jobs:
           cosign-release: v3.1.2
 
       - name: Sign Docker Hub image digest (keyless)
-        run: cosign sign --yes "docker.io/ambitresearch/genie@${{ steps.build.outputs.digest }}"
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "docker.io/ambitresearch/genie@$BUILD_DIGEST"
 
       - name: Verify Docker Hub image signature
         env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
           CERTIFICATE_IDENTITY: https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main
           CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
           SIGNING_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           image=docker.io/ambitresearch/genie
-          digest=${{ steps.build.outputs.digest }}
           max_attempts=12
           for attempt in $(seq 1 "$max_attempts"); do
             if cosign verify \
               --certificate-identity="$CERTIFICATE_IDENTITY" \
               --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
               --certificate-github-workflow-sha="$SIGNING_SHA" \
-              "$image@$digest"; then
+              "$image@$BUILD_DIGEST"; then
               exit 0
             fi
             if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
           done
-          echo "::error::Docker Hub signature was not readable after $max_attempts attempts for $image@$digest"
+          echo "::error::Docker Hub signature was not readable after $max_attempts attempts for $image@$BUILD_DIGEST"
           exit 1
 
       - name: Promote verified Docker Hub digest
@@ -789,22 +802,31 @@ jobs:
           set -euo pipefail
           image=docker.io/ambitresearch/genie
           max_attempts=12
-          for tag in "$VERSION" latest; do
-            published_digest=
-            for attempt in $(seq 1 "$max_attempts"); do
+          version_digest=
+          latest_digest=
+          for attempt in $(seq 1 "$max_attempts"); do
+            for tag in "$VERSION" latest; do
+              published_digest=
               if output=$(docker buildx imagetools inspect "$image:$tag" 2>&1); then
                 published_digest=$(printf '%s\n' "$output" | awk '$1 == "Digest:" { print $2; exit }')
-              else
-                published_digest=
               fi
-              if [ "$published_digest" = "$BUILD_DIGEST" ]; then break; fi
-              if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+              case "$tag" in
+                "$VERSION") version_digest=$published_digest ;;
+                latest) latest_digest=$published_digest ;;
+              esac
             done
-            if [ "$published_digest" != "$BUILD_DIGEST" ]; then
-              echo "::error::$image:$tag expected $BUILD_DIGEST, observed ${published_digest:-unavailable} after $max_attempts attempts"
-              exit 1
+            if [ "$version_digest" = "$BUILD_DIGEST" ] && [ "$latest_digest" = "$BUILD_DIGEST" ]; then
+              exit 0
             fi
+            if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
           done
+          if [ "$version_digest" != "$BUILD_DIGEST" ]; then
+            echo "::error::$image:$VERSION expected $BUILD_DIGEST, observed ${version_digest:-unavailable} after $max_attempts attempts"
+          fi
+          if [ "$latest_digest" != "$BUILD_DIGEST" ]; then
+            echo "::error::$image:latest expected $BUILD_DIGEST, observed ${latest_digest:-unavailable} after $max_attempts attempts"
+          fi
+          exit 1
 
   # GitHub's immutable-release setting rejects asset uploads after publication.
   # Release Please therefore creates drafts; this job publishes them only after
@@ -1153,22 +1175,31 @@ jobs:
           set -euo pipefail
           image=ghcr.io/ambitresearch/genie
           max_attempts=12
-          for tag in "$VERSION" latest; do
-            published_digest=
-            for attempt in $(seq 1 "$max_attempts"); do
+          version_digest=
+          latest_digest=
+          for attempt in $(seq 1 "$max_attempts"); do
+            for tag in "$VERSION" latest; do
+              published_digest=
               if output=$(docker buildx imagetools inspect "$image:$tag" 2>&1); then
                 published_digest=$(printf '%s\n' "$output" | awk '$1 == "Digest:" { print $2; exit }')
-              else
-                published_digest=
               fi
-              if [ "$published_digest" = "$BUILD_DIGEST" ]; then break; fi
-              if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+              case "$tag" in
+                "$VERSION") version_digest=$published_digest ;;
+                latest) latest_digest=$published_digest ;;
+              esac
             done
-            if [ "$published_digest" != "$BUILD_DIGEST" ]; then
-              echo "::error::$image:$tag expected $BUILD_DIGEST, observed ${published_digest:-unavailable} after $max_attempts attempts"
-              exit 1
+            if [ "$version_digest" = "$BUILD_DIGEST" ] && [ "$latest_digest" = "$BUILD_DIGEST" ]; then
+              exit 0
             fi
+            if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
           done
+          if [ "$version_digest" != "$BUILD_DIGEST" ]; then
+            echo "::error::$image:$VERSION expected $BUILD_DIGEST, observed ${version_digest:-unavailable} after $max_attempts attempts"
+          fi
+          if [ "$latest_digest" != "$BUILD_DIGEST" ]; then
+            echo "::error::$image:latest expected $BUILD_DIGEST, observed ${latest_digest:-unavailable} after $max_attempts attempts"
+          fi
+          exit 1
 
   recovery-docker-publish-dockerhub:
     name: recover Docker Hub image (multi-arch, signed)
@@ -1291,22 +1322,31 @@ jobs:
           set -euo pipefail
           image=docker.io/ambitresearch/genie
           max_attempts=12
-          for tag in "$VERSION" latest; do
-            published_digest=
-            for attempt in $(seq 1 "$max_attempts"); do
+          version_digest=
+          latest_digest=
+          for attempt in $(seq 1 "$max_attempts"); do
+            for tag in "$VERSION" latest; do
+              published_digest=
               if output=$(docker buildx imagetools inspect "$image:$tag" 2>&1); then
                 published_digest=$(printf '%s\n' "$output" | awk '$1 == "Digest:" { print $2; exit }')
-              else
-                published_digest=
               fi
-              if [ "$published_digest" = "$BUILD_DIGEST" ]; then break; fi
-              if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+              case "$tag" in
+                "$VERSION") version_digest=$published_digest ;;
+                latest) latest_digest=$published_digest ;;
+              esac
             done
-            if [ "$published_digest" != "$BUILD_DIGEST" ]; then
-              echo "::error::$image:$tag expected $BUILD_DIGEST, observed ${published_digest:-unavailable} after $max_attempts attempts"
-              exit 1
+            if [ "$version_digest" = "$BUILD_DIGEST" ] && [ "$latest_digest" = "$BUILD_DIGEST" ]; then
+              exit 0
             fi
+            if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
           done
+          if [ "$version_digest" != "$BUILD_DIGEST" ]; then
+            echo "::error::$image:$VERSION expected $BUILD_DIGEST, observed ${version_digest:-unavailable} after $max_attempts attempts"
+          fi
+          if [ "$latest_digest" != "$BUILD_DIGEST" ]; then
+            echo "::error::$image:latest expected $BUILD_DIGEST, observed ${latest_digest:-unavailable} after $max_attempts attempts"
+          fi
+          exit 1
 
   recovery-finalize-releases:
     name: verify recovery and finalize component releases

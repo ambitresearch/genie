@@ -803,8 +803,10 @@ fi
         source.indexOf("Verify promoted release tag"),
       );
       expect(source).toContain("docker buildx imagetools inspect");
+      expect(source).toContain('for attempt in $(seq 1 "$max_attempts")');
       expect(source).toContain('for tag in "$VERSION" latest');
-      expect(source).toContain('[ "$published_digest" = "$BUILD_DIGEST" ]');
+      expect(source).toContain('[ "$version_digest" = "$BUILD_DIGEST" ]');
+      expect(source).toContain('[ "$latest_digest" = "$BUILD_DIGEST" ]');
       expect(source).toContain("max_attempts=12");
       expect(source).toContain("sleep 5");
     }
@@ -872,8 +874,10 @@ fi
       expect(source).toContain('test "$promoted_digest" = "$BUILD_DIGEST"');
       expect(source).toContain("linux/amd64");
       expect(source).toContain("linux/arm64");
+      expect(source).toContain('for attempt in $(seq 1 "$max_attempts")');
       expect(source).toContain('for tag in "$VERSION" latest');
-      expect(source).toContain('[ "$published_digest" = "$BUILD_DIGEST" ]');
+      expect(source).toContain('[ "$version_digest" = "$BUILD_DIGEST" ]');
+      expect(source).toContain('[ "$latest_digest" = "$BUILD_DIGEST" ]');
     }
 
     const finalize = job(release, "recovery-finalize-releases");
@@ -979,24 +983,57 @@ fi
 
   it.each([
     {
+      jobName: "docker-publish-ghcr",
+      image: "ghcr.io/ambitresearch/genie",
+      signStep: "Sign GHCR image digest (keyless)",
+      signatureStep: "Verify GHCR image signature",
+      platformStep: undefined,
+      promotionStep: "Promote verified GHCR digest",
+      liveStep: "Verify promoted release tag",
+      signsDigest: false,
+    },
+    {
+      jobName: "docker-publish-dockerhub",
+      image: "docker.io/ambitresearch/genie",
+      signStep: "Sign Docker Hub image digest (keyless)",
+      signatureStep: "Verify Docker Hub image signature",
+      platformStep: undefined,
+      promotionStep: "Promote verified Docker Hub digest",
+      liveStep: "Verify promoted release tag",
+      signsDigest: false,
+    },
+    {
       jobName: "recovery-docker-publish-ghcr",
       image: "ghcr.io/ambitresearch/genie",
+      signStep: undefined,
       signatureStep: "Sign and verify recovered GHCR digest",
       platformStep: "Verify recovered GHCR platforms",
       promotionStep: "Promote verified GHCR recovery digest",
       liveStep: "Verify live GHCR recovery tags",
+      signsDigest: true,
     },
     {
       jobName: "recovery-docker-publish-dockerhub",
       image: "docker.io/ambitresearch/genie",
+      signStep: undefined,
       signatureStep: "Sign and verify recovered Docker Hub digest",
       platformStep: "Verify recovered Docker Hub platforms",
       promotionStep: "Promote verified Docker Hub recovery digest",
       liveStep: "Verify live Docker Hub recovery tags",
+      signsDigest: true,
     },
   ])(
-    "$jobName executes platform and digest checks before accepting promotion",
-    ({ jobName, image, signatureStep, platformStep, promotionStep, liveStep }) => {
+    "$jobName executes signature and digest checks before accepting promotion",
+    ({
+      jobName,
+      image,
+      signStep,
+      signatureStep,
+      platformStep,
+      promotionStep,
+      liveStep,
+      signsDigest,
+    }) => {
       const fullManifest = JSON.stringify({
         manifests: [
           { platform: { os: "linux", architecture: "amd64" } },
@@ -1007,6 +1044,15 @@ fi
         manifests: [{ platform: { os: "linux", architecture: "amd64" } }],
       });
       const expectedDigest = "sha256:expected";
+
+      if (signStep !== undefined) {
+        const signing = runReleaseStep(jobName, signStep, {
+          commands: { cosign: transientCosignCommand },
+          env: { BUILD_DIGEST: expectedDigest },
+        });
+        expect(signing.status, `${signing.stdout}\n${signing.stderr}`).toBe(0);
+        expect(signing.log).toBe(`cosign sign --yes ${image}@${expectedDigest}\n`);
+      }
 
       const signature = runReleaseStep(jobName, signatureStep, {
         commands: { cosign: transientCosignCommand, sleep: fakeSleepCommand },
@@ -1021,9 +1067,9 @@ fi
       });
       expect(signature.status, `${signature.stdout}\n${signature.stderr}`).toBe(0);
       const signatureCalls = signature.log.trim().split("\n");
-      expect(signatureCalls.filter((call) => call.startsWith("cosign sign "))).toEqual([
-        `cosign sign --yes ${image}@${expectedDigest}`,
-      ]);
+      expect(signatureCalls.filter((call) => call.startsWith("cosign sign "))).toEqual(
+        signsDigest ? [`cosign sign --yes ${image}@${expectedDigest}`] : [],
+      );
       const verifyCalls = signatureCalls.filter((call) => call.startsWith("cosign verify "));
       expect(verifyCalls).toHaveLength(3);
       for (const call of verifyCalls) {
@@ -1057,28 +1103,30 @@ fi
           .filter((call) => call.startsWith("cosign verify ")),
       ).toHaveLength(12);
 
-      const platform = runReleaseStep(jobName, platformStep, {
-        commands: { docker: dockerPlatformCommand },
-        env: {
-          BUILD_DIGEST: expectedDigest,
-          EXPECTED_IMAGE: image,
-          FAKE_MANIFEST: fullManifest,
-        },
-      });
-      expect(platform.status).toBe(0);
-      expect(platform.log).toBe(
-        `docker buildx imagetools inspect ${image}@${expectedDigest} --raw\n`,
-      );
-      expect(
-        runReleaseStep(jobName, platformStep, {
+      if (platformStep !== undefined) {
+        const platform = runReleaseStep(jobName, platformStep, {
           commands: { docker: dockerPlatformCommand },
           env: {
             BUILD_DIGEST: expectedDigest,
             EXPECTED_IMAGE: image,
-            FAKE_MANIFEST: incompleteManifest,
+            FAKE_MANIFEST: fullManifest,
           },
-        }).status,
-      ).not.toBe(0);
+        });
+        expect(platform.status).toBe(0);
+        expect(platform.log).toBe(
+          `docker buildx imagetools inspect ${image}@${expectedDigest} --raw\n`,
+        );
+        expect(
+          runReleaseStep(jobName, platformStep, {
+            commands: { docker: dockerPlatformCommand },
+            env: {
+              BUILD_DIGEST: expectedDigest,
+              EXPECTED_IMAGE: image,
+              FAKE_MANIFEST: incompleteManifest,
+            },
+          }).status,
+        ).not.toBe(0);
+      }
 
       const promotion = runReleaseStep(jobName, promotionStep, {
         commands: { docker: dockerPromotionCommand },
@@ -1158,7 +1206,7 @@ fi
       expect(
         delayedCalls.filter((call) => call === `docker buildx imagetools inspect ${image}:latest`),
       ).toHaveLength(3);
-      expect(delayedCalls.filter((call) => call === "sleep 5")).toHaveLength(4);
+      expect(delayedCalls.filter((call) => call === "sleep 5")).toHaveLength(2);
 
       const staleLiveTag = runReleaseStep(jobName, liveStep, {
         commands: { docker: dockerLiveTagCommand, sleep: fakeSleepCommand },
@@ -1172,12 +1220,14 @@ fi
         },
       });
       expect(staleLiveTag.status).not.toBe(0);
+      const staleCalls = staleLiveTag.log.trim().split("\n");
       expect(
-        staleLiveTag.log
-          .trim()
-          .split("\n")
-          .filter((call) => call === `docker buildx imagetools inspect ${image}:latest`),
+        staleCalls.filter((call) => call === `docker buildx imagetools inspect ${image}:1.3.1`),
       ).toHaveLength(12);
+      expect(
+        staleCalls.filter((call) => call === `docker buildx imagetools inspect ${image}:latest`),
+      ).toHaveLength(12);
+      expect(staleCalls.filter((call) => call === "sleep 5")).toHaveLength(11);
     },
     30_000,
   );
