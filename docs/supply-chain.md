@@ -105,7 +105,9 @@ uploads or replaces release assets. Normal production and recovery runs share on
 lock, and both input versions must still match npm `latest` before registry tags can move. It
 rebuilds and signs both registry images from the exact server tag,
 requires amd64 and arm64 plus promoted-tag digest equality, then downloads and cryptographically
-verifies every existing blob bundle and checks both npm SLSA provenance records. Both drafts are
+verifies every existing blob bundle and checks both npm SLSA provenance records. Registry
+signature and promoted-tag reads retry for at most 60 seconds after the single write, without
+relaxing certificate identity, workflow SHA, or exact-digest equality. Both drafts are
 published only after the two independent registry jobs pass. See
 [Recovering an incomplete production release](developer/releases.md#recovering-an-incomplete-production-release)
 for the operator procedure.
