@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/ambitresearch/genie/compare/server-v1.3.1...server-v1.3.2) (2026-07-21)
+
+
+### Bug Fixes
+
+* **cli:** make local npm setup actionable ([#232](https://github.com/ambitresearch/genie/issues/232)) ([e677b78](https://github.com/ambitresearch/genie/commit/e677b78ba22fb83b9d95e13aed97463e02c5004e))
+
 ## [1.3.1](https://github.com/ambitresearch/genie/compare/server-v1.3.0...server-v1.3.1) (2026-07-20)
 
 
