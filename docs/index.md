@@ -10,7 +10,7 @@ description: Generate, preview, and safely apply components from your own UI kit
     <div class="genie-hero__content">
       <p class="genie-kicker"><span></span> Open source · MCP-native</p>
       <h1 id="genie-hero-title">Your UI kit,<br><em>ready to answer.</em></h1>
-      <p class="genie-deck">Describe the component in your coding agent. Genie plans it, builds it against your kit, and brings back a live preview.</p>
+      <p class="genie-deck">Describe the component in your coding agent. Genie generates proposed files from your UI kit, then waits for you to approve the plan before writing and previewing them.</p>
       <div class="genie-actions" aria-label="Get started">
         <a class="genie-button genie-button--primary" href="user/installation">Install genie <span aria-hidden="true">→</span></a>
         <a class="genie-button genie-button--quiet" href="user/workflow">See the workflow</a>
@@ -22,23 +22,23 @@ description: Generate, preview, and safely apply components from your own UI kit
     <div class="genie-workflow__intro">
       <p class="genie-section-label">One prompt, one guarded path</p>
       <h2 id="genie-workflow-title">Stay in your coding agent.<br>Keep control of every write.</h2>
-      <p>Genie works where the conversation already happens. Generation stays separate from persistence, so a proposal becomes code only after an explicit plan.</p>
+      <p>Genie works where the conversation already happens. Generation stays separate from persistence, so a proposal becomes code only after you approve its plan.</p>
     </div>
     <ol class="genie-steps">
       <li>
         <span>01 / Describe</span>
         <h3>Ask for the component</h3>
-        <p><code>conjure</code> and <code>refine</code> build against the UI kit you choose.</p>
+        <p><code>conjure</code> and <code>refine</code> generate proposed files from the UI kit you choose.</p>
       </li>
       <li>
-        <span>02 / Preview</span>
-        <h3>Inspect the real result</h3>
-        <p>Review the component inline through <code>ui://genie/grid</code> or the local viewer.</p>
-      </li>
-      <li>
-        <span>03 / Apply</span>
+        <span>02 / Apply</span>
         <h3>Approve the write</h3>
-        <p>Plan-gated file operations keep generated changes explicit and bounded.</p>
+        <p>Review the bounded plan, then pass its ID to <code>write_files</code>.</p>
+      </li>
+      <li>
+        <span>03 / Preview</span>
+        <h3>Inspect the real result</h3>
+        <p>Review the persisted component through <code>ui://genie/grid</code> or the local viewer.</p>
       </li>
     </ol>
     <div class="genie-paths">

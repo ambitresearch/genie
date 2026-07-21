@@ -40,6 +40,18 @@ describe("public documentation surface", () => {
     expect(readRootFile("docs/index.md")).not.toContain("guide-card--accent");
   });
 
+  it("documents the guarded landing-page workflow with canonical typography", () => {
+    const home = readRootFile("docs/index.md");
+    const styles = readRootFile("docs/.vitepress/theme/style.css");
+
+    expect(home.indexOf("02 / Apply")).toBeLessThan(home.indexOf("03 / Preview"));
+    expect(home).toContain("generate proposed files");
+    expect(styles).not.toMatch(/\.guide-(?:grid|card)/);
+    expect(styles).not.toMatch(
+      /\.genie-(?:workflow h2|steps h3|paths strong)[^{]*{[^}]*Newsreader/s,
+    );
+  });
+
   it("configures the two guides for the public Pages URL", () => {
     const config = readRootFile("docs/.vitepress/config.mts");
 

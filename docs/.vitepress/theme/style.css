@@ -50,64 +50,6 @@
   letter-spacing: -0.025em;
 }
 
-.guide-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
-  gap: 1rem;
-  margin-block: 2rem;
-}
-
-.guide-card {
-  display: grid;
-  gap: 0.7rem;
-  min-block-size: 10rem;
-  padding: 1.5rem;
-  color: var(--vp-c-text-1) !important;
-  border: 1px solid var(--vp-c-divider);
-  border-radius: 0.75rem;
-  background: var(--vp-c-bg-alt);
-  transition:
-    transform 140ms ease,
-    border-color 140ms ease;
-}
-
-.guide-card:hover {
-  border-color: var(--vp-c-text-2);
-  transform: translateY(-2px);
-}
-
-.guide-card:focus-visible {
-  border-color: var(--genie-focus);
-  outline: 2px solid var(--genie-focus);
-  outline-offset: 3px;
-}
-
-.guide-card--start {
-  border-color: var(--vp-c-brand-1);
-}
-
-.guide-card strong {
-  font-size: 1.35rem;
-}
-
-.guide-card__eyebrow {
-  color: var(--vp-c-text-2);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .guide-card {
-    transition: none;
-  }
-
-  .guide-card:hover {
-    transform: none;
-  }
-}
-
 /* Landing page · a quiet alpine field for a tool that works in the background. */
 :root {
   --genie-home-paper: #faf8f5;
@@ -404,7 +346,6 @@
 
 .genie-workflow h2 {
   margin: 0;
-  font-family: Newsreader, Georgia, "Times New Roman", serif;
   font-size: clamp(2.8rem, 5vw, 4.8rem);
   font-weight: 500;
   letter-spacing: -0.05em;
@@ -449,7 +390,6 @@
 
 .genie-steps h3 {
   margin: 60px 0 12px;
-  font-family: Newsreader, Georgia, serif;
   font-size: 1.55rem;
   font-weight: 550;
   letter-spacing: -0.025em;
@@ -509,7 +449,6 @@
 
 .genie-paths strong {
   align-self: end;
-  font-family: Newsreader, Georgia, serif;
   font-size: 1.45rem;
   font-weight: 550;
 }
