@@ -9,6 +9,9 @@
   --vp-c-text-1: #171614;
   --vp-c-text-2: #57524e;
   --vp-c-divider: #dad7d2;
+  --vp-font-family-base:
+    "Inter Variable", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
   --genie-focus: #345197;
   --genie-chrome-bg: #171614;
   --genie-chrome-fg: #faf8f5;
@@ -82,27 +85,6 @@
   padding-top: 18px;
   color: #171614;
   background: transparent !important;
-  font-family:
-    "Inter Variable",
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-}
-
-.VPFooter {
-  font-family:
-    "Inter Variable",
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
 }
 
 .VPNavBar.home .wrapper {

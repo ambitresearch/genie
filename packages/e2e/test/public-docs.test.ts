@@ -64,13 +64,10 @@ describe("public documentation surface", () => {
     expect(packageJson.devDependencies?.["@fontsource-variable/jetbrains-mono"]).toBe("5.2.8");
     expect(packageJson.devDependencies?.["@fontsource-variable/newsreader"]).toBe("5.2.10");
     expect(styles).toMatch(
+      /:root\s*{[^}]*--vp-font-family-base:\s*"Inter Variable",\s*Inter,\s*ui-sans-serif,\s*system-ui,\s*-apple-system,/s,
+    );
+    expect(styles).toMatch(
       /font-family:\s*"Inter Variable",\s*Inter,\s*ui-sans-serif,\s*system-ui,\s*-apple-system,/,
-    );
-    expect(styles).toMatch(
-      /\.VPNavBar\.home\s*{[^}]*font-family:\s*"Inter Variable",\s*Inter,\s*ui-sans-serif,\s*system-ui,\s*-apple-system,/s,
-    );
-    expect(styles).toMatch(
-      /\.VPFooter\s*{[^}]*font-family:\s*"Inter Variable",\s*Inter,\s*ui-sans-serif,\s*system-ui,\s*-apple-system,/s,
     );
     expect(styles).toContain(
       'font-family: "Newsreader Variable", Newsreader, Georgia, "Times New Roman", serif;',
