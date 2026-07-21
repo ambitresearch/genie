@@ -35,6 +35,8 @@ The recovery path checks both drafts and their tag targets, checks out the exact
 then independently rebuilds amd64/arm64 images for GHCR and Docker Hub with SBOM and max
 provenance attestations. Each registry digest is signed, verified, and inspected for both
 platforms before that exact digest is promoted to the version and `latest` tags. The recovery
+signs once, then retries signature and promoted-tag reads for up to 60 seconds to tolerate
+registry propagation; it still fails unless every read resolves to the exact signed digest. It
 does **not** publish npm or replace any GitHub asset. Its final job instead verifies both live
 npm provenance attestations and downloads and verifies every existing release blob against its
 Sigstore bundle. Only after both registry jobs and all read-back checks pass does it publish the

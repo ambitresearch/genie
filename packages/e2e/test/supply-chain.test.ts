@@ -202,12 +202,31 @@ const dockerLiveTagCommand = [
   'test "$2" = imagetools',
   'test "$3" = inspect',
   'case "$4" in',
-  '  "$EXPECTED_IMAGE:$VERSION") digest=$FAKE_VERSION_DIGEST ;;',
-  '  "$EXPECTED_IMAGE:latest") digest=$FAKE_LATEST_DIGEST ;;',
+  '  "$EXPECTED_IMAGE:$VERSION") key=version; digest=$FAKE_VERSION_DIGEST; success_attempt=${FAKE_VERSION_SUCCESS_ATTEMPT:-1} ;;',
+  '  "$EXPECTED_IMAGE:latest") key=latest; digest=$FAKE_LATEST_DIGEST; success_attempt=${FAKE_LATEST_SUCCESS_ATTEMPT:-1} ;;',
   "  *) exit 64 ;;",
   "esac",
+  'attempt_file="$FAKE_LOG.$key-attempts"',
+  'attempt=$(cat "$attempt_file" 2>/dev/null || printf 0)',
+  "attempt=$((attempt + 1))",
+  'printf \'%s\\n\' "$attempt" > "$attempt_file"',
+  'if [ "$attempt" -lt "$success_attempt" ]; then digest=${FAKE_TRANSIENT_DIGEST:-sha256:stale}; fi',
   "printf 'Name: fixture\\nDigest: %s\\n' \"$digest\"",
 ].join("\n");
+
+const transientCosignCommand = [
+  "#!/bin/sh",
+  'printf \'cosign %s\\n\' "$*" >> "$FAKE_LOG"',
+  'if [ "$1" = sign ]; then exit 0; fi',
+  'test "$1" = verify',
+  'attempt_file="$FAKE_LOG.cosign-attempts"',
+  'attempt=$(cat "$attempt_file" 2>/dev/null || printf 0)',
+  "attempt=$((attempt + 1))",
+  'printf \'%s\\n\' "$attempt" > "$attempt_file"',
+  'test "$attempt" -ge "${FAKE_COSIGN_SUCCESS_ATTEMPT:-1}"',
+].join("\n");
+
+const fakeSleepCommand = ["#!/bin/sh", 'printf \'sleep %s\\n\' "$*" >> "$FAKE_LOG"'].join("\n");
 
 const recoveryFinalizeGhCommand = [
   "#!/bin/sh",
@@ -721,6 +740,8 @@ fi
       expect(source).toContain('--certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER"');
       expect(source).toContain("SIGNING_SHA: ${{ github.sha }}");
       expect(source).toContain('--certificate-github-workflow-sha="$SIGNING_SHA"');
+      expect(source).toContain("max_attempts=12");
+      expect(source).toContain("sleep 5");
       const build = source.indexOf("Build and push staging multi-arch image");
       const sign = source.indexOf("cosign sign --yes");
       const verify = source.indexOf("cosign verify");
@@ -783,7 +804,9 @@ fi
       );
       expect(source).toContain("docker buildx imagetools inspect");
       expect(source).toContain('for tag in "$VERSION" latest');
-      expect(source).toContain('test "$published_digest" = "$BUILD_DIGEST"');
+      expect(source).toContain('[ "$published_digest" = "$BUILD_DIGEST" ]');
+      expect(source).toContain("max_attempts=12");
+      expect(source).toContain("sleep 5");
     }
   });
 
@@ -850,7 +873,7 @@ fi
       expect(source).toContain("linux/amd64");
       expect(source).toContain("linux/arm64");
       expect(source).toContain('for tag in "$VERSION" latest');
-      expect(source).toContain('test "$published_digest" = "$BUILD_DIGEST"');
+      expect(source).toContain('[ "$published_digest" = "$BUILD_DIGEST" ]');
     }
 
     const finalize = job(release, "recovery-finalize-releases");
@@ -958,6 +981,7 @@ fi
     {
       jobName: "recovery-docker-publish-ghcr",
       image: "ghcr.io/ambitresearch/genie",
+      signatureStep: "Sign and verify recovered GHCR digest",
       platformStep: "Verify recovered GHCR platforms",
       promotionStep: "Promote verified GHCR recovery digest",
       liveStep: "Verify live GHCR recovery tags",
@@ -965,13 +989,14 @@ fi
     {
       jobName: "recovery-docker-publish-dockerhub",
       image: "docker.io/ambitresearch/genie",
+      signatureStep: "Sign and verify recovered Docker Hub digest",
       platformStep: "Verify recovered Docker Hub platforms",
       promotionStep: "Promote verified Docker Hub recovery digest",
       liveStep: "Verify live Docker Hub recovery tags",
     },
   ])(
     "$jobName executes platform and digest checks before accepting promotion",
-    ({ jobName, image, platformStep, promotionStep, liveStep }) => {
+    ({ jobName, image, signatureStep, platformStep, promotionStep, liveStep }) => {
       const fullManifest = JSON.stringify({
         manifests: [
           { platform: { os: "linux", architecture: "amd64" } },
@@ -982,6 +1007,55 @@ fi
         manifests: [{ platform: { os: "linux", architecture: "amd64" } }],
       });
       const expectedDigest = "sha256:expected";
+
+      const signature = runReleaseStep(jobName, signatureStep, {
+        commands: { cosign: transientCosignCommand, sleep: fakeSleepCommand },
+        env: {
+          BUILD_DIGEST: expectedDigest,
+          CERTIFICATE_IDENTITY:
+            "https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main",
+          CERTIFICATE_OIDC_ISSUER: "https://token.actions.githubusercontent.com",
+          SIGNING_SHA: "sha-reviewed-workflow",
+          FAKE_COSIGN_SUCCESS_ATTEMPT: "3",
+        },
+      });
+      expect(signature.status, `${signature.stdout}\n${signature.stderr}`).toBe(0);
+      const signatureCalls = signature.log.trim().split("\n");
+      expect(signatureCalls.filter((call) => call.startsWith("cosign sign "))).toEqual([
+        `cosign sign --yes ${image}@${expectedDigest}`,
+      ]);
+      const verifyCalls = signatureCalls.filter((call) => call.startsWith("cosign verify "));
+      expect(verifyCalls).toHaveLength(3);
+      for (const call of verifyCalls) {
+        expect(call).toContain(
+          `--certificate-identity=https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main`,
+        );
+        expect(call).toContain(
+          "--certificate-oidc-issuer=https://token.actions.githubusercontent.com",
+        );
+        expect(call).toContain("--certificate-github-workflow-sha=sha-reviewed-workflow");
+        expect(call).toContain(`${image}@${expectedDigest}`);
+      }
+      expect(signatureCalls.filter((call) => call === "sleep 5")).toHaveLength(2);
+
+      const missingSignature = runReleaseStep(jobName, signatureStep, {
+        commands: { cosign: transientCosignCommand, sleep: fakeSleepCommand },
+        env: {
+          BUILD_DIGEST: expectedDigest,
+          CERTIFICATE_IDENTITY:
+            "https://github.com/ambitresearch/genie/.github/workflows/release.yml@refs/heads/main",
+          CERTIFICATE_OIDC_ISSUER: "https://token.actions.githubusercontent.com",
+          SIGNING_SHA: "sha-reviewed-workflow",
+          FAKE_COSIGN_SUCCESS_ATTEMPT: "99",
+        },
+      });
+      expect(missingSignature.status).not.toBe(0);
+      expect(
+        missingSignature.log
+          .trim()
+          .split("\n")
+          .filter((call) => call.startsWith("cosign verify ")),
+      ).toHaveLength(12);
 
       const platform = runReleaseStep(jobName, platformStep, {
         commands: { docker: dockerPlatformCommand },
@@ -1032,7 +1106,7 @@ fi
       ).not.toBe(0);
 
       const live = runReleaseStep(jobName, liveStep, {
-        commands: { docker: dockerLiveTagCommand },
+        commands: { docker: dockerLiveTagCommand, sleep: fakeSleepCommand },
         env: {
           BUILD_DIGEST: expectedDigest,
           EXPECTED_IMAGE: image,
@@ -1051,7 +1125,7 @@ fi
       );
       expect(
         runReleaseStep(jobName, liveStep, {
-          commands: { docker: dockerLiveTagCommand },
+          commands: { docker: dockerLiveTagCommand, sleep: fakeSleepCommand },
           env: {
             BUILD_DIGEST: expectedDigest,
             EXPECTED_IMAGE: image,
@@ -1061,7 +1135,51 @@ fi
           },
         }).status,
       ).not.toBe(0);
+
+      const delayedLiveTags = runReleaseStep(jobName, liveStep, {
+        commands: { docker: dockerLiveTagCommand, sleep: fakeSleepCommand },
+        env: {
+          BUILD_DIGEST: expectedDigest,
+          EXPECTED_IMAGE: image,
+          VERSION: "1.3.1",
+          FAKE_VERSION_DIGEST: expectedDigest,
+          FAKE_LATEST_DIGEST: expectedDigest,
+          FAKE_VERSION_SUCCESS_ATTEMPT: "3",
+          FAKE_LATEST_SUCCESS_ATTEMPT: "3",
+        },
+      });
+      expect(delayedLiveTags.status, `${delayedLiveTags.stdout}\n${delayedLiveTags.stderr}`).toBe(
+        0,
+      );
+      const delayedCalls = delayedLiveTags.log.trim().split("\n");
+      expect(
+        delayedCalls.filter((call) => call === `docker buildx imagetools inspect ${image}:1.3.1`),
+      ).toHaveLength(3);
+      expect(
+        delayedCalls.filter((call) => call === `docker buildx imagetools inspect ${image}:latest`),
+      ).toHaveLength(3);
+      expect(delayedCalls.filter((call) => call === "sleep 5")).toHaveLength(4);
+
+      const staleLiveTag = runReleaseStep(jobName, liveStep, {
+        commands: { docker: dockerLiveTagCommand, sleep: fakeSleepCommand },
+        env: {
+          BUILD_DIGEST: expectedDigest,
+          EXPECTED_IMAGE: image,
+          VERSION: "1.3.1",
+          FAKE_VERSION_DIGEST: expectedDigest,
+          FAKE_LATEST_DIGEST: expectedDigest,
+          FAKE_LATEST_SUCCESS_ATTEMPT: "99",
+        },
+      });
+      expect(staleLiveTag.status).not.toBe(0);
+      expect(
+        staleLiveTag.log
+          .trim()
+          .split("\n")
+          .filter((call) => call === `docker buildx imagetools inspect ${image}:latest`),
+      ).toHaveLength(12);
     },
+    30_000,
   );
 
   it("keeps releases draft when any recovery prerequisite fails", () => {

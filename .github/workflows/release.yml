@@ -624,11 +624,22 @@ jobs:
           CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
           SIGNING_SHA: ${{ github.sha }}
         run: |
-          cosign verify \
-            --certificate-identity="$CERTIFICATE_IDENTITY" \
-            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
-            --certificate-github-workflow-sha="$SIGNING_SHA" \
-            "ghcr.io/ambitresearch/genie@${{ steps.build.outputs.digest }}"
+          set -euo pipefail
+          image=ghcr.io/ambitresearch/genie
+          digest=${{ steps.build.outputs.digest }}
+          max_attempts=12
+          for attempt in $(seq 1 "$max_attempts"); do
+            if cosign verify \
+              --certificate-identity="$CERTIFICATE_IDENTITY" \
+              --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+              --certificate-github-workflow-sha="$SIGNING_SHA" \
+              "$image@$digest"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+          done
+          echo "::error::GHCR signature was not readable after $max_attempts attempts for $image@$digest"
+          exit 1
 
       - name: Promote verified GHCR digest
         env:
@@ -651,11 +662,23 @@ jobs:
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
           set -euo pipefail
+          image=ghcr.io/ambitresearch/genie
+          max_attempts=12
           for tag in "$VERSION" latest; do
-            published_digest=$(docker buildx imagetools inspect \
-              "ghcr.io/ambitresearch/genie:$tag" \
-              | awk '$1 == "Digest:" { print $2; exit }')
-            test "$published_digest" = "$BUILD_DIGEST"
+            published_digest=
+            for attempt in $(seq 1 "$max_attempts"); do
+              if output=$(docker buildx imagetools inspect "$image:$tag" 2>&1); then
+                published_digest=$(printf '%s\n' "$output" | awk '$1 == "Digest:" { print $2; exit }')
+              else
+                published_digest=
+              fi
+              if [ "$published_digest" = "$BUILD_DIGEST" ]; then break; fi
+              if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+            done
+            if [ "$published_digest" != "$BUILD_DIGEST" ]; then
+              echo "::error::$image:$tag expected $BUILD_DIGEST, observed ${published_digest:-unavailable} after $max_attempts attempts"
+              exit 1
+            fi
           done
 
   docker-publish-dockerhub:
@@ -726,11 +749,22 @@ jobs:
           CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
           SIGNING_SHA: ${{ github.sha }}
         run: |
-          cosign verify \
-            --certificate-identity="$CERTIFICATE_IDENTITY" \
-            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
-            --certificate-github-workflow-sha="$SIGNING_SHA" \
-            "docker.io/ambitresearch/genie@${{ steps.build.outputs.digest }}"
+          set -euo pipefail
+          image=docker.io/ambitresearch/genie
+          digest=${{ steps.build.outputs.digest }}
+          max_attempts=12
+          for attempt in $(seq 1 "$max_attempts"); do
+            if cosign verify \
+              --certificate-identity="$CERTIFICATE_IDENTITY" \
+              --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+              --certificate-github-workflow-sha="$SIGNING_SHA" \
+              "$image@$digest"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+          done
+          echo "::error::Docker Hub signature was not readable after $max_attempts attempts for $image@$digest"
+          exit 1
 
       - name: Promote verified Docker Hub digest
         env:
@@ -753,11 +787,23 @@ jobs:
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
           set -euo pipefail
+          image=docker.io/ambitresearch/genie
+          max_attempts=12
           for tag in "$VERSION" latest; do
-            published_digest=$(docker buildx imagetools inspect \
-              "docker.io/ambitresearch/genie:$tag" \
-              | awk '$1 == "Digest:" { print $2; exit }')
-            test "$published_digest" = "$BUILD_DIGEST"
+            published_digest=
+            for attempt in $(seq 1 "$max_attempts"); do
+              if output=$(docker buildx imagetools inspect "$image:$tag" 2>&1); then
+                published_digest=$(printf '%s\n' "$output" | awk '$1 == "Digest:" { print $2; exit }')
+              else
+                published_digest=
+              fi
+              if [ "$published_digest" = "$BUILD_DIGEST" ]; then break; fi
+              if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+            done
+            if [ "$published_digest" != "$BUILD_DIGEST" ]; then
+              echo "::error::$image:$tag expected $BUILD_DIGEST, observed ${published_digest:-unavailable} after $max_attempts attempts"
+              exit 1
+            fi
           done
 
   # GitHub's immutable-release setting rejects asset uploads after publication.
@@ -1053,11 +1099,19 @@ jobs:
           set -euo pipefail
           image=ghcr.io/ambitresearch/genie
           cosign sign --yes "$image@$BUILD_DIGEST"
-          cosign verify \
-            --certificate-identity="$CERTIFICATE_IDENTITY" \
-            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
-            --certificate-github-workflow-sha="$SIGNING_SHA" \
-            "$image@$BUILD_DIGEST"
+          max_attempts=12
+          for attempt in $(seq 1 "$max_attempts"); do
+            if cosign verify \
+              --certificate-identity="$CERTIFICATE_IDENTITY" \
+              --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+              --certificate-github-workflow-sha="$SIGNING_SHA" \
+              "$image@$BUILD_DIGEST"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+          done
+          echo "::error::GHCR signature was not readable after $max_attempts attempts for $image@$BUILD_DIGEST"
+          exit 1
 
       - name: Verify recovered GHCR platforms
         env:
@@ -1097,11 +1151,23 @@ jobs:
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
           set -euo pipefail
+          image=ghcr.io/ambitresearch/genie
+          max_attempts=12
           for tag in "$VERSION" latest; do
-            published_digest=$(docker buildx imagetools inspect \
-              "ghcr.io/ambitresearch/genie:$tag" \
-              | awk '$1 == "Digest:" { print $2; exit }')
-            test "$published_digest" = "$BUILD_DIGEST"
+            published_digest=
+            for attempt in $(seq 1 "$max_attempts"); do
+              if output=$(docker buildx imagetools inspect "$image:$tag" 2>&1); then
+                published_digest=$(printf '%s\n' "$output" | awk '$1 == "Digest:" { print $2; exit }')
+              else
+                published_digest=
+              fi
+              if [ "$published_digest" = "$BUILD_DIGEST" ]; then break; fi
+              if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+            done
+            if [ "$published_digest" != "$BUILD_DIGEST" ]; then
+              echo "::error::$image:$tag expected $BUILD_DIGEST, observed ${published_digest:-unavailable} after $max_attempts attempts"
+              exit 1
+            fi
           done
 
   recovery-docker-publish-dockerhub:
@@ -1171,11 +1237,19 @@ jobs:
           set -euo pipefail
           image=docker.io/ambitresearch/genie
           cosign sign --yes "$image@$BUILD_DIGEST"
-          cosign verify \
-            --certificate-identity="$CERTIFICATE_IDENTITY" \
-            --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
-            --certificate-github-workflow-sha="$SIGNING_SHA" \
-            "$image@$BUILD_DIGEST"
+          max_attempts=12
+          for attempt in $(seq 1 "$max_attempts"); do
+            if cosign verify \
+              --certificate-identity="$CERTIFICATE_IDENTITY" \
+              --certificate-oidc-issuer="$CERTIFICATE_OIDC_ISSUER" \
+              --certificate-github-workflow-sha="$SIGNING_SHA" \
+              "$image@$BUILD_DIGEST"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+          done
+          echo "::error::Docker Hub signature was not readable after $max_attempts attempts for $image@$BUILD_DIGEST"
+          exit 1
 
       - name: Verify recovered Docker Hub platforms
         env:
@@ -1215,11 +1289,23 @@ jobs:
           VERSION: ${{ steps.tags.outputs.version }}
         run: |
           set -euo pipefail
+          image=docker.io/ambitresearch/genie
+          max_attempts=12
           for tag in "$VERSION" latest; do
-            published_digest=$(docker buildx imagetools inspect \
-              "docker.io/ambitresearch/genie:$tag" \
-              | awk '$1 == "Digest:" { print $2; exit }')
-            test "$published_digest" = "$BUILD_DIGEST"
+            published_digest=
+            for attempt in $(seq 1 "$max_attempts"); do
+              if output=$(docker buildx imagetools inspect "$image:$tag" 2>&1); then
+                published_digest=$(printf '%s\n' "$output" | awk '$1 == "Digest:" { print $2; exit }')
+              else
+                published_digest=
+              fi
+              if [ "$published_digest" = "$BUILD_DIGEST" ]; then break; fi
+              if [ "$attempt" -lt "$max_attempts" ]; then sleep 5; fi
+            done
+            if [ "$published_digest" != "$BUILD_DIGEST" ]; then
+              echo "::error::$image:$tag expected $BUILD_DIGEST, observed ${published_digest:-unavailable} after $max_attempts attempts"
+              exit 1
+            fi
           done
 
   recovery-finalize-releases:
