@@ -43,9 +43,23 @@ describe("public documentation surface", () => {
   it("documents the guarded landing-page workflow with canonical typography", () => {
     const home = readRootFile("docs/index.md");
     const styles = readRootFile("docs/.vitepress/theme/style.css");
+    const theme = readRootFile("docs/.vitepress/theme/index.ts");
+    const packageJson = JSON.parse(readRootFile("package.json")) as {
+      readonly devDependencies?: Readonly<Record<string, string>>;
+    };
+    const applyPosition = home.indexOf("02 / Apply");
+    const previewPosition = home.indexOf("03 / Preview");
 
-    expect(home.indexOf("02 / Apply")).toBeLessThan(home.indexOf("03 / Preview"));
+    expect(applyPosition).toBeGreaterThan(-1);
+    expect(previewPosition).toBeGreaterThan(-1);
+    expect(applyPosition).toBeLessThan(previewPosition);
     expect(home).toContain("generate proposed files");
+    expect(theme).toContain('import "@fontsource-variable/newsreader/wght.css";');
+    expect(theme).toContain('import "@fontsource-variable/newsreader/wght-italic.css";');
+    expect(packageJson.devDependencies?.["@fontsource-variable/newsreader"]).toBe("5.2.10");
+    expect(styles).toContain(
+      'font-family: "Newsreader Variable", Newsreader, Georgia, "Times New Roman", serif;',
+    );
     expect(styles).not.toMatch(/\.guide-(?:grid|card)/);
     expect(styles).not.toMatch(
       /\.genie-(?:workflow h2|steps h3|paths strong)[^{]*{[^}]*Newsreader/s,
