@@ -798,6 +798,7 @@ fi
           inputs?: Record<string, { required?: boolean; type?: string }>;
         };
       };
+      jobs?: Record<string, { permissions?: Record<string, string> }>;
     };
     expect(parsed.on?.workflow_dispatch?.inputs).toMatchObject({
       server_tag: { required: true, type: "string" },
@@ -806,6 +807,7 @@ fi
     expect(parsed.concurrency?.["cancel-in-progress"]).toBe(false);
     expect(parsed.concurrency?.group).toContain("github.event_name == 'pull_request'");
     expect(parsed.concurrency?.group).toContain("release-production");
+    expect(parsed.jobs?.["recovery-guard"]?.permissions).toEqual({ contents: "write" });
 
     const guard = job(release, "recovery-guard", "recovery-docker-publish-ghcr");
     expect(guard).toContain("github.event_name == 'workflow_dispatch'");
