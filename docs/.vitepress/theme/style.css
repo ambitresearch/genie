@@ -148,6 +148,7 @@
   color: var(--genie-home-ink);
   background: var(--genie-home-paper);
   font-family:
+    "Inter Variable",
     Inter,
     ui-sans-serif,
     system-ui,
