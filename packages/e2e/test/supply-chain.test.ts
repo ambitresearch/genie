@@ -202,14 +202,15 @@ const dockerLiveTagCommand = [
   'test "$2" = imagetools',
   'test "$3" = inspect',
   'case "$4" in',
-  '  "$EXPECTED_IMAGE:$VERSION") key=version; digest=$FAKE_VERSION_DIGEST; success_attempt=${FAKE_VERSION_SUCCESS_ATTEMPT:-1} ;;',
-  '  "$EXPECTED_IMAGE:latest") key=latest; digest=$FAKE_LATEST_DIGEST; success_attempt=${FAKE_LATEST_SUCCESS_ATTEMPT:-1} ;;',
+  '  "$EXPECTED_IMAGE:$VERSION") key=version; digest=$FAKE_VERSION_DIGEST; missing_attempts=${FAKE_VERSION_MISSING_ATTEMPTS:-0}; success_attempt=${FAKE_VERSION_SUCCESS_ATTEMPT:-1} ;;',
+  '  "$EXPECTED_IMAGE:latest") key=latest; digest=$FAKE_LATEST_DIGEST; missing_attempts=${FAKE_LATEST_MISSING_ATTEMPTS:-0}; success_attempt=${FAKE_LATEST_SUCCESS_ATTEMPT:-1} ;;',
   "  *) exit 64 ;;",
   "esac",
   'attempt_file="$FAKE_LOG.$key-attempts"',
   'attempt=$(cat "$attempt_file" 2>/dev/null || printf 0)',
   "attempt=$((attempt + 1))",
   'printf \'%s\\n\' "$attempt" > "$attempt_file"',
+  'if [ "$attempt" -le "$missing_attempts" ]; then exit 1; fi',
   'if [ "$attempt" -lt "$success_attempt" ]; then digest=${FAKE_TRANSIENT_DIGEST:-sha256:stale}; fi',
   "printf 'Name: fixture\\nDigest: %s\\n' \"$digest\"",
 ].join("\n");
@@ -1208,7 +1209,7 @@ fi
       ).toHaveLength(3);
       expect(delayedCalls.filter((call) => call === "sleep 5")).toHaveLength(2);
 
-      const staleLiveTag = runReleaseStep(jobName, liveStep, {
+      const delayedMissingLiveTags = runReleaseStep(jobName, liveStep, {
         commands: { docker: dockerLiveTagCommand, sleep: fakeSleepCommand },
         env: {
           BUILD_DIGEST: expectedDigest,
@@ -1216,11 +1217,48 @@ fi
           VERSION: "1.3.1",
           FAKE_VERSION_DIGEST: expectedDigest,
           FAKE_LATEST_DIGEST: expectedDigest,
+          FAKE_VERSION_MISSING_ATTEMPTS: "2",
+          FAKE_LATEST_MISSING_ATTEMPTS: "2",
+        },
+      });
+      expect(
+        delayedMissingLiveTags.status,
+        `${delayedMissingLiveTags.stdout}\n${delayedMissingLiveTags.stderr}`,
+      ).toBe(0);
+      const delayedMissingCalls = delayedMissingLiveTags.log.trim().split("\n");
+      expect(
+        delayedMissingCalls.filter(
+          (call) => call === `docker buildx imagetools inspect ${image}:1.3.1`,
+        ),
+      ).toHaveLength(3);
+      expect(
+        delayedMissingCalls.filter(
+          (call) => call === `docker buildx imagetools inspect ${image}:latest`,
+        ),
+      ).toHaveLength(3);
+      expect(delayedMissingCalls.filter((call) => call === "sleep 5")).toHaveLength(2);
+
+      const staleLiveTags = runReleaseStep(jobName, liveStep, {
+        commands: { docker: dockerLiveTagCommand, sleep: fakeSleepCommand },
+        env: {
+          BUILD_DIGEST: expectedDigest,
+          EXPECTED_IMAGE: image,
+          VERSION: "1.3.1",
+          FAKE_VERSION_DIGEST: expectedDigest,
+          FAKE_LATEST_DIGEST: expectedDigest,
+          FAKE_VERSION_SUCCESS_ATTEMPT: "99",
           FAKE_LATEST_SUCCESS_ATTEMPT: "99",
         },
       });
-      expect(staleLiveTag.status).not.toBe(0);
-      const staleCalls = staleLiveTag.log.trim().split("\n");
+      expect(staleLiveTags.status).not.toBe(0);
+      expect(staleLiveTags.stdout).toBe(
+        [
+          `::error::${image}:1.3.1 expected ${expectedDigest}, observed sha256:stale after 12 attempts`,
+          `::error::${image}:latest expected ${expectedDigest}, observed sha256:stale after 12 attempts`,
+          "",
+        ].join("\n"),
+      );
+      const staleCalls = staleLiveTags.log.trim().split("\n");
       expect(
         staleCalls.filter((call) => call === `docker buildx imagetools inspect ${image}:1.3.1`),
       ).toHaveLength(12);
@@ -1228,6 +1266,35 @@ fi
         staleCalls.filter((call) => call === `docker buildx imagetools inspect ${image}:latest`),
       ).toHaveLength(12);
       expect(staleCalls.filter((call) => call === "sleep 5")).toHaveLength(11);
+
+      const missingLiveTags = runReleaseStep(jobName, liveStep, {
+        commands: { docker: dockerLiveTagCommand, sleep: fakeSleepCommand },
+        env: {
+          BUILD_DIGEST: expectedDigest,
+          EXPECTED_IMAGE: image,
+          VERSION: "1.3.1",
+          FAKE_VERSION_DIGEST: expectedDigest,
+          FAKE_LATEST_DIGEST: expectedDigest,
+          FAKE_VERSION_MISSING_ATTEMPTS: "99",
+          FAKE_LATEST_MISSING_ATTEMPTS: "99",
+        },
+      });
+      expect(missingLiveTags.status).not.toBe(0);
+      expect(missingLiveTags.stdout).toBe(
+        [
+          `::error::${image}:1.3.1 expected ${expectedDigest}, observed unavailable after 12 attempts`,
+          `::error::${image}:latest expected ${expectedDigest}, observed unavailable after 12 attempts`,
+          "",
+        ].join("\n"),
+      );
+      const missingCalls = missingLiveTags.log.trim().split("\n");
+      expect(
+        missingCalls.filter((call) => call === `docker buildx imagetools inspect ${image}:1.3.1`),
+      ).toHaveLength(12);
+      expect(
+        missingCalls.filter((call) => call === `docker buildx imagetools inspect ${image}:latest`),
+      ).toHaveLength(12);
+      expect(missingCalls.filter((call) => call === "sleep 5")).toHaveLength(11);
     },
     30_000,
   );
