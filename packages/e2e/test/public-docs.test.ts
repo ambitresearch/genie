@@ -69,6 +69,9 @@ describe("public documentation surface", () => {
     expect(styles).toMatch(
       /\.VPNavBar\.home\s*{[^}]*font-family:\s*"Inter Variable",\s*Inter,\s*ui-sans-serif,\s*system-ui,\s*-apple-system,/s,
     );
+    expect(styles).toMatch(
+      /\.VPFooter\s*{[^}]*font-family:\s*"Inter Variable",\s*Inter,\s*ui-sans-serif,\s*system-ui,\s*-apple-system,/s,
+    );
     expect(styles).toContain(
       'font-family: "Newsreader Variable", Newsreader, Georgia, "Times New Roman", serif;',
     );
