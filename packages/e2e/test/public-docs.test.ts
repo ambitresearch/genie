@@ -40,6 +40,56 @@ describe("public documentation surface", () => {
     expect(readRootFile("docs/index.md")).not.toContain("guide-card--accent");
   });
 
+  it("documents the guarded landing-page workflow with canonical typography", () => {
+    const home = readRootFile("docs/index.md");
+    const styles = readRootFile("docs/.vitepress/theme/style.css");
+    const theme = readRootFile("docs/.vitepress/theme/index.ts");
+    const packageJson = JSON.parse(readRootFile("package.json")) as {
+      readonly devDependencies?: Readonly<Record<string, string>>;
+    };
+    const applyPosition = home.indexOf("02 / Apply");
+    const previewPosition = home.indexOf("03 / Preview");
+
+    expect(home).toContain('<div class="genie-actions" role="group" aria-label="Get started">');
+    expect(home).toContain('<ol class="genie-steps" role="list">');
+    expect(applyPosition).toBeGreaterThan(-1);
+    expect(previewPosition).toBeGreaterThan(-1);
+    expect(applyPosition).toBeLessThan(previewPosition);
+    expect(home).toContain("generate proposed files");
+    expect(theme).toContain('import "@fontsource-variable/inter/wght.css";');
+    expect(theme).toContain('import "@fontsource-variable/jetbrains-mono/wght.css";');
+    expect(theme).toContain('import "@fontsource-variable/newsreader/wght.css";');
+    expect(theme).toContain('import "@fontsource-variable/newsreader/wght-italic.css";');
+    expect(packageJson.devDependencies?.["@fontsource-variable/inter"]).toBe("5.2.8");
+    expect(packageJson.devDependencies?.["@fontsource-variable/jetbrains-mono"]).toBe("5.2.8");
+    expect(packageJson.devDependencies?.["@fontsource-variable/newsreader"]).toBe("5.2.10");
+    expect(styles).toMatch(
+      /:root\s*{[^}]*--vp-font-family-base:\s*"Inter Variable",\s*Inter,\s*ui-sans-serif,\s*system-ui,\s*-apple-system,/s,
+    );
+    expect(styles).toMatch(
+      /font-family:\s*"Inter Variable",\s*Inter,\s*ui-sans-serif,\s*system-ui,\s*-apple-system,/,
+    );
+    expect(styles).toContain(
+      'font-family: "Newsreader Variable", Newsreader, Georgia, "Times New Roman", serif;',
+    );
+    expect(styles).toMatch(
+      /font-family:\s*"JetBrains Mono Variable",\s*"JetBrains Mono",\s*ui-monospace,/,
+    );
+    expect(styles).not.toMatch(/font-family:\s*"JetBrains Mono",\s*ui-monospace,/);
+    expect(styles).toMatch(/\.genie-steps code[^}]*"JetBrains Mono Variable"/s);
+    expect(styles).not.toMatch(
+      /\.genie-(?:kicker|section-label|scroll|steps li > span|paths span)[^{]*{[^}]*JetBrains Mono/s,
+    );
+    expect(styles).toContain('url("/genie/images/genie-alpine-atmospheric.webp")');
+    expect(existsSync(resolve(ROOT, "docs/public/images/genie-alpine-atmospheric.webp"))).toBe(
+      true,
+    );
+    expect(styles).not.toMatch(/\.guide-(?:grid|card)/);
+    expect(styles).not.toMatch(
+      /\.genie-(?:workflow h2|steps h3|paths strong)[^{]*{[^}]*Newsreader/s,
+    );
+  });
+
   it("configures the two guides for the public Pages URL", () => {
     const config = readRootFile("docs/.vitepress/config.mts");
 
