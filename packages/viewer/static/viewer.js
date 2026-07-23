@@ -107,6 +107,8 @@
   var TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY = "genie/embeddedManifest";
   var MCP_APP_PROTOCOL_VERSION = "2026-01-26";
   var mcpAppRequestId = 0;
+  var LIST_KITS_TOOL = "mcp__genie__list_kits";
+  var CONJURE_TOOL = "mcp__genie__conjure";
 
   /**
    * Fallback card height (px) for a named/unparseable viewport (e.g. "desktop").
@@ -570,6 +572,9 @@
   function initMcpApp(doc, options) {
     var opts = options || {};
     var onTeardown = typeof opts.onTeardown === "function" ? opts.onTeardown : function () {};
+    var onReady = typeof opts.onReady === "function" ? opts.onReady : function () {};
+    var onUnavailable =
+      typeof opts.onUnavailable === "function" ? opts.onUnavailable : function () {};
     var win = "win" in opts ? opts.win : typeof window !== "undefined" ? window : undefined;
     if (
       !win ||
@@ -587,6 +592,8 @@
     var lastWidth = -1;
     var lastHeight = -1;
     var tornDown = false;
+    var hostBridge = null;
+    var initializeTimer = null;
     function post(message) {
       host.postMessage(message, "*");
     }
@@ -620,6 +627,8 @@
       if (resizeObserver && typeof resizeObserver.disconnect === "function") {
         resizeObserver.disconnect();
       }
+      if (initializeTimer !== null) win.clearTimeout(initializeTimer);
+      if (hostBridge) hostBridge.destroy();
       onTeardown();
     }
     function onMessage(event) {
@@ -645,7 +654,13 @@
         return;
       }
       if (data.id === initializeId && data.result) {
+        if (initializeTimer !== null) {
+          win.clearTimeout(initializeTimer);
+          initializeTimer = null;
+        }
         post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+        hostBridge = createHostBridge(win, host, opts.onProgress);
+        onReady(hostBridge, data.result);
         notifySize();
         observeSize();
         return;
@@ -660,6 +675,12 @@
     }
 
     win.addEventListener("message", onMessage);
+    if (typeof opts.onUnavailable === "function") {
+      initializeTimer = win.setTimeout(function () {
+        initializeTimer = null;
+        onUnavailable();
+      }, 3000);
+    }
     post({
       jsonrpc: "2.0",
       id: initializeId,
@@ -672,6 +693,420 @@
     });
 
     return teardown;
+  }
+
+  function normalizeRoute(route) {
+    return route === "browse" || route === "review" ? route : "generate";
+  }
+
+  function writeRoute(win, route, replace) {
+    try {
+      var next = new win.URL(win.location.href);
+      next.searchParams.set("route", normalizeRoute(route));
+      win.history[replace ? "replaceState" : "pushState"]({}, "", next);
+    } catch {
+      /* opaque/about:blank embedded origins cannot persist history */
+    }
+  }
+
+  function canConjure(state) {
+    return Boolean(
+      state &&
+      typeof state.prompt === "string" &&
+      state.prompt.trim().length >= 3 &&
+      state.kitId &&
+      state.model &&
+      state.hostAvailable &&
+      !state.inFlight,
+    );
+  }
+
+  function selectInitialKit(kits, remembered) {
+    var editable = Array.isArray(kits)
+      ? kits.filter(function (kit) {
+          return kit && kit.canEdit === true && typeof kit.id === "string" && kit.id;
+        })
+      : [];
+    if (
+      remembered &&
+      editable.some(function (kit) {
+        return kit.id === remembered;
+      })
+    ) {
+      return remembered;
+    }
+    return editable.length === 1 ? editable[0].id : "";
+  }
+
+  function isConjureResult(value) {
+    return Boolean(
+      value &&
+      typeof value === "object" &&
+      typeof value.componentName === "string" &&
+      value.componentName.trim() &&
+      typeof value.group === "string" &&
+      Array.isArray(value.files) &&
+      value.manifestEntry &&
+      typeof value.manifestEntry === "object" &&
+      value.usage &&
+      typeof value.usage === "object",
+    );
+  }
+
+  function createDraftStore() {
+    var drafts = [];
+    return {
+      add: function (result) {
+        var number = drafts.length + 1;
+        var draft = { number: number, label: "draft #" + number, result: result };
+        drafts.push(draft);
+        return draft;
+      },
+      current: function () {
+        return drafts.length ? drafts[drafts.length - 1] : null;
+      },
+    };
+  }
+
+  function safeHostMessage(value, fallback) {
+    var message = typeof value === "string" && value.trim() ? value.trim() : fallback;
+    return message
+      .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/-]+=*/gi, "$1[redacted]")
+      .replace(/\b(api[-_ ]?key|token|secret)\s*[:=]\s*\S+/gi, "$1=[redacted]")
+      .slice(0, 500);
+  }
+
+  function hostErrorMessage(result) {
+    if (result && result.error) {
+      return safeHostMessage(result.error.message, "The host rejected the request.");
+    }
+    var content = result && result.result && result.result.content;
+    if (Array.isArray(content)) {
+      for (var i = 0; i < content.length; i++) {
+        if (content[i] && content[i].type === "text" && typeof content[i].text === "string") {
+          try {
+            var parsed = JSON.parse(content[i].text);
+            if (parsed && typeof parsed.message === "string") {
+              return safeHostMessage(parsed.message, "The tool returned an error.");
+            }
+          } catch {
+            return safeHostMessage(content[i].text, "The tool returned an error.");
+          }
+        }
+      }
+    }
+    return "The tool returned an error.";
+  }
+
+  /**
+   * @typedef {{callTool(name:string,args:object):Promise<object>,destroy():void}} HostBridge
+   */
+  function createHostBridge(win, host, onProgress, timeoutMs) {
+    var pending = new Map();
+    var timeout = typeof timeoutMs === "number" ? timeoutMs : 60_000;
+    function onMessage(event) {
+      if (!event || event.source !== host || !event.data || typeof event.data !== "object") return;
+      var data = event.data;
+      if (data.method === "notifications/progress") {
+        if (typeof onProgress === "function") {
+          onProgress(
+            safeHostMessage(data.params && data.params.message, "Conjuring your component…"),
+          );
+        }
+        return;
+      }
+      if (!pending.has(data.id)) return;
+      var request = pending.get(data.id);
+      pending.delete(data.id);
+      win.clearTimeout(request.timer);
+      if (data.error || (data.result && data.result.isError)) {
+        request.reject(new Error(hostErrorMessage(data)));
+        return;
+      }
+      var structured = data.result && data.result.structuredContent;
+      if (!structured || typeof structured !== "object") {
+        request.reject(new Error("The host returned a malformed tool result."));
+        return;
+      }
+      request.resolve(structured);
+    }
+    win.addEventListener("message", onMessage);
+    return {
+      callTool: function (name, args) {
+        var id = ++mcpAppRequestId;
+        return new Promise(function (resolve, reject) {
+          var timer = win.setTimeout(function () {
+            pending.delete(id);
+            reject(new Error("The host tool request timed out. Try again."));
+          }, timeout);
+          pending.set(id, { resolve: resolve, reject: reject, timer: timer });
+          host.postMessage(
+            {
+              jsonrpc: "2.0",
+              id: id,
+              method: "tools/call",
+              params: { name: name, arguments: args },
+            },
+            "*",
+          );
+        });
+      },
+      destroy: function () {
+        win.removeEventListener("message", onMessage);
+        for (var request of pending.values()) {
+          win.clearTimeout(request.timer);
+          request.reject(new Error("The host closed the viewer."));
+        }
+        pending.clear();
+      },
+    };
+  }
+
+  function initProductShell(doc, bridge) {
+    var win = doc.defaultView;
+    var form = doc.getElementById("generate-form");
+    if (!win || !form) return;
+    var prompt = doc.getElementById("generate-prompt");
+    var kitSelect = doc.getElementById("kit-select");
+    var modelSelect = doc.getElementById("model-select");
+    var submit = doc.getElementById("conjure-button");
+    var kitState = doc.getElementById("kit-state");
+    var errorBox = doc.getElementById("generate-error");
+    var errorDetail = doc.getElementById("generate-error-detail");
+    var retry = doc.getElementById("generate-retry");
+    var progress = doc.getElementById("generate-progress");
+    var progressCopy = doc.getElementById("generate-progress-copy");
+    var status = doc.getElementById("app-status");
+    var drafts = createDraftStore();
+    var kits = [];
+    var inFlight = false;
+    var hostAvailable = Boolean(bridge);
+    var hostPending = bridge === undefined;
+
+    function renderRoute(route, focusPrompt) {
+      var selected = normalizeRoute(route);
+      var views = doc.querySelectorAll("[data-route-view]");
+      for (var i = 0; i < views.length; i++) {
+        views[i].hidden = views[i].getAttribute("data-route-view") !== selected;
+      }
+      var links = doc.querySelectorAll("[data-route-link]");
+      for (var j = 0; j < links.length; j++) {
+        if (links[j].getAttribute("data-route-link") === selected) {
+          links[j].setAttribute("aria-current", "page");
+        } else {
+          links[j].removeAttribute("aria-current");
+        }
+      }
+      if (selected === "generate" && focusPrompt) prompt.focus();
+    }
+
+    function navigate(route, replace, focusPrompt) {
+      writeRoute(win, route, replace);
+      renderRoute(route, focusPrompt);
+    }
+
+    function updateGate() {
+      submit.disabled = !canConjure({
+        prompt: prompt.value,
+        kitId: kitSelect.value,
+        model: modelSelect.value,
+        hostAvailable: hostAvailable,
+        inFlight: inFlight,
+      });
+    }
+
+    function showError(error) {
+      errorDetail.textContent = safeHostMessage(
+        error && error.message,
+        "The host could not complete this request.",
+      );
+      errorBox.hidden = false;
+      progress.hidden = true;
+      errorBox.focus();
+      updateGate();
+    }
+
+    function showProgress(message) {
+      progressCopy.textContent = safeHostMessage(message, "Conjuring your component…");
+      progress.hidden = false;
+    }
+
+    function renderDraft(draft) {
+      doc.getElementById("review-empty").hidden = true;
+      doc.getElementById("draft-review").hidden = false;
+      doc.getElementById("draft-label").textContent = draft.label;
+      doc.getElementById("draft-name").textContent = draft.result.componentName;
+      var summary = doc.getElementById("draft-summary");
+      summary.replaceChildren();
+      var values = [
+        ["UI kit", kitSelect.options[kitSelect.selectedIndex].textContent],
+        ["Group", draft.result.group],
+        ["Proposed files", String(draft.result.files.length)],
+        ["Model", modelSelect.options[modelSelect.selectedIndex].textContent],
+      ];
+      for (var i = 0; i < values.length; i++) {
+        var dt = doc.createElement("dt");
+        var dd = doc.createElement("dd");
+        dt.textContent = values[i][0];
+        dd.textContent = values[i][1];
+        summary.append(dt, dd);
+      }
+    }
+
+    async function submitGenerate(event) {
+      if (event) event.preventDefault();
+      if (
+        !canConjure({
+          prompt: prompt.value,
+          kitId: kitSelect.value,
+          model: modelSelect.value,
+          hostAvailable: hostAvailable,
+          inFlight: inFlight,
+        })
+      )
+        return;
+      var selectedKit = kits.find(function (kit) {
+        return kit.id === kitSelect.value;
+      });
+      if (!selectedKit) return;
+      inFlight = true;
+      errorBox.hidden = true;
+      showProgress("Conjuring your component…");
+      prompt.disabled = true;
+      kitSelect.disabled = true;
+      modelSelect.disabled = true;
+      submit.textContent = "✦ Conjuring…";
+      updateGate();
+      try {
+        var result = await bridge.callTool(CONJURE_TOOL, {
+          kitId: selectedKit.id,
+          kit: selectedKit.name,
+          prompt: prompt.value.trim(),
+          model: modelSelect.value,
+        });
+        if (!isConjureResult(result)) throw new Error("The host returned an invalid draft.");
+        var draft = drafts.add(result);
+        renderDraft(draft);
+        status.textContent = "Generated " + result.componentName + ", " + draft.label + ".";
+        navigate("review", false, false);
+      } catch (error) {
+        showError(error);
+      } finally {
+        inFlight = false;
+        prompt.disabled = false;
+        kitSelect.disabled = kits.length === 0;
+        modelSelect.disabled = false;
+        submit.replaceChildren();
+        var spark = doc.createElement("span");
+        spark.setAttribute("aria-hidden", "true");
+        spark.textContent = "✦";
+        submit.append(spark, " Conjure");
+        if (!errorBox.hidden) progress.hidden = true;
+        updateGate();
+      }
+    }
+
+    async function loadKits() {
+      if (hostPending) return;
+      if (!bridge) {
+        kitState.textContent =
+          "Conjure requires an MCP-capable host. Use the genie MCP workflow from your coding host.";
+        kitSelect.replaceChildren();
+        var unavailable = doc.createElement("option");
+        unavailable.textContent = "Host unavailable";
+        unavailable.value = "";
+        kitSelect.appendChild(unavailable);
+        updateGate();
+        return;
+      }
+      try {
+        var reply = await bridge.callTool(LIST_KITS_TOOL, {});
+        if (!Array.isArray(reply.kits)) throw new Error("The host returned malformed UI-kit data.");
+        kits = reply.kits.filter(function (kit) {
+          return (
+            kit &&
+            kit.canEdit === true &&
+            typeof kit.id === "string" &&
+            typeof kit.name === "string"
+          );
+        });
+        kitSelect.replaceChildren();
+        if (!kits.length) {
+          var empty = doc.createElement("option");
+          empty.value = "";
+          empty.textContent = "No editable UI kits";
+          kitSelect.appendChild(empty);
+          kitSelect.disabled = true;
+          kitState.textContent = "No kits yet — create or connect a UI kit first in your host.";
+        } else {
+          if (kits.length > 1) {
+            var choose = doc.createElement("option");
+            choose.value = "";
+            choose.textContent = "Choose a UI kit…";
+            kitSelect.appendChild(choose);
+          }
+          for (var i = 0; i < kits.length; i++) {
+            var option = doc.createElement("option");
+            option.value = kits[i].id;
+            option.textContent = kits[i].name + " · " + (kits[i].owner || "local");
+            kitSelect.appendChild(option);
+          }
+          kitSelect.value = selectInitialKit(kits, "");
+          kitSelect.disabled = false;
+          kitState.textContent =
+            kits.length === 1
+              ? "Using " + kits[0].name + "."
+              : "Choose the UI kit this draft should match.";
+        }
+      } catch (error) {
+        kitState.textContent = "UI kits could not be loaded.";
+        showError(error);
+      }
+      updateGate();
+    }
+
+    doc.addEventListener("click", function (event) {
+      var link = event.target && event.target.closest && event.target.closest("[data-route-link]");
+      if (!link) return;
+      event.preventDefault();
+      navigate(link.getAttribute("data-route-link"), false, true);
+    });
+    win.addEventListener("popstate", function () {
+      renderRoute(new win.URL(win.location.href).searchParams.get("route"), false);
+    });
+    prompt.addEventListener("input", updateGate);
+    kitSelect.addEventListener("change", updateGate);
+    modelSelect.addEventListener("change", updateGate);
+    prompt.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void submitGenerate(event);
+    });
+    form.addEventListener("submit", function (event) {
+      void submitGenerate(event);
+    });
+    retry.addEventListener("click", function () {
+      void submitGenerate();
+    });
+    var initialRoute = normalizeRoute(new win.URL(win.location.href).searchParams.get("route"));
+    navigate(initialRoute, true, initialRoute === "generate");
+    void loadKits();
+    return {
+      setBridge: function (nextBridge) {
+        bridge = nextBridge;
+        hostAvailable = Boolean(nextBridge);
+        hostPending = false;
+        kitState.textContent = "Discovering editable UI kits…";
+        void loadKits();
+      },
+      setUnavailable: function () {
+        bridge = null;
+        hostAvailable = false;
+        hostPending = false;
+        void loadKits();
+      },
+      showProgress: function (message) {
+        if (inFlight) showProgress(message);
+      },
+    };
   }
 
   /**
@@ -1315,7 +1750,25 @@
           /* live refresh is an enhancement, never a boot blocker */
         }
         if (doc.querySelector(`meta[name="${TOOL_RESULT_SHELL_META}"]`)) {
-          initMcpApp(doc, { onTeardown: teardownHmr });
+          var shellController = initProductShell(doc, undefined);
+          initMcpApp(doc, {
+            onTeardown: teardownHmr,
+            onReady: function (bridge) {
+              if (shellController && shellController.setBridge) shellController.setBridge(bridge);
+            },
+            onUnavailable: function () {
+              if (shellController && shellController.setUnavailable) {
+                shellController.setUnavailable();
+              }
+            },
+            onProgress: function (message) {
+              if (shellController && shellController.showProgress) {
+                shellController.showProgress(message);
+              }
+            },
+          });
+        } else {
+          initProductShell(doc, null);
         }
       } catch (err) {
         var inlineDetail = err && err.message ? err.message : String(err);
@@ -1351,10 +1804,12 @@
         } catch {
           /* live refresh is an enhancement, never a boot blocker */
         }
+        initProductShell(doc, null);
       })
       .catch(function (err) {
         var detail = err && err.message ? err.message : String(err);
         renderError(doc, grid, detail);
+        initProductShell(doc, null);
       });
   }
 
@@ -1382,6 +1837,14 @@
     window.__genieViewerTestHooks.filterManifestBySearch = filterManifestBySearch;
     window.__genieViewerTestHooks.renderToolResult = renderToolResult;
     window.__genieViewerTestHooks.initMcpApp = initMcpApp;
+    window.__genieViewerTestHooks.normalizeRoute = normalizeRoute;
+    window.__genieViewerTestHooks.writeRoute = writeRoute;
+    window.__genieViewerTestHooks.canConjure = canConjure;
+    window.__genieViewerTestHooks.selectInitialKit = selectInitialKit;
+    window.__genieViewerTestHooks.isConjureResult = isConjureResult;
+    window.__genieViewerTestHooks.createDraftStore = createDraftStore;
+    window.__genieViewerTestHooks.createHostBridge = createHostBridge;
+    window.__genieViewerTestHooks.initProductShell = initProductShell;
     window.__genieViewerTestHooks.applyFilter = applyFilter;
     window.__genieViewerTestHooks.readInlineManifest = readInlineManifest;
     window.__genieViewerTestHooks.wireSearch = wireSearch;

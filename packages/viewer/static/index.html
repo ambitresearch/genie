@@ -35,12 +35,86 @@
   </head>
   <body>
     <header class="app-header">
-      <div class="app-header__brand">
-        <span class="wordmark">genie<span class="wordmark__spark" aria-hidden="true">✦</span></span>
-        <span class="app-header__subtitle">preview</span>
-      </div>
-      <div class="app-header__search">
-        <!--
+      <a class="wordmark" href="?route=generate">genie</a>
+      <nav class="app-nav" aria-label="Primary">
+        <a class="app-nav__link" data-route-link="generate" href="?route=generate">Generate</a>
+        <a class="app-nav__link" data-route-link="browse" href="?route=browse">Browse</a>
+        <a class="app-nav__link" data-route-link="review" href="?route=review">Review</a>
+      </nav>
+      <p id="app-status" class="app-status" role="status" aria-live="polite"></p>
+    </header>
+
+    <main id="app-main">
+      <section id="generate-view" class="route-view generate-view" data-route-view="generate">
+        <div class="generate-hero">
+          <p class="eyebrow">Generate</p>
+          <h1>What will you make?</h1>
+          <p class="generate-hero__lede">
+            Describe a component and conjure it against your UI kit.
+          </p>
+        </div>
+
+        <form id="generate-form" class="prompt-card">
+          <label class="visually-hidden" for="generate-prompt">Describe the component</label>
+          <textarea
+            id="generate-prompt"
+            name="prompt"
+            rows="5"
+            maxlength="8192"
+            placeholder="A compact status card with a title, value, and trend…"
+            autofocus
+          ></textarea>
+          <div id="generate-error" class="generate-error" role="alert" tabindex="-1" hidden>
+            <strong>Couldn’t conjure that component.</strong>
+            <span id="generate-error-detail"></span>
+            <button id="generate-retry" type="button">Try again</button>
+          </div>
+          <div id="generate-progress" class="generate-progress" role="status" hidden>
+            <span class="generate-progress__skeleton" aria-hidden="true"></span>
+            <span id="generate-progress-copy">Preparing your draft…</span>
+          </div>
+          <div class="prompt-card__controls">
+            <div class="field">
+              <label for="kit-select">UI kit</label>
+              <select id="kit-select" name="kitId" disabled>
+                <option value="">Loading UI kits…</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="model-select">Model</label>
+              <select id="model-select" name="model">
+                <option value="design-default">Configured model</option>
+              </select>
+            </div>
+            <button id="conjure-button" class="conjure-button" type="submit" disabled>
+              <span aria-hidden="true">✦</span> Conjure
+            </button>
+          </div>
+          <p id="generate-help" class="generate-help">
+            <span id="kit-state">Discovering editable UI kits…</span>
+            <span>Press <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> to conjure.</span>
+          </p>
+        </form>
+
+        <section class="supporting-section" aria-labelledby="blueprints-heading">
+          <div>
+            <p class="eyebrow">Blueprints</p>
+            <h2 id="blueprints-heading">Start from your project</h2>
+          </div>
+          <p>
+            No blueprints are available for this project yet. Describe the component above to begin.
+          </p>
+        </section>
+      </section>
+
+      <section id="browse-view" class="route-view browse-view" data-route-view="browse" hidden>
+        <div class="browse-toolbar">
+          <div>
+            <p class="eyebrow">Browse</p>
+            <h1>Your UI kit</h1>
+          </div>
+          <div class="app-header__search">
+            <!--
           M4-09 AC4 — `aria-label` directly on the input (not just the
           `<label for="q">` below). Both are harmless together: `aria-label`
           wins the accessible-name computation (WAI-ARIA §5.2.7.5 name-from
@@ -50,19 +124,19 @@
           "click the label to focus" affordance the aria-label alone can't
           give them.
         -->
-        <label class="visually-hidden" for="q">Filter components by name</label>
-        <input
-          id="q"
-          type="search"
-          class="search-input"
-          placeholder="Filter components…"
-          aria-label="Filter components by name"
-          autocomplete="off"
-          spellcheck="false"
-        />
-      </div>
+            <label class="visually-hidden" for="q">Filter components by name</label>
+            <input
+              id="q"
+              type="search"
+              class="search-input"
+              placeholder="Filter components…"
+              aria-label="Filter components by name"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
 
-      <!--
+          <!--
         M4-04 (DRO-266) — HMR reload counter (AC6): a debugging read-out of how
         many per-card refreshes have fired this session. Collapsible via a native
         <details> (no JS needed to toggle). Structural chrome only — neutral
@@ -74,20 +148,38 @@
         announced. Static tools (file:// open, embedded ui:// grid) that never
         receive an HMR event simply leave it at 0.
       -->
-      <details class="hmr-meter">
-        <summary class="hmr-meter__summary" tabindex="-1">
-          HMR
-          <span id="hmr-count" class="hmr-meter__count" data-count="0" aria-live="polite">0</span>
-        </summary>
-        <p class="hmr-meter__detail">
-          Per-card reloads since load. Edit a component's preview HTML to see one card refresh in
-          place.
-        </p>
-      </details>
-    </header>
+          <details class="hmr-meter">
+            <summary class="hmr-meter__summary" tabindex="-1">
+              HMR
+              <span id="hmr-count" class="hmr-meter__count" data-count="0" aria-live="polite"
+                >0</span
+              >
+            </summary>
+            <p class="hmr-meter__detail">
+              Per-card reloads since load. Edit a component's preview HTML to see one card refresh
+              in place.
+            </p>
+          </details>
+        </div>
+        <div id="grid" class="app-grid" aria-live="polite">
+          <!-- viewer.js renders group sections + cards here. -->
+        </div>
+      </section>
 
-    <main id="grid" class="app-grid" aria-live="polite">
-      <!-- viewer.js renders group sections + cards here. -->
+      <section id="review-view" class="route-view review-view" data-route-view="review" hidden>
+        <p class="eyebrow">Review</p>
+        <div id="review-empty" class="review-empty">
+          <h1>No draft to review</h1>
+          <p>Conjure a component first. Review and Apply arrive in the next workflow milestone.</p>
+          <a href="?route=generate" data-route-link="generate">Go to Generate</a>
+        </div>
+        <article id="draft-review" class="draft-review" hidden>
+          <p id="draft-label" class="draft-label"></p>
+          <h1 id="draft-name"></h1>
+          <p>This validated draft is held only in this viewer session. Nothing has been written.</p>
+          <dl id="draft-summary"></dl>
+        </article>
+      </section>
     </main>
 
     <script src="./viewer.js"></script>

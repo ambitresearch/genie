@@ -36,6 +36,14 @@ Preview delivery has two surfaces:
 Cards remain byte-identical across `file://`, localhost, and `ui://`; host-specific
 differences stay in the surrounding grid shell.
 
+The surrounding viewer shell exposes Generate, Browse, and Review in every vehicle. In the
+embedded resource, a small isolated JSON-RPC adapter sends `tools/call` requests for
+`mcp__genie__list_kits` and `mcp__genie__conjure` to the MCP Apps host with `postMessage`.
+This preserves `connect-src 'none'`: the document never fetches a model endpoint. Tool
+results are normalized and checked before their exact `structuredContent` becomes a
+session-only numbered draft. Standalone and `file://` rendering have no host adapter, so
+Generate remains visibly read-only rather than attempting a browser network fallback.
+
 ## Transport and authentication
 
 Stdio relies on the harness-owned child-process boundary. HTTP exposes `POST /mcp` and
