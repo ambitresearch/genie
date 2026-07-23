@@ -5,12 +5,14 @@ Vite-backed live preview + UI-kit browser for genie. Watches a kit directory
 MCP tools produce, in a grid, with per-card HMR. See the public
 [Developer Guide](../../docs/developer/architecture.md) for the system context.
 
-## Status: live grid + per-card HMR (M4-04 / M4-08)
+## Status: Generate shell + live grid
 
 This package ships the `genie-viewer` CLI — it boots the Vite **multi-page dev
 server** against a kit directory (every `components/**/*.html` preview is its own
 entry point), prints the preview URL, opens your browser, and stops cleanly on
-Ctrl-C. The grid renderer and per-card HMR refresh are wired end to end.
+Ctrl-C. The shared shell provides Generate, Browse, and Review; Generate is
+host-driven and therefore read-only in this standalone CLI vehicle. The grid
+renderer and per-card HMR refresh are wired end to end under Browse.
 
 | Milestone           | Adds                                                     |
 | ------------------- | -------------------------------------------------------- |

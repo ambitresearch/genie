@@ -50,23 +50,9 @@
  *   - AC7 — the same scan + keyboard walk repeated with
  *           `emulateMedia({ colorScheme: "dark" })`.
  *
- * ── AC2's "justification doc per case" — the one allowed `incomplete` ──────
- * axe-core's `color-contrast` check has a THIRD bucket beyond
- * violations/passes: `incomplete` — results it cannot auto-grade and defers
- * to a human. `.wordmark__spark` (the brand glyph, `aria-hidden="true"`)
- * always lands there, in every scheme, regardless of its actual computed
- * color: axe's contrast checker gives up on a `nonBmp` (non-Basic-Multilingual-
- * Plane) glyph because it cannot rasterize a symbol character's shape the way
- * it rasterizes a real word to measure anti-aliased edge pixels — see
- * `node_modules/axe-core`'s `_isIconLigature`/`hasUnicode` (`nonBmp: true`)
- * checks. This is NOT a signal the color is wrong: it is independently
- * verified elsewhere (`static-index.test.ts`'s "identity rule" case computes
- * the real ratio — 4.62:1 light / 5.27:1 dark, both ≥ 4.5:1 AA — using
- * `--color-accent-2`, the design system's own "text-safe clay" per
- * design.md §14's clay-text rule). `assertNoBlockingViolations` below fails
- * on ANY `incomplete` result other than this one exact, pre-approved case —
- * a future incomplete finding on a NEW element must get its own review, not
- * silently ride through under this one's allowance.
+ * `assertNoBlockingViolations` treats axe-core's `incomplete` bucket as a
+ * failure too. There are currently no approved exceptions, so a finding axe
+ * cannot auto-grade must receive explicit review rather than silently pass.
  */
 import { createServer } from "node:http";
 import type { Server } from "node:http";
@@ -251,16 +237,10 @@ async function newPage(): Promise<{ context: BrowserContext; page: Page }> {
 }
 
 /**
- * Pre-approved `results.incomplete` findings — axe-core could not auto-grade
- * these, but each has an explicit, documented reason (see the file header's
- * "AC2's justification doc per case" section) they are not a real
- * regression. Keyed by rule id -> selector list, so a NEW incomplete finding
- * on a different element (or a different rule on the same element) still
- * fails loudly rather than silently inheriting this allowance.
+ * Pre-approved `results.incomplete` findings, keyed by rule id. Empty by
+ * default: new incomplete findings require explicit review.
  */
-const APPROVED_INCOMPLETE: Record<string, string[]> = {
-  "color-contrast": [".wordmark__spark"],
-};
+const APPROVED_INCOMPLETE: Record<string, string[]> = {};
 
 /**
  * Run an axe-core scan restricted to the WCAG 2.2 AA rule sets (AC2), always
@@ -274,8 +254,8 @@ const APPROVED_INCOMPLETE: Record<string, string[]> = {
  * Also inspects `results.incomplete` — axe-core's third bucket for checks it
  * could not auto-resolve (as opposed to checks that ran and failed). Without
  * this, a real gap can hide here indefinitely: `results.violations` alone
- * would have silently missed the wordmark spark's contrast finding (see the
- * file header). Any incomplete result NOT in `APPROVED_INCOMPLETE` fails the
+ * can otherwise silently miss a real gap. Any incomplete result NOT in
+ * `APPROVED_INCOMPLETE` fails the
  * suite — new incomplete findings need their own justification, not a free
  * pass because SOME incomplete findings are pre-approved.
  */
@@ -319,126 +299,6 @@ async function assertNoBlockingViolations(page: Page, extra?: { rules?: string[]
   }
 }
 
-/**
- * Independently measures the wordmark spark's real WCAG contrast ratio —
- * the actual gate on AC2's "one approved incomplete" (see
- * `APPROVED_INCOMPLETE` above): axe-core structurally cannot grade this
- * element's color (a nonBmp glyph), so this is the test that actually
- * catches a future regression here, computed straight from
- * `getComputedStyle` with no axe-core involvement.
- *
- * Parses BOTH `rgb(a)(...)` and `oklch(...)` computed-style serializations
- * (each with an optional alpha channel) — this Chromium build serializes an
- * oklch()-declared custom property back as `oklch(...)` verbatim rather than
- * converting to legacy rgb() syntax (see the AC7 dark-palette-detection test
- * below for the same two-format handling), so a color-managed
- * getComputedStyle read cannot assume rgb(). Alpha specifically matters for
- * the background walk below: `.app-header`'s background is a semi-
- * transparent `color-mix()`, which serializes with a trailing `/ 0.88` (or
- * `rgba(..., 0.88)`) alpha component that must be composited, not discarded
- * (Copilot review, PR #171 — see the walk's own comment for why).
- */
-async function measureSparkContrast(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    /** [r, g, b] in 0-255 gamma-sRGB, alpha in 0-1 (1 = fully opaque). */
-    function parseColor(str: string): [number, number, number, number] {
-      if (str === "transparent") return [0, 0, 0, 0];
-      const rgbMatch = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/.exec(str);
-      if (rgbMatch) {
-        const [, r, g, b, a] = rgbMatch;
-        return [Number(r), Number(g), Number(b), a === undefined ? 1 : Number(a)];
-      }
-      // oklch(L C H [/ A]) -> OKLab -> linear sRGB -> gamma sRGB, per the CSS
-      // Color 4 / Bjorn Ottosson reference matrices (same math as
-      // docs/designs/design-6/contrast-check.mjs, inlined here since a
-      // browser-evaluated function can't import a repo module).
-      const oklchMatch =
-        /oklch\(\s*([\d.]+%?)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+%?))?\s*\)/.exec(str);
-      if (!oklchMatch) throw new Error("cannot parse color: " + str);
-      const [, lRaw, cRaw, hRaw, aRaw] = oklchMatch;
-      const L = lRaw.endsWith("%") ? Number(lRaw.slice(0, -1)) / 100 : Number(lRaw);
-      const C = Number(cRaw);
-      const hRad = (Number(hRaw) * Math.PI) / 180;
-      const a = C * Math.cos(hRad);
-      const b = C * Math.sin(hRad);
-      const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
-      const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
-      const s_ = L - 0.0894841775 * a - 1.291485548 * b;
-      const l = l_ ** 3;
-      const m = m_ ** 3;
-      const s = s_ ** 3;
-      const rl = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
-      const gl = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
-      const bl = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
-      const toSrgb = (c: number) => {
-        const cc = Math.min(1, Math.max(0, c));
-        return cc <= 0.0031308 ? 12.92 * cc : 1.055 * Math.pow(cc, 1 / 2.4) - 0.055;
-      };
-      const alpha =
-        aRaw === undefined ? 1 : aRaw.endsWith("%") ? Number(aRaw.slice(0, -1)) / 100 : Number(aRaw);
-      return [toSrgb(rl) * 255, toSrgb(gl) * 255, toSrgb(bl) * 255, alpha];
-    }
-    function relLuminance([r, g, b]: [number, number, number]): number {
-      const chan = (c: number) => {
-        const s = c / 255;
-        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-      };
-      return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
-    }
-    /**
-     * Porter-Duff "over": composites a (possibly translucent) `layer` onto an
-     * already fully-opaque `base`. Used below to flatten a stack of
-     * translucent ancestor backgrounds into the one true painted surface
-     * color, instead of only reading a single element's own backgroundColor.
-     */
-    function over(
-      layer: [number, number, number, number],
-      base: [number, number, number],
-    ): [number, number, number] {
-      const a = layer[3];
-      return [
-        layer[0] * a + base[0] * (1 - a),
-        layer[1] * a + base[1] * (1 - a),
-        layer[2] * a + base[2] * (1 - a),
-      ];
-    }
-    const spark = document.querySelector(".wordmark__spark") as HTMLElement;
-    const fg = parseColor(getComputedStyle(spark).color);
-    // Walk up collecting every ancestor background that actually paints
-    // something (alpha > 0), stopping once a FULLY opaque one is found (the
-    // true bottom of the visible stack). `.app-header`'s own background is a
-    // semi-transparent color-mix over the body: naively taking the first
-    // non-fully-transparent background (as this test originally did) treats
-    // that 88%-opacity tint as fully opaque and never looks past it to the
-    // real (opaque) body underneath — harmless today only because the tint
-    // happens to be the same paper color mixed with itself, so it composites
-    // back to exactly that color either way. Collecting the whole translucent
-    // stack and alpha-compositing it (below) keeps this correct even if a
-    // future header background is a genuinely different tint (Copilot
-    // review, PR #171).
-    const layers: Array<[number, number, number, number]> = [];
-    let bgEl: HTMLElement | null = spark;
-    while (bgEl) {
-      const parsed = parseColor(getComputedStyle(bgEl).backgroundColor);
-      if (parsed[3] > 0) layers.push(parsed);
-      if (parsed[3] >= 1) break;
-      bgEl = bgEl.parentElement;
-    }
-    // Composite back-to-front (`layers` was collected front-to-back, i.e.
-    // element-to-root, so reverse it first). Falls back to opaque white — the
-    // browser's own default canvas — if the walk reached the top of the tree
-    // without ever finding a fully opaque background.
-    let composited: [number, number, number] = [255, 255, 255];
-    for (const layer of layers.reverse()) composited = over(layer, composited);
-
-    const l1 = relLuminance([fg[0], fg[1], fg[2]]);
-    const l2 = relLuminance(composited);
-    const lighter = Math.max(l1, l2);
-    const darker = Math.min(l1, l2);
-    return (lighter + 0.05) / (darker + 0.05);
-  });
-}
-
 // ── AC2/AC6 — populated grid, light mode ────────────────────────────────────
 
 describe.skipIf(!chromiumAvailable)(
@@ -455,7 +315,7 @@ describe.skipIf(!chromiumAvailable)(
       server = serveDir(root);
       port = await listen(server);
       ({ context, page } = await newPage());
-      await page.goto(`http://127.0.0.1:${port}/`);
+      await page.goto(`http://127.0.0.1:${port}/?route=browse`);
       // Wait for the real fetch('./.genie/manifest.json') boot path to finish
       // painting cards, rather than racing axe-core against an empty grid.
       await page.waitForSelector(".ds-card", { timeout: 5_000 });
@@ -476,17 +336,6 @@ describe.skipIf(!chromiumAvailable)(
       // an unambiguous rule id even if the AC2 tag-based scan above is ever
       // loosened.
       await assertNoBlockingViolations(page, { rules: ["color-contrast"] });
-    });
-
-    it("AC6 — wordmark spark (axe-core's one approved 'incomplete') independently measures >= 4.5:1", async () => {
-      // axe-core can never auto-grade this element (see the file header's
-      // "AC2's justification doc per case" — a nonBmp glyph is not
-      // shape-gradable), so this test is the actual gate on its color:
-      // `measureSparkContrast` computes the WCAG contrast ratio from the REAL
-      // rendered `getComputedStyle` color against its real painted
-      // background, independent of axe-core entirely.
-      const ratio = await measureSparkContrast(page);
-      expect(ratio).toBeGreaterThanOrEqual(4.5);
     });
 
     it("AC4 — the search input has a real accessible name", async () => {
@@ -566,7 +415,7 @@ describe.skipIf(!chromiumAvailable)(
       port = await listen(server);
       ({ context, page } = await newPage());
       await page.emulateMedia({ colorScheme: "dark" });
-      await page.goto(`http://127.0.0.1:${port}/`);
+      await page.goto(`http://127.0.0.1:${port}/?route=browse`);
       await page.waitForSelector(".ds-card", { timeout: 5_000 });
     }, 30_000);
 
@@ -621,21 +470,6 @@ describe.skipIf(!chromiumAvailable)(
       await assertNoBlockingViolations(page, { rules: ["color-contrast"] });
     });
 
-    it("AC6/AC7 — wordmark spark independently measures >= 4.5:1 in dark mode too", async () => {
-      // Same rationale as the light-mode case above: axe-core can't grade
-      // this element at all, so this is the actual regression gate. Also
-      // covers the SECOND latent DRO-743-shaped bug this issue's audit
-      // found: `--color-accent-2` (the token this glyph now uses) had a
-      // dark-mode override in `docs/designs/design-6/tokens.css` (DRO-743)
-      // but NOT in this file's own separate token copy — ported alongside
-      // the wordmark-spark fix (see viewer.css's dark-mode comment). Without
-      // that port, this specific test would catch it: dark mode would
-      // silently fall back to the light value (56% lightness -> 3.78:1,
-      // below AA) exactly like the original DRO-743 gap.
-      const ratio = await measureSparkContrast(page);
-      expect(ratio).toBeGreaterThanOrEqual(4.5);
-    });
-
     it("AC3 — Tab order still holds in dark mode (search -> card -> card)", async () => {
       await page.locator("#q").focus();
       await page.keyboard.press("Tab");
@@ -659,7 +493,7 @@ describe.skipIf(!chromiumAvailable)("viewer chrome — axe-core scan (empty mani
     server = serveDir(root);
     port = await listen(server);
     ({ context, page } = await newPage());
-    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.goto(`http://127.0.0.1:${port}/?route=browse`);
     await page.waitForSelector(".ds-empty", { timeout: 5_000 });
   }, 30_000);
 

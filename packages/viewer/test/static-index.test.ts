@@ -38,15 +38,35 @@ describe("static/index.html (AC1)", () => {
     expect(doc.querySelector("header")).not.toBeNull();
   });
 
+  it("exposes the persistent three-route shell with correct landmarks", () => {
+    expect(doc.querySelectorAll("header")).toHaveLength(1);
+    expect(doc.querySelector('nav[aria-label="Primary"]')).not.toBeNull();
+    expect(
+      [...doc.querySelectorAll("[data-route-link]")].slice(0, 3).map((link) => link.textContent),
+    ).toEqual(["Generate", "Browse", "Review"]);
+  });
+
+  it("puts the labeled Generate prompt before selectors and submit in DOM order", () => {
+    const controls = [
+      ...doc.querySelectorAll(
+        "#generate-form textarea, #generate-form select, #generate-form button",
+      ),
+    ];
+    expect(controls[0]?.id).toBe("generate-prompt");
+    expect(doc.querySelector('label[for="generate-prompt"]')).not.toBeNull();
+    expect(doc.querySelector("#generate-error[role='alert']")).not.toBeNull();
+    expect(doc.querySelector("#app-status[aria-live='polite']")).not.toBeNull();
+  });
+
   it("has a search input #q", () => {
     const q = doc.querySelector("#q") as HTMLInputElement | null;
     expect(q).not.toBeNull();
     expect(q?.tagName).toBe("INPUT");
   });
 
-  it('has a <main id="grid">', () => {
-    const main = doc.querySelector("main#grid");
-    expect(main).not.toBeNull();
+  it("has exactly one main region containing the grid", () => {
+    expect(doc.querySelectorAll("main")).toHaveLength(1);
+    expect(doc.querySelector("main #grid")).not.toBeNull();
   });
 
   it("loads viewer.css and viewer.js by relative path", () => {
@@ -94,8 +114,8 @@ describe("static/index.html (AC1)", () => {
     // AC6: "Reload count shown in viewer header for debugging (collapsible)."
     // A native <details> makes it collapsible with zero JS; #hmr-count is the
     // live read-out viewer.js's bumpReloadCounter writes into.
-    const meter = doc.querySelector("header details.hmr-meter");
-    expect(meter, "collapsible <details> HMR meter in the header").not.toBeNull();
+    const meter = doc.querySelector("#browse-view details.hmr-meter");
+    expect(meter, "collapsible <details> HMR meter in Browse").not.toBeNull();
     expect(
       meter?.querySelector("summary"),
       "the <details> needs a <summary> to toggle",
@@ -127,38 +147,31 @@ describe("static/viewer.css (AC7)", () => {
     expect(css.replace(/\s+/g, " ")).toMatch(/display:\s*grid/);
   });
 
+  it("provides 44px controls, a visible focus ring, responsive reflow, and reduced motion", () => {
+    expect(css).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--color-focus\)/s);
+    expect(css).toMatch(/\.conjure-button\s*\{[^}]*min-height:\s*44px/s);
+    expect(css).toMatch(/@media\s*\(max-width:\s*1099px\)/);
+    expect(css).toMatch(/@media\s*\(max-width:\s*719px\)/);
+    expect(css).toMatch(
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?\.generate-progress__skeleton\s*\{[^}]*animation:\s*none/s,
+    );
+  });
+
   it("uses a fixed minimum for the nested viewer instead of viewport-relative height", () => {
     const rule = /\.ds-viewer-embed\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(rule).toMatch(/min-height:\s*\d+px/);
     expect(rule).not.toMatch(/\b(?:vh|dvh|svh|lvh)\b/);
   });
 
-  it("identity rule — the clay accent is CONSUMED only on the wordmark spark", () => {
-    // The genie identity contract (tokens.css): the clay/gilt accent marks
-    // generate/refine moments ONLY; structural chrome stays ink/neutral. This
-    // is a *browse* surface, so its single sanctioned accent touch is the
-    // wordmark spark. A regression that paints a border/heading/pill clay would
-    // add another `color: var(--color-accent…)` consumer and trip this guard.
-    //
-    // We count CONSUMERS (`var(--color-accent…)` reads — this also matches
-    // `--color-accent-2`, the "text-safe clay", since `\b` fires at the
-    // `t`/`-` boundary regardless of what follows), not the token
-    // DEFINITIONS (`--color-accent: …` / `--color-accent-2: …` in :root /
-    // dark mode), so redefining either token per-scheme never trips it.
-    const consumers = css.match(/var\(\s*--color-accent\b/g) ?? [];
-    expect(consumers.length).toBe(1);
+  it("identity rule — structural navigation never consumes clay", () => {
+    const navRule = /\.app-nav(?:__link)?[^{]*\{[^}]*\}/g;
+    const structuralRules = css.match(navRule)?.join("\n") ?? "";
+    expect(structuralRules).not.toMatch(/--color-accent/);
 
-    // And that one consumer is the spark rule — using `--color-accent-2`
-    // (M4-09/DRO-271), NOT the bare `--color-accent`. `--color-accent` is
-    // only 3.05:1 on paper (below the 4.5:1 AA body-text bar); design.md's
-    // own **clay-text rule** says clay carried by body-size TEXT (as opposed
-    // to a button/pill FILL) always renders in `--color-accent-2` (4.62:1
-    // light / 5.27:1 dark) instead — exactly what every bare "✦" already
-    // does across the design-6 mocks (ref-primitives.svg, ref-genie-card.svg)
-    // outside a button chip. This changes no identity, only which clay token
-    // small clay text points at.
-    const sparkRule = /\.wordmark__spark\s*\{[^}]*color:\s*var\(--color-accent-2\)[^}]*\}/;
-    expect(css).toMatch(sparkRule);
+    expect(css).toMatch(/\.conjure-button\s*\{[^}]*background:\s*var\(--color-accent\)[^}]*\}/s);
+    expect(css).toMatch(
+      /\.generate-error\s*\{[^}]*border-left:\s*3px solid var\(--color-accent\)[^}]*\}/s,
+    );
   });
 
   it("a11y — overrides --color-ink-3 below the design token's failing 55% lightness", () => {

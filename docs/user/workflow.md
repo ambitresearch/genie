@@ -11,6 +11,15 @@ the operator-owned library. `create_kit` scaffolds a new kit under `GENIE_KITS_R
 OpenAI-compatible endpoint, validates the structured reply, and returns proposed files.
 It does not persist them.
 
+In an MCP-Apps-capable host, open `ui://genie/grid` and use the **Generate** tab. The viewer
+loads editable UI kits through `list_kits`, invokes `conjure` through the host tool bridge,
+and opens the validated result as a session-only `draft #N` under **Review**. Generating a
+draft never calls `plan`, `write_files`, or another persistence path.
+
+The same shell remains available from localhost or `file://`, but Generate is intentionally
+read-only there: browsers do not receive model credentials or a direct model endpoint. Use
+the registered genie MCP server in your coding host to Conjure.
+
 `refine` reads an existing component from a kit, applies a free-form change through the
 same generation/validation path, and returns updated files plus a diff. It also does not
 persist them.
@@ -30,6 +39,13 @@ The plan guard rejects expired plans, missing plans, and paths outside the plan'
 MCP-Apps host can render the grid inline. Local stdio hosts without inline support can
 open the standalone viewer. HTTP defaults to remote preview locality and never opens a
 browser on the server machine.
+
+### Viewer navigation
+
+The persistent **Generate · Browse · Review** navigation keeps the selected destination in
+the URL where the vehicle supports browser history. Browse continues to provide the
+searchable component grid. Review displays the current non-persisted draft; applying a draft
+still requires the explicit plan-and-write workflow below.
 
 ### Browse components
 
