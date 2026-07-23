@@ -9,6 +9,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const VIEWER_JS = readFileSync(resolve(HERE, "../static/viewer.js"), "utf8");
 const VIEWER_HTML = readFileSync(resolve(HERE, "../static/index.html"), "utf8");
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Hooks = Record<string, (...args: any[]) => any>;
 
 function loadHooks(): { hooks: Hooks; window: JSDOM["window"] } {
@@ -16,8 +17,10 @@ function loadHooks(): { hooks: Hooks; window: JSDOM["window"] } {
     runScripts: "outside-only",
     url: "https://viewer.example.test/?route=generate",
   });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (dom.window as any).__genieViewerTestHooks = {};
   dom.window.eval(VIEWER_JS);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return { hooks: (dom.window as any).__genieViewerTestHooks, window: dom.window };
 }
 
@@ -26,9 +29,11 @@ function loadShell() {
     runScripts: "outside-only",
     url: "https://viewer.example.test/?route=generate",
   });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (dom.window as any).__genieViewerTestHooks = {};
   dom.window.eval(VIEWER_JS);
   return {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     hooks: (dom.window as any).__genieViewerTestHooks as Hooks,
     window: dom.window,
     document: dom.window.document,
@@ -113,6 +118,7 @@ describe("Generate workflow state", () => {
 describe("MCP host bridge", () => {
   it("calls tools/call with exact tool arguments and resolves structured content", async () => {
     const { hooks, window } = loadHooks();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const posted: any[] = [];
     const host = { postMessage: vi.fn((message) => posted.push(message)) };
     const bridge = hooks.createHostBridge(window, host);
@@ -133,6 +139,7 @@ describe("MCP host bridge", () => {
 
     window.dispatchEvent(
       new window.MessageEvent("message", {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         source: host as any,
         data: {
           jsonrpc: "2.0",
@@ -147,7 +154,9 @@ describe("MCP host bridge", () => {
 
   it("normalizes rejected, malformed, and progress host replies", async () => {
     const { hooks, window } = loadHooks();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const posted: any[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const host = { postMessage: (message: any) => posted.push(message) };
     const progress = vi.fn();
     const bridge = hooks.createHostBridge(window, host, progress);
@@ -156,6 +165,7 @@ describe("MCP host bridge", () => {
     const malformedId = posted.at(-1).id;
     window.dispatchEvent(
       new window.MessageEvent("message", {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         source: host as any,
         data: { jsonrpc: "2.0", id: malformedId, result: { content: [] } },
       }),
@@ -166,6 +176,7 @@ describe("MCP host bridge", () => {
     const rejectedId = posted.at(-1).id;
     window.dispatchEvent(
       new window.MessageEvent("message", {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         source: host as any,
         data: { jsonrpc: "2.0", id: rejectedId, error: { message: "Endpoint timed out" } },
       }),
@@ -174,6 +185,7 @@ describe("MCP host bridge", () => {
 
     window.dispatchEvent(
       new window.MessageEvent("message", {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         source: host as any,
         data: {
           jsonrpc: "2.0",
@@ -237,8 +249,10 @@ describe("Generate surface DOM states", () => {
     const conjure = new Promise((resolve) => {
       resolveConjure = resolve;
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const calls: Array<{ name: string; args: any }> = [];
     const bridge = {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       callTool: vi.fn((name: string, args: any) => {
         calls.push({ name, args });
         if (name === "mcp__genie__list_kits") {
