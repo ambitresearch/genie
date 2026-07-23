@@ -169,13 +169,13 @@
       <section id="review-view" class="route-view review-view" data-route-view="review" hidden>
         <p class="eyebrow">Review</p>
         <div id="review-empty" class="review-empty">
-          <h1>No draft to review</h1>
+          <h1 id="review-empty-heading" tabindex="-1">No draft to review</h1>
           <p>Conjure a component first. Review and Apply arrive in the next workflow milestone.</p>
           <a href="?route=generate" data-route-link="generate">Go to Generate</a>
         </div>
         <article id="draft-review" class="draft-review" hidden>
           <p id="draft-label" class="draft-label"></p>
-          <h1 id="draft-name"></h1>
+          <h1 id="draft-name" tabindex="-1"></h1>
           <p>This validated draft is held only in this viewer session. Nothing has been written.</p>
           <dl id="draft-summary"></dl>
         </article>

@@ -103,7 +103,6 @@
    * `viewer.js` stays byte-identical across all three vehicles (RFC G-5).
    */
   var MANIFEST_ELEMENT_ID = "manifest";
-  var TOOL_RESULT_SHELL_META = "genie-tool-result-shell";
   var TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY = "genie/embeddedManifest";
   var MCP_APP_PROTOCOL_VERSION = "2026-01-26";
   var mcpAppRequestId = 0;
@@ -583,6 +582,12 @@
       typeof win.addEventListener !== "function" ||
       typeof win.parent.postMessage !== "function"
     ) {
+      // No host frame to hand-shake with. Resolve the shell out of its pending
+      // state so a caller that started it as `undefined` (the inline tier) can't
+      // get stranded showing a spinner forever — mirrors the old non-host path
+      // that went straight to `initProductShell(doc, null)` (immediate
+      // unavailable). Embedded frames never reach here (parent !== win).
+      onUnavailable();
       return function () {};
     }
 
@@ -883,7 +888,7 @@
     var hostAvailable = Boolean(bridge);
     var hostPending = bridge === undefined;
 
-    function renderRoute(route, focusPrompt) {
+    function renderRoute(route, focusView) {
       var selected = normalizeRoute(route);
       var views = doc.querySelectorAll("[data-route-view]");
       for (var i = 0; i < views.length; i++) {
@@ -897,12 +902,28 @@
           links[j].removeAttribute("aria-current");
         }
       }
-      if (selected === "generate" && focusPrompt) prompt.focus();
+      // On an explicit route change, move keyboard focus into the newly shown
+      // view so the next action starts predictably there — and, critically, so
+      // focus is never left inside a now-hidden subtree (e.g. the Conjure button
+      // after routing to Review on success). Skipped on initial load/popstate so
+      // we don't steal focus the user didn't ask to move.
+      if (focusView) {
+        if (selected === "generate") {
+          prompt.focus();
+        } else if (selected === "review") {
+          var draftReview = doc.getElementById("draft-review");
+          var heading =
+            draftReview && !draftReview.hidden
+              ? doc.getElementById("draft-name")
+              : doc.getElementById("review-empty-heading");
+          if (heading) heading.focus();
+        }
+      }
     }
 
-    function navigate(route, replace, focusPrompt) {
+    function navigate(route, replace, focusView) {
       writeRoute(win, route, replace);
-      renderRoute(route, focusPrompt);
+      renderRoute(route, focusView);
     }
 
     function updateGate() {
@@ -988,7 +1009,7 @@
         var draft = drafts.add(result);
         renderDraft(draft);
         status.textContent = "Generated " + result.componentName + ", " + draft.label + ".";
-        navigate("review", false, false);
+        navigate("review", false, true);
       } catch (error) {
         showError(error);
       } finally {
@@ -1001,7 +1022,7 @@
         spark.setAttribute("aria-hidden", "true");
         spark.textContent = "✦";
         submit.append(spark, " Conjure");
-        if (!errorBox.hidden) progress.hidden = true;
+        progress.hidden = true;
         updateGate();
       }
     }
@@ -1084,6 +1105,15 @@
       void submitGenerate(event);
     });
     retry.addEventListener("click", function () {
+      // The one retry button covers two distinct failures. If kit discovery is
+      // what failed, no kit is selected and submitGenerate() early-returns —
+      // leaving the user stuck without a reload. So when the host is present but
+      // no kits loaded, retry discovery; otherwise retry the generation.
+      if (bridge && kits.length === 0) {
+        errorBox.hidden = true;
+        void loadKits();
+        return;
+      }
       void submitGenerate();
     });
     var initialRoute = normalizeRoute(new win.URL(win.location.href).searchParams.get("route"));
@@ -1749,27 +1779,32 @@
         } catch {
           /* live refresh is an enhancement, never a boot blocker */
         }
-        if (doc.querySelector(`meta[name="${TOOL_RESULT_SHELL_META}"]`)) {
-          var shellController = initProductShell(doc, undefined);
-          initMcpApp(doc, {
-            onTeardown: teardownHmr,
-            onReady: function (bridge) {
-              if (shellController && shellController.setBridge) shellController.setBridge(bridge);
-            },
-            onUnavailable: function () {
-              if (shellController && shellController.setUnavailable) {
-                shellController.setUnavailable();
-              }
-            },
-            onProgress: function (message) {
-              if (shellController && shellController.showProgress) {
-                shellController.showProgress(message);
-              }
-            },
-          });
-        } else {
-          initProductShell(doc, null);
-        }
+        // The inlined tier IS the embedded MCP-App surface, so the postMessage
+        // host bridge applies to EVERY inlined resource — not only the bare
+        // tool-result shell. Query-bearing `ui://` resources (e.g. the preview
+        // URI carrying `kitId`) are intentionally emitted WITHOUT the
+        // tool-result-shell marker (grid-resource.ts), yet still use the MCP-App
+        // MIME type and still run inside a host frame. Gating the bridge on that
+        // marker wrongly flagged their Generate tab "Host unavailable". Start the
+        // shell in the pending state and let initMcpApp resolve ready/unavailable
+        // from the actual host handshake.
+        var shellController = initProductShell(doc, undefined);
+        initMcpApp(doc, {
+          onTeardown: teardownHmr,
+          onReady: function (bridge) {
+            if (shellController && shellController.setBridge) shellController.setBridge(bridge);
+          },
+          onUnavailable: function () {
+            if (shellController && shellController.setUnavailable) {
+              shellController.setUnavailable();
+            }
+          },
+          onProgress: function (message) {
+            if (shellController && shellController.showProgress) {
+              shellController.showProgress(message);
+            }
+          },
+        });
       } catch (err) {
         var inlineDetail = err && err.message ? err.message : String(err);
         renderError(doc, grid, inlineDetail);

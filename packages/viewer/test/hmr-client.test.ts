@@ -818,6 +818,47 @@ describe("initMcpApp — standard tool result delivery", () => {
 
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(before);
   });
+
+  it("boot inits the host bridge for an inlined resource that lacks the tool-result-shell marker", async () => {
+    // Query-bearing `ui://` resources (e.g. the preview URI with ?kitId=…) are
+    // emitted WITHOUT the tool-result-shell marker (grid-resource.ts) yet still
+    // run inside an MCP-App host frame. The bridge must init regardless of the
+    // marker — otherwise their Generate tab is wrongly flagged "Host unavailable".
+    const { hooks, window, document } = setup({ version: 1, groups: [], components: [] });
+    const manifestNode = document.createElement("script");
+    manifestNode.id = "manifest";
+    manifestNode.type = "application/json";
+    manifestNode.textContent = JSON.stringify(twoCardManifest());
+    document.head.appendChild(manifestNode);
+    // NB: no genie-tool-result-shell meta node this time.
+    const parent = { postMessage: vi.fn() };
+    Object.defineProperty(window, "parent", { value: parent, configurable: true });
+
+    await hooks.boot(document, vi.fn());
+
+    // The MCP-App handshake fired: boot posted an `initialize` to the host.
+    const initialize = parent.postMessage.mock.calls[0]?.[0] as
+      | { method?: string; id?: number }
+      | undefined;
+    expect(initialize?.method).toBe("ui/initialize");
+    expect(typeof initialize?.id).toBe("number");
+  });
+
+  it("resolves onUnavailable immediately when there is no host frame (win.parent === win)", () => {
+    const { hooks, window, document } = setup({ version: 1, groups: [], components: [] });
+    // Top-level render: a window is its own parent, so no MCP-App host handshake
+    // is possible. The bridge must resolve the pending shell to unavailable
+    // rather than returning a silent no-op that strands it spinning forever.
+    Object.defineProperty(window, "parent", { value: window, configurable: true });
+    const onUnavailable = vi.fn();
+    const onReady = vi.fn();
+
+    const teardown = hooks.initMcpApp(document, { win: window, onUnavailable, onReady });
+
+    expect(onUnavailable).toHaveBeenCalledTimes(1);
+    expect(onReady).not.toHaveBeenCalled();
+    expect(typeof teardown).toBe("function");
+  });
 });
 
 describe("initHmr — WebSocket transport (AC2/AC5)", () => {

@@ -333,4 +333,81 @@ describe("Generate surface DOM states", () => {
     await settle();
     expect(attempts).toBe(2);
   });
+
+  it("retries kit discovery — not generation — when list_kits was what failed", async () => {
+    const { hooks, document } = loadShell();
+    let listKitsCalls = 0;
+    let conjureCalls = 0;
+    const bridge = {
+      callTool: (name: string) => {
+        if (name === "mcp__genie__list_kits") {
+          listKitsCalls += 1;
+          // First discovery fails; the retry succeeds with a real kit.
+          if (listKitsCalls === 1) {
+            return Promise.reject(new Error("The host returned malformed UI-kit data."));
+          }
+          return Promise.resolve({
+            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+          });
+        }
+        conjureCalls += 1;
+        return Promise.resolve({});
+      },
+      destroy: () => {},
+    };
+    hooks.initProductShell(document, bridge);
+    await settle();
+
+    // Discovery failed: error is shown, no kit is selectable.
+    expect(document.getElementById("generate-error")?.hidden).toBe(false);
+    expect((document.getElementById("kit-select") as HTMLSelectElement).value).toBe("");
+
+    // Retry must re-run discovery (not submitGenerate, which would no-op with no kit).
+    (document.getElementById("generate-retry") as HTMLButtonElement).click();
+    await settle();
+
+    expect(listKitsCalls).toBe(2);
+    expect(conjureCalls).toBe(0);
+    expect((document.getElementById("kit-select") as HTMLSelectElement).value).toBe("acme-kit");
+    expect(document.getElementById("generate-error")?.hidden).toBe(true);
+  });
+
+  it("moves focus to the Review heading on a successful route change, out of the hidden Generate subtree", async () => {
+    const { hooks, window, document } = loadShell();
+    let resolveConjure: (value: unknown) => void = () => {};
+    const conjure = new Promise((resolve) => {
+      resolveConjure = resolve;
+    });
+    const bridge = {
+      callTool: (name: string) => {
+        if (name === "mcp__genie__list_kits") {
+          return Promise.resolve({
+            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+          });
+        }
+        return conjure;
+      },
+      destroy: () => {},
+    };
+    hooks.initProductShell(document, bridge);
+    await settle();
+    const prompt = document.getElementById("generate-prompt") as HTMLTextAreaElement;
+    prompt.value = "Build a compact status card";
+    prompt.dispatchEvent(new window.Event("input", { bubbles: true }));
+    const button = document.getElementById("conjure-button") as HTMLButtonElement;
+    button.focus();
+    button.click();
+    resolveConjure({
+      componentName: "Status card",
+      group: "surfaces",
+      files: [{ path: "components/StatusCard.tsx", content: "export default null" }],
+      manifestEntry: { name: "Status card" },
+      usage: { inputTokens: 12, outputTokens: 20 },
+    });
+    await settle();
+
+    // Focus landed on the rendered draft heading, never left on the now-hidden button.
+    expect(document.activeElement?.id).toBe("draft-name");
+    expect(document.getElementById("draft-name")?.textContent).toBe("Status card");
+  });
 });
