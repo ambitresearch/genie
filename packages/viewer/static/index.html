@@ -161,8 +161,25 @@
             </p>
           </details>
         </div>
-        <div id="grid" class="app-grid" aria-live="polite">
-          <!-- viewer.js renders group sections + cards here. -->
+        <!--
+          M7-02 (#234) — Browse UI-kit workbench. `#browse-workbench` holds
+          the 240px tree (left) + component-detail stage (right); it is
+          populated by `initBrowseController` in viewer.js from the SAME
+          compiled manifest `#grid` already fetches — no parallel catalog
+          (Decision #1). `#grid` itself is left in place, hidden, for the
+          embedded `ui://genie/grid` MCP-Apps tool-result path
+          (`renderToolResult`), which is UNCHANGED by this issue (AC12: no
+          new embedded fetch/API). Standalone/localhost Browse renders into
+          `#browse-workbench` instead.
+        -->
+        <div id="browse-workbench" class="browse-workbench">
+          <nav id="browse-tree" class="tree-sidebar" aria-label="UI kit tree navigation"></nav>
+          <div id="browse-detail" class="detail-panel" aria-live="polite">
+            <p class="browse-detail__placeholder">Select a component to see its details.</p>
+          </div>
+        </div>
+        <div id="grid" class="app-grid" aria-live="polite" hidden>
+          <!-- viewer.js renders group sections + cards here (embedded tier). -->
         </div>
       </section>
 

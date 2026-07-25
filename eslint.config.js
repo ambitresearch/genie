@@ -84,6 +84,8 @@ export default tseslint.config(
         WebSocket: "readonly",
         setInterval: "readonly",
         clearInterval: "readonly",
+        // M7-02 (#234) — Browse deep-link selection serialize/parse.
+        URLSearchParams: "readonly",
       },
     },
   },

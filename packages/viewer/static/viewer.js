@@ -1187,6 +1187,803 @@
     grid.appendChild(box);
   }
 
+  // ── Browse UI-kit workbench (M7-02 / #234) ─────────────────────────────────
+  //
+  // Turns the M4 grid into a navigable tree + component-detail workbench,
+  // reusing the same manifest, iframe sandbox, and HMR machinery above.
+  // Everything here is additive: `renderGrid`/`applyFilter`/HMR are untouched,
+  // and this module only reads the manifest — it never mutates it (AC2/AC3).
+  //
+  // Design reference: `docs/designs/design-6/01-ui-kit-browser.svg` +
+  // `design.md` §§7, 11-14. Decision #5 (issue #234): the shipped manifest
+  // carries NO variant concept (`store/manifest.ts` / `manifest/compiler.ts`
+  // have no `variant` field) — so `computeVariantTabs` below deliberately
+  // renders Default-only with Hover/Focus/Disabled declared-but-disabled,
+  // rather than inventing a new schema.
+
+  /**
+   * Case-insensitive substring match against a component's name AND group —
+   * the same "supported metadata" search scope the product-behavior section
+   * of #234 describes. Pure; never mutates its inputs.
+   *
+   * @param {object} component
+   * @param {string} needle — already-lowercased query.
+   * @returns {boolean}
+   */
+  function componentMatchesSearch(component, needle) {
+    if (!needle) return true;
+    var name = ((component && component.name) || "").toLowerCase();
+    var group = ((component && component.group) || "").toLowerCase();
+    var tags = Array.isArray(component && component.tags) ? component.tags : [];
+    if (name.indexOf(needle) !== -1 || group.indexOf(needle) !== -1) return true;
+    for (var i = 0; i < tags.length; i++) {
+      if (typeof tags[i] === "string" && tags[i].toLowerCase().indexOf(needle) !== -1) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Project a compiled manifest into the Browse tree shape: groups (in the
+   * manifest's own deterministic order, via {@link computeGroupOrder}), each
+   * holding its matching components, plus overall counts and the two
+   * distinct "nothing to show" flags AC4 requires:
+   *   - `isEmptyKit`  — the KIT itself has zero components (no search applied
+   *     or not — an empty kit is empty regardless of the query).
+   *   - `isNoMatch`   — the kit has components, but the current `search`
+   *     matched none of them.
+   * Never mutates `manifest`.
+   *
+   * @param {object} manifest
+   * @param {string=} search
+   * @returns {{ groups: Array<{name:string,count:number,components:Array<object>}>, totalCount: number, isEmptyKit: boolean, isNoMatch: boolean }}
+   */
+  function projectManifestToTree(manifest, search) {
+    var components = (manifest && manifest.components) || [];
+    var isEmptyKit = components.length === 0;
+    var needle = (search || "").trim().toLowerCase();
+
+    var grouped = groupByGroup(components);
+    var order = computeGroupOrder(manifest && manifest.groups, grouped);
+
+    var groups = [];
+    var totalCount = 0;
+    for (var i = 0; i < order.length; i++) {
+      var groupName = order[i];
+      var cards = grouped.get(groupName) || [];
+      var matched = [];
+      for (var j = 0; j < cards.length; j++) {
+        if (componentMatchesSearch(cards[j], needle)) {
+          matched.push({
+            componentName: cards[j].name,
+            group: cards[j].group,
+            path: cards[j].path,
+            sourcePath: cards[j].sourcePath,
+            viewport: cards[j].viewport,
+            hash: cards[j].hash,
+            lastModified: cards[j].lastModified,
+            subtitle: cards[j].subtitle,
+            tags: cards[j].tags,
+          });
+        }
+      }
+      if (matched.length === 0) continue;
+      groups.push({ name: groupName, count: matched.length, components: matched });
+      totalCount += matched.length;
+    }
+
+    return {
+      groups: groups,
+      totalCount: totalCount,
+      isEmptyKit: isEmptyKit,
+      // A kit with data but a query that hid everything is a distinct state
+      // from "the kit is empty" (AC4) — never true when the kit itself is
+      // empty (that's `isEmptyKit`'s job) or when there is no active query.
+      isNoMatch: !isEmptyKit && totalCount === 0 && needle !== "",
+    };
+  }
+
+  /**
+   * Resolve a `{kitId, group, componentName}` selection against a projected
+   * tree by STABLE IDENTITY (never DOM/array index — AC3/Decision #7).
+   * `kitId` is accepted for the caller's bookkeeping (a future multi-kit
+   * host) but the current single-kit tree only disambiguates on
+   * `group + componentName`, matching the compiled manifest's own identity.
+   *
+   * @param {ReturnType<typeof projectManifestToTree>} tree
+   * @param {{kitId?: string, group?: string, componentName?: string}} selection
+   * @returns {{found: boolean, component: object|null}}
+   */
+  function resolveSelection(tree, selection) {
+    if (!selection || !selection.group || !selection.componentName) {
+      return { found: false, component: null };
+    }
+    var groups = (tree && tree.groups) || [];
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].name !== selection.group) continue;
+      var components = groups[i].components || [];
+      for (var j = 0; j < components.length; j++) {
+        if (components[j].componentName === selection.componentName) {
+          return { found: true, component: components[j] };
+        }
+      }
+    }
+    return { found: false, component: null };
+  }
+
+  /**
+   * A UI-kit change always invalidates a prior selection's identity (AC/
+   * product-behavior: "changing UI kit clears an invalid prior component
+   * selection"). Returns `null` unconditionally — callers choose the new
+   * default (first valid component, or none) deterministically themselves;
+   * this helper only guarantees the OLD identity is never silently kept.
+   *
+   * @param {ReturnType<typeof projectManifestToTree>} _tree — the NEW kit's tree.
+   * @param {{kitId?: string, group?: string, componentName?: string}} _priorSelection
+   * @returns {null}
+   */
+  function selectionForKitChange(_tree, _priorSelection) {
+    return null;
+  }
+
+  /**
+   * Serialize a selection into `URLSearchParams`-compatible query params —
+   * the deep-link contract (Decision #7): `kitId`, `group`, `componentName`
+   * all survive refresh without relying on array position.
+   *
+   * @param {{kitId?: string, group?: string, componentName?: string}} selection
+   * @returns {string}
+   */
+  function serializeSelection(selection) {
+    var Params =
+      typeof window !== "undefined" && typeof window.URLSearchParams === "function"
+        ? window.URLSearchParams
+        : typeof URLSearchParams !== "undefined"
+          ? URLSearchParams
+          : null;
+    if (!Params) return "";
+    var params = new Params();
+    if (selection && selection.kitId) params.set("kitId", selection.kitId);
+    if (selection && selection.group) params.set("group", selection.group);
+    if (selection && selection.componentName) params.set("componentName", selection.componentName);
+    return params.toString();
+  }
+
+  /**
+   * Parse a deep-link's `URLSearchParams` back into a selection, or `null`
+   * when `group`/`componentName` (the two identity-bearing fields) are not
+   * BOTH present — a partial link is not a valid selection (AC4's
+   * "unknown selection falls back to a controlled not-found state").
+   *
+   * @param {URLSearchParams} params
+   * @returns {{kitId: string, group: string, componentName: string}|null}
+   */
+  function parseSelection(params) {
+    var group = params.get("group");
+    var componentName = params.get("componentName");
+    if (!group || !componentName) return null;
+    return {
+      kitId: params.get("kitId") || "",
+      group: group,
+      componentName: componentName,
+    };
+  }
+
+  /** Declared variant tabs, in Design 6's fixed order. */
+  var VARIANT_TAB_ORDER = ["default", "hover", "focus", "disabled"];
+
+  /**
+   * Decision #5 — the compiled manifest carries no variant concept today.
+   * Returns the four Design-6 tabs with ONLY `default` marked available;
+   * the rest are declared-but-disabled with an accessible reason, never a
+   * fabricated rendered state (AC8). If a future manifest version adds a
+   * `variants` array, this is the single place that would start reading it.
+   *
+   * @param {object} component
+   * @returns {Array<{id: string, label: string, available: boolean, reason?: string}>}
+   */
+  function computeVariantTabs(component) {
+    var declared =
+      component && Array.isArray(component.variants)
+        ? component.variants.filter(function (v) {
+            return typeof v === "string";
+          })
+        : [];
+    return VARIANT_TAB_ORDER.map(function (id) {
+      var label = id.charAt(0).toUpperCase() + id.slice(1);
+      if (id === "default" || declared.indexOf(id) !== -1) {
+        return { id: id, label: label, available: true };
+      }
+      return {
+        id: id,
+        label: label,
+        available: false,
+        reason: "No variant data available for " + label + ".",
+      };
+    });
+  }
+
+  /** Default truncation length (chars) for the source panel (AC10). */
+  var SOURCE_TRUNCATE_LENGTH = 20_000;
+
+  /**
+   * Prepare raw source text for safe, plain-text display: never executed,
+   * never `innerHTML`'d (callers must use `textContent`), and truncated
+   * progressively for large files rather than rendering megabytes inline.
+   * Non-string input (a failed/absent read) degrades to an empty, non-
+   * truncated result rather than throwing (AC16 — a hostile/malformed read
+   * must not take the panel down).
+   *
+   * @param {unknown} raw
+   * @param {number=} limit
+   * @returns {{text: string, truncated: boolean, totalLength: number}}
+   */
+  function sanitizeSourceForDisplay(raw, limit) {
+    var max = typeof limit === "number" && limit > 0 ? limit : SOURCE_TRUNCATE_LENGTH;
+    if (typeof raw !== "string") return { text: "", truncated: false, totalLength: 0 };
+    if (raw.length <= max) return { text: raw, truncated: false, totalLength: raw.length };
+    return { text: raw.slice(0, max), truncated: true, totalLength: raw.length };
+  }
+
+  /**
+   * Build the exact context object Refine hands to Review (AC11): the
+   * selected kit/group/component/variant, and nothing else — no mutation,
+   * no write. `viewer.js` has no Review-side consumer yet beyond the M7-01
+   * shell's empty-draft view (M7-03 is the actual apply workflow); this is a
+   * pure, independently-testable data-shaping step so that wiring is a small
+   * final piece rather than an untested one.
+   *
+   * @param {string} kitId
+   * @param {object} component
+   * @param {string} variant
+   * @returns {{kitId: string, group: string, componentName: string, variant: string}}
+   */
+  function buildRefineContext(kitId, component, variant) {
+    return {
+      kitId: kitId || "",
+      group: (component && component.group) || "",
+      componentName: (component && component.componentName) || "",
+      variant: variant || "default",
+    };
+  }
+
+  /**
+   * Render the 240px Browse tree: kit header, one labelled section per group
+   * with a live count, and keyboard-operable `role="treeitem"` rows (AC/a11y:
+   * arrow-key roving tabindex, Home/End, Enter/Space to select). Distinguishes
+   * the three "nothing selected yet" states (AC4): empty kit (CTA to
+   * Generate), no-filter-match (scoped Clear-filter action), and the normal
+   * populated tree.
+   *
+   * @param {Document} doc
+   * @param {HTMLElement} container
+   * @param {ReturnType<typeof projectManifestToTree>} tree
+   * @param {string|null} activeSearch — current query, for the no-match Clear action.
+   * @param {(selection: {group:string, componentName:string}) => void=} onSelect
+   * @param {{group:string, componentName:string}|null=} selected
+   */
+  function renderBrowseTree(doc, container, tree, activeSearch, onSelect, selected) {
+    container.replaceChildren();
+    var select = typeof onSelect === "function" ? onSelect : function () {};
+
+    if (tree.isEmptyKit) {
+      var emptyBox = doc.createElement("div");
+      emptyBox.className = "browse-tree__empty";
+      var heading = doc.createElement("p");
+      heading.textContent = "No components yet — Conjure your first component.";
+      var link = doc.createElement("a");
+      link.setAttribute("href", "?route=generate");
+      link.setAttribute("data-route-link", "generate");
+      link.textContent = "Go to Generate";
+      emptyBox.append(heading, link);
+      container.appendChild(emptyBox);
+      return;
+    }
+
+    if (tree.isNoMatch) {
+      var noMatchBox = doc.createElement("div");
+      noMatchBox.className = "browse-tree__no-match";
+      var noMatchMsg = doc.createElement("p");
+      noMatchMsg.textContent = 'No components match "' + (activeSearch || "") + '".';
+      var clear = doc.createElement("button");
+      clear.type = "button";
+      clear.setAttribute("data-clear-filter", "true");
+      clear.textContent = "Clear filter";
+      noMatchBox.append(noMatchMsg, clear);
+      container.appendChild(noMatchBox);
+      return;
+    }
+
+    var treeEl = doc.createElement("div");
+    treeEl.setAttribute("role", "tree");
+    treeEl.setAttribute("aria-label", "UI kit components");
+    treeEl.className = "browse-tree";
+
+    var allItems = [];
+    var firstTabbableSet = false;
+    for (var g = 0; g < tree.groups.length; g++) {
+      var group = tree.groups[g];
+      var section = doc.createElement("div");
+      section.className = "browse-tree__group";
+      var label = doc.createElement("p");
+      label.className = "browse-tree__group-label";
+      label.textContent = group.name + " · " + group.count;
+      section.appendChild(label);
+
+      for (var c = 0; c < group.components.length; c++) {
+        var component = group.components[c];
+        var item = doc.createElement("div");
+        item.setAttribute("role", "treeitem");
+        item.className = "browse-tree__item";
+        item.textContent = component.componentName;
+        var isSelected =
+          selected && selected.group === group.name && selected.componentName === component.componentName;
+        item.setAttribute("aria-selected", isSelected ? "true" : "false");
+        if (isSelected) item.classList.add("browse-tree__item--active");
+        // Roving tabindex (a11y): exactly one item is in Tab order at a time.
+        item.setAttribute("tabindex", !firstTabbableSet || isSelected ? "0" : "-1");
+        if (!firstTabbableSet || isSelected) firstTabbableSet = true;
+        item.dataset.group = group.name;
+        item.dataset.componentName = component.componentName;
+        section.appendChild(item);
+        allItems.push(item);
+      }
+      treeEl.appendChild(section);
+    }
+
+    function activate(item) {
+      select({ group: item.dataset.group, componentName: item.dataset.componentName });
+    }
+
+    function moveFocus(fromIndex, delta) {
+      if (allItems.length === 0) return;
+      var next = ((fromIndex + delta) % allItems.length + allItems.length) % allItems.length;
+      for (var i = 0; i < allItems.length; i++) allItems[i].setAttribute("tabindex", "-1");
+      allItems[next].setAttribute("tabindex", "0");
+      allItems[next].focus();
+    }
+
+    treeEl.addEventListener("keydown", function (event) {
+      var target = event.target;
+      var index = allItems.indexOf(target);
+      if (index === -1) return;
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        moveFocus(index, 1);
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        moveFocus(index, -1);
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        moveFocus(0, 0);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        moveFocus(allItems.length - 1, 0);
+      } else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        activate(target);
+      }
+    });
+    treeEl.addEventListener("click", function (event) {
+      var item = event.target && event.target.closest && event.target.closest('[role="treeitem"]');
+      if (item) activate(item);
+    });
+
+    container.appendChild(treeEl);
+  }
+
+  /**
+   * Render the component detail stage: breadcrumb, heading (with `@genie`
+   * marker ONLY when `registered`/`validated` is a proven fact, never
+   * fabricated — AC9), variant tabs (Default-only per Decision #5), the
+   * reused sandboxed preview iframe (same sandbox/lazy/CSP contract as the
+   * grid's own `createCard`), a metadata panel, a sanitized source panel, and
+   * the Refine action (disabled + explained when no MCP host bridge is
+   * present — AC13).
+   *
+   * @param {Document} doc
+   * @param {HTMLElement} container
+   * @param {{kitId: string, kitName?: string, component: object, source: string|null|undefined, hostAvailable: boolean, registered?: boolean, validated?: boolean, onRefine?: (ctx: object) => void}} state
+   */
+  function renderBrowseDetail(doc, container, state) {
+    container.replaceChildren();
+    var component = state.component;
+
+    var breadcrumb = doc.createElement("p");
+    breadcrumb.className = "browse-breadcrumb";
+    breadcrumb.textContent =
+      (state.kitName || state.kitId || "kit") + " / " + component.group + " / " + component.componentName;
+    container.appendChild(breadcrumb);
+
+    var heading = doc.createElement("div");
+    heading.className = "browse-detail__heading";
+    var titleWrap = doc.createElement("div");
+    if (state.registered) {
+      var marker = doc.createElement("span");
+      marker.className = "genie-marker";
+      marker.setAttribute("aria-label", "Genie synced");
+      marker.textContent = "@genie";
+      titleWrap.appendChild(marker);
+      titleWrap.appendChild(doc.createTextNode(" "));
+    }
+    var titleText = doc.createElement("span");
+    titleText.textContent = component.componentName;
+    titleWrap.appendChild(titleText);
+    heading.appendChild(titleWrap);
+
+    var refineButton = doc.createElement("button");
+    refineButton.type = "button";
+    refineButton.className = "btn-clay";
+    refineButton.setAttribute("data-refine-action", "true");
+    refineButton.textContent = "Refine →";
+    if (!state.hostAvailable) {
+      refineButton.disabled = true;
+      refineButton.setAttribute("aria-disabled", "true");
+    }
+    heading.appendChild(refineButton);
+    container.appendChild(heading);
+
+    if (!state.hostAvailable) {
+      var refineExplain = doc.createElement("p");
+      refineExplain.className = "browse-refine-explain";
+      refineExplain.textContent =
+        "Refine requires an MCP-capable host. Standalone Browse stays read-only.";
+      container.appendChild(refineExplain);
+    } else if (typeof state.onRefine === "function") {
+      refineButton.addEventListener("click", function () {
+        state.onRefine(buildRefineContext(state.kitId, component, "default"));
+      });
+    }
+
+    // Variant tabs (AC8) — Default-only per Decision #5.
+    var tabs = computeVariantTabs(component);
+    var tablist = doc.createElement("div");
+    tablist.setAttribute("role", "tablist");
+    tablist.setAttribute("aria-label", "Variants");
+    tablist.className = "variants-bar";
+    var tabButtons = [];
+    for (var t = 0; t < tabs.length; t++) {
+      var tab = tabs[t];
+      var button = doc.createElement("button");
+      button.type = "button";
+      button.setAttribute("role", "tab");
+      button.className = "variant-tab";
+      button.textContent = tab.label;
+      button.setAttribute("aria-selected", tab.id === "default" ? "true" : "false");
+      if (!tab.available) {
+        button.disabled = true;
+        button.setAttribute("aria-disabled", "true");
+        button.title = tab.reason;
+      }
+      if (tab.id === "default") button.classList.add("active");
+      tablist.appendChild(button);
+      tabButtons.push(button);
+    }
+    // Arrow-key tab behaviour (a11y AC15).
+    tablist.addEventListener("keydown", function (event) {
+      var index = tabButtons.indexOf(event.target);
+      if (index === -1) return;
+      if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+        event.preventDefault();
+        var delta = event.key === "ArrowRight" ? 1 : -1;
+        var next = ((index + delta) % tabButtons.length + tabButtons.length) % tabButtons.length;
+        tabButtons[next].focus();
+      }
+    });
+    container.appendChild(tablist);
+
+    // Preview stage — reuses the SAME sandbox contract as `createCard`.
+    var stage = doc.createElement("div");
+    stage.className = "preview-stage";
+    var label = doc.createElement("span");
+    label.className = "stage-label";
+    label.textContent = "Preview · Default";
+    stage.appendChild(label);
+
+    var iframe = doc.createElement("iframe");
+    iframe.setAttribute("sandbox", "allow-scripts");
+    iframe.setAttribute("loading", "lazy");
+    iframe.setAttribute("src", component.path || "");
+    iframe.setAttribute("title", accessibleName(component.componentName, "preview"));
+    var size = parseViewport(component.viewport);
+    if (size) {
+      iframe.setAttribute("width", String(size.width));
+      iframe.setAttribute("height", String(size.height));
+      iframe.style.aspectRatio = size.width + " / " + size.height;
+    } else {
+      iframe.setAttribute("height", String(DEFAULT_CARD_HEIGHT));
+    }
+    iframe.addEventListener("error", function () {
+      stage.classList.add("browse-preview--broken");
+      stage.replaceChildren();
+      var broken = doc.createElement("p");
+      broken.textContent = "Preview unavailable.";
+      stage.appendChild(broken);
+    });
+    stage.appendChild(iframe);
+    container.appendChild(stage);
+
+    // Metadata panel (AC9) — only real, provable facts; nothing fabricated.
+    var metadata = doc.createElement("dl");
+    metadata.className = "browse-metadata";
+    metadata.setAttribute("aria-label", "Component metadata");
+    var metaRows = [
+      ["Group", component.group],
+      ["Viewport", component.viewport],
+      ["Hash", component.hash],
+      ["Last modified", component.lastModified],
+      ["Tags", Array.isArray(component.tags) && component.tags.length ? component.tags.join(", ") : null],
+    ];
+    for (var m = 0; m < metaRows.length; m++) {
+      var value = metaRows[m][1];
+      var dt = doc.createElement("dt");
+      dt.textContent = metaRows[m][0];
+      var dd = doc.createElement("dd");
+      dd.textContent = value ? String(value) : "Not provided";
+      metadata.append(dt, dd);
+    }
+    if (state.validated) {
+      var validatedDt = doc.createElement("dt");
+      validatedDt.textContent = "Validation";
+      var validatedDd = doc.createElement("dd");
+      var badge = doc.createElement("span");
+      badge.className = "badge badge-success";
+      badge.textContent = "✓ validated";
+      validatedDd.appendChild(badge);
+      metadata.append(validatedDt, validatedDd);
+    }
+    container.appendChild(metadata);
+
+    // Source panel (AC10) — sanitized plain text, progressive truncation.
+    var sourceBox = doc.createElement("div");
+    sourceBox.className = "browse-source";
+    sourceBox.setAttribute("aria-label", "Component source");
+    if (typeof state.source === "string") {
+      var sanitized = sanitizeSourceForDisplay(state.source);
+      var pre = doc.createElement("pre");
+      pre.className = "code-box";
+      pre.textContent = sanitized.text; // textContent only — never executed.
+      sourceBox.appendChild(pre);
+      if (sanitized.truncated) {
+        var expand = doc.createElement("button");
+        expand.type = "button";
+        expand.setAttribute("data-expand-source", "true");
+        expand.textContent = "Show more";
+        expand.addEventListener("click", function () {
+          pre.textContent = state.source;
+          expand.hidden = true;
+        });
+        sourceBox.appendChild(expand);
+      }
+      var copyButton = doc.createElement("button");
+      copyButton.type = "button";
+      copyButton.setAttribute("data-copy-source", "true");
+      copyButton.textContent = "Copy";
+      var copyStatus = doc.createElement("span");
+      copyStatus.setAttribute("role", "status");
+      copyStatus.setAttribute("aria-live", "polite");
+      copyStatus.className = "browse-source__copy-status";
+      copyButton.addEventListener("click", function () {
+        var clipboard = doc.defaultView && doc.defaultView.navigator && doc.defaultView.navigator.clipboard;
+        var reportSuccess = function () {
+          copyStatus.textContent = "Copied.";
+        };
+        var reportFailure = function () {
+          copyStatus.textContent = "Copy failed.";
+        };
+        if (clipboard && typeof clipboard.writeText === "function") {
+          clipboard.writeText(state.source).then(reportSuccess, reportFailure);
+        } else {
+          reportFailure();
+        }
+      });
+      sourceBox.append(copyButton, copyStatus);
+    } else {
+      var unavailable = doc.createElement("p");
+      unavailable.textContent = state.hostAvailable
+        ? "Source could not be read."
+        : "Source inspection requires an MCP-capable host bridge.";
+      sourceBox.appendChild(unavailable);
+    }
+    container.appendChild(sourceBox);
+  }
+
+  /**
+   * Render the "component removed during HMR" controlled state (AC4/product-
+   * behavior: "If the selected component disappears, show a controlled
+   * removed state and move focus to the nearest valid navigation control").
+   * This function only renders the message; moving focus is the caller's job
+   * (it owns the tree DOM and knows the nearest valid item).
+   *
+   * @param {Document} doc
+   * @param {HTMLElement} container
+   * @param {{componentName: string}} removed
+   */
+  function renderBrowseDetailRemoved(doc, container, removed) {
+    container.replaceChildren();
+    var box = doc.createElement("div");
+    box.className = "browse-detail__removed";
+    box.setAttribute("role", "status");
+    var message = doc.createElement("p");
+    message.textContent =
+      (removed && removed.componentName ? removed.componentName : "This component") +
+      " is no longer available in this UI kit.";
+    box.appendChild(message);
+    container.appendChild(box);
+  }
+
+  /**
+   * Wire the tree + detail panes together against a live manifest: owns the
+   * current selection (deep-link-aware — Decision #7), re-projects the tree
+   * on search/manifest changes, and re-renders detail atomically on
+   * selection (AC5 — "stale content from the prior selection is not shown as
+   * current", satisfied because both panes are rebuilt from the SAME
+   * `tree`/`selection` read on every call, never patched piecemeal).
+   *
+   * Standalone-only (this issue does not touch the embedded `ui://` grid
+   * path — AC12/Decision #2): call sites are gated on `#browse-workbench`
+   * existing, which the embedded shell never renders.
+   *
+   * @param {Document} doc
+   * @param {{hostBridge?: {callTool: Function}|null, kitId?: string, kitName?: string}} opts
+   * @returns {{update(manifest: object): void, teardown(): void}}
+   */
+  function initBrowseController(doc, opts) {
+    var options = opts || {};
+    var win = doc.defaultView;
+    var workbench = doc.getElementById("browse-workbench");
+    var treeContainer = doc.getElementById("browse-tree");
+    var detailContainer = doc.getElementById("browse-detail");
+    var searchInput = doc.getElementById("q");
+    if (!workbench || !treeContainer || !detailContainer) {
+      return { update: function () {}, teardown: function () {} };
+    }
+
+    var manifest = { components: [], groups: [] };
+    var selection = null; // {group, componentName}
+
+    function currentSearch() {
+      return searchInput ? searchInput.value || "" : "";
+    }
+
+    function writeSelectionToUrl(sel) {
+      if (!win) return;
+      try {
+        var next = new win.URL(win.location.href);
+        if (sel) {
+          next.searchParams.set("group", sel.group);
+          next.searchParams.set("componentName", sel.componentName);
+        } else {
+          next.searchParams.delete("group");
+          next.searchParams.delete("componentName");
+        }
+        win.history.replaceState({}, "", next);
+      } catch {
+        /* opaque/about:blank embedded origins cannot persist history */
+      }
+    }
+
+    function fetchSource(component) {
+      var bridge = options.hostBridge;
+      if (!bridge || !component || !component.path) return Promise.resolve(null);
+      return bridge
+        .callTool("mcp__genie__read_file", { kitId: options.kitId || "", path: component.path })
+        .then(function (result) {
+          return result && typeof result.content === "string" && result.encoding !== "base64"
+            ? result.content
+            : null;
+        })
+        .catch(function () {
+          return null;
+        });
+    }
+
+    function renderAll() {
+      var tree = projectManifestToTree(manifest, currentSearch());
+      renderBrowseTree(doc, treeContainer, tree, currentSearch(), select, selection);
+
+      if (!selection) {
+        detailContainer.replaceChildren();
+        var placeholder = doc.createElement("p");
+        placeholder.className = "browse-detail__placeholder";
+        placeholder.textContent = tree.isEmptyKit
+          ? ""
+          : "Select a component to see its details.";
+        detailContainer.appendChild(placeholder);
+        return;
+      }
+
+      var resolved = resolveSelection(tree, selection);
+      if (!resolved.found) {
+        renderBrowseDetailRemoved(doc, detailContainer, { componentName: selection.componentName });
+        // Move focus to the nearest valid navigation control (AC/a11y): the
+        // tree itself, if it has any tabbable item, else the search input.
+        var firstItem = treeContainer.querySelector('[role="treeitem"][tabindex="0"]');
+        if (firstItem && typeof firstItem.focus === "function") firstItem.focus();
+        else if (searchInput) searchInput.focus();
+        return;
+      }
+
+      renderBrowseDetail(doc, detailContainer, {
+        kitId: options.kitId || "",
+        kitName: options.kitName || "",
+        component: resolved.component,
+        source: null,
+        hostAvailable: Boolean(options.hostBridge),
+        onRefine: function (context) {
+          if (win) writeRoute(win, "review", false);
+          if (typeof options.onRefine === "function") options.onRefine(context);
+        },
+      });
+
+      fetchSource(resolved.component).then(function (source) {
+        // A HMR/selection race could resolve after the user moved on —
+        // re-check identity before writing stale source into the DOM.
+        if (
+          !selection ||
+          selection.group !== resolved.component.group ||
+          selection.componentName !== resolved.component.componentName
+        ) {
+          return;
+        }
+        renderBrowseDetail(doc, detailContainer, {
+          kitId: options.kitId || "",
+          kitName: options.kitName || "",
+          component: resolved.component,
+          source: source,
+          hostAvailable: Boolean(options.hostBridge),
+          onRefine: function (context) {
+            if (win) writeRoute(win, "review", false);
+            if (typeof options.onRefine === "function") options.onRefine(context);
+          },
+        });
+      });
+    }
+
+    function select(sel) {
+      selection = sel;
+      writeSelectionToUrl(sel);
+      renderAll();
+    }
+
+    treeContainer.addEventListener("click", function (event) {
+      var clear = event.target && event.target.closest && event.target.closest("[data-clear-filter]");
+      if (clear && searchInput) {
+        searchInput.value = "";
+        renderAll();
+      }
+    });
+
+    if (searchInput) {
+      searchInput.addEventListener("input", renderAll);
+    }
+
+    // Deep-link (Decision #7): read an initial selection from the URL.
+    if (win) {
+      try {
+        var initial = parseSelection(new win.URL(win.location.href).searchParams);
+        if (initial) selection = { group: initial.group, componentName: initial.componentName };
+      } catch {
+        /* malformed URL — no initial selection */
+      }
+    }
+
+    renderAll();
+
+    return {
+      update: function (nextManifest) {
+        manifest = nextManifest || { components: [], groups: [] };
+        // HMR-safe: an update never resets an unrelated selection or filter
+        // (product-behavior requirement) — `renderAll` re-resolves the SAME
+        // `selection` identity against the fresh manifest and only shows the
+        // "removed" state if it genuinely no longer resolves.
+        renderAll();
+      },
+      teardown: function () {
+        if (searchInput) searchInput.removeEventListener("input", renderAll);
+      },
+    };
+  }
+
   // ── HMR: per-card live refresh (M4-04 / DRO-266) ───────────────────────────
   //
   // Two transports, one pure dispatcher (`applyHmrMessage`):
@@ -1548,6 +2345,12 @@
         if (total > 0) bumpReloadCounter(doc, total);
       }
       lastManifest = next;
+      // M7-02 (#234) — HMR-safe Browse: re-project the SAME live tree/
+      // selection against the fresh manifest on every update (structural or
+      // content-only alike), never resetting an unrelated selection/filter
+      // (see `initBrowseController`'s own doc for why re-resolving-by-
+      // identity is safe here).
+      if (typeof opts.onManifestUpdate === "function") opts.onManifestUpdate(next);
     }
 
     function finishManifestFetch() {
@@ -1827,6 +2630,16 @@
         renderGrid(doc, grid, filterManifestBySearch(manifest, fetchedLocation?.search || ""));
         wireSearch(doc, grid);
 
+        // M7-02 (#234) — standalone/localhost Browse workbench. Reuses the
+        // SAME fetched manifest as the grid above (no parallel catalog —
+        // Decision #1); a no-op when `#browse-workbench` isn't present in
+        // this document (e.g. the fixture-only grid tests).
+        var browseController = initBrowseController(doc, {
+          hostBridge: null,
+          kitId: manifest && manifest.name,
+          kitName: manifest && manifest.name,
+        });
+
         // M4-04 (DRO-266) — engage live per-card refresh AFTER the grid exists,
         // handing the just-fetched manifest in as the polling baseline so the
         // fallback's very first tick can already spot a hash change. Best-effort:
@@ -1835,7 +2648,12 @@
         // browser page lives until navigation; tests call `initHmr` directly and
         // own their own teardown.
         try {
-          initHmr(doc, { initialManifest: manifest });
+          initHmr(doc, {
+            initialManifest: manifest,
+            onManifestUpdate: function (next) {
+              browseController.update(next);
+            },
+          });
         } catch {
           /* live refresh is an enhancement, never a boot blocker */
         }
@@ -1899,5 +2717,18 @@
     window.__genieViewerTestHooks.bumpReloadCounter = bumpReloadCounter;
     window.__genieViewerTestHooks.hmrSocketUrl = hmrSocketUrl;
     window.__genieViewerTestHooks.initHmr = initHmr;
+    // M7-02 (#234) — Browse UI-kit workbench seam.
+    window.__genieViewerTestHooks.projectManifestToTree = projectManifestToTree;
+    window.__genieViewerTestHooks.resolveSelection = resolveSelection;
+    window.__genieViewerTestHooks.selectionForKitChange = selectionForKitChange;
+    window.__genieViewerTestHooks.serializeSelection = serializeSelection;
+    window.__genieViewerTestHooks.parseSelection = parseSelection;
+    window.__genieViewerTestHooks.computeVariantTabs = computeVariantTabs;
+    window.__genieViewerTestHooks.sanitizeSourceForDisplay = sanitizeSourceForDisplay;
+    window.__genieViewerTestHooks.buildRefineContext = buildRefineContext;
+    window.__genieViewerTestHooks.renderBrowseTree = renderBrowseTree;
+    window.__genieViewerTestHooks.renderBrowseDetail = renderBrowseDetail;
+    window.__genieViewerTestHooks.renderBrowseDetailRemoved = renderBrowseDetailRemoved;
+    window.__genieViewerTestHooks.initBrowseController = initBrowseController;
   }
 })();
