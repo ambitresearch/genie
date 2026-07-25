@@ -427,7 +427,9 @@ describe("MCP host bridge", () => {
         calls.push({ name, args, timeoutMs });
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+            kits: [
+              { id: "acme-kit", name: "Acme", owner: "team", updatedAt: "now", canEdit: true },
+            ],
           });
         }
         if (name === "mcp__genie__list_files") {
@@ -461,14 +463,21 @@ describe("MCP host bridge", () => {
     expect(listKitsCall?.timeoutMs).toBeUndefined();
 
     resolveConjure({
-      componentName: "Status card",
+      componentName: "StatusCard",
       group: "surfaces",
-      files: [{ path: "components/StatusCard.tsx", content: "export default null" }],
-      manifestEntry: { name: "Status card" },
-      usage: { inputTokens: 12, outputTokens: 20 },
+      files: [
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "x",
+          mimeType: "text/plain",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 320, height: 240 } },
+      usage: { promptTokens: 12, completionTokens: 20, totalTokens: 32 },
     });
     await settle();
-    expect(document.getElementById("draft-name")?.textContent).toBe("Status card");
+    expect(document.getElementById("draft-name")?.textContent).toBe("StatusCard");
   });
 
   it("createHostBridge schedules no timer at all for NO_CLIENT_DEADLINE, however long the host takes", async () => {
