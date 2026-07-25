@@ -560,6 +560,12 @@
       overflow-y: auto;
       transform: translateX(-110%);
       transition: transform 0.15s ease-out;
+      /* Copilot review (PR #248, a11y) — `transform` alone moves the tree
+         off-screen visually but its tabindex="0" treeitem remains focusable
+         and exposed to assistive tech while the rail is closed. Hide it from
+         AT too; `visibility` (not `display`) keeps the slide transition
+         working when the overlay reopens. */
+      visibility: hidden;
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -574,6 +580,7 @@
     .browse-tree--overlay-open {
       transform: translateX(0);
       box-shadow: 4px 0 16px rgb(0 0 0 / 15%);
+      visibility: visible;
     }
   }
 

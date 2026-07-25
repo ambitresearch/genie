@@ -2478,10 +2478,21 @@
       };
     }
 
-    function renderAll() {
-      renderGeneration += 1;
-      var generation = renderGeneration;
+    // Copilot #24 — identity of the last selection whose detail/source panel
+    // was actually (re)rendered. A plain search-filter keystroke only needs
+    // to refresh the filtered tree list; re-rendering the detail panel and
+    // re-issuing a `mcp__genie__read_file` call for a selection that hasn't
+    // changed is wasted work — it visibly reloads the preview iframe on
+    // every character typed. Callers that DO need the detail panel refreshed
+    // even when the selection is unchanged (HMR content updates, a host
+    // bridge becoming available) pass `forceDetailRender: true`.
+    var lastRenderedSelectionKey = undefined;
 
+    function selectionKey(sel) {
+      return sel ? sel.group + "\x00" + sel.componentName : null;
+    }
+
+    function renderAll(forceDetailRender) {
       // Copilot #6 — project the FILTERED tree only for the visible tree
       // list/counts; selection resolution below always uses the UNFILTERED
       // manifest, so typing a filter that hides the selected component never
@@ -2489,6 +2500,16 @@
       var filteredTree = projectManifestToTree(manifest, currentSearch());
       var unfilteredTree = projectManifestToTree(manifest, "");
       renderBrowseTree(doc, treeContainer, filteredTree, currentSearch(), select, selection);
+
+      // Copilot #24 — skip the detail-panel rebuild (and its source re-read)
+      // when the selection identity hasn't actually changed since the last
+      // time it was rendered and no caller has demanded a fresh render.
+      var nextKey = selectionKey(selection);
+      if (!forceDetailRender && nextKey === lastRenderedSelectionKey) return;
+      lastRenderedSelectionKey = nextKey;
+
+      renderGeneration += 1;
+      var generation = renderGeneration;
 
       if (!selection) {
         detailContainer.replaceChildren();
@@ -2547,6 +2568,13 @@
       selection = sel;
       writeSelectionToUrl(sel);
       renderAll();
+      // Copilot #22 — `renderAll()` rebuilds the tree DOM from scratch, which
+      // detaches whatever treeitem the keyboard/activation event had focus
+      // on. Without this, focus silently drops to <body> after every
+      // selection change. Restore it explicitly to the newly (re)rendered
+      // selected row so keyboard navigation stays predictable.
+      var activeItem = treeContainer.querySelector('[role="treeitem"][aria-selected="true"]');
+      if (activeItem && typeof activeItem.focus === "function") activeItem.focus();
     }
 
     treeContainer.addEventListener("click", function (event) {
@@ -2587,8 +2615,11 @@
         // HMR-safe: an update never resets an unrelated selection or filter
         // (product-behavior requirement) — `renderAll` re-resolves the SAME
         // `selection` identity against the fresh manifest and only shows the
-        // "removed" state if it genuinely no longer resolves.
-        renderAll();
+        // "removed" state if it genuinely no longer resolves. Force the
+        // detail panel to re-render even though the selection's identity is
+        // unchanged — HMR can replace the SAME component's content/source,
+        // which the identity-only dedup in `renderAll` would otherwise skip.
+        renderAll(true);
       },
       // Copilot #1 — the embedded tier's host bridge only exists after the
       // `ui://` MCP-App handshake resolves (asynchronously, after
@@ -2604,7 +2635,11 @@
         // tier's `createStandaloneSourceBridge` path. So this is exactly the
         // signal that a real, Refine-capable host is present.
         refineEnabled = Boolean(nextBridge);
-        renderAll();
+        // Force a re-render: the bridge just changed from absent to present
+        // (or vice versa), which must re-evaluate `hostAvailable`/source
+        // fetching for the SAME selection, not be skipped by the identity
+        // dedup in `renderAll`.
+        renderAll(true);
       },
       teardown: function () {
         if (searchInput) searchInput.removeEventListener("input", renderAll);
