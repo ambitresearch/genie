@@ -142,15 +142,36 @@
   var URL_TAB_OR_NEWLINE_RE = /[\t\n\r]/g;
   // eslint-disable-next-line no-control-regex
   var URL_EDGE_C0_RE = /^[\x00- ]+|[\x00- ]+$/g;
+  var URL_HTML_METACHAR_RE = /[<>"'`]/g;
   var ANY_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
   var SAFE_FRAME_SCHEME_RE = /^(?:https?|data):/i;
 
+  /**
+   * Is an ALREADY-NORMALIZED URL safe to hand an iframe? Split out of `safeFrameSrc` and called in
+   * guard position on purpose: static analysis (CodeQL) clears taint at a recognised sanitizer
+   * *guard*, never at a transformer whose return value is derived from tainted input. Folding this
+   * back into a single function reopens alerts 8-11. Callers must normalize first.
+   *
+   * @param {string} url
+   * @returns {boolean}
+   */
+  function isSafeFrameSrc(url) {
+    if (!url || url.slice(0, 2) === "//") return false;
+    if (!ANY_URL_SCHEME_RE.test(url)) return true;
+    return SAFE_FRAME_SCHEME_RE.test(url);
+  }
+
+  /**
+   * @param {unknown} value
+   * @returns {string} the value when safe, else "about:blank"
+   */
   function safeFrameSrc(value) {
     if (typeof value !== "string") return "about:blank";
-    var url = value.replace(URL_TAB_OR_NEWLINE_RE, "").replace(URL_EDGE_C0_RE, "");
-    if (!url || url.slice(0, 2) === "//") return "about:blank";
-    if (!ANY_URL_SCHEME_RE.test(url)) return url;
-    return SAFE_FRAME_SCHEME_RE.test(url) ? url : "about:blank";
+    var url = value
+      .replace(URL_TAB_OR_NEWLINE_RE, "")
+      .replace(URL_EDGE_C0_RE, "")
+      .replace(URL_HTML_METACHAR_RE, "");
+    return isSafeFrameSrc(url) ? url : "about:blank";
   }
 
   /**
@@ -202,17 +223,7 @@
   }
 
   /**
-   * Section display order (DRO-749 fix): prefer the manifest's own `groups` array — the compiler
-   * already resolved alphabetical-vs-`_groups.json`- pinned order server-side, so there is no
-   * reason to re-derive a (possibly different) order client-side — but ALWAYS append any group
-   * actually present in `grouped` that `declaredGroups` omitted, in first-seen order. Mirrors the
-   * server's own `orderGroups` "remainder" logic (`packages/server/src/manifest/compiler.ts`): "an
-   * incomplete pin list never silently drops a group." Without this, a valid-but-partial `groups[]`
-   * (e.g. a hand-edited or stale manifest listing only some of the groups `components[]` actually
-   * uses) would cause `renderGrid` to silently drop every component in an undeclared group — worse
-   * than the plain first-seen order this replaces. When `declaredGroups` is absent, empty, or
-   * entirely malformed, this degrades to pure first-seen order among `grouped`'s own keys (every
-   * group is then "remainder").
+   * See architecture.md -> "Section display order".
    *
    * @param {unknown} declaredGroups — `manifest.groups`, untrusted shape.
    * @param {Map<string, object[]>} grouped
@@ -1233,22 +1244,7 @@
     return null;
   }
 
-  /**
-   * The file the preview pane and the marker check actually read.
-   *
-   * `findPreviewFile` above is the strict CONVENTION check — it answers "does this draft name its
-   * entry point `<Name>/<Name>.html`?", and the `preview-file` checklist row exists to report
-   * exactly that. It is the wrong question for *rendering*: the manifest compiler cards every
-   * `.html` under `components/` and derives `name` from the file's own basename (server
-   * `manifest/compiler.ts` — `walkPreviewFiles` + `deriveName`), so a kit whose entry point is
-   * `Button/preview.html` is perfectly legitimate and can never satisfy the canonical form.
-   *
-   * Before Copilot #2 (PR #250) this never surfaced, because a Browse handoff FABRICATED a
-   * canonical path. Now that the draft carries the path Browse really read, resolving the render
-   * target has to tolerate the real world: canonical when it exists, otherwise the sole HTML entry.
-   * Ambiguity (two or more HTML files, none canonical) still resolves to nothing rather than
-   * guessing which one the reviewer is looking at.
-   */
+  /** See architecture.md -> "Resolving the preview file to render". */
   function resolvePreviewFile(result) {
     var canonical = findPreviewFile(result);
     if (canonical) return canonical;
@@ -3109,7 +3105,16 @@
       });
     }
 
-    /** See architecture.md -> "Building the kit context". */
+    /**
+     * See architecture.md -> "Building the kit context".
+     *
+     * @param {{callTool(name:string,args:object):Promise<object>}} hostBridge
+     * @param {string} kitId
+     * @param {string} kitName
+     * @param {number} [deadlineMs] Overall wall-clock budget in ms; defaults to
+     * `KIT_CONTEXT_DEADLINE_MS`. Overridable so tests need not wait on the real value.
+     * @returns {Promise<string>}
+     */
     async function buildKitContext(hostBridge, kitId, kitName, deadlineMs) {
       var sections = ['UI kit "' + kitName + '" (id: ' + kitId + ")."];
       var budget = KIT_CONTEXT_MAX_CHARS - sections[0].length;
@@ -5085,7 +5090,11 @@
    * @returns {boolean}
    */
   function reloadIframeEl(iframe, token, freshSrc) {
-    if (freshSrc) {
+    // The embedded refresh channel only ever carries a base64 `data:text/html` document (see
+    // `normalizeHmrMessage`); the standalone dev-server plugin sends no `src` at all. Pinning the
+    // prefix means a compromised or misconfigured host cannot steer the frame at another origin --
+    // anything else falls through to the ordinary `data-src` reload below.
+    if (freshSrc && freshSrc.indexOf("data:text/html;base64,") === 0) {
       iframe.setAttribute("data-src", freshSrc);
       iframe.setAttribute("src", safeFrameSrc(freshSrc));
       return true;
@@ -5314,7 +5323,13 @@
     return (loc.protocol === "https:" ? "wss:" : "ws:") + "//" + loc.host + HMR_PATH;
   }
 
-  /** See architecture.md -> "The HMR reload protocol". */
+  /**
+   * See architecture.md -> "The HMR reload protocol".
+   *
+   * @param {Document} doc
+   * @param {object=} options
+   * @returns {() => void} teardown
+   */
   function initHmr(doc, options) {
     var opts = options || {};
     var grid = doc.getElementById("grid");
@@ -5542,7 +5557,14 @@
     };
   }
 
-  /** See architecture.md -> "Reading the inline manifest". */
+  /**
+   * See architecture.md -> "Reading the inline manifest".
+   *
+   * @param {Document} doc
+   * @param {string=} elementId defaults to {@link MANIFEST_ELEMENT_ID}; pass
+   * {@link MANIFEST_FULL_ELEMENT_ID} to read the full-kit island instead.
+   * @returns {object | null}
+   */
   function readInlineManifest(doc, elementId) {
     var el = doc.getElementById(elementId || MANIFEST_ELEMENT_ID);
     if (!el) return null;
@@ -5940,6 +5962,7 @@
     // M7-03 (#235) — review → refine → approve → apply.
     window.__genieViewerTestHooks.isRefineResult = isRefineResult;
     window.__genieViewerTestHooks.safeFrameSrc = safeFrameSrc;
+    window.__genieViewerTestHooks.isSafeFrameSrc = isSafeFrameSrc;
     window.__genieViewerTestHooks.entryByteLength = entryByteLength;
     window.__genieViewerTestHooks.parseUnifiedDiff = parseUnifiedDiff;
     window.__genieViewerTestHooks.computeChecklist = computeChecklist;

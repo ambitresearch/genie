@@ -288,7 +288,7 @@ All tool calls (the two `list_*` calls, then every `read_file` call) run CONCURR
 
 Best-effort by design: any tool failure or deadline miss here (a host that doesn't implement these verbs yet, a slow kit, etc.) degrades to partial context, and total failure falls back to the OLD display-name-only behavior rather than blocking generation — losing kit-fidelity is strictly better than losing the ability to generate at all.
 
-@param {{callTool(name:string,args:object):Promise<object>}} hostBridge @param {string} kitId @param {string} kitName @param {number} [deadlineMs] Overall wall-clock budget in ms. Defaults to `KIT_CONTEXT_DEADLINE_MS`; overridable so tests can exercise the "deadline elapses" path without waiting on the real production value (Copilot review on #246 — a test previously waited on the real 8s `KIT_CONTEXT_DEADLINE_MS`, adding 8s of real wall-clock time to every run that hit it). @returns {Promise<string>}
+The budget is injectable rather than hard-wired so tests can exercise the "deadline elapses" path without waiting on the real production value (Copilot review on #246 — a test previously waited on the real 8s `KIT_CONTEXT_DEADLINE_MS`, adding 8s of real wall-clock time to every run that hit it).
 
 ### The HMR reload protocol
 
@@ -298,12 +298,22 @@ Wire the live-refresh channels and return a teardown function. Everything the br
 
 The `postMessage` bridge is ALWAYS active (harmless where unused). The WS + polling only engage when {@link hmrSocketUrl} resolves (a real dev server); on `file://`/`ui://` there is nothing to poll, so we don't spin a timer against a static snapshot.
 
-@param {Document} doc @param {object=} options @returns {() => void} teardown
-
 ### Reading the inline manifest
 
 Read the manifest inlined by the embedded `ui://genie/grid` tier (M4-06): a `<script type="application/json" id="manifest">` data island whose text content is the compiled manifest JSON. Returns the parsed object, or `null` when there is no such node (the `file://` / localhost tiers, which fetch instead) OR the node is present but not usable — wrong `type`, empty, or malformed JSON. A `null` return is the caller's signal to fall back to the network path; a malformed INLINE manifest deliberately degrades to that same fallback rather than throwing, so a corrupt payload surfaces as the normal error state, never an uncaught exception on the page.
 
 Reading `type` guards against picking up an unrelated `#manifest` element and, more importantly, means only a genuine data block (never an executable `<script>`) is ever parsed here.
 
-@param {Document} doc @param {string=} elementId defaults to {@link MANIFEST_ELEMENT_ID}; pass {@link MANIFEST_FULL_ELEMENT_ID} to read the full-kit island instead (Copilot review, PR #248 — see that constant's own comment). @returns {object | null}
+`elementId` defaults to `MANIFEST_ELEMENT_ID`; pass `MANIFEST_FULL_ELEMENT_ID` to read the full-kit island instead (Copilot review, PR #248 — see that constant's own comment).
+
+### Resolving the preview file to render
+
+The file the preview pane and the marker check actually read.
+
+`findPreviewFile` above is the strict CONVENTION check — it answers "does this draft name its entry point `<Name>/<Name>.html`?", and the `preview-file` checklist row exists to report exactly that. It is the wrong question for _rendering_: the manifest compiler cards every `.html` under `components/` and derives `name` from the file's own basename (server `manifest/compiler.ts` — `walkPreviewFiles` + `deriveName`), so a kit whose entry point is `Button/preview.html` is perfectly legitimate and can never satisfy the canonical form.
+
+Before Copilot #2 (PR #250) this never surfaced, because a Browse handoff FABRICATED a canonical path. Now that the draft carries the path Browse really read, resolving the render target has to tolerate the real world: canonical when it exists, otherwise the sole HTML entry. Ambiguity (two or more HTML files, none canonical) still resolves to nothing rather than guessing which one the reviewer is looking at.
+
+### Section display order
+
+Section display order (DRO-749 fix): prefer the manifest's own `groups` array — the compiler already resolved alphabetical-vs-`_groups.json`- pinned order server-side, so there is no reason to re-derive a (possibly different) order client-side — but ALWAYS append any group actually present in `grouped` that `declaredGroups` omitted, in first-seen order. Mirrors the server's own `orderGroups` "remainder" logic (`packages/server/src/manifest/compiler.ts`): "an incomplete pin list never silently drops a group." Without this, a valid-but-partial `groups[]` (e.g. a hand-edited or stale manifest listing only some of the groups `components[]` actually uses) would cause `renderGrid` to silently drop every component in an undeclared group — worse than the plain first-seen order this replaces. When `declaredGroups` is absent, empty, or entirely malformed, this degrades to pure first-seen order among `grouped`'s own keys (every group is then "remainder").

@@ -3027,7 +3027,21 @@ describe("CodeQL — iframe src taint (alerts 2, 4, 5, 7)", () => {
       "components/actions/Button/Button.html",
     );
     expect(hooks.safeFrameSrc("https://example.test/x.html")).toBe("https://example.test/x.html");
-    expect(hooks.safeFrameSrc("data:text/html,<b>hi</b>")).toBe("data:text/html,<b>hi</b>");
+    // Every `data:` URL the server mints is base64 (`grid-resource.ts`), so the metacharacter
+    // strip below is a no-op on the real transport -- the base64 alphabet has no `<`, `>`, `"`
+    // or `'` in it. Assert that byte-for-byte, because the grid depends on it.
+    const embedded = "data:text/html;base64,PGI+aGk8L2I+";
+    expect(hooks.safeFrameSrc(embedded)).toBe(embedded);
+  });
+
+  it("strips HTML metacharacters that can never appear in a serialized URL", async () => {
+    const hooks = await loadHooks();
+    // WHATWG URL serialization always percent-encodes `<`, `>`, `"` and `'`, so a raw one is
+    // always an injection attempt -- and dropping them is what CodeQL recognises as a barrier
+    // (`MetacharEscapeSanitizer`), which is how alerts 8-10 clear.
+    expect(hooks.safeFrameSrc('components/a"onload=x/B.html')).toBe("components/aonload=x/B.html");
+    expect(hooks.safeFrameSrc("components/a<script>/B.html")).toBe("components/ascript/B.html");
+    expect(hooks.safeFrameSrc("components/a'b/B.html")).toBe("components/ab/B.html");
   });
 
   it("neutralises javascript: and other script-bearing schemes", async () => {
