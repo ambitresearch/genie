@@ -197,6 +197,67 @@ describe("MCP host bridge", () => {
     expect(progress).toHaveBeenCalledWith("Validating files");
     bridge.destroy();
   });
+
+  it("gives the conjure tool call a deadline longer than the server's 120s LLM timeout", async () => {
+    // Regression for genie#241: the viewer bridge's generic 60s deadline was
+    // shorter than the server's LLM request timeout (120s), so a slow-but-
+    // valid generation would be reported as a client-side timeout well
+    // before the server ever gave up. The conjure call must use a deadline
+    // that exceeds 120s with headroom.
+    vi.useFakeTimers();
+    try {
+      const { hooks, window } = loadHooks();
+      const posted: unknown[] = [];
+      const host = { postMessage: vi.fn((message) => posted.push(message)) };
+      const bridge = hooks.createHostBridge(window, host);
+
+      const pending = bridge.callTool("mcp__genie__conjure", {}, hooks.CONJURE_TOOL_TIMEOUT_MS);
+      pending.catch(() => {});
+
+      expect(hooks.CONJURE_TOOL_TIMEOUT_MS).toBeGreaterThan(120_000);
+
+      // Advance past the old 60s default: should NOT have timed out yet.
+      await vi.advanceTimersByTimeAsync(60_000);
+      // Advance to just before the 120s server ceiling: still pending.
+      await vi.advanceTimersByTimeAsync(59_000);
+
+      const request = posted.at(-1) as { id: number };
+      window.dispatchEvent(
+        new window.MessageEvent("message", {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          source: host as any,
+          data: {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { structuredContent: { componentName: "Status card" } },
+          },
+        }),
+      );
+
+      await expect(pending).resolves.toEqual({ componentName: "Status card" });
+      bridge.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still times out a generic (non-conjure) tool call at the default 60s deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hooks, window } = loadHooks();
+      const host = { postMessage: vi.fn() };
+      const bridge = hooks.createHostBridge(window, host);
+
+      const pending = bridge.callTool("mcp__genie__list_kits", {});
+      const assertion = expect(pending).rejects.toThrow("timed out");
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+      bridge.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("route contract", () => {
