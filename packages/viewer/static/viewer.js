@@ -176,6 +176,48 @@
   var KIT_CONTEXT_DEADLINE_MS = 8_000;
 
   /**
+   * Default deadline (ms) for a generic host tool call (e.g. list-kits,
+   * ping-style round trips). Cheap calls that hang past this are almost
+   * certainly stuck, so a short timeout surfaces real failures quickly.
+   */
+  var DEFAULT_HOST_TOOL_TIMEOUT_MS = 60_000;
+
+  /**
+   * Sentinel passed as `callTool`'s `callTimeoutMs` for the conjure call:
+   * "do not apply a client-side deadline to this request" (genie#241 /
+   * genie#243 Copilot review).
+   *
+   * A prior fix here picked a fixed 150s client deadline — 30s past the
+   * server's then-`DEFAULT_LLM_REQUEST_TIMEOUT_MS` (120s) — reasoning that
+   * 150s must outlast one LLM call. That's wrong on two counts the Copilot
+   * review on #243 called out: (1) `GENIE_LLM_REQUEST_TIMEOUT_MS` bounds
+   * EACH HTTP attempt, not the call as a whole — `conjure` can run the
+   * schema-retry loop (`component-response.ts`, up to two full model calls)
+   * and each of THOSE is separately wrapped in `withRetry` (`llm/retry.ts`),
+   * which can make up to `1 + GENIE_LLM_RETRY_MAX` (default 4) attempts with
+   * exponential backoff between them; and (2) both the per-request timeout
+   * and the retry ceiling are operator-configurable env vars, so no fixed
+   * client-side number can be derived that's guaranteed to outlast every
+   * valid deployment's worst case — a slow-but-legitimate generation can
+   * still finish after any such constant has already rejected the call.
+   *
+   * Rather than guess another (still-wrong) fixed ceiling, or thread the
+   * server's live env config across the postMessage boundary just to
+   * recompute one client-side number, the conjure call takes NO client
+   * deadline at all: `createHostBridge` skips scheduling a timer when this
+   * sentinel is passed, and the call resolves/rejects whenever the host
+   * actually answers `tools/call` — nothing here can time out early. Host
+   * lifecycle already covers the "genuinely stuck" case without a timer:
+   * `destroy()` rejects every pending call the moment the host tears the
+   * frame down (`ui/resource-teardown`), and the host's own transport-level
+   * request handling is what actually bounds a hung generation. Generic
+   * calls (list-kits, etc.) are unaffected — they keep the fixed 60s
+   * `DEFAULT_HOST_TOOL_TIMEOUT_MS` above, since those are cheap round trips
+   * with no LLM/retry variability behind them.
+   */
+  var NO_CLIENT_DEADLINE = null;
+
+  /**
    * Fallback card height (px) for a named/unparseable viewport (e.g. "desktop").
    * A comfortable 16:10-ish default so a card without an explicit WxH still
    * reserves a sensible preview area instead of collapsing to nothing.
@@ -913,11 +955,11 @@
   }
 
   /**
-   * @typedef {{callTool(name:string,args:object):Promise<object>,destroy():void}} HostBridge
+   * @typedef {{callTool(name:string,args:object,callTimeoutMs?:number|null):Promise<object>,destroy():void}} HostBridge
    */
   function createHostBridge(win, host, onProgress, timeoutMs) {
     var pending = new Map();
-    var timeout = typeof timeoutMs === "number" ? timeoutMs : 60_000;
+    var timeout = typeof timeoutMs === "number" ? timeoutMs : DEFAULT_HOST_TOOL_TIMEOUT_MS;
     function onMessage(event) {
       if (!event || event.source !== host || !event.data || typeof event.data !== "object") return;
       var data = event.data;
@@ -946,13 +988,22 @@
     }
     win.addEventListener("message", onMessage);
     return {
-      callTool: function (name, args) {
+      callTool: function (name, args, callTimeoutMs) {
         var id = ++mcpAppRequestId;
+        // `callTimeoutMs === NO_CLIENT_DEADLINE` (null) means "never time
+        // out client-side for this call" — used by the conjure call site,
+        // since no fixed constant can outlast every operator-configured
+        // timeout/retry combination on the server (genie#241 / #243
+        // Copilot review; see NO_CLIENT_DEADLINE's doc comment above).
+        var hasClientDeadline = callTimeoutMs !== NO_CLIENT_DEADLINE;
+        var effectiveTimeout = typeof callTimeoutMs === "number" ? callTimeoutMs : timeout;
         return new Promise(function (resolve, reject) {
-          var timer = win.setTimeout(function () {
-            pending.delete(id);
-            reject(new Error("The host tool request timed out. Try again."));
-          }, timeout);
+          var timer = hasClientDeadline
+            ? win.setTimeout(function () {
+                pending.delete(id);
+                reject(new Error("The host tool request timed out. Try again."));
+              }, effectiveTimeout)
+            : null;
           pending.set(id, { resolve: resolve, reject: reject, timer: timer });
           host.postMessage(
             {
@@ -1309,12 +1360,16 @@
         } catch {
           /* fall back to the display name — generation must still proceed. */
         }
-        var result = await bridge.callTool(CONJURE_TOOL, {
-          kitId: selectedKit.id,
-          kit: kitContext,
-          prompt: prompt.value.trim(),
-          model: modelSelect.value,
-        });
+        var result = await bridge.callTool(
+          CONJURE_TOOL,
+          {
+            kitId: selectedKit.id,
+            kit: kitContext,
+            prompt: prompt.value.trim(),
+            model: modelSelect.value,
+          },
+          NO_CLIENT_DEADLINE,
+        );
         if (!isConjureResult(result)) throw new Error("The host returned an invalid draft.");
         var draft = drafts.add(result);
         renderDraft(draft);
@@ -3885,6 +3940,8 @@
     window.__genieViewerTestHooks.MANIFEST_URL = MANIFEST_URL;
     window.__genieViewerTestHooks.DEFAULT_CARD_HEIGHT = DEFAULT_CARD_HEIGHT;
     window.__genieViewerTestHooks.KIT_CONTEXT_DEADLINE_MS = KIT_CONTEXT_DEADLINE_MS;
+    window.__genieViewerTestHooks.DEFAULT_HOST_TOOL_TIMEOUT_MS = DEFAULT_HOST_TOOL_TIMEOUT_MS;
+    window.__genieViewerTestHooks.NO_CLIENT_DEADLINE = NO_CLIENT_DEADLINE;
     window.__genieViewerTestHooks.parseViewport = parseViewport;
     window.__genieViewerTestHooks.groupByGroup = groupByGroup;
     window.__genieViewerTestHooks.computeGroupOrder = computeGroupOrder;

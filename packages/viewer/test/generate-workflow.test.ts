@@ -197,6 +197,145 @@ describe("MCP host bridge", () => {
     expect(progress).toHaveBeenCalledWith("Validating files");
     bridge.destroy();
   });
+
+  it("drives production submitGenerate to request no client-side deadline for conjure, unlike generic calls", async () => {
+    // Regression for genie#241 / Copilot review on #243: a fixed client
+    // deadline for conjure (originally 150s) can still be too short —
+    // `GENIE_LLM_REQUEST_TIMEOUT_MS` bounds each individual HTTP attempt,
+    // not the call as a whole, and `conjure` can run a two-attempt schema
+    // retry loop where EACH attempt is itself wrapped in `withRetry` (up to
+    // `1 + GENIE_LLM_RETRY_MAX`, default 4, HTTP attempts with backoff
+    // between them) — both the timeout and the retry ceiling are
+    // operator-configurable, so no fixed client constant can be derived
+    // that's guaranteed to outlast every valid deployment's worst case.
+    //
+    // The fix: the conjure call site now passes `NO_CLIENT_DEADLINE` as its
+    // `callTool` timeout override, so `createHostBridge` schedules no
+    // client-side timer for that call at all.
+    //
+    // This drives submission through the real Generate submit path
+    // (`initProductShell` → `submitGenerate`, via a DOM click), not a direct
+    // `bridge.callTool` call — closing the exact gap the Copilot review on
+    // #243 flagged in the prior version of this test (supplying the
+    // timeout override directly to `callTool` duplicated, rather than
+    // verified, the production call site — it would still pass even if the
+    // Generate submit path stopped threading the override through).
+    const { hooks, window, document } = loadShell();
+    expect(hooks.NO_CLIENT_DEADLINE).toBeNull();
+
+    let resolveConjure: (value: unknown) => void = () => {};
+    const conjure = new Promise((resolve) => {
+      resolveConjure = resolve;
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const calls: Array<{ name: string; args: any; timeoutMs: unknown }> = [];
+    const bridge = {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      callTool: vi.fn((name: string, args: any, timeoutMs: unknown) => {
+        calls.push({ name, args, timeoutMs });
+        if (name === "mcp__genie__list_kits") {
+          return Promise.resolve({
+            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+          });
+        }
+        if (name === "mcp__genie__list_files") {
+          return Promise.resolve({ files: [] });
+        }
+        if (name === "mcp__genie__list_components") {
+          return Promise.resolve({ components: [] });
+        }
+        return conjure;
+      }),
+      destroy: () => {},
+    };
+    hooks.initProductShell(document, bridge);
+    await settle();
+
+    const prompt = document.getElementById("generate-prompt") as HTMLTextAreaElement;
+    prompt.value = "Build a compact status card";
+    prompt.dispatchEvent(new window.Event("input", { bubbles: true }));
+    (document.getElementById("conjure-button") as HTMLButtonElement).click();
+    await settle();
+
+    const listKitsCall = calls.find((call) => call.name === "mcp__genie__list_kits");
+    const conjureCall = calls.find((call) => call.name === "mcp__genie__conjure");
+    // The production submit path threads NO_CLIENT_DEADLINE through to the
+    // conjure call specifically. If the call site ever stops passing it,
+    // this assertion (not just the bridge-level unit test below) catches it.
+    expect(conjureCall?.timeoutMs).toBe(hooks.NO_CLIENT_DEADLINE);
+    expect(conjureCall?.timeoutMs).toBeNull();
+    // Generic calls are unaffected: submitGenerate never threads an
+    // override through for them (they keep the fixed 60s default).
+    expect(listKitsCall?.timeoutMs).toBeUndefined();
+
+    resolveConjure({
+      componentName: "Status card",
+      group: "surfaces",
+      files: [{ path: "components/StatusCard.tsx", content: "export default null" }],
+      manifestEntry: { name: "Status card" },
+      usage: { inputTokens: 12, outputTokens: 20 },
+    });
+    await settle();
+    expect(document.getElementById("draft-name")?.textContent).toBe("Status card");
+  });
+
+  it("createHostBridge schedules no timer at all for NO_CLIENT_DEADLINE, however long the host takes", async () => {
+    // Bridge-level companion to the submit-path test above: confirms
+    // `createHostBridge` itself honours the sentinel — the call is still
+    // pending arbitrarily far past both the old 60s generic default and the
+    // server's 120s LLM ceiling, and only settles once the host actually
+    // replies.
+    vi.useFakeTimers();
+    try {
+      const { hooks, window } = loadHooks();
+      const posted: unknown[] = [];
+      const host = { postMessage: vi.fn((message) => posted.push(message)) };
+      const bridge = hooks.createHostBridge(window, host);
+
+      const pending = bridge.callTool("mcp__genie__conjure", {}, hooks.NO_CLIENT_DEADLINE);
+      pending.catch(() => {});
+
+      // Advance well past both the old 60s generic default and the
+      // server's 120s LLM ceiling: still pending, no client-side timeout.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+      const request = posted.at(-1) as { id: number };
+      window.dispatchEvent(
+        new window.MessageEvent("message", {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          source: host as any,
+          data: {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { structuredContent: { componentName: "Status card" } },
+          },
+        }),
+      );
+
+      await expect(pending).resolves.toEqual({ componentName: "Status card" });
+      bridge.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still times out a generic (non-conjure) tool call at the default 60s deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hooks, window } = loadHooks();
+      const host = { postMessage: vi.fn() };
+      const bridge = hooks.createHostBridge(window, host);
+
+      const pending = bridge.callTool("mcp__genie__list_kits", {});
+      const assertion = expect(pending).rejects.toThrow("timed out");
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      await assertion;
+      bridge.destroy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("route contract", () => {
