@@ -262,6 +262,12 @@
               <a href="?route=generate" data-route-link="generate">Go to Generate</a>
             </div>
 
+            <p id="review-preview-note" class="review-preview-note" hidden>
+              This host pins <code>style-src</code> to hashes of files already in the kit, and the
+              preview frame inherits that policy. An unwritten draft&rsquo;s inline style cannot
+              match one of those hashes, so this preview may render unstyled here even though the
+              card is correct. Apply it, or open it standalone, to judge the styling.
+            </p>
             <div id="review-preview" class="review-preview" hidden></div>
           </section>
 

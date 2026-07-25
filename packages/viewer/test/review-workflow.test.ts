@@ -3090,3 +3090,200 @@ describe("CodeQL — iframe src taint (alerts 2, 4, 5, 7)", () => {
     }
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Copilot review round 7 — findings 26-35                             */
+/* ------------------------------------------------------------------ */
+
+describe("round 7 — payload schema", () => {
+  it("rejects two file entries that share a path", () => {
+    const hooks = loadHooks();
+    // `write_files` rejects duplicates up front with `DuplicatePathError`
+    // (packages/server/src/tools/write_files.ts:104). A payload that only fails
+    // AFTER the reviewer confirms is a gate that did not gate.
+    const duplicate = conjureResult({
+      files: [
+        fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>A</button>\n`),
+        fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>B</button>\n`),
+      ],
+    });
+    expect(hooks.isConjureResult(duplicate)).toBe(false);
+    // Positive control: distinct paths still pass, so this is not a vacuous assertion.
+    expect(
+      hooks.isConjureResult(
+        conjureResult({
+          files: [
+            fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>A</button>\n`),
+            fileEntry("components/actions/Button/Button.css", ".b{color:red}"),
+          ],
+        }),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("round 7 — embedded CSP preflight", () => {
+  it("rejects a srcset whose later candidate is remote", () => {
+    const hooks = loadHooks();
+    const mixed =
+      '<img srcset="data:image/png;base64,QQ== 1x, https://cdn.example/x.png 2x" alt="">';
+    expect(hooks.violatesEmbeddedCsp(mixed)).toBe(true);
+    // Positive control: every candidate inline is still allowed.
+    expect(
+      hooks.violatesEmbeddedCsp(
+        '<img srcset="data:image/png;base64,QQ== 1x, data:image/png;base64,QQ== 2x" alt="">',
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a meta refresh, including character-reference spellings", () => {
+    const hooks = loadHooks();
+    // `default-src 'none'` does not govern document navigation, and the review
+    // sandbox permits the frame to navigate itself.
+    expect(
+      hooks.violatesEmbeddedCsp('<meta http-equiv="refresh" content="0;url=https://evil.example">'),
+    ).toBe(true);
+    expect(
+      hooks.violatesEmbeddedCsp(
+        '<meta http-equiv="&#114;efresh" content="0;url=https://evil.example">',
+      ),
+    ).toBe(true);
+    expect(
+      hooks.violatesEmbeddedCsp(
+        '<meta http-equiv="&#x72;efresh" content="0;url=https://evil.example">',
+      ),
+    ).toBe(true);
+    // Positive control: an ordinary meta tag is not a navigation.
+    expect(hooks.violatesEmbeddedCsp('<meta charset="utf-8">')).toBe(false);
+  });
+});
+
+describe("round 7 — checklist accessibility", () => {
+  it("announces pass/fail state for automated rows", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult(), { kitId: "my-kit", kitLabel: "My Kit" });
+    const row = document.querySelector('[data-check-id="schema"]')!;
+    // The glyph is aria-hidden, so without extra text a screen reader hears only
+    // the check's name and never its outcome.
+    expect(row.textContent).toMatch(/passed/i);
+    const manual = document.querySelector('[data-check-kind="manual"]')!;
+    // Manual rows already expose state through their checkbox — no double-speak.
+    expect(manual.textContent).not.toMatch(/\bpassed\b/i);
+  });
+});
+
+describe("round 7 — draft provenance", () => {
+  it("shows the token usage the model reported", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult(), { kitId: "my-kit", kitLabel: "My Kit" });
+    const summary = document.getElementById("draft-summary")!.textContent ?? "";
+    expect(summary).toMatch(/tokens/i);
+    expect(summary).toMatch(/10/);
+    expect(summary).toMatch(/20/);
+    expect(summary).toMatch(/30/);
+  });
+
+  it("omits the usage row when the payload carries no usage", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    const bare = conjureResult();
+    delete (bare as Record<string, unknown>).usage;
+    controller.addDraft(bare, { kitId: "my-kit", kitLabel: "My Kit" });
+    expect(document.getElementById("draft-summary")!.textContent ?? "").not.toMatch(/tokens/i);
+  });
+
+  it("keeps a browse-sourced draft labelled Browse after a refine", async () => {
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__refine: refineResult(),
+    });
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      componentInKit: true,
+      source: "browse",
+    });
+    expect(wired.document.getElementById("draft-summary")!.textContent).toMatch(/Browse/);
+
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "make it wider";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    (wired.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.document.getElementById("draft-label")!.textContent).toMatch(/draft #2/i);
+    });
+    // A refine of a kit component is still that component — not a fresh generation.
+    expect(wired.document.getElementById("draft-summary")!.textContent).toMatch(/Browse/);
+  });
+});
+
+describe("round 7 — apply dialog truthfulness", () => {
+  function twoFileDraft() {
+    return conjureResult({
+      files: [
+        fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Go</button>\n`),
+        fileEntry("components/actions/Button/Button.css", ".b{color:red}"),
+      ],
+    });
+  }
+
+  it("remembers that bytes left the session when the write was only partial", async () => {
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      // One of the two planned files never landed: `ok:false`, writtenPaths non-empty.
+      mcp__genie__write_files: { writtenPaths: ["components/actions/Button/Button.html"] },
+    });
+    wired.controller.addDraft(twoFileDraft(), { kitId: "my-kit", kitLabel: "My Kit" });
+    makeGreen(wired.document, wired.controller);
+    (wired.document.getElementById("decision-approve") as HTMLButtonElement).click();
+    (wired.document.getElementById("apply-button") as HTMLButtonElement).click();
+    (wired.document.getElementById("apply-confirm-accept") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.document.getElementById("review-status")!.textContent).toMatch(/partial write/i);
+    });
+
+    // Reopening must not claim these bytes have never left the session.
+    (wired.document.getElementById("apply-button") as HTMLButtonElement).click();
+    const detail = wired.document.getElementById("apply-confirm-detail")!.textContent ?? "";
+    expect(detail).not.toMatch(/first time anything leaves/i);
+    expect(detail).toMatch(/already written once/i);
+  });
+
+  it("takes the persistent app header out of the a11y tree while the dialog is up", () => {
+    const wired = loadWired(HAPPY_REPLIES);
+    wired.controller.addDraft(conjureResult(), { kitId: "my-kit", kitLabel: "My Kit" });
+    makeGreen(wired.document, wired.controller);
+    (wired.document.getElementById("decision-approve") as HTMLButtonElement).click();
+    (wired.document.getElementById("apply-button") as HTMLButtonElement).click();
+    const header = wired.document.querySelector(".app-header")!;
+    // `aria-modal="true"` only promises focus containment to AT that honours it;
+    // the header sits outside the review layout and stayed reachable.
+    expect(header.hasAttribute("inert")).toBe(true);
+    expect(header.getAttribute("aria-hidden")).toBe("true");
+    (wired.document.getElementById("apply-confirm-cancel") as HTMLButtonElement).click();
+    expect(header.hasAttribute("inert")).toBe(false);
+    expect(header.hasAttribute("aria-hidden")).toBe(false);
+  });
+});
+
+describe("round 7 — inherited style-src hashes", () => {
+  it("warns when the embedding document pins style-src to build-time hashes", () => {
+    const { document, controller, window } = loadWired(HAPPY_REPLIES);
+    const meta = document.createElement("meta");
+    meta.setAttribute("http-equiv", "Content-Security-Policy");
+    meta.setAttribute("content", "default-src 'none'; style-src 'sha256-abc123'");
+    document.head.append(meta);
+    controller.addDraft(conjureResult(), { kitId: "my-kit", kitLabel: "My Kit" });
+    const note = document.getElementById("review-preview-note") as HTMLElement;
+    // A `srcdoc` frame inherits this policy, so an unwritten draft's inline
+    // <style> can never match a hash minted before the draft existed.
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toMatch(/style/i);
+    void window;
+  });
+
+  it("stays quiet when the embedding document pins no style hashes", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult(), { kitId: "my-kit", kitLabel: "My Kit" });
+    expect((document.getElementById("review-preview-note") as HTMLElement).hidden).toBe(true);
+  });
+});

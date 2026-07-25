@@ -126,18 +126,8 @@
   var NO_CLIENT_DEADLINE = null;
 
   /**
-   * CodeQL alerts 2/4/5/7 (js/xss-through-dom, js/xss, js/client-side-unvalidated-url-redirection)
-   * — every iframe `src` we assign traces back to attacker-reachable data: a manifest-supplied
-   * `card.path`, a `data-src` re-read from the DOM, or a `freshSrc` riding an HMR postMessage that
-   * any frame in the tree can send. The preview sandbox (allow-scripts, deliberately NO
-   * allow-same-origin) contains the blast radius, but that is defence in depth, not the guard.
-   *
-   * The WHATWG URL parser removes ASCII tab/LF/CR from ANYWHERE in a URL and trims leading and
-   * trailing "C0 control or space" BEFORE it detects the scheme, so `java\tscript:alert(1)` and
-   * " javascript:alert(1)" both parse as `javascript:`. Normalize exactly the same way first, or
-   * a scheme allowlist is trivially bypassed. Then allow relative paths (the common case) plus
-   * http/https/data — `data:` is a real embedded-manifest transport and lands in an opaque origin.
-   * Protocol-relative `//host/x` is rejected: it is off-origin but carries no scheme to match.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * (“iframe `src` normalization”) — viewer.js is capped at 256 KiB (#253).
    */
   var URL_TAB_OR_NEWLINE_RE = /[\t\n\r]/g;
   // eslint-disable-next-line no-control-regex
@@ -890,18 +880,9 @@
   var MIME_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/;
 
   /**
-   * DRO-242 (fail closed) — a single `files[]` entry from an untrusted host reply, validated
-   * against conjure's canonical output schema (`packages/server/src/tools/conjure.ts`'s
-   * `conjureOutputShape` plus `COMPONENT_SCHEMA`'s `files[]` item shape in
-   * `packages/server/src/llm/schema.ts`): `path` must match the
-   * `components/<group>/<Name>/<basename>` layout, `content`/`mimeType` are required non-empty
-   * strings (`mimeType` further constrained to the `type/subtype` pattern), and `encoding` is
-   * restricted to `"utf-8"` or `"base64"`. A reply missing any of these (or supplying an
-   * unrecognized encoding, a malformed path, or any extra key beyond this strict shape) is
-   * structurally invalid and must be rejected here rather than passed through on the strength of
-   * the two fields the viewer happens to use.
-   */
-  /**
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * (“`files[]` entry validation”) — viewer.js is capped at 256 KiB (#253).
+   *
    * DRO-242 (fail closed, Copilot review round 6) — JSON Schema's `maxLength`/`minLength` count
    * Unicode CODE POINTS, but JS `String.length` counts UTF-16 CODE UNITS — every character outside
    * the Basic Multilingual Plane (astral characters: most emoji, some CJK extensions) is one code
@@ -971,16 +952,8 @@
   }
 
   /**
-   * DRO-242 (fail closed) — validates `manifestEntry` against conjure's canonical output schema
-   * (`packages/server/src/tools/conjure.ts` / `packages/server/src/llm/schema.ts`'s `Viewport`
-   * $def): `viewport.width`/ `viewport.height` are required integers in `[1, 4096]` (Copilot review
-   * round 5 — a bare `typeof === "number"` check still accepted fractions, `0`/negatives, values
-   * above 4096, `NaN`, and `Infinity`, none of which the canonical schema permits), and both
-   * `manifestEntry` and `viewport` are `.strict()` — no keys beyond `viewport`/`subtitle`/`tags`
-   * (resp. `width`/`height`) are allowed. `subtitle` (`maxLength: 256`) and `tags` (`maxItems: 16`,
-   * each a string) are optional but, when present, must respect those same bounds. An
-   * object-like-but-empty `manifestEntry: {}` (missing `viewport` entirely) must be rejected, not
-   * just checked for being a plain object.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * (“`manifestEntry` validation”) — viewer.js is capped at 256 KiB (#253).
    */
   var VIEWPORT_DIMENSION_MIN = 1;
   var VIEWPORT_DIMENSION_MAX = 4096;
@@ -1049,17 +1022,23 @@
   }
 
   /**
-   * DRO-242 (fail closed, Copilot review round 4) — validates an untrusted `conjure` host reply
-   * against the FULL canonical `COMPONENT_SCHEMA` (`packages/server/src/llm/schema.ts`) shape, not
-   * just field presence: `componentName` must be PascalCase (`^[A-Z][A-Za-z0-9]{1,63}$`), `group`
-   * kebab-case (`^[a-z0-9-]{1,32}$`), `files` bounded to 1-12 entries with at least one
-   * self-consistent `<Name>/<Name>.html` preview (AC5's `contains` rule), and every `files[]`
-   * entry/`manifestEntry`/`usage` individually validated against their own strict nested shapes.
-   * Earlier rounds closed the "missing field" and "extra key" gaps; this round closes the "right
-   * shape, wrong content" gap Copilot flagged — a name like `"Status card"` (lowercase, space) or
-   * an oversized/no-`.html` file set still had every key present with the right JS `typeof`, but is
-   * exactly the malformed-payload case AC3-AC5 exist to reject.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * (“`conjure` reply validation”) — viewer.js is capped at 256 KiB (#253).
    */
+  /**
+   * Copilot (round 7) — `write_files` rejects a repeated `path` with `DuplicatePathError`, so a
+   * payload the reviewer approves here would fail only AFTER confirmation. Fail closed at the
+   * gate. `files` is capped at 12, so the pairwise scan is cheaper than building a Set.
+   */
+  function hasUniquePaths(files) {
+    for (var i = 0; i < files.length; i++) {
+      for (var j = i + 1; j < files.length; j++) {
+        if (files[i].path === files[j].path) return false;
+      }
+    }
+    return true;
+  }
+
   function isConjureResult(value) {
     return Boolean(
       isPlainObject(value) &&
@@ -1072,6 +1051,7 @@
       value.files.length >= 1 &&
       value.files.length <= 12 &&
       value.files.every(isConjureFileEntry) &&
+      hasUniquePaths(value.files) &&
       hasMatchingHtmlPreview(value.files) &&
       isManifestEntry(value.manifestEntry) &&
       isConjureUsage(value.usage),
@@ -1215,10 +1195,52 @@
   // trip it.
   var INLINE_HANDLER_PATTERN = /<[a-z][^>]*\son[a-z]+\s*=/i;
 
+  // Copilot (round 7) — `srcset` is a COMMA-SEPARATED candidate list, so the attribute check above
+  // (a negative lookahead anchored at the value's start) cleared the whole list on the strength of
+  // its first entry: `srcset="data:… 1x, https://cdn/x.png 2x"` passed while the 2x candidate was
+  // a live remote fetch. Parse it the way HTML does — split on WHITESPACE, not commas, because a
+  // base64 `data:` URL legitimately contains a comma and never a space. Anything that is not a
+  // width/pixel-density descriptor is a URL, and an unrecognised token is treated as one.
+  var SRCSET_ATTR_RE = /\bsrcset\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+  var SRCSET_DESCRIPTOR_RE = /^\d+(?:\.\d+)?[wx]$/i;
+  var LOCAL_URL_RE = /^(?:data:|#)/i;
+
+  function srcsetReachesNetwork(content) {
+    SRCSET_ATTR_RE.lastIndex = 0;
+    var match;
+    while ((match = SRCSET_ATTR_RE.exec(content))) {
+      var parts = (match[1] || match[2] || match[3] || "").split(/\s+/);
+      for (var i = 0; i < parts.length; i++) {
+        var token = parts[i].replace(/^,+/, "").replace(/,+$/, "");
+        if (!token || SRCSET_DESCRIPTOR_RE.test(token)) continue;
+        if (!LOCAL_URL_RE.test(token)) return true;
+      }
+    }
+    return false;
+  }
+
+  // Copilot (round 7) — `default-src 'none'` does not govern document NAVIGATION, so a
+  // `<meta http-equiv="refresh" content="0;url=…">` still leaves the card blank and, on a remote
+  // target, still makes the request. Browsers decode character references inside attribute values
+  // before matching `http-equiv`, so decode numeric ones first; no NAMED reference spells a bare
+  // ASCII letter, which is why decimal + hex is the complete set for this attack.
+  var NUMERIC_CHAR_REF_RE = /&#(?:(\d+)|[xX]([\dA-Fa-f]+));?/g;
+  var META_REFRESH_PATTERN = /<meta\b[^>]*\bhttp-equiv\s*=\s*["']?\s*refresh\b/i;
+
+  function declaresMetaRefresh(content) {
+    var decoded = content.replace(NUMERIC_CHAR_REF_RE, function (whole, dec, hex) {
+      var code = dec ? parseInt(dec, 10) : parseInt(hex, 16);
+      return code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+    });
+    return META_REFRESH_PATTERN.test(decoded);
+  }
+
   function violatesEmbeddedCsp(content) {
     if (typeof content !== "string") return false;
     return (
       EXTERNAL_ATTR_URL_PATTERN.test(content) ||
+      srcsetReachesNetwork(content) ||
+      declaresMetaRefresh(content) ||
       EXTERNAL_CSS_URL_PATTERN.test(content) ||
       REMOTE_IMPORT_PATTERN.test(content) ||
       SCRIPT_TAG_PATTERN.test(content) ||
@@ -1886,6 +1908,10 @@
   }
 
   var CHECK_ICONS = { pass: "✓", fail: "✕", pending: "…" };
+  // Copilot (round 7) — the glyph is aria-hidden, so an automated row announced its name and
+  // nothing else. Manual rows already expose state through their checkbox, so only the automated
+  // branch gets this; adding it to both would make AT say the state twice.
+  var CHECK_STATE_TEXT = { pass: "passed", fail: "failed", pending: "pending" };
 
   function renderChecklist(doc, target, checklist, onToggle) {
     if (!target) return;
@@ -1923,6 +1949,10 @@
         var span = doc.createElement("span");
         span.className = "check-item__label";
         span.textContent = entry.label;
+        var state = doc.createElement("span");
+        state.className = "visually-hidden";
+        state.textContent = " — " + (CHECK_STATE_TEXT[entry.state] || entry.state);
+        span.append(state);
         item.append(icon, span);
       }
 
@@ -1962,6 +1992,7 @@
       stageLabel: doc.getElementById("review-stage-label"),
       empty: doc.getElementById("review-empty"),
       preview: doc.getElementById("review-preview"),
+      previewNote: doc.getElementById("review-preview-note"),
       draft: doc.getElementById("draft-review"),
       draftLabel: doc.getElementById("draft-label"),
       persistenceNote: doc.getElementById("draft-persistence-note"),
@@ -2067,6 +2098,17 @@
       frame.srcdoc = file.content;
       el.preview.append(frame);
       el.preview.hidden = false;
+      // Copilot (round 7) — a `srcdoc` frame INHERITS the embedding document's CSP (no local
+      // scheme escapes it). Where the host pins `style-src` to build-time sha256 hashes, an
+      // unwritten draft's inline <style> cannot match one that was minted before it existed, so a
+      // green render row would over-promise. Detect the policy itself rather than guess the tier.
+      if (el.previewNote) el.previewNote.hidden = !inheritsStyleHashPolicy();
+    }
+
+    function inheritsStyleHashPolicy() {
+      var meta = doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
+      var content = meta && meta.getAttribute("content");
+      return typeof content === "string" && /style-src[^;]*sha256-/i.test(content);
     }
 
     function renderSummary(draft) {
@@ -2080,6 +2122,19 @@
         ["Proposed files", String(draft.result.files.length)],
       ];
       if (info.model) rows.push(["Model", info.model]);
+      // Copilot (round 7) — S1 asks for provenance. `usage` is already validated on the way in;
+      // Browse baselines carry none, so the row is conditional rather than a bare "0".
+      var usage = draft.result.usage;
+      if (usage)
+        rows.push([
+          "Tokens",
+          usage.promptTokens +
+            " prompt + " +
+            usage.completionTokens +
+            " completion = " +
+            usage.totalTokens +
+            " total",
+        ]);
       for (var i = 0; i < rows.length; i++) {
         var dt = doc.createElement("dt");
         dt.textContent = rows[i][0];
@@ -2185,6 +2240,9 @@
       return {
         kitId: source.kitId,
         kitLabel: source.kitLabel,
+        // Copilot (round 7) — a refine of a kit component is still that component. Dropping
+        // `source` relabelled a Browse-opened card "Generate" the moment it was refined.
+        source: source.source,
         model: source.model,
         displayName: source.displayName || "",
         componentInKit: false,
@@ -2306,6 +2364,7 @@
         model: info.model || "",
         displayName: info.displayName || "",
         componentInKit: Boolean(info.componentInKit),
+        source: draft.source,
       };
       log("genie", note || "Drafted " + presentName(draft) + " — " + draft.label + ".");
       renderPreview(draft);
@@ -2452,7 +2511,7 @@
 
     /** Take the review workspace out of the tab order while the dialog is up. */
     function setBackgroundInert(on) {
-      var nodes = [el.layout, el.segmented];
+      var nodes = [el.layout, el.segmented, doc.querySelector(".app-header")];
       for (var i = 0; i < nodes.length; i++) {
         if (!nodes[i]) continue;
         if (on) {
@@ -2525,6 +2584,10 @@
         inFlight = false;
       }
 
+      // Copilot (round 7) — a PARTIAL write returns ok:false with a non-empty `writtenPaths`.
+      // Recording this below the early return let the retry dialog claim, falsely, that nothing
+      // had ever left the session. Same class as the stuck-delete bug in round 6.
+      if (outcome.writtenPaths.length && meta[draft.id]) meta[draft.id].bytesWritten = true;
       if (!outcome.ok) {
         if (el.status) el.status.textContent = outcome.message || "Apply failed.";
         announce(outcome.message || "Apply failed. Nothing was written.");
@@ -2539,8 +2602,6 @@
       // deletes raises the "already applied" blocker, removing the one control that could finish
       // the job; `write_files` is idempotent, so a retry is safe. See architecture.md.
       var stuckDeletes = outcome.stuckDeletes || [];
-      // Bytes left this session even when the deletes stranded — the confirm dialog must say so.
-      if (outcome.writtenPaths.length) meta[draft.id].bytesWritten = true;
       if (!stuckDeletes.length) store.markApplied(outcome.writtenPaths, draft.id);
       meta[draft.id].componentInKit = true;
 
@@ -4638,17 +4699,8 @@
   }
 
   /**
-   * Wire the tree + detail panes together against a live manifest: owns the current selection
-   * (deep-link-aware — Decision #7), re-projects the tree on search/manifest changes, and
-   * re-renders detail atomically on selection (AC5 — "stale content from the prior selection is not
-   * shown as current", satisfied because both panes are rebuilt from the SAME `tree`/`selection`
-   * read on every call, never patched piecemeal).
-   *
-   * Used by BOTH vehicles now (Copilot #1): the fetch tier calls this with `hostBridge: null` (no
-   * MCP host), and the embedded `ui://genie/grid` tier calls it with the real host bridge once the
-   * handshake resolves (`setHostBridge`), so Refine/source-read still route through the host
-   * (AC12/AC13). Call sites are gated on `#browse-workbench` existing, which only the fixture-only
-   * grid tests omit.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * (“`initBrowseController` responsibilities”) — viewer.js is capped at 256 KiB (#253).
    *
    * @param {Document} doc
    * @param {{hostBridge?: {callTool: Function}|null, kitId?: string, kitName?: string, onRefine?: (ctx: object) => void}} opts
@@ -5247,17 +5299,8 @@
   }
 
   /**
-   * True when any Browse-rendered metadata field (`tags`, `subtitle`, `lastModified`) changed for
-   * any component, independent of `hash`/ structural identity.
-   *
-   * Copilot review (PR #248) — Browse's detail panel (`renderBrowseDetail`) renders `tags`,
-   * `subtitle` (breadcrumb), and `lastModified` straight from the manifest; a manifest update that
-   * changes ONLY one of those (no path/name/group/viewport/hash change) was invisible to both
-   * `manifestStructureChanged` and `diffManifestHashes`, so `onManifestUpdate` never fired and the
-   * visible Browse detail went stale. This is checked SEPARATELY from `manifestStructureChanged`
-   * (rather than folded into it) so it only ever triggers Browse's own re-render, never the
-   * full-grid rebuild path — see that function's doc for why `lastModified` in particular must stay
-   * out of the grid-rebuild decision.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * (“Browse metadata-only manifest changes”) — viewer.js is capped at 256 KiB (#253).
    *
    * @param {object} prev
    * @param {object} next
@@ -5597,17 +5640,8 @@
   }
 
   /**
-   * Boot the viewer: obtain the manifest, render the grid, and wire the `#q` search input to
-   * live-filter (AC5). Resolves (never rejects) so a caller / the browser auto-boot can `await` it
-   * without an unhandled rejection; on any failure it paints the error state instead.
-   *
-   * ── Manifest source: inline first, then fetch (M4-06 / DRO-268) ────
-   * The embedded `ui://genie/grid` tier inlines the manifest into the document (`<script
-   * type="application/json" id="manifest">`) because its CSP (`connect-src 'none'`) blocks `fetch`
-   * entirely. So `boot` reads the inline node FIRST and, when present, renders straight from it —
-   * issuing NO network request. Only when there is no inline node (the `file://` / localhost tiers)
-   * does it fall back to `fetch(MANIFEST_URL)`. This keeps `viewer.js` byte-identical across all
-   * three vehicles (RFC G-5) while honouring each tier's transport.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * (“Viewer boot and manifest source”) — viewer.js is capped at 256 KiB (#253).
    *
    * @param {Document} doc
    * @param {typeof fetch} fetchImpl

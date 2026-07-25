@@ -317,3 +317,39 @@ Before Copilot #2 (PR #250) this never surfaced, because a Browse handoff FABRIC
 ### Section display order
 
 Section display order (DRO-749 fix): prefer the manifest's own `groups` array — the compiler already resolved alphabetical-vs-`_groups.json`- pinned order server-side, so there is no reason to re-derive a (possibly different) order client-side — but ALWAYS append any group actually present in `grouped` that `declaredGroups` omitted, in first-seen order. Mirrors the server's own `orderGroups` "remainder" logic (`packages/server/src/manifest/compiler.ts`): "an incomplete pin list never silently drops a group." Without this, a valid-but-partial `groups[]` (e.g. a hand-edited or stale manifest listing only some of the groups `components[]` actually uses) would cause `renderGrid` to silently drop every component in an undeclared group — worse than the plain first-seen order this replaces. When `declaredGroups` is absent, empty, or entirely malformed, this degrades to pure first-seen order among `grouped`'s own keys (every group is then "remainder").
+
+### iframe `src` normalization (CodeQL alerts 2/4/5/7)
+
+CodeQL alerts 2/4/5/7 (js/xss-through-dom, js/xss, js/client-side-unvalidated-url-redirection) — every iframe `src` we assign traces back to attacker-reachable data: a manifest-supplied `card.path`, a `data-src` re-read from the DOM, or a `freshSrc` riding an HMR postMessage that any frame in the tree can send. The preview sandbox (allow-scripts, deliberately NO allow-same-origin) contains the blast radius, but that is defence in depth, not the guard.
+
+The WHATWG URL parser removes ASCII tab/LF/CR from ANYWHERE in a URL and trims leading and trailing "C0 control or space" BEFORE it detects the scheme, so `java\tscript:alert(1)` and " javascript:alert(1)" both parse as `javascript:`. Normalize exactly the same way first, or a scheme allowlist is trivially bypassed. Then allow relative paths (the common case) plus http/https/data — `data:` is a real embedded-manifest transport and lands in an opaque origin. Protocol-relative `//host/x` is rejected: it is off-origin but carries no scheme to match.
+
+### `manifestEntry` validation (DRO-242)
+
+DRO-242 (fail closed) — validates `manifestEntry` against conjure's canonical output schema (`packages/server/src/tools/conjure.ts` / `packages/server/src/llm/schema.ts`'s `Viewport` $def): `viewport.width`/ `viewport.height` are required integers in `[1, 4096]` (Copilot review round 5 — a bare `typeof === "number"` check still accepted fractions, `0`/negatives, values above 4096, `NaN`, and `Infinity`, none of which the canonical schema permits), and both `manifestEntry` and `viewport` are `.strict()` — no keys beyond `viewport`/`subtitle`/`tags` (resp. `width`/`height`) are allowed. `subtitle` (`maxLength: 256`) and `tags` (`maxItems: 16`, each a string) are optional but, when present, must respect those same bounds. An object-like-but-empty `manifestEntry: {}` (missing `viewport` entirely) must be rejected, not just checked for being a plain object.
+
+### `conjure` reply validation (DRO-242)
+
+DRO-242 (fail closed, Copilot review round 4) — validates an untrusted `conjure` host reply against the FULL canonical `COMPONENT_SCHEMA` (`packages/server/src/llm/schema.ts`) shape, not just field presence: `componentName` must be PascalCase (`^[A-Z][A-Za-z0-9]{1,63}$`), `group` kebab-case (`^[a-z0-9-]{1,32}$`), `files` bounded to 1-12 entries with at least one self-consistent `<Name>/<Name>.html` preview (AC5's `contains` rule), and every `files[]` entry/`manifestEntry`/`usage` individually validated against their own strict nested shapes. Earlier rounds closed the "missing field" and "extra key" gaps; this round closes the "right shape, wrong content" gap Copilot flagged — a name like `"Status card"` (lowercase, space) or an oversized/no-`.html` file set still had every key present with the right JS `typeof`, but is exactly the malformed-payload case AC3-AC5 exist to reject.
+
+### `files[]` entry validation (DRO-242)
+
+DRO-242 (fail closed) — a single `files[]` entry from an untrusted host reply, validated against conjure's canonical output schema (`packages/server/src/tools/conjure.ts`'s `conjureOutputShape` plus `COMPONENT_SCHEMA`'s `files[]` item shape in `packages/server/src/llm/schema.ts`): `path` must match the `components/<group>/<Name>/<basename>` layout, `content`/`mimeType` are required non-empty strings (`mimeType` further constrained to the `type/subtype` pattern), and `encoding` is restricted to `"utf-8"` or `"base64"`. A reply missing any of these (or supplying an unrecognized encoding, a malformed path, or any extra key beyond this strict shape) is structurally invalid and must be rejected here rather than passed through on the strength of the two fields the viewer happens to use.
+
+### `initBrowseController` responsibilities
+
+Wire the tree + detail panes together against a live manifest: owns the current selection (deep-link-aware — Decision #7), re-projects the tree on search/manifest changes, and re-renders detail atomically on selection (AC5 — "stale content from the prior selection is not shown as current", satisfied because both panes are rebuilt from the SAME `tree`/`selection` read on every call, never patched piecemeal).
+
+Used by BOTH vehicles now (Copilot #1): the fetch tier calls this with `hostBridge: null` (no MCP host), and the embedded `ui://genie/grid` tier calls it with the real host bridge once the handshake resolves (`setHostBridge`), so Refine/source-read still route through the host (AC12/AC13). Call sites are gated on `#browse-workbench` existing, which only the fixture-only grid tests omit.
+
+### Browse metadata-only manifest changes
+
+True when any Browse-rendered metadata field (`tags`, `subtitle`, `lastModified`) changed for any component, independent of `hash`/ structural identity.
+
+Copilot review (PR #248) — Browse's detail panel (`renderBrowseDetail`) renders `tags`, `subtitle` (breadcrumb), and `lastModified` straight from the manifest; a manifest update that changes ONLY one of those (no path/name/group/viewport/hash change) was invisible to both `manifestStructureChanged` and `diffManifestHashes`, so `onManifestUpdate` never fired and the visible Browse detail went stale. This is checked SEPARATELY from `manifestStructureChanged` (rather than folded into it) so it only ever triggers Browse's own re-render, never the full-grid rebuild path — see that function's doc for why `lastModified` in particular must stay out of the grid-rebuild decision.
+
+### Viewer boot and manifest source
+
+Boot the viewer: obtain the manifest, render the grid, and wire the `#q` search input to live-filter (AC5). Resolves (never rejects) so a caller / the browser auto-boot can `await` it without an unhandled rejection; on any failure it paints the error state instead.
+
+── Manifest source: inline first, then fetch (M4-06 / DRO-268) ──── The embedded `ui://genie/grid` tier inlines the manifest into the document (`<script type="application/json" id="manifest">`) because its CSP (`connect-src 'none'`) blocks `fetch` entirely. So `boot` reads the inline node FIRST and, when present, renders straight from it — issuing NO network request. Only when there is no inline node (the `file://` / localhost tiers) does it fall back to `fetch(MANIFEST_URL)`. This keeps `viewer.js` byte-identical across all three vehicles (RFC G-5) while honouring each tier's transport.
