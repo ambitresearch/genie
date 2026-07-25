@@ -849,14 +849,9 @@
   }
 
   /**
-   * DRO-242 (fail closed, Copilot review round 3) — the server's canonical shapes for `files[]`
-   * entries, `manifestEntry`, `manifestEntry.viewport`, `usage`, and the top-level `conjure` result
-   * all declare `.strict()`/`additionalProperties: false` (`packages/server/src/tools/
-   * conjure.ts`'s `conjureOutputShape`, `packages/server/src/llm/schema.ts`'s `COMPONENT_SCHEMA`).
-   * A field-by-field/`isPlainObject` check alone does not enforce that — `{ ...valid.usage,
-   * unexpected: true }` has every required key with the right type, so it still passed.
-   * `hasOnlyKeys` makes every one of those checks reject any key outside its known set, closing
-   * that gap for good rather than only checking presence of the expected fields.
+   * Reject any key outside a known set, so the server's `.strict()` shapes are really enforced.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * ("Enforcing strict object shapes in the viewer") — viewer.js is capped at 256 KiB (#253).
    */
   function hasOnlyKeys(value, allowedKeys) {
     return Object.keys(value).every(function (key) {
@@ -2592,14 +2587,25 @@
       }
     }
 
-    function closeApplyConfirm() {
-      if (!el.dialog) return;
+    // `viewIsClosing` must be an explicit `true`: this is also used directly as a click listener,
+    // so the first argument is otherwise an Event.
+    function closeApplyConfirm(viewIsClosing) {
+      if (!el.dialog || el.dialog.hidden) return false;
       el.dialog.hidden = true;
       setBackgroundInert(false);
-      if (dialogReturnFocus && typeof dialogReturnFocus.focus === "function") {
+      var active = doc.activeElement;
+      if (viewIsClosing === true) {
+        // The return target lives inside the view that is being hidden, so restoring it would
+        // strand focus in a hidden subtree. Browsers blur out of a subtree that becomes hidden;
+        // do it explicitly so jsdom and assistive tech agree.
+        if (active && el.dialog.contains(active) && typeof active.blur === "function") {
+          active.blur();
+        }
+      } else if (dialogReturnFocus && typeof dialogReturnFocus.focus === "function") {
         dialogReturnFocus.focus();
       }
       dialogReturnFocus = null;
+      return true;
     }
 
     async function confirmApply() {
@@ -2787,6 +2793,11 @@
 
     return {
       addDraft: addDraft,
+      // Copilot (round 12) — the shell owns routing, so it is the only thing that can know the
+      // review view is about to be hidden out from under an open dialog.
+      dismissApplyConfirm: function () {
+        return closeApplyConfirm(true);
+      },
       logUser: function (text) {
         log("user", text);
       },
@@ -3106,6 +3117,9 @@
 
     function renderRoute(route, focusView) {
       var selected = normalizeRoute(route);
+      // Copilot (round 12) — a route change must never strand the apply dialog's `inert`. See
+      // `docs/developer/architecture.md` ("A route change must never strand the apply dialog").
+      if (selected !== "review" && review) review.dismissApplyConfirm();
       var views = doc.querySelectorAll("[data-route-view]");
       for (var i = 0; i < views.length; i++) {
         views[i].hidden = views[i].getAttribute("data-route-view") !== selected;
@@ -4072,14 +4086,10 @@
   }
 
   /**
-   * Copilot review (PR #248) — the removed-selection focus fallback used to try ONLY the full
-   * tree's `[tabindex="0"]` treeitem, then the search input. At the responsive breakpoints below
-   * 1100px, though, that treeitem still exists in the DOM but is hidden (`visibility: hidden` in
-   * the 720–1099px rail-overlay mode, `display: none` in the <720px compact mode) — so `.focus()`
-   * on it silently failed, and neither the rail toggle nor the compact `<select>` (the ACTUAL
-   * visible navigation control at those widths) was ever tried before falling through to search.
-   * Walk the candidates in specificity order and focus the first one that's both present and
-   * visible.
+   * Focus the first navigation control that is both present AND visible at the current breakpoint.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * ("Focusing the right Browse navigation control at every breakpoint") — viewer.js is capped at
+   * 256 KiB (#253).
    *
    * @param {Document} doc
    * @param {HTMLElement} treeContainer
@@ -4698,15 +4708,11 @@
   }
 
   /**
-   * Updates ONLY the source subpanel of an already-rendered detail pane, in place — leaving the
-   * breadcrumb/heading/variant tabs/preview iframe untouched. Used by the async source-read settle
-   * handler (guarded by the caller's render-generation check) so resolving a source read no longer
-   * tears down and re-fetches a perfectly valid live preview iframe just to paint the source text
-   * underneath it (Copilot review, PR #248).
-   *
-   * Falls back to a full `renderBrowseDetail` re-render if the subpanel marker isn't found (e.g. an
-   * older/differently-shaped container), so behavior degrades safely rather than silently doing
-   * nothing.
+   * Update ONLY the source subpanel of an already-rendered detail pane, in place; fall back to a
+   * full `renderBrowseDetail` re-render when the subpanel marker isn't found.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * ("Repainting Browse source text without tearing down the preview") — viewer.js is capped at
+   * 256 KiB (#253).
    *
    * @param {Document} doc
    * @param {Element} container

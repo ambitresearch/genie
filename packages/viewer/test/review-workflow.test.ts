@@ -3513,3 +3513,125 @@ describe("F38 — the data: exemption is directive-aware", () => {
     expect(violatesEmbeddedCsp("<video controls></video>")).toBe(false);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* F39 (Copilot round 12) — the apply dialog must not strand `inert`.  */
+/* `.app-header` lives OUTSIDE every [data-route-view], so the         */
+/* `inert`/`aria-hidden` the dialog puts on it survives a route change */
+/* unless the route change closes the dialog. `popstate` (Back) never  */
+/* passes through the dialog's own controls, so it is the vector.      */
+/* ------------------------------------------------------------------ */
+
+/** Boot a real product shell that already holds an approved, appliable draft. */
+async function loadRoutedDraft() {
+  const shell = loadShell();
+  const bridge = {
+    callTool(name: string) {
+      if (name === "mcp__genie__list_kits") return Promise.resolve({ kits: [] });
+      return Promise.resolve({});
+    },
+    destroy() {},
+  };
+  const shellController = shell.hooks.initProductShell(shell.document, bridge, {});
+  shellController.setRefineContext({
+    kitId: "kit-a",
+    componentName: "Card",
+    group: "actions",
+    path: "components/actions/Card/Card.html",
+    source: CARD_SOURCE,
+  });
+  const { document } = shell;
+  firePreviewLoad(document);
+  for (const box of Array.from(
+    document.querySelectorAll<HTMLInputElement>("[data-check-toggle]"),
+  )) {
+    box.checked = true;
+    box.dispatchEvent(new document.defaultView!.Event("change", { bubbles: true }));
+  }
+  document
+    .getElementById("decision-approve")!
+    .dispatchEvent(new document.defaultView!.Event("click", { bubbles: true }));
+  await vi.waitFor(() => {
+    expect((document.getElementById("apply-button") as HTMLButtonElement).disabled).toBe(false);
+  });
+  const applyButton = document.getElementById("apply-button") as HTMLButtonElement;
+  // A real pointer click focuses the button first; `dialogReturnFocus` is read off
+  // `document.activeElement`, so skipping this would capture the wrong return target.
+  applyButton.focus();
+  applyButton.dispatchEvent(new document.defaultView!.Event("click", { bubbles: true }));
+  expect((document.getElementById("apply-confirm") as HTMLElement).hidden).toBe(false);
+  return { ...shell, shellController };
+}
+
+/** The Back button: change the URL, then fire the event the browser fires. */
+function goBackTo(shell: { window: Window & typeof globalThis }, route: string) {
+  shell.window.history.pushState({}, "", `?route=${route}`);
+  shell.window.dispatchEvent(new shell.window.PopStateEvent("popstate"));
+}
+
+describe("F39 — a route change cannot strand the apply dialog", () => {
+  it("marks the persistent header inert while the dialog is open", async () => {
+    const { document } = await loadRoutedDraft();
+    const header = document.querySelector(".app-header") as HTMLElement;
+    expect(header.hasAttribute("inert")).toBe(true);
+    expect(header.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("clears inert from the persistent header when Back leaves Review", async () => {
+    const shell = await loadRoutedDraft();
+    goBackTo(shell, "generate");
+    const header = shell.document.querySelector(".app-header") as HTMLElement;
+    expect(header.hasAttribute("inert")).toBe(false);
+  });
+
+  it("clears aria-hidden from the persistent header when Back leaves Review", async () => {
+    const shell = await loadRoutedDraft();
+    goBackTo(shell, "generate");
+    const header = shell.document.querySelector(".app-header") as HTMLElement;
+    expect(header.hasAttribute("aria-hidden")).toBe(false);
+  });
+
+  it("hides the dialog itself when Back leaves Review", async () => {
+    const shell = await loadRoutedDraft();
+    goBackTo(shell, "generate");
+    expect((shell.document.getElementById("apply-confirm") as HTMLElement).hidden).toBe(true);
+  });
+
+  it("does not leave focus inside the now-hidden Review view", async () => {
+    const shell = await loadRoutedDraft();
+    goBackTo(shell, "generate");
+    const active = shell.document.activeElement;
+    const reviewView = shell.document.getElementById("review-view") as HTMLElement;
+    expect(reviewView.hidden).toBe(true);
+    expect(active === null || !reviewView.contains(active)).toBe(true);
+  });
+
+  it("also closes the dialog when an in-app route link changes the view", async () => {
+    const shell = await loadRoutedDraft();
+    const link = shell.document.querySelector<HTMLElement>('[data-route-link="generate"]');
+    expect(link).not.toBeNull();
+    link!.dispatchEvent(new shell.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    const header = shell.document.querySelector(".app-header") as HTMLElement;
+    expect((shell.document.getElementById("apply-confirm") as HTMLElement).hidden).toBe(true);
+    expect(header.hasAttribute("inert")).toBe(false);
+  });
+
+  it("leaves the dialog open when the route re-renders as Review", async () => {
+    const shell = await loadRoutedDraft();
+    goBackTo(shell, "review");
+    const header = shell.document.querySelector(".app-header") as HTMLElement;
+    expect((shell.document.getElementById("apply-confirm") as HTMLElement).hidden).toBe(false);
+    expect(header.hasAttribute("inert")).toBe(true);
+  });
+
+  it("still returns focus to Apply when the dialog is cancelled normally", async () => {
+    const shell = await loadRoutedDraft();
+    shell.document
+      .getElementById("apply-confirm-cancel")!
+      .dispatchEvent(new shell.window.Event("click", { bubbles: true }));
+    expect(shell.document.activeElement).toBe(shell.document.getElementById("apply-button"));
+    expect((shell.document.querySelector(".app-header") as HTMLElement).hasAttribute("inert")).toBe(
+      false,
+    );
+  });
+});

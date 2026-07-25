@@ -404,3 +404,61 @@ that renders broken behind a green gate.
 `src` or `data` attribute only. `poster` and `srcset` stay exempt because both resolve against
 `img-src`, which does permit `data:`. Requiring `\s*=` immediately after the attribute name is
 what keeps `srcset=` and `data-*` attributes out of the match.
+
+### Enforcing strict object shapes in the viewer
+
+DRO-242 (fail closed, Copilot review round 3) — the server's canonical shapes for `files[]`
+entries, `manifestEntry`, `manifestEntry.viewport`, `usage`, and the top-level `conjure` result
+all declare `.strict()`/`additionalProperties: false` (`packages/server/src/tools/conjure.ts`'s
+`conjureOutputShape`, `packages/server/src/llm/schema.ts`'s `COMPONENT_SCHEMA`). A
+field-by-field/`isPlainObject` check alone does not enforce that — `{ ...valid.usage, unexpected:
+true }` has every required key with the right type, so it still passed. `hasOnlyKeys` makes every
+one of those checks reject any key outside its known set, closing that gap for good rather than
+only checking presence of the expected fields.
+
+### Focusing the right Browse navigation control at every breakpoint
+
+Copilot review (PR #248) — the removed-selection focus fallback used to try ONLY the full tree's
+`[tabindex="0"]` treeitem, then the search input. At the responsive breakpoints below 1100px,
+though, that treeitem still exists in the DOM but is hidden (`visibility: hidden` in the
+720–1099px rail-overlay mode, `display: none` in the sub-720px compact mode) — so `.focus()` on it
+silently failed, and neither the rail toggle nor the compact `<select>` (the ACTUAL visible
+navigation control at those widths) was ever tried before falling through to search. Walk the
+candidates in specificity order and focus the first one that's both present and visible.
+
+### Repainting Browse source text without tearing down the preview
+
+Updates ONLY the source subpanel of an already-rendered detail pane, in place — leaving the
+breadcrumb/heading/variant tabs/preview iframe untouched. Used by the async source-read settle
+handler (guarded by the caller's render-generation check) so resolving a source read no longer
+tears down and re-fetches a perfectly valid live preview iframe just to paint the source text
+underneath it (Copilot review, PR #248).
+
+Falls back to a full `renderBrowseDetail` re-render if the subpanel marker isn't found (e.g. an
+older/differently-shaped container), so behavior degrades safely rather than silently doing
+nothing.
+
+### A route change must never strand the apply dialog
+
+The apply-confirm dialog makes the rest of the shell unreachable while it is open: `inert` and
+`aria-hidden="true"` go onto the review layout, the segmented control, and `.app-header`. Only the
+first two live inside `#review-view`. `.app-header` is persistent chrome that sits outside every
+`[data-route-view]`, so hiding the review view does not hide it.
+
+That matters because `popstate` — the browser Back and Forward buttons — calls `renderRoute`
+directly, bypassing the in-app `navigate` helper and never touching the dialog. Pressing Back with
+the dialog open therefore hid `#review-view` (and, as its child, the dialog) while leaving the
+header visible but `inert` and `aria-hidden`: the whole navigation silently unreachable by
+keyboard and invisible to assistive technology, with no dialog on screen to explain why. Focus was
+also left on the dialog heading inside a subtree that had just been hidden.
+
+`renderRoute` is the single choke point every route transition passes through, so it dismisses the
+dialog there whenever the incoming route is not `review`. Re-rendering Review itself leaves a
+legitimately open dialog alone.
+
+The dismissal deliberately does not restore `dialogReturnFocus`. That target is the Apply button,
+which lives inside the view the route change is about to hide, so restoring it would simply move
+the problem. Instead the dialog's own focus is blurred, matching what a browser does when the
+focused element's subtree becomes hidden, and the incoming route's normal focus handling takes
+over. `closeApplyConfirm` distinguishes the two cases on a strict `=== true` flag because it is
+also registered directly as a click listener, where the first argument is an `Event`.
