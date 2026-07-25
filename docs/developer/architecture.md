@@ -374,3 +374,33 @@ Copilot review (PR #248) — Browse's detail panel (`renderBrowseDetail`) render
 Boot the viewer: obtain the manifest, render the grid, and wire the `#q` search input to live-filter (AC5). Resolves (never rejects) so a caller / the browser auto-boot can `await` it without an unhandled rejection; on any failure it paints the error state instead.
 
 ── Manifest source: inline first, then fetch (M4-06 / DRO-268) ──── The embedded `ui://genie/grid` tier inlines the manifest into the document (`<script type="application/json" id="manifest">`) because its CSP (`connect-src 'none'`) blocks `fetch` entirely. So `boot` reads the inline node FIRST and, when present, renders straight from it — issuing NO network request. Only when there is no inline node (the `file://` / localhost tiers) does it fall back to `fetch(MANIFEST_URL)`. This keeps `viewer.js` byte-identical across all three vehicles (RFC G-5) while honouring each tier's transport.
+
+### Guaranteeing a non-empty accessible name
+
+`accessibleName(value, fallback)` returns `value` trimmed, or `fallback` when it is missing,
+empty, or whitespace-only. It is used for the two places M4-09 needs a GUARANTEED non-empty
+accessible name: the card's `aria-label` (axe-core's `link-name` rule flags a `role="link"` with
+no accessible name as a CRITICAL violation — and an empty string `aria-label=""` counts as "no
+name", it does NOT fall back to the element's text content) and the iframe's `title` (axe-core's
+`frame-title` rule, same "empty is not acceptable" contract). A card whose upstream manifest
+carries `name: ""` (schema-legal — `store/manifest.ts` only requires `z.string()`, not a
+non-empty one) must still render an accessible, non-violating card rather than silently produce
+an unnamed link/frame.
+
+### A `data:` URL is only inert on an image attribute
+
+The draft CSP scan exempts `data:` and `#` from its "reaches the network" patterns, because those
+are the only two forms that can resolve inside a card. That exemption is correct only for
+IMAGE-bearing attributes. The embedded card policy (`packages/server/src/ui/card-asset-broker.ts`)
+is `default-src 'none'; img-src 'self' data: blob:; connect-src 'none'; font-src 'none';
+object-src 'none'; base-uri 'none'; form-action 'none'` — it has no `media-src` and no
+`frame-src`, and `object-src` is explicitly `'none'`. So `<video src="data:…">`, `<audio src>`,
+`<source src>` and `<track src>` fall through to `default-src 'none'`; `<object data>` and
+`<embed src>` hit `object-src 'none'`; and a nested `<iframe src>` falls to `default-src 'none'`
+as well. All are blocked exactly as hard as a remote URL would be, so passing them ships a card
+that renders broken behind a green gate.
+
+`BLOCKED_DATA_URL_RE` therefore re-blocks `data:` on precisely those elements, matched on the
+`src` or `data` attribute only. `poster` and `srcset` stay exempt because both resolve against
+`img-src`, which does permit `data:`. Requiring `\s*=` immediately after the attribute name is
+what keeps `srcset=` and `data-*` attributes out of the match.

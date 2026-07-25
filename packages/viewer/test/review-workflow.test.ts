@@ -3456,3 +3456,60 @@ describe("F37 — safeFrameSrc matches browser URL resolution", () => {
     expect(hooks.safeFrameSrc("javascript:alert(1)")).toBe("about:blank");
   });
 });
+
+/* ------------------------------------------------------------------
+ * Copilot review round 10 — F38
+ * The blanket `data:` exemption in LOCAL_REF is only correct for
+ * IMAGE-bearing attributes. The embedded card policy
+ * (`packages/server/src/ui/card-asset-broker.ts`) is:
+ *   default-src 'none'; img-src 'self' data: blob:; connect-src 'none';
+ *   font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'
+ * There is no `media-src` and no `frame-src`, and `object-src` is
+ * explicitly 'none' — so a `data:` URL on media/object/embed/iframe is
+ * blocked just as hard as a remote one, and a green gate ships a card
+ * that renders broken.
+ * ------------------------------------------------------------------ */
+
+describe("F38 — the data: exemption is directive-aware", () => {
+  it("rejects data: media sources, which have no media-src to fall back on", () => {
+    const { violatesEmbeddedCsp } = loadHooks();
+    expect(violatesEmbeddedCsp('<video src="data:video/mp4;base64,AAAA"></video>')).toBe(true);
+    expect(violatesEmbeddedCsp('<audio src="data:audio/mpeg;base64,AAAA"></audio>')).toBe(true);
+    expect(violatesEmbeddedCsp('<video><source src="data:video/mp4;base64,AA"></video>')).toBe(
+      true,
+    );
+    expect(violatesEmbeddedCsp('<video><track src="data:text/vtt,WEBVTT"></video>')).toBe(true);
+  });
+
+  it("rejects data: object and embed sources, which object-src 'none' blocks outright", () => {
+    const { violatesEmbeddedCsp } = loadHooks();
+    expect(violatesEmbeddedCsp('<object data="data:text/html,<b>x</b>"></object>')).toBe(true);
+    expect(violatesEmbeddedCsp('<embed src="data:image/svg+xml,<svg/>">')).toBe(true);
+  });
+
+  it("rejects a nested data: iframe, which has no frame-src in the card policy", () => {
+    const { violatesEmbeddedCsp } = loadHooks();
+    expect(violatesEmbeddedCsp('<iframe src="data:text/html,<b>x</b>"></iframe>')).toBe(true);
+  });
+
+  it("catches the unquoted and whitespace-padded forms too", () => {
+    const { violatesEmbeddedCsp } = loadHooks();
+    expect(violatesEmbeddedCsp("<video src=data:video/mp4;base64,AAAA></video>")).toBe(true);
+    expect(violatesEmbeddedCsp('<object data=" data:text/html,x"></object>')).toBe(true);
+  });
+
+  it("still allows data: on image-bearing attributes, which img-src permits", () => {
+    const { violatesEmbeddedCsp } = loadHooks();
+    expect(violatesEmbeddedCsp('<img src="data:image/png;base64,AAAA" alt="">')).toBe(false);
+    expect(violatesEmbeddedCsp('<video poster="data:image/png;base64,AAAA"></video>')).toBe(false);
+    expect(
+      violatesEmbeddedCsp('<picture><source srcset="data:image/png;base64,AA"></picture>'),
+    ).toBe(false);
+  });
+
+  it("does not trip on prose or on a media element with no source at all", () => {
+    const { violatesEmbeddedCsp } = loadHooks();
+    expect(violatesEmbeddedCsp("<p>Use a video src of data: only for images.</p>")).toBe(false);
+    expect(violatesEmbeddedCsp("<video controls></video>")).toBe(false);
+  });
+});

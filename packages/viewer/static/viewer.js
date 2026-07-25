@@ -258,14 +258,9 @@
   }
 
   /**
-   * Returns `value` trimmed, or `fallback` when it is missing, empty, or whitespace-only. Used for
-   * the two places M4-09 needs a GUARANTEED non-empty accessible name: the card's `aria-label`
-   * (axe-core's `link-name` rule flags a `role="link"` with no accessible name as a CRITICAL
-   * violation — and an empty string `aria-label=""` counts as "no name", it does NOT fall back to
-   * the element's text content) and the iframe's `title` (axe-core's `frame-title` rule, same
-   * "empty is not acceptable" contract). A card whose upstream manifest carries `name: ""`
-   * (schema-legal — `store/manifest.ts` only requires `z.string()`, not a non-empty one) must still
-   * render an accessible, non-violating card rather than silently produce an unnamed link/frame.
+   * Returns `value` trimmed, or `fallback` when it is missing, empty, or whitespace-only.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * ("Guaranteeing a non-empty accessible name") — viewer.js is capped at 256 KiB (#253).
    *
    * @param {string=} value
    * @param {string} fallback
@@ -1232,6 +1227,11 @@
     "i",
   );
   var EXTERNAL_CSS_URL_PATTERN = new RegExp("url\\(\\s*[\"']?" + LOCAL_REF + "[^)]+\\)", "i");
+  // Copilot (round 10) — the `data:` exemption above is only correct for IMAGE-bearing attributes.
+  // Rationale relocated verbatim to `docs/developer/architecture.md`
+  // ("A `data:` URL is only inert on an image attribute") — viewer.js is capped at 256 KiB (#253).
+  var BLOCKED_DATA_URL_RE =
+    /<(?:video|audio|source|track|object|embed|iframe)\b[^>]*\b(?:src|data)\s*=\s*["']?\s*data:/i;
   var REMOTE_IMPORT_PATTERN = /@import\s/i;
   var SCRIPT_TAG_PATTERN = /<script\b/i;
   var FONT_FACE_PATTERN = /@font-face/i;
@@ -1284,6 +1284,7 @@
     if (typeof content !== "string") return false;
     return (
       EXTERNAL_ATTR_URL_PATTERN.test(content) ||
+      BLOCKED_DATA_URL_RE.test(content) ||
       srcsetReachesNetwork(content) ||
       declaresMetaRefresh(content) ||
       EXTERNAL_CSS_URL_PATTERN.test(content) ||
