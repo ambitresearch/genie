@@ -289,7 +289,12 @@
 
   .browse-tree__item {
     padding: 8px var(--space-xs) 8px 12px;
-    min-height: 32px;
+    /* AC15 — tree rows are pointer-operated controls and must meet the
+       44×44px touch target minimum (Copilot #11); `box-sizing: border-box`
+       (set globally in the base layer) keeps padding inside this height. */
+    min-height: 44px;
+    display: flex;
+    align-items: center;
     font-size: var(--text-sm);
     color: var(--color-ink-2);
     cursor: pointer;
@@ -416,7 +421,13 @@
 
   .variant-tab {
     padding: 6px var(--space-sm);
-    min-height: 32px;
+    /* AC15 — variant tabs are explicitly required to be 44×44px pointer
+       targets (Copilot #12): both dimensions, not just height. */
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border-radius: var(--radius-sm);
     font-size: var(--text-xs);
     cursor: pointer;
@@ -503,28 +514,71 @@
     color: var(--color-ink-2);
   }
 
-  /* 720–1099px — tree collapses to a narrow group-icon rail (Design 6 §13). */
+  /* Rail toggle (Copilot #13) — hidden by default (≥1100px full-width tree),
+     only shown as the 44px group rail at the 720–1099px breakpoint below. */
+  .browse-tree__rail-toggle {
+    display: none;
+  }
+
+  /* Compact breadcrumb/dropdown nav (Copilot #14) — hidden by default, only
+     shown at the <720px breakpoint below. */
+  .browse-tree__compact-nav {
+    display: none;
+  }
+
+  /* 720–1099px — tree collapses to a 44px group rail (Design 6 §13); its
+     activation opens an IDENTIFIABLE overlay tree (Copilot #13) rather than
+     merely truncating every row to its first letter (indistinguishable
+     same-initial components, no navigation could be opened). */
   @media (max-width: 1099px) {
     .browse-workbench {
       grid-template-columns: 44px 1fr;
     }
 
-    .browse-tree__group-label {
-      display: none;
+    .browse-tree__rail-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      border: none;
+      background: var(--color-paper);
+      border-right: var(--rule-hair) solid var(--color-hairline);
+      cursor: pointer;
+      font-size: var(--text-md);
+      color: var(--color-ink);
     }
 
-    .browse-tree__item {
-      font-size: 0;
-      padding-inline: 0;
-      text-align: center;
+    .browse-tree {
+      position: fixed;
+      inset-block: 0;
+      left: 44px;
+      z-index: 20;
+      width: min(320px, calc(100vw - 44px));
+      background: var(--color-paper);
+      border-right: var(--rule-hair) solid var(--color-hairline);
+      overflow-y: auto;
+      transform: translateX(-110%);
+      transition: transform 0.15s ease-out;
     }
 
-    .browse-tree__item::first-letter {
-      font-size: var(--text-sm);
+    @media (prefers-reduced-motion: reduce) {
+      .browse-tree {
+        transition: none;
+      }
+    }
+
+    /* The overlay tree is identifiable (a real, positioned panel that
+       slides fully into view) and never covers focus invisibly — it only
+       ever renders on top when explicitly toggled open. */
+    .browse-tree--overlay-open {
+      transform: translateX(0);
+      box-shadow: 4px 0 16px rgb(0 0 0 / 15%);
     }
   }
 
-  /* <720px — single column: tree becomes a top strip, detail fills width. */
+  /* <720px — tree becomes a breadcrumb/dropdown compact nav (Copilot #14)
+     rather than the full tree stacked in a 40vh scrolling sidebar. */
   @media (max-width: 719px) {
     .browse-workbench {
       grid-template-columns: 1fr;
@@ -532,14 +586,39 @@
     }
 
     .tree-sidebar {
+      position: static;
       border-right: none;
       border-bottom: var(--rule-hair) solid var(--color-hairline);
-      max-height: 40vh;
+      overflow: visible;
     }
 
-    .browse-tree__item {
-      font-size: var(--text-sm);
-      text-align: left;
+    .browse-tree__rail-toggle,
+    .browse-tree {
+      display: none;
+    }
+
+    .browse-tree__compact-nav {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2xs);
+      padding: var(--space-sm) var(--space-md);
+    }
+
+    .browse-tree__compact-breadcrumb {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      color: var(--color-ink-3);
+    }
+
+    .browse-tree__compact-select {
+      min-height: 44px;
+      padding-inline: var(--space-sm);
+      border: var(--rule-hair) solid var(--color-hairline);
+      border-radius: var(--radius-sm);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      font: inherit;
     }
 
     .browse-detail__heading {
@@ -839,6 +918,24 @@
     align-items: center;
     min-height: 44px;
     color: var(--color-focus);
+  }
+
+  /* M7-02 (#234) AC11 — Refine handoff context rendered into Review. */
+  .review-refine-context {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: var(--space-2xs) var(--space-md);
+    margin: var(--space-md) 0;
+    font-size: var(--text-sm);
+  }
+
+  .review-refine-context dt {
+    color: var(--color-ink-3);
+  }
+
+  .review-refine-context dd {
+    margin: 0;
+    color: var(--color-ink);
   }
 
   .draft-label {

@@ -390,3 +390,724 @@ describe("Refine handoff context", () => {
     });
   });
 });
+
+describe("renderBrowseTree — roving tabindex (Copilot #9)", () => {
+  it("clears the first row's tabindex when a later row is the selection, leaving exactly one Tab stop", () => {
+    const { hooks, document } = loadShell();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const tree = hooks.projectManifestToTree(MANIFEST, "");
+    // "Card" (surfaces group) is NOT the first row ("Primary buttons" is) —
+    // this is exactly the two-tab-stop regression Copilot flagged.
+    hooks.renderBrowseTree(document, container, tree, null, () => {}, {
+      group: "surfaces",
+      componentName: "Card",
+    });
+
+    const items = Array.from(
+      container.querySelectorAll('[role="treeitem"]'),
+    ) as HTMLElement[];
+    const tabbable = items.filter((item) => item.getAttribute("tabindex") === "0");
+    expect(tabbable).toHaveLength(1);
+    expect(tabbable[0].dataset.componentName).toBe("Card");
+    // The first row (not selected) must be demoted out of the Tab order.
+    const firstRow = items[0];
+    expect(firstRow.dataset.componentName).toBe("Primary buttons");
+    expect(firstRow.getAttribute("tabindex")).toBe("-1");
+  });
+});
+
+describe("renderBrowseDetail — iframe/tab a11y wiring (Copilot #10/#18)", () => {
+  it("pulls the preview iframe out of Tab order, mirroring createCard's contract", () => {
+    const { hooks, document } = loadShell();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    hooks.renderBrowseDetail(document, container, {
+      kitId: "kit-a",
+      kitName: "kit",
+      component,
+      source: null,
+      hostAvailable: false,
+    });
+    const iframe = container.querySelector("iframe");
+    expect(iframe?.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("wires every tab's aria-controls to the single labelled tabpanel preview stage", () => {
+    const { hooks, document } = loadShell();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    hooks.renderBrowseDetail(document, container, {
+      kitId: "kit-a",
+      kitName: "kit",
+      component,
+      source: null,
+      hostAvailable: false,
+    });
+    const tabs = Array.from(container.querySelectorAll('[role="tab"]')) as HTMLElement[];
+    const panel = container.querySelector('[role="tabpanel"]') as HTMLElement;
+    expect(panel).toBeTruthy();
+    expect(panel.id).toBeTruthy();
+    for (const tab of tabs) {
+      expect(tab.getAttribute("aria-controls")).toBe(panel.id);
+      expect(tab.id).toBeTruthy();
+    }
+    // The panel's accessible name tracks the active (Default) tab.
+    const activeTab = tabs.find((t) => t.getAttribute("aria-selected") === "true");
+    expect(panel.getAttribute("aria-labelledby")).toBe(activeTab?.id);
+  });
+
+  it("shows a distinct loading label until the iframe fires load, then Preview · Default (Copilot #16)", () => {
+    const { hooks, document } = loadShell();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    hooks.renderBrowseDetail(document, container, {
+      kitId: "kit-a",
+      kitName: "kit",
+      component,
+      source: null,
+      hostAvailable: false,
+    });
+    const label = container.querySelector(".stage-label") as HTMLElement;
+    expect(label.textContent).toMatch(/loading/i);
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    iframe.dispatchEvent(new (document.defaultView as Window).Event("load"));
+    expect(label.textContent).toBe("Preview · Default");
+  });
+
+  it("shows a distinct source-loading state, never the failure copy, while a read is in flight (Copilot #17)", () => {
+    const { hooks, document } = loadShell();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    hooks.renderBrowseDetail(document, container, {
+      kitId: "kit-a",
+      kitName: "kit",
+      component,
+      source: null,
+      sourceLoading: true,
+      hostAvailable: true,
+    });
+    expect(container.textContent).toMatch(/loading source/i);
+    expect(container.textContent).not.toMatch(/could not be read/i);
+  });
+});
+
+describe("initBrowseController — HMR integration (Copilot #15, AC3/AC15)", () => {
+  it("selects a component, then an HMR manifest update that removes it shows the removed state and moves focus off the stale row", () => {
+    const { hooks, document, window } = loadShell();
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit",
+      kitName: "kit",
+    });
+
+    // Select "Card" via the rendered tree (mirrors real user interaction,
+    // not a direct internal call) so the controller's OWN selection state
+    // — not just the pure render helper — is under test.
+    controller.update(MANIFEST);
+    const cardItem = document.querySelector<HTMLElement>(
+      '[role="treeitem"][data-component-name="Card"]',
+    );
+    expect(cardItem).toBeTruthy();
+    cardItem!.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+    expect(document.querySelector(".browse-breadcrumb")?.textContent).toContain("Card");
+
+    // HMR update: "Card" no longer exists in the manifest, but "Primary
+    // buttons" still does.
+    const nextManifest = {
+      ...MANIFEST,
+      components: MANIFEST.components.filter((c) => c.name !== "Card"),
+    };
+    controller.update(nextManifest);
+
+    expect(document.querySelector(".browse-detail__removed")?.textContent).toMatch(
+      /no longer available/i,
+    );
+    // Focus must move to the nearest valid navigation control (the
+    // remaining tree item), never linger on/reference the removed row.
+    const activeElement = document.activeElement;
+    expect(activeElement?.getAttribute("role")).toBe("treeitem");
+    expect(activeElement?.getAttribute("data-component-name")).toBe("Primary buttons");
+
+    controller.teardown();
+  });
+
+  it("re-resolves an unrelated selection against the UNFILTERED manifest so a typed filter never shows it as removed (Copilot #6)", () => {
+    const { hooks, document } = loadShell();
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+    const cardItem = document.querySelector<HTMLElement>(
+      '[role="treeitem"][data-component-name="Card"]',
+    );
+    cardItem!.dispatchEvent(new (document.defaultView as Window).MouseEvent("click", { bubbles: true }));
+    expect(document.querySelector(".browse-breadcrumb")?.textContent).toContain("Card");
+
+    // Typing a filter that excludes "Card" from the VISIBLE tree must not
+    // resolve the selection against the filtered projection — "Card" is
+    // still in the manifest, just hidden by the filter.
+    const search = document.getElementById("q") as HTMLInputElement;
+    search.value = "button";
+    search.dispatchEvent(new (document.defaultView as Window).Event("input", { bubbles: true }));
+
+    expect(document.querySelector(".browse-detail__removed")).toBeFalsy();
+    expect(document.querySelector(".browse-breadcrumb")?.textContent).toContain("Card");
+
+    controller.teardown();
+  });
+});
+
+describe("initBrowseController — deep-link kitId guard (Copilot #8)", () => {
+  it("serializes kitId into the URL on selection", () => {
+    const { hooks, document, window } = loadShell(
+      "https://viewer.example.test/?route=browse",
+    );
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+    const cardItem = document.querySelector<HTMLElement>(
+      '[role="treeitem"][data-component-name="Card"]',
+    );
+    cardItem!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+    const url = new window.URL(window.location.href);
+    expect(url.searchParams.get("kitId")).toBe("kit-a");
+    expect(url.searchParams.get("group")).toBe("surfaces");
+    expect(url.searchParams.get("componentName")).toBe("Card");
+
+    controller.teardown();
+  });
+
+  it("ignores an initial deep-link selection whose kitId does not match the current kit", () => {
+    const { hooks, document } = loadShell(
+      "https://viewer.example.test/?route=browse&kitId=other-kit&group=surfaces&componentName=Card",
+    );
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    // The mismatched-kit deep link must NOT resolve — no selection, no
+    // "removed" state either (a controlled "nothing selected" placeholder).
+    expect(document.querySelector(".browse-breadcrumb")).toBeFalsy();
+    expect(document.querySelector(".browse-detail__removed")).toBeFalsy();
+
+    controller.teardown();
+  });
+
+  it("honors an initial deep-link selection whose kitId matches the current kit", () => {
+    const { hooks, document } = loadShell(
+      "https://viewer.example.test/?route=browse&kitId=kit-a&group=surfaces&componentName=Card",
+    );
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    expect(document.querySelector(".browse-breadcrumb")?.textContent).toContain("Card");
+
+    controller.teardown();
+  });
+});
+
+describe("initBrowseController — source read identity + staleness (Copilot #4/#7)", () => {
+  it("reads sourcePath (kit-relative identity), not the embedded-rewritten transport path", async () => {
+    const { hooks, document, window } = loadShell();
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const bridge = {
+      callTool: (name: string, args: Record<string, unknown>) => {
+        calls.push({ name, args });
+        return Promise.resolve({ content: "export const X = 1;", encoding: "utf-8" });
+      },
+      destroy: () => {},
+    };
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: bridge,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    const embeddedManifest = {
+      ...MANIFEST,
+      components: [
+        {
+          ...MANIFEST.components[0],
+          componentName: MANIFEST.components[0].name,
+          path: "data:text/html;base64,AAAA",
+          sourcePath: "components/actions/Button/preview.html",
+        },
+      ],
+    };
+    controller.update(embeddedManifest);
+    const item = document.querySelector<HTMLElement>('[role="treeitem"]');
+    item!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+    // Let the fetchSource promise chain settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("mcp__genie__read_file");
+    expect(calls[0].args.path).toBe("components/actions/Button/preview.html");
+
+    controller.teardown();
+  });
+
+  it("does not commit a stale in-flight source read after a newer HMR update selects fresh content for the same identity", async () => {
+    const { hooks, document, window } = loadShell();
+    let resolveFirst!: (value: { content: string; encoding: string }) => void;
+    let callCount = 0;
+    const bridge = {
+      callTool: () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return new Promise((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return Promise.resolve({ content: "SECOND", encoding: "utf-8" });
+      },
+      destroy: () => {},
+    };
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: bridge,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+    const item = document.querySelector<HTMLElement>('[role="treeitem"]');
+    item!.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+    // The first read is now in flight (unresolved). An HMR update re-renders
+    // the SAME selected identity — bumping the render generation — before
+    // the first read settles.
+    controller.update({ ...MANIFEST });
+
+    // Now let the FIRST (stale) read resolve.
+    resolveFirst({ content: "STALE", encoding: "utf-8" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The stale content must never have been committed to the DOM.
+    expect(document.querySelector(".code-box")?.textContent).not.toBe("STALE");
+
+    controller.teardown();
+  });
+});
+
+// ── initBrowseController integration (Copilot review #234) ─────────────────
+//
+// The suite above drives the pure/DOM-render helpers directly; these tests
+// instead drive the STATEFUL `initBrowseController` the way `boot()` really
+// does — selecting a component, pushing a manifest `update()` that removes
+// it (AC3/AC15 HMR selection-removal), and asserting the promised focus
+// move — closing the gap Copilot flagged (#15) where only the message
+// renderer was exercised.
+describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", () => {
+  it("selects a component, then moves focus to the tree and shows the removed state when an HMR update drops it", () => {
+    const { hooks, document } = loadShell();
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const firstItem = document.querySelector<HTMLElement>('[role="treeitem"]');
+    expect(firstItem).toBeTruthy();
+    firstItem!.click();
+    expect(document.querySelector(".browse-breadcrumb")?.textContent).toContain("Primary buttons");
+
+    // HMR update removing the selected component ("Primary buttons").
+    const withoutSelected = {
+      ...MANIFEST,
+      components: MANIFEST.components.filter((c) => c.name !== "Primary buttons"),
+    };
+    controller.update(withoutSelected);
+
+    expect(document.querySelector("#browse-detail")?.textContent).toMatch(/no longer available/i);
+    // Focus moved to the nearest valid navigation control (the remaining
+    // tabbable tree item), never left stranded on a now-removed row.
+    const activeItem = document.activeElement;
+    expect(activeItem?.getAttribute("role")).toBe("treeitem");
+
+    controller.teardown();
+  });
+
+  it("re-resolves the SAME selection after a manifest update that keeps it, without resetting the active filter", () => {
+    const { hooks, document } = loadShell();
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+
+    const search = document.getElementById("q") as HTMLInputElement;
+    search.value = "card";
+    search.dispatchEvent(new document.defaultView!.Event("input", { bubbles: true }));
+
+    // A content-only HMR update (hash change) must not clear the selection
+    // or the active filter (Copilot #6/#7 regression guard).
+    const updated = {
+      ...MANIFEST,
+      components: MANIFEST.components.map((c) =>
+        c.name === "Card" ? { ...c, hash: "sha256-NEW=" } : c,
+      ),
+    };
+    controller.update(updated);
+
+    expect(document.querySelector(".browse-breadcrumb")?.textContent).toContain("Card");
+    expect(search.value).toBe("card");
+
+    controller.teardown();
+  });
+
+  it("resolves selection against the UNFILTERED manifest, not the filtered tree (Copilot #6)", () => {
+    const { hooks, document } = loadShell();
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+    expect(document.querySelector(".browse-breadcrumb")?.textContent).toContain("Card");
+
+    // Typing a filter that excludes the selected component must NOT show
+    // the "no longer available" HMR-removal state — the component is still
+    // in the manifest, merely filtered out of the visible tree list.
+    const search = document.getElementById("q") as HTMLInputElement;
+    search.value = "does-not-match-card";
+    search.dispatchEvent(new document.defaultView!.Event("input", { bubbles: true }));
+
+    expect(document.querySelector("#browse-detail")?.textContent).not.toMatch(/no longer available/i);
+    expect(document.querySelector(".browse-breadcrumb")?.textContent).toContain("Card");
+
+    controller.teardown();
+  });
+
+  it("only commits the LATEST source read when HMR replaces the selected component while an older read is in flight (Copilot #7)", async () => {
+    const { hooks, document } = loadShell();
+    const reads: Array<{ path: string; resolve: (v: { content: string }) => void }> = [];
+    const hostBridge = {
+      callTool: (_name: string, args: { path: string }) =>
+        new Promise((resolve) => {
+          reads.push({ path: args.path, resolve });
+        }),
+      destroy: () => {},
+    };
+    const controller = hooks.initBrowseController(document, {
+      hostBridge,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+    expect(reads).toHaveLength(1);
+
+    // HMR replaces the SAME selected component's content (identity
+    // unchanged) while the first read is still in flight — a second read
+    // for the new content starts.
+    const updated = {
+      ...MANIFEST,
+      components: MANIFEST.components.map((c) =>
+        c.name === "Card" ? { ...c, hash: "sha256-NEW=", path: "components/surfaces/Card/preview.html" } : c,
+      ),
+    };
+    controller.update(updated);
+    expect(reads).toHaveLength(2);
+
+    // Resolve the OLDER (stale) read AFTER the newer one — a plain identity
+    // check alone (group+componentName) would let this stale content win.
+    reads[1].resolve({ content: "NEW SOURCE" });
+    await Promise.resolve();
+    await Promise.resolve();
+    reads[0].resolve({ content: "STALE SOURCE" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(document.querySelector(".code-box")?.textContent).toBe("NEW SOURCE");
+
+    controller.teardown();
+  });
+
+  it("serializes kitId into the deep-link URL and rejects a link whose kitId does not match the current kit (Copilot #8)", () => {
+    const { hooks, document, window } = loadShell(
+      "https://viewer.example.test/?route=browse&kitId=other-kit&group=surfaces&componentName=Card",
+    );
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    // A deep-link minted for a DIFFERENT kit must not resolve against this
+    // kit's same-named component.
+    expect(document.querySelector(".browse-breadcrumb")).toBeFalsy();
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+    const url = new window.URL(window.location.href);
+    expect(url.searchParams.get("kitId")).toBe("kit-a");
+    expect(url.searchParams.get("group")).toBe("surfaces");
+    expect(url.searchParams.get("componentName")).toBe("Card");
+
+    controller.teardown();
+  });
+
+  it("passes the Refine context through to onRefine and routes to Review (Copilot #5)", () => {
+    const { hooks, document, window } = loadShell();
+    let received: unknown = null;
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: { callTool: () => Promise.resolve({}), destroy: () => {} },
+      kitId: "kit-a",
+      kitName: "kit",
+      onRefine: (context: unknown) => {
+        received = context;
+      },
+    });
+    controller.update(MANIFEST);
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+
+    const refineButton = document.querySelector<HTMLButtonElement>("[data-refine-action]");
+    refineButton!.click();
+
+    expect(received).toMatchObject({ kitId: "kit-a", group: "surfaces", componentName: "Card" });
+    expect(new window.URL(window.location.href).searchParams.get("route")).toBe("review");
+
+    controller.teardown();
+  });
+
+  it("reads sourcePath (not the rewritten embedded transport path) for host source inspection (Copilot #4)", async () => {
+    const { hooks, document } = loadShell();
+    const calls: Array<{ path: string }> = [];
+    const hostBridge = {
+      callTool: (_name: string, args: { path: string }) => {
+        calls.push(args);
+        return Promise.resolve({ content: "source text" });
+      },
+      destroy: () => {},
+    };
+    const embeddedManifest = {
+      ...MANIFEST,
+      components: MANIFEST.components.map((c) => ({
+        ...c,
+        path: "https://cdn.example.test/blob/abc123", // rewritten transport URL
+        sourcePath: c.path, // original kit-relative identity
+      })),
+    };
+    const controller = hooks.initBrowseController(document, {
+      hostBridge,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(embeddedManifest);
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].path).toBe("components/surfaces/Card/preview.html");
+
+    controller.teardown();
+  });
+
+  it("shows a distinct loading state (not the failure copy) before a host source read settles (Copilot #17)", () => {
+    const { hooks, document } = loadShell();
+    const hostBridge = {
+      callTool: () => new Promise(() => {}), // never resolves within this test
+      destroy: () => {},
+    };
+    const controller = hooks.initBrowseController(document, {
+      hostBridge,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+
+    const sourceText = document.querySelector(".browse-source")?.textContent ?? "";
+    expect(sourceText).toMatch(/loading/i);
+    expect(sourceText).not.toMatch(/could not be read/i);
+
+    controller.teardown();
+  });
+
+  it("standalone Browse (createStandaloneSourceBridge) supports source inspection via a same-origin relative fetch (Copilot #3, AC13)", async () => {
+    const { hooks } = loadHooks();
+    const fetchCalls: string[] = [];
+    const fetchImpl = (url: string) => {
+      fetchCalls.push(url);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve("standalone source"),
+      });
+    };
+    const bridge = hooks.createStandaloneSourceBridge(fetchImpl);
+    const result = await bridge.callTool("mcp__genie__read_file", {
+      path: "components/surfaces/Card/preview.html",
+    });
+    expect(fetchCalls).toEqual(["components/surfaces/Card/preview.html"]);
+    expect(result).toEqual({ content: "standalone source" });
+  });
+
+  it("createStandaloneSourceBridge refuses unsafe/absolute/traversal paths (AC16)", async () => {
+    const { hooks } = loadHooks();
+    const bridge = hooks.createStandaloneSourceBridge(() =>
+      Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("nope") }),
+    );
+    await expect(
+      bridge.callTool("mcp__genie__read_file", { path: "../../etc/passwd" }),
+    ).rejects.toThrow();
+    await expect(
+      bridge.callTool("mcp__genie__read_file", { path: "/etc/passwd" }),
+    ).rejects.toThrow();
+    await expect(
+      bridge.callTool("mcp__genie__read_file", { path: "https://evil.example/x" }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("renderBrowseTree — roving tabindex (Copilot #9)", () => {
+  it("demotes the first row's tabindex when a LATER row is selected, leaving exactly one tab stop", () => {
+    const { hooks, document } = loadShell();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const tree = hooks.projectManifestToTree(MANIFEST, "");
+    // "Card" (surfaces) is the SECOND rendered row; select it.
+    hooks.renderBrowseTree(document, container, tree, null, () => {}, {
+      group: "surfaces",
+      componentName: "Card",
+    });
+
+    const items = Array.from(container.querySelectorAll('[role="treeitem"]')) as HTMLElement[];
+    const zeroTabIndex = items.filter((el) => el.getAttribute("tabindex") === "0");
+    expect(zeroTabIndex).toHaveLength(1);
+    expect(zeroTabIndex[0].dataset.componentName).toBe("Card");
+  });
+});
+
+describe("renderBrowseDetail — preview iframe tabindex + tab semantics (Copilot #10/#18)", () => {
+  it("keeps the preview iframe out of Tab order like createCard's iframe", () => {
+    const { hooks, document } = loadShell();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    hooks.renderBrowseDetail(document, container, {
+      kitId: "kit-a",
+      kitName: "kit",
+      component,
+      source: null,
+      hostAvailable: false,
+    });
+    const iframe = container.querySelector("iframe");
+    expect(iframe?.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("wires each variant tab's aria-controls to the labelled tabpanel preview stage", () => {
+    const { hooks, document } = loadShell();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    hooks.renderBrowseDetail(document, container, {
+      kitId: "kit-a",
+      kitName: "kit",
+      component,
+      source: null,
+      hostAvailable: false,
+    });
+    const tabs = Array.from(container.querySelectorAll('[role="tab"]')) as HTMLElement[];
+    const panel = container.querySelector('[role="tabpanel"]') as HTMLElement;
+    expect(panel).toBeTruthy();
+    for (const tab of tabs) {
+      expect(tab.getAttribute("aria-controls")).toBe(panel.id);
+    }
+    expect(panel.getAttribute("aria-labelledby")).toBe(tabs[0].id);
+  });
+
+  it("shows a loading preview label until the iframe load event fires (Copilot #16)", () => {
+    const { hooks, document } = loadShell();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    hooks.renderBrowseDetail(document, container, {
+      kitId: "kit-a",
+      kitName: "kit",
+      component,
+      source: null,
+      hostAvailable: false,
+    });
+    const label = container.querySelector(".stage-label");
+    expect(label?.textContent).toMatch(/loading/i);
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    iframe.dispatchEvent(new (document.defaultView as Window).Event("load"));
+    expect(label?.textContent).toBe("Preview · Default");
+  });
+});
+
+describe("extractToolResultManifest (Copilot #1 — embedded workbench sync)", () => {
+  it("extracts the embedded manifest from _meta the same way renderToolResult does", () => {
+    const { hooks } = loadHooks();
+    const result = {
+      structuredContent: {},
+      _meta: {
+        "genie/embeddedManifest": {
+          ...MANIFEST,
+          components: MANIFEST.components.map((c) => ({ ...c, path: "https://cdn.example.test/x" })),
+        },
+      },
+    };
+    const manifest = hooks.extractToolResultManifest(result);
+    expect(manifest).toBeTruthy();
+    expect(manifest.components).toHaveLength(2);
+  });
+
+  it("returns null when there is no usable embedded manifest", () => {
+    const { hooks } = loadHooks();
+    expect(hooks.extractToolResultManifest({ structuredContent: {} })).toBeNull();
+    expect(hooks.extractToolResultManifest(null)).toBeNull();
+  });
+});

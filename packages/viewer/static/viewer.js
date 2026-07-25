@@ -470,6 +470,26 @@
     grid.appendChild(box);
   }
 
+  /**
+   * Copilot #1 — extract the embedded manifest a `ui/notifications/tool-
+   * result` payload carries, using the SAME resolution order
+   * `renderToolResult` itself uses (`_meta` key first, then
+   * `structuredContent.embeddedManifest`), so the Browse workbench and the
+   * hidden `#grid` are always kept in sync from one source of truth.
+   *
+   * @param {object} result
+   * @returns {object|null}
+   */
+  function extractToolResultManifest(result) {
+    var structured = result && result.structuredContent;
+    var metadata = result && result._meta;
+    var embeddedManifest =
+      metadata && metadata[TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY] !== undefined
+        ? metadata[TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY]
+        : structured && structured.embeddedManifest;
+    return embeddedManifest && canRenderEmbeddedManifest(embeddedManifest) ? embeddedManifest : null;
+  }
+
   function renderToolResult(doc, grid, result) {
     restoreShellHeader(doc);
     var structured = result && result.structuredContent;
@@ -675,6 +695,10 @@
         if (grid) {
           renderToolResult(doc, grid, data.params);
           notifySize();
+          // Copilot #1 — keep the Browse workbench (not just the hidden
+          // `#grid`) in sync with every live tool-result update, the same
+          // manifest source `renderToolResult` just wrote into `#grid`.
+          if (typeof opts.onToolResult === "function") opts.onToolResult(data.params);
         }
       }
     }
@@ -1119,6 +1143,34 @@
     var initialRoute = normalizeRoute(new win.URL(win.location.href).searchParams.get("route"));
     navigate(initialRoute, true, initialRoute === "generate");
     void loadKits();
+
+    // M7-02 (#234) AC11 — persist the exact Refine handoff context Browse
+    // hands off, and render it into the Review empty-state (no consumer
+    // beyond that existed before this issue; full refine/apply is M7-03).
+    function renderRefineContext(context) {
+      var dl = doc.getElementById("review-refine-context");
+      if (!dl) return;
+      dl.replaceChildren();
+      if (!context) {
+        dl.hidden = true;
+        return;
+      }
+      var rows = [
+        ["UI kit", context.kitId],
+        ["Group", context.group],
+        ["Component", context.componentName],
+        ["Variant", context.variant],
+      ];
+      for (var i = 0; i < rows.length; i++) {
+        var dt = doc.createElement("dt");
+        dt.textContent = rows[i][0];
+        var dd = doc.createElement("dd");
+        dd.textContent = rows[i][1] || "Not provided";
+        dl.append(dt, dd);
+      }
+      dl.hidden = false;
+    }
+
     return {
       setBridge: function (nextBridge) {
         bridge = nextBridge;
@@ -1136,6 +1188,7 @@
       showProgress: function (message) {
         if (inFlight) showProgress(message);
       },
+      setRefineContext: renderRefineContext,
     };
   }
 
@@ -1497,9 +1550,71 @@
     treeEl.setAttribute("role", "tree");
     treeEl.setAttribute("aria-label", "UI kit components");
     treeEl.className = "browse-tree";
+    treeEl.id = "browse-tree-nav";
+
+    // Copilot #13 (AC14, 720–1099px) — a 44px group rail whose activation
+    // opens an IDENTIFIABLE overlay tree, rather than only shrinking every
+    // row label to its first letter (which left same-initial components
+    // visually indistinguishable and offered no way to open real
+    // navigation). `.tree-sidebar`'s CSS at this breakpoint hides
+    // `#browse-tree-nav` off-canvas by default and only the rail toggle is
+    // visible; activating it reveals `#browse-tree-nav` as a real overlay
+    // (`browse-tree--overlay-open`) without covering focus invisibly — the
+    // toggle itself IS the 44px rail control, and its `aria-expanded`/
+    // `aria-controls` make the relationship programmatically discoverable.
+    var railToggle = doc.createElement("button");
+    railToggle.type = "button";
+    railToggle.className = "browse-tree__rail-toggle";
+    railToggle.setAttribute("aria-haspopup", "true");
+    railToggle.setAttribute("aria-expanded", "false");
+    railToggle.setAttribute("aria-controls", "browse-tree-nav");
+    railToggle.setAttribute("aria-label", "Open UI kit navigation");
+    railToggle.textContent = "☰";
+    railToggle.addEventListener("click", function () {
+      var open = treeEl.classList.toggle("browse-tree--overlay-open");
+      railToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) {
+        var firstTabbable = treeEl.querySelector('[role="treeitem"][tabindex="0"]');
+        if (firstTabbable && typeof firstTabbable.focus === "function") firstTabbable.focus();
+      }
+    });
+    treeEl.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && treeEl.classList.contains("browse-tree--overlay-open")) {
+        treeEl.classList.remove("browse-tree--overlay-open");
+        railToggle.setAttribute("aria-expanded", "false");
+        railToggle.focus();
+      }
+    });
+
+    // Copilot #14 (AC14, <720px) — the <720px band collapses into a
+    // breadcrumb + `<select>` dropdown compact nav, rather than only
+    // stacking the full tree into a 40vh scrolling sidebar (which offered
+    // no breadcrumb and no dropdown). `.tree-sidebar`'s CSS shows only this
+    // element at that breakpoint.
+    var compactNav = doc.createElement("div");
+    compactNav.className = "browse-tree__compact-nav";
+    var compactBreadcrumb = doc.createElement("p");
+    compactBreadcrumb.className = "browse-tree__compact-breadcrumb";
+    compactBreadcrumb.textContent = selected
+      ? selected.group + " / " + selected.componentName
+      : "No component selected";
+    var compactSelect = doc.createElement("select");
+    compactSelect.className = "browse-tree__compact-select";
+    compactSelect.setAttribute("aria-label", "Jump to a component");
+    var placeholderOption = doc.createElement("option");
+    placeholderOption.value = "";
+    placeholderOption.textContent = "Choose a component…";
+    placeholderOption.disabled = true;
+    if (!selected) placeholderOption.selected = true;
+    compactSelect.appendChild(placeholderOption);
 
     var allItems = [];
-    var firstTabbableSet = false;
+    // Roving tabindex (a11y): exactly ONE item is in Tab order at a time.
+    // `tabbableCandidate` tracks that single item as we walk the tree so a
+    // LATER-discovered selected row can demote an EARLIER first-row
+    // candidate that already received tabindex="0" — otherwise both stay
+    // "0" and produce two Tab stops (Copilot review: bug #9).
+    var tabbableCandidate = null;
     for (var g = 0; g < tree.groups.length; g++) {
       var group = tree.groups[g];
       var section = doc.createElement("div");
@@ -1519,19 +1634,51 @@
           selected && selected.group === group.name && selected.componentName === component.componentName;
         item.setAttribute("aria-selected", isSelected ? "true" : "false");
         if (isSelected) item.classList.add("browse-tree__item--active");
-        // Roving tabindex (a11y): exactly one item is in Tab order at a time.
-        item.setAttribute("tabindex", !firstTabbableSet || isSelected ? "0" : "-1");
-        if (!firstTabbableSet || isSelected) firstTabbableSet = true;
         item.dataset.group = group.name;
         item.dataset.componentName = component.componentName;
+        if (isSelected) {
+          // A selected row always wins the single tab stop, demoting
+          // whatever candidate (e.g. the first row) was previously chosen.
+          if (tabbableCandidate) tabbableCandidate.setAttribute("tabindex", "-1");
+          item.setAttribute("tabindex", "0");
+          tabbableCandidate = item;
+        } else if (!tabbableCandidate) {
+          // No selection yet encountered — the first row is the provisional
+          // candidate until/unless a selected row later demotes it.
+          item.setAttribute("tabindex", "0");
+          tabbableCandidate = item;
+        } else {
+          item.setAttribute("tabindex", "-1");
+        }
         section.appendChild(item);
         allItems.push(item);
+
+        var option = doc.createElement("option");
+        option.value = group.name + " " + component.componentName;
+        option.textContent = group.name + " / " + component.componentName;
+        if (isSelected) option.selected = true;
+        compactSelect.appendChild(option);
       }
       treeEl.appendChild(section);
     }
 
+    compactSelect.addEventListener("change", function () {
+      var value = compactSelect.value;
+      var sep = value.indexOf(" ");
+      if (sep === -1) return;
+      select({ group: value.slice(0, sep), componentName: value.slice(sep + 1) });
+    });
+    compactNav.append(compactBreadcrumb, compactSelect);
+
     function activate(item) {
       select({ group: item.dataset.group, componentName: item.dataset.componentName });
+      // Closing the overlay on activation returns focus predictably (a11y
+      // requirement: "Focus remains visible and returns predictably when an
+      // overlay tree closes").
+      if (treeEl.classList.contains("browse-tree--overlay-open")) {
+        treeEl.classList.remove("browse-tree--overlay-open");
+        railToggle.setAttribute("aria-expanded", "false");
+      }
     }
 
     function moveFocus(fromIndex, delta) {
@@ -1568,7 +1715,7 @@
       if (item) activate(item);
     });
 
-    container.appendChild(treeEl);
+    container.append(railToggle, treeEl, compactNav);
   }
 
   /**
@@ -1582,11 +1729,20 @@
    *
    * @param {Document} doc
    * @param {HTMLElement} container
-   * @param {{kitId: string, kitName?: string, component: object, source: string|null|undefined, hostAvailable: boolean, registered?: boolean, validated?: boolean, onRefine?: (ctx: object) => void}} state
+   * @param {{kitId: string, kitName?: string, component: object, source: string|null|undefined, sourceLoading?: boolean, hostAvailable: boolean, registered?: boolean, validated?: boolean, onRefine?: (ctx: object) => void}} state
    */
   function renderBrowseDetail(doc, container, state) {
     container.replaceChildren();
     var component = state.component;
+    // A stable-ish id derived from group/component identity — safe for use
+    // as an element id (no `[` `]` `.` etc. survive real component names,
+    // but even if one did, `id`/`aria-controls`/`aria-labelledby` only need
+    // to agree with EACH OTHER, not be a valid CSS selector).
+    var idBase =
+      "browse-detail-" +
+      String(component.group || "group").replace(/[^a-zA-Z0-9_-]/g, "_") +
+      "-" +
+      String(component.componentName || "component").replace(/[^a-zA-Z0-9_-]/g, "_");
 
     var breadcrumb = doc.createElement("p");
     breadcrumb.className = "browse-breadcrumb";
@@ -1641,6 +1797,7 @@
     tablist.setAttribute("aria-label", "Variants");
     tablist.className = "variants-bar";
     var tabButtons = [];
+    var previewPanelId = idBase + "-preview-panel";
     for (var t = 0; t < tabs.length; t++) {
       var tab = tabs[t];
       var button = doc.createElement("button");
@@ -1648,13 +1805,21 @@
       button.setAttribute("role", "tab");
       button.className = "variant-tab";
       button.textContent = tab.label;
-      button.setAttribute("aria-selected", tab.id === "default" ? "true" : "false");
+      var tabId = idBase + "-tab-" + tab.id;
+      button.id = tabId;
+      var isActiveTab = tab.id === "default";
+      button.setAttribute("aria-selected", isActiveTab ? "true" : "false");
+      // AC15 — wire every rendered tab (available or declared-but-disabled)
+      // to the single preview stage `tabpanel` it controls, so assistive
+      // tech can determine the tab-to-panel relationship (Copilot #18).
+      button.setAttribute("aria-controls", previewPanelId);
+      button.setAttribute("tabindex", isActiveTab ? "0" : "-1");
       if (!tab.available) {
         button.disabled = true;
         button.setAttribute("aria-disabled", "true");
         button.title = tab.reason;
       }
-      if (tab.id === "default") button.classList.add("active");
+      if (isActiveTab) button.classList.add("active");
       tablist.appendChild(button);
       tabButtons.push(button);
     }
@@ -1666,6 +1831,8 @@
         event.preventDefault();
         var delta = event.key === "ArrowRight" ? 1 : -1;
         var next = ((index + delta) % tabButtons.length + tabButtons.length) % tabButtons.length;
+        for (var i = 0; i < tabButtons.length; i++) tabButtons[i].setAttribute("tabindex", "-1");
+        tabButtons[next].setAttribute("tabindex", "0");
         tabButtons[next].focus();
       }
     });
@@ -1674,9 +1841,22 @@
     // Preview stage — reuses the SAME sandbox contract as `createCard`.
     var stage = doc.createElement("div");
     stage.className = "preview-stage";
+    // AC15/AC18 — the stage is the panel every variant tab's `aria-controls`
+    // points at; `aria-labelledby` the active (Default) tab so its
+    // accessible name tracks whichever variant is selected.
+    stage.id = previewPanelId;
+    stage.setAttribute("role", "tabpanel");
+    stage.setAttribute("aria-labelledby", idBase + "-tab-default");
+    stage.setAttribute("tabindex", "0");
     var label = doc.createElement("span");
     label.className = "stage-label";
-    label.textContent = "Preview · Default";
+    label.setAttribute("role", "status");
+    label.setAttribute("aria-live", "polite");
+    // AC7 — a distinct loading state: the label starts as "Preview ·
+    // Loading…" and only becomes "Preview · Default" once the iframe's
+    // `load` event actually fires, so a slow/stalled preview isn't silently
+    // presented as already-rendered (Copilot #16).
+    label.textContent = "Preview · Loading…";
     stage.appendChild(label);
 
     var iframe = doc.createElement("iframe");
@@ -1684,6 +1864,11 @@
     iframe.setAttribute("loading", "lazy");
     iframe.setAttribute("src", component.path || "");
     iframe.setAttribute("title", accessibleName(component.componentName, "preview"));
+    // Mirror `createCard`'s iframe contract (Copilot #10): a sandboxed
+    // iframe with no `allow-same-origin` is STILL natively focusable, so it
+    // must be explicitly pulled out of Tab order or Tab would land inside
+    // the sandboxed frame after the variant tabs.
+    iframe.setAttribute("tabindex", "-1");
     var size = parseViewport(component.viewport);
     if (size) {
       iframe.setAttribute("width", String(size.width));
@@ -1692,6 +1877,10 @@
     } else {
       iframe.setAttribute("height", String(DEFAULT_CARD_HEIGHT));
     }
+    iframe.addEventListener("load", function () {
+      if (stage.classList.contains("browse-preview--broken")) return;
+      label.textContent = "Preview · Default";
+    });
     iframe.addEventListener("error", function () {
       stage.classList.add("browse-preview--broken");
       stage.replaceChildren();
@@ -1777,6 +1966,15 @@
         }
       });
       sourceBox.append(copyButton, copyStatus);
+    } else if (state.sourceLoading) {
+      // AC7 — a settled failed read is the ONLY time the "could not be
+      // read" copy is honest; a read that simply hasn't resolved yet must
+      // say so distinctly (Copilot #17), never present as an error.
+      var loading = doc.createElement("p");
+      loading.setAttribute("role", "status");
+      loading.setAttribute("aria-live", "polite");
+      loading.textContent = "Loading source…";
+      sourceBox.appendChild(loading);
     } else {
       var unavailable = doc.createElement("p");
       unavailable.textContent = state.hostAvailable
@@ -1819,13 +2017,16 @@
    * current", satisfied because both panes are rebuilt from the SAME
    * `tree`/`selection` read on every call, never patched piecemeal).
    *
-   * Standalone-only (this issue does not touch the embedded `ui://` grid
-   * path — AC12/Decision #2): call sites are gated on `#browse-workbench`
-   * existing, which the embedded shell never renders.
+   * Used by BOTH vehicles now (Copilot #1): the fetch tier calls this with
+   * `hostBridge: null` (no MCP host), and the embedded `ui://genie/grid`
+   * tier calls it with the real host bridge once the handshake resolves
+   * (`setHostBridge`), so Refine/source-read still route through the host
+   * (AC12/AC13). Call sites are gated on `#browse-workbench` existing, which
+   * only the fixture-only grid tests omit.
    *
    * @param {Document} doc
-   * @param {{hostBridge?: {callTool: Function}|null, kitId?: string, kitName?: string}} opts
-   * @returns {{update(manifest: object): void, teardown(): void}}
+   * @param {{hostBridge?: {callTool: Function}|null, kitId?: string, kitName?: string, onRefine?: (ctx: object) => void}} opts
+   * @returns {{update(manifest: object): void, setHostBridge(bridge: object|null): void, teardown(): void}}
    */
   function initBrowseController(doc, opts) {
     var options = opts || {};
@@ -1835,11 +2036,20 @@
     var detailContainer = doc.getElementById("browse-detail");
     var searchInput = doc.getElementById("q");
     if (!workbench || !treeContainer || !detailContainer) {
-      return { update: function () {}, teardown: function () {} };
+      return { update: function () {}, setHostBridge: function () {}, teardown: function () {} };
     }
 
     var manifest = { components: [], groups: [] };
     var selection = null; // {group, componentName}
+    var hostBridge = options.hostBridge || null;
+    // AC3/Copilot #7 — a monotonic generation counter. Every `renderAll()`
+    // call bumps it and captures its own value; an in-flight async source
+    // read is only allowed to commit if the generation it captured is STILL
+    // the current one when it resolves. This closes a race a pure identity
+    // check (group+componentName) cannot: HMR replacing the SAME selected
+    // component (identity unchanged, content/path changed) while an older
+    // read for the PRIOR content is still in flight.
+    var renderGeneration = 0;
 
     function currentSearch() {
       return searchInput ? searchInput.value || "" : "";
@@ -1850,9 +2060,15 @@
       try {
         var next = new win.URL(win.location.href);
         if (sel) {
+          // Copilot #8 — serialize kitId too, so a saved/shared link
+          // disambiguates across kits instead of only group+componentName
+          // (which could collide with a same-named component in a
+          // different kit once re-opened there).
+          next.searchParams.set("kitId", options.kitId || "");
           next.searchParams.set("group", sel.group);
           next.searchParams.set("componentName", sel.componentName);
         } else {
+          next.searchParams.delete("kitId");
           next.searchParams.delete("group");
           next.searchParams.delete("componentName");
         }
@@ -1863,10 +2079,18 @@
     }
 
     function fetchSource(component) {
-      var bridge = options.hostBridge;
-      if (!bridge || !component || !component.path) return Promise.resolve(null);
-      return bridge
-        .callTool("mcp__genie__read_file", { kitId: options.kitId || "", path: component.path })
+      if (!hostBridge || !component) return Promise.resolve(null);
+      // Copilot #4 — embedded manifests rewrite `component.path` to an
+      // absolute/data transport URL for the IFRAME's `src`, but preserve the
+      // kit-relative file identity in `sourcePath`. A host read-file tool
+      // has a relative-path contract, so it MUST receive `sourcePath` (when
+      // present) rather than the rewritten transport URL, which would
+      // always fail (or worse, resolve to the wrong file) against a real
+      // host.
+      var readPath = component.sourcePath || component.path;
+      if (!readPath) return Promise.resolve(null);
+      return hostBridge
+        .callTool("mcp__genie__read_file", { kitId: options.kitId || "", path: readPath })
         .then(function (result) {
           return result && typeof result.content === "string" && result.encoding !== "base64"
             ? result.content
@@ -1877,22 +2101,45 @@
         });
     }
 
+    function detailStateFor(component, source, sourceLoading) {
+      return {
+        kitId: options.kitId || "",
+        kitName: options.kitName || "",
+        component: component,
+        source: source,
+        sourceLoading: sourceLoading,
+        hostAvailable: Boolean(hostBridge),
+        onRefine: function (context) {
+          if (win) writeRoute(win, "review", false);
+          if (typeof options.onRefine === "function") options.onRefine(context);
+        },
+      };
+    }
+
     function renderAll() {
-      var tree = projectManifestToTree(manifest, currentSearch());
-      renderBrowseTree(doc, treeContainer, tree, currentSearch(), select, selection);
+      renderGeneration += 1;
+      var generation = renderGeneration;
+
+      // Copilot #6 — project the FILTERED tree only for the visible tree
+      // list/counts; selection resolution below always uses the UNFILTERED
+      // manifest, so typing a filter that hides the selected component never
+      // conflates "filtered out" with "removed from the manifest".
+      var filteredTree = projectManifestToTree(manifest, currentSearch());
+      var unfilteredTree = projectManifestToTree(manifest, "");
+      renderBrowseTree(doc, treeContainer, filteredTree, currentSearch(), select, selection);
 
       if (!selection) {
         detailContainer.replaceChildren();
         var placeholder = doc.createElement("p");
         placeholder.className = "browse-detail__placeholder";
-        placeholder.textContent = tree.isEmptyKit
+        placeholder.textContent = filteredTree.isEmptyKit
           ? ""
           : "Select a component to see its details.";
         detailContainer.appendChild(placeholder);
         return;
       }
 
-      var resolved = resolveSelection(tree, selection);
+      var resolved = resolveSelection(unfilteredTree, selection);
       if (!resolved.found) {
         renderBrowseDetailRemoved(doc, detailContainer, { componentName: selection.componentName });
         // Move focus to the nearest valid navigation control (AC/a11y): the
@@ -1903,21 +2150,26 @@
         return;
       }
 
-      renderBrowseDetail(doc, detailContainer, {
-        kitId: options.kitId || "",
-        kitName: options.kitName || "",
-        component: resolved.component,
-        source: null,
-        hostAvailable: Boolean(options.hostBridge),
-        onRefine: function (context) {
-          if (win) writeRoute(win, "review", false);
-          if (typeof options.onRefine === "function") options.onRefine(context);
-        },
-      });
+      // Copilot #17 — the initial render for a host-backed selection must
+      // show a distinct LOADING state, not the settled-failure copy; the
+      // failure copy is reserved for when the async read below actually
+      // resolves to `null`.
+      renderBrowseDetail(
+        doc,
+        detailContainer,
+        detailStateFor(resolved.component, null, Boolean(hostBridge)),
+      );
+
+      if (!hostBridge) return;
 
       fetchSource(resolved.component).then(function (source) {
-        // A HMR/selection race could resolve after the user moved on —
-        // re-check identity before writing stale source into the DOM.
+        // Copilot #7 — stale-result guard: only the render generation that
+        // is STILL current when this read resolves may commit. A plain
+        // identity check (group/componentName only, the prior guard) cannot
+        // catch HMR replacing the same-identity component's content/path
+        // while an older read for the PRIOR content is in flight; the
+        // generation counter does.
+        if (generation !== renderGeneration) return;
         if (
           !selection ||
           selection.group !== resolved.component.group ||
@@ -1925,17 +2177,7 @@
         ) {
           return;
         }
-        renderBrowseDetail(doc, detailContainer, {
-          kitId: options.kitId || "",
-          kitName: options.kitName || "",
-          component: resolved.component,
-          source: source,
-          hostAvailable: Boolean(options.hostBridge),
-          onRefine: function (context) {
-            if (win) writeRoute(win, "review", false);
-            if (typeof options.onRefine === "function") options.onRefine(context);
-          },
-        });
+        renderBrowseDetail(doc, detailContainer, detailStateFor(resolved.component, source, false));
       });
     }
 
@@ -1958,10 +2200,20 @@
     }
 
     // Deep-link (Decision #7): read an initial selection from the URL.
+    // Copilot #8 — a link's `kitId` (when present) must match the CURRENT
+    // kit; a mismatched kitId means the link was minted for a different kit
+    // and a same-named component here would be the wrong one, so the
+    // deep-link is rejected (falls back to no initial selection) rather
+    // than silently resolving against this kit.
     if (win) {
       try {
         var initial = parseSelection(new win.URL(win.location.href).searchParams);
-        if (initial) selection = { group: initial.group, componentName: initial.componentName };
+        if (
+          initial &&
+          (!initial.kitId || !options.kitId || initial.kitId === options.kitId)
+        ) {
+          selection = { group: initial.group, componentName: initial.componentName };
+        }
       } catch {
         /* malformed URL — no initial selection */
       }
@@ -1976,6 +2228,16 @@
         // (product-behavior requirement) — `renderAll` re-resolves the SAME
         // `selection` identity against the fresh manifest and only shows the
         // "removed" state if it genuinely no longer resolves.
+        renderAll();
+      },
+      // Copilot #1 — the embedded tier's host bridge only exists after the
+      // `ui://` MCP-App handshake resolves (asynchronously, after
+      // `initBrowseController` is first called with `hostBridge: null` so
+      // the workbench renders immediately rather than waiting on the host).
+      // This lets the boot path hand the bridge in later without recreating
+      // the whole controller (and losing the live selection/filter state).
+      setHostBridge: function (nextBridge) {
+        hostBridge = nextBridge || null;
         renderAll();
       },
       teardown: function () {
@@ -2555,6 +2817,51 @@
    * @param {typeof fetch} fetchImpl
    * @returns {Promise<void>}
    */
+  /**
+   * Copilot #3 (AC13) — a minimal `HostBridge`-shaped adapter for standalone
+   * Browse (`file://` / localhost, no MCP host) that still supports source
+   * inspection: `mcp__genie__read_file` reads the SAME-ORIGIN kit-relative
+   * path via the ordinary `fetch` already used for the manifest, rather than
+   * hard-coding a null bridge that guarantees every read fails. Any other
+   * tool name rejects — this adapter exists ONLY to satisfy Browse's
+   * read-only source panel, never to fake Refine/Conjure (those still
+   * correctly require a real MCP host and stay disabled — Decision #6).
+   *
+   * @param {(url: string) => Promise<Response>} fetchImpl
+   * @returns {{callTool: Function, destroy(): void}}
+   */
+  function createStandaloneSourceBridge(fetchImpl) {
+    return {
+      callTool: function (name, args) {
+        if (name !== "mcp__genie__read_file" || !args || typeof args.path !== "string") {
+          return Promise.reject(new Error("Standalone Browse cannot call " + name + "."));
+        }
+        // Path containment: reject anything that isn't a plain kit-relative
+        // path (no `..` segments, no scheme, no leading slash) — the same
+        // boundary a real host's read-file tool would enforce server-side
+        // (AC16), kept here since this adapter has no server to defer to.
+        var path = args.path;
+        if (
+          !path ||
+          path.indexOf("..") !== -1 ||
+          /^[a-z][a-z0-9+.-]*:/i.test(path) ||
+          path.charAt(0) === "/"
+        ) {
+          return Promise.reject(new Error("Refusing to read an unsafe path."));
+        }
+        return fetchImpl(path).then(function (response) {
+          if (!response || !response.ok) {
+            throw new Error("HTTP " + (response ? response.status : "error"));
+          }
+          return response.text().then(function (text) {
+            return { content: text };
+          });
+        });
+      },
+      destroy: function () {},
+    };
+  }
+
   function boot(doc, fetchImpl) {
     var grid = doc.getElementById("grid");
     if (!grid) return Promise.resolve();
@@ -2576,9 +2883,32 @@
         // this call (as an earlier revision did) left the bridge dead code in
         // the one tier it was built for. Best-effort, like the fetch path
         // below: a throw here must never take down an otherwise-good render.
+
+        // Copilot #1 (AC1/AC12/AC13) — embedded Browse must actually
+        // initialize the workbench too, not just leave content in the
+        // hidden `#grid`. `hostBridge` starts `null` (the handshake hasn't
+        // resolved yet) and is handed to the controller once `initMcpApp`'s
+        // `onReady` fires, via `setHostBridge` — never recreating the
+        // controller, so any selection/filter already made survives.
+        var browseController = initBrowseController(doc, {
+          hostBridge: null,
+          kitId: inline && inline.name,
+          kitName: inline && inline.name,
+          onRefine: function (context) {
+            if (shellController && shellController.setRefineContext) {
+              shellController.setRefineContext(context);
+            }
+          },
+        });
+
         var teardownHmr = function () {};
         try {
-          teardownHmr = initHmr(doc, { initialManifest: inline });
+          teardownHmr = initHmr(doc, {
+            initialManifest: inline,
+            onManifestUpdate: function (next) {
+              browseController.update(next);
+            },
+          });
         } catch {
           /* live refresh is an enhancement, never a boot blocker */
         }
@@ -2596,11 +2926,17 @@
           onTeardown: teardownHmr,
           onReady: function (bridge) {
             if (shellController && shellController.setBridge) shellController.setBridge(bridge);
+            browseController.setHostBridge(bridge);
           },
           onUnavailable: function () {
             if (shellController && shellController.setUnavailable) {
               shellController.setUnavailable();
             }
+            browseController.setHostBridge(null);
+          },
+          onToolResult: function (result) {
+            var nextManifest = extractToolResultManifest(result);
+            if (nextManifest) browseController.update(nextManifest);
           },
           onProgress: function (message) {
             if (shellController && shellController.showProgress) {
@@ -2634,11 +2970,29 @@
         // SAME fetched manifest as the grid above (no parallel catalog —
         // Decision #1); a no-op when `#browse-workbench` isn't present in
         // this document (e.g. the fixture-only grid tests).
+        //
+        // Copilot #3 (AC13) — standalone still supports source inspection
+        // via `createStandaloneSourceBridge`'s same-origin relative fetch,
+        // rather than a hard-coded null bridge that made `fetchSource`
+        // always resolve `null`.
+        var standaloneShellController = initProductShell(doc, null);
         var browseController = initBrowseController(doc, {
-          hostBridge: null,
+          hostBridge: createStandaloneSourceBridge(fetchImpl),
           kitId: manifest && manifest.name,
           kitName: manifest && manifest.name,
+          onRefine: function (context) {
+            if (standaloneShellController && standaloneShellController.setRefineContext) {
+              standaloneShellController.setRefineContext(context);
+            }
+          },
         });
+
+        // Copilot #2 — supply the ALREADY-FETCHED manifest to the controller
+        // up front. `initHmr`'s `initialManifest` is only its OWN polling/
+        // diff baseline, and `onManifestUpdate` fires no earlier than the
+        // first refresh — without this call, standalone Browse would render
+        // the empty-kit placeholder until the first HMR tick.
+        browseController.update(manifest);
 
         // M4-04 (DRO-266) — engage live per-card refresh AFTER the grid exists,
         // handing the just-fetched manifest in as the polling baseline so the
@@ -2657,7 +3011,6 @@
         } catch {
           /* live refresh is an enhancement, never a boot blocker */
         }
-        initProductShell(doc, null);
       })
       .catch(function (err) {
         var detail = err && err.message ? err.message : String(err);
@@ -2730,5 +3083,7 @@
     window.__genieViewerTestHooks.renderBrowseDetail = renderBrowseDetail;
     window.__genieViewerTestHooks.renderBrowseDetailRemoved = renderBrowseDetailRemoved;
     window.__genieViewerTestHooks.initBrowseController = initBrowseController;
+    window.__genieViewerTestHooks.extractToolResultManifest = extractToolResultManifest;
+    window.__genieViewerTestHooks.createStandaloneSourceBridge = createStandaloneSourceBridge;
   }
 })();

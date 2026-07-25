@@ -166,11 +166,15 @@
           the 240px tree (left) + component-detail stage (right); it is
           populated by `initBrowseController` in viewer.js from the SAME
           compiled manifest `#grid` already fetches — no parallel catalog
-          (Decision #1). `#grid` itself is left in place, hidden, for the
-          embedded `ui://genie/grid` MCP-Apps tool-result path
-          (`renderToolResult`), which is UNCHANGED by this issue (AC12: no
-          new embedded fetch/API). Standalone/localhost Browse renders into
-          `#browse-workbench` instead.
+          (Decision #1). `initBrowseController` is now wired for BOTH the
+          fetch tier (localhost/`file://`) AND the embedded `ui://genie/grid`
+          tool-result path (`renderToolResult`) — the embedded controller is
+          handed the host bridge so Refine/source-read still route through it
+          (AC12/AC13). `#grid` stays in the DOM, hidden, purely as the render
+          target `renderGrid`/`renderToolResult` write into; `viewer.js` keeps
+          `#browse-workbench` and `#grid` in sync by re-projecting whichever
+          manifest was last written to `#grid` into the workbench on every
+          update, so neither surface goes stale.
         -->
         <div id="browse-workbench" class="browse-workbench">
           <nav id="browse-tree" class="tree-sidebar" aria-label="UI kit tree navigation"></nav>
@@ -179,7 +183,7 @@
           </div>
         </div>
         <div id="grid" class="app-grid" aria-live="polite" hidden>
-          <!-- viewer.js renders group sections + cards here (embedded tier). -->
+          <!-- viewer.js renders group sections + cards here (source of truth manifest render). -->
         </div>
       </section>
 
@@ -187,7 +191,17 @@
         <p class="eyebrow">Review</p>
         <div id="review-empty" class="review-empty">
           <h1 id="review-empty-heading" tabindex="-1">No draft to review</h1>
-          <p>Conjure a component first. Review and Apply arrive in the next workflow milestone.</p>
+          <p id="review-empty-detail">
+            Conjure a component first. Review and Apply arrive in the next workflow milestone.
+          </p>
+          <!--
+            M7-02 (#234) AC11 — Refine's exact {kitId, group, componentName,
+            variant} handoff context, rendered here once Browse's Refine
+            action routes to Review (see `initProductShell`'s
+            `setRefineContext`). Full refine/apply is M7-03; this view is
+            only the receiving state for the transferred context.
+          -->
+          <dl id="review-refine-context" class="review-refine-context" hidden></dl>
           <a href="?route=generate" data-route-link="generate">Go to Generate</a>
         </div>
         <article id="draft-review" class="draft-review" hidden>
