@@ -108,6 +108,62 @@
   var mcpAppRequestId = 0;
   var LIST_KITS_TOOL = "mcp__genie__list_kits";
   var CONJURE_TOOL = "mcp__genie__conjure";
+  var LIST_FILES_TOOL = "mcp__genie__list_files";
+  var READ_FILE_TOOL = "mcp__genie__read_file";
+  var LIST_COMPONENTS_TOOL = "mcp__genie__list_components";
+
+  /**
+   * Kit-relative path prefix that marks a file as design-token source (genie#239).
+   * `create_kit`'s starter tree and every fixture/demo kit put token files
+   * under `tokens/` (see `packages/viewer/test/fixtures/kit/tokens/colors.css`),
+   * so this is the same convention `conjure`'s system prompt already asks the
+   * model to look for (tokens, primitives, house style) — just resolved from
+   * real kit files instead of the caller inventing them.
+   */
+  var TOKENS_DIR_PREFIX = "tokens/";
+
+  /**
+   * Canonical root stylesheet a kit may keep its shared variables/import
+   * closure in, alongside (or instead of) `tokens/**`. The viewer's own
+   * static serving (`packages/viewer/README.md:106`, `packages/viewer/src/
+   * config.ts:234`) and HMR both treat root `styles.css` as token context, so
+   * `buildKitContext` must include it too — otherwise a kit that keeps its
+   * house style here (rather than under `tokens/`) sends no styling context
+   * at all (Copilot review on #246).
+   */
+  var ROOT_STYLES_PATH = "styles.css";
+
+  /**
+   * Hard caps on how much kit context genie#239's `buildKitContext` will ever
+   * read into the `conjure` call. `read_file` already caps a single file at
+   * 256 KiB (`MAX_FILE_BYTES`, read_file.ts) — this bounds the *count* of
+   * token files read (a kit could have dozens) and the *total* character
+   * budget handed to the model, so a token-heavy kit can't balloon the
+   * request or blow past `conjure`'s own 100_000-char `kit` field cap
+   * (conjure.ts `conjureInputShape`).
+   */
+  var KIT_CONTEXT_MAX_TOKEN_FILES = 12;
+  var KIT_CONTEXT_MAX_CHARS = 20_000;
+
+  /**
+   * How many existing components' file contents `buildKitContext` will read
+   * for primitive/house-style context, beyond the bare group/name inventory
+   * (Copilot review on #246: metadata alone gives the model no actual
+   * primitive code to match). Small — a handful of representative components
+   * is enough context without ballooning the request.
+   */
+  var KIT_CONTEXT_MAX_COMPONENT_FILES = 5;
+
+  /**
+   * Overall wall-clock budget (ms) for ALL of `buildKitContext`'s tool calls
+   * combined. Each individual `read_file`/`list_*` call still inherits the
+   * host bridge's normal per-call timeout (60s), so serial reads could
+   * otherwise stall `conjure` by many minutes (Copilot review on #246).
+   * Context-gathering is best-effort by design, so once this deadline is hit
+   * we proceed with whatever partial context has resolved so far rather than
+   * waiting on slower calls.
+   */
+  var KIT_CONTEXT_DEADLINE_MS = 8_000;
 
   /**
    * Fallback card height (px) for a named/unparseable viewport (e.g. "desktop").
@@ -966,6 +1022,187 @@
       progress.hidden = false;
     }
 
+    /**
+     * True when a kit-relative path is design-token/house-style source: either
+     * inside `tokens/**` or the canonical root `styles.css` (Copilot review on
+     * #246 — the root file carries a kit's shared variables/import closure
+     * just as much as `tokens/**` does; see `ROOT_STYLES_PATH`'s doc comment).
+     */
+    function isKitStyleContextFile(path) {
+      return path === ROOT_STYLES_PATH || path.indexOf(TOKENS_DIR_PREFIX) === 0;
+    }
+
+    /**
+     * Resolve `promise` but never wait longer than `ms` for it: resolves to
+     * `null` (rather than rejecting) on timeout OR on the wrapped promise's own
+     * rejection, so callers can `Promise.all` a batch of these without any one
+     * slow/failing call sinking the others or the overall deadline (Copilot
+     * review on #246 — `buildKitContext`'s tool calls used to run serially,
+     * each inheriting the host bridge's full 60s per-call timeout).
+     */
+    function withDeadline(promise, ms) {
+      return new Promise(function (resolve) {
+        var settled = false;
+        var timer = win.setTimeout(function () {
+          if (settled) return;
+          settled = true;
+          resolve(null);
+        }, Math.max(0, ms));
+        promise.then(
+          function (value) {
+            if (settled) return;
+            settled = true;
+            win.clearTimeout(timer);
+            resolve(value);
+          },
+          function () {
+            if (settled) return;
+            settled = true;
+            win.clearTimeout(timer);
+            resolve(null);
+          },
+        );
+      });
+    }
+
+    /**
+     * genie#239 — resolve the SELECTED kit's real compiled context (tokens +
+     * primitives/components) instead of handing `conjure` just its display
+     * name. Reuses tools the viewer's host already exposes — `list_files`,
+     * `read_file`, `list_components` — so this needs no new server contract
+     * and `conjure`'s `kit` field stays the free-form string it already is
+     * (#233/M7-01: "reuse the existing conjure contract, this is not a
+     * redesign of the generation engine").
+     *
+     * All tool calls (the two `list_*` calls, then every `read_file` call) run
+     * CONCURRENTLY and share one overall `KIT_CONTEXT_DEADLINE_MS` wall-clock
+     * budget — not the host bridge's full per-call timeout — so a slow or
+     * unresponsive host can delay `conjure` by at most that budget, not by
+     * minutes (Copilot review on #246).
+     *
+     * Best-effort by design: any tool failure or deadline miss here (a host
+     * that doesn't implement these verbs yet, a slow kit, etc.) degrades to
+     * partial context, and total failure falls back to the OLD
+     * display-name-only behavior rather than blocking generation — losing
+     * kit-fidelity is strictly better than losing the ability to generate at
+     * all.
+     *
+     * @param {{callTool(name:string,args:object):Promise<object>}} hostBridge
+     * @param {string} kitId
+     * @param {string} kitName
+     * @param {number} [deadlineMs] Overall wall-clock budget in ms. Defaults
+     *   to `KIT_CONTEXT_DEADLINE_MS`; overridable so tests can exercise the
+     *   "deadline elapses" path without waiting on the real production
+     *   value (Copilot review on #246 — a test previously waited on the
+     *   real 8s `KIT_CONTEXT_DEADLINE_MS`, adding 8s of real wall-clock time
+     *   to every run that hit it).
+     * @returns {Promise<string>}
+     */
+    async function buildKitContext(hostBridge, kitId, kitName, deadlineMs) {
+      var sections = ['UI kit "' + kitName + '" (id: ' + kitId + ').'];
+      var budget = KIT_CONTEXT_MAX_CHARS - sections[0].length;
+      var deadline = Date.now() + (typeof deadlineMs === "number" ? deadlineMs : KIT_CONTEXT_DEADLINE_MS);
+      function remaining() {
+        return deadline - Date.now();
+      }
+
+      var results = await Promise.all([
+        withDeadline(hostBridge.callTool(LIST_FILES_TOOL, { kitId: kitId }), remaining()),
+        withDeadline(hostBridge.callTool(LIST_COMPONENTS_TOOL, { kitId: kitId }), remaining()),
+      ]);
+      var filesReply = results[0];
+      var componentsReply = results[1];
+
+      var files = Array.isArray(filesReply && filesReply.files) ? filesReply.files : [];
+      // Root `styles.css` is prioritized ahead of `tokens/**` entries so it
+      // survives KIT_CONTEXT_MAX_TOKEN_FILES truncation on token-heavy kits.
+      var styleFiles = files
+        .filter(function (entry) {
+          return entry && typeof entry.path === "string" && isKitStyleContextFile(entry.path);
+        })
+        .sort(function (a, b) {
+          return (a.path === ROOT_STYLES_PATH ? 0 : 1) - (b.path === ROOT_STYLES_PATH ? 0 : 1);
+        })
+        .slice(0, KIT_CONTEXT_MAX_TOKEN_FILES);
+
+      var components = Array.isArray(componentsReply && componentsReply.components)
+        ? componentsReply.components
+        : [];
+      var componentSampleTargets = components
+        .filter(function (entry) {
+          return entry && typeof entry.path === "string";
+        })
+        .slice(0, KIT_CONTEXT_MAX_COMPONENT_FILES);
+
+      // Read every style file and the bounded component sample concurrently —
+      // each individually capped by the SAME shared deadline — rather than in
+      // series, so one slow file can't crowd out the rest of the budget.
+      var readTargets = styleFiles
+        .map(function (entry) {
+          return { path: entry.path, label: entry.path };
+        })
+        .concat(
+          componentSampleTargets.map(function (entry) {
+            return { path: entry.path, label: entry.group + "/" + entry.name + " (" + entry.path + ")" };
+          }),
+        );
+
+      var reads = await Promise.all(
+        readTargets.map(function (target) {
+          return withDeadline(
+            hostBridge.callTool(READ_FILE_TOOL, { kitId: kitId, path: target.path }),
+            remaining(),
+          ).then(function (fileReply) {
+            return { label: target.label, fileReply: fileReply };
+          });
+        }),
+      );
+
+      var styleReadCount = styleFiles.length;
+      for (var i = 0; i < reads.length && budget > 0; i++) {
+        var isStyleRead = i < styleReadCount;
+        var fileReply = reads[i].fileReply;
+        if (fileReply && fileReply.encoding === "utf-8" && typeof fileReply.content === "string") {
+          var heading = isStyleRead ? "--- " + reads[i].label + " ---" : "--- component: " + reads[i].label + " ---";
+          // The heading itself counts against `budget` too — slicing only the
+          // file content and then prepending the heading on top of that
+          // slice let the assembled chunk exceed `budget` (Copilot review on
+          // #246).
+          var contentBudget = budget - heading.length - 1; /* -1 for the "\n" join */
+          if (contentBudget <= 0) continue;
+          var chunk = heading + "\n" + fileReply.content.slice(0, contentBudget);
+          sections.push(chunk);
+          budget -= chunk.length;
+        }
+        /* an unreadable/timed-out file must not sink the whole context. */
+      }
+
+      if (components.length && budget > 0) {
+        var namesPrefix = "Existing primitives/components: ";
+        var names = components
+          .map(function (component) {
+            return component.group + "/" + component.name;
+          })
+          .join(", ");
+        // Same accounting bug as above: this line was appended unconditionally
+        // AFTER the budget-tracked loop, so it could push the assembled
+        // context past KIT_CONTEXT_MAX_CHARS (and conjure's own kit-schema
+        // cap) regardless of how much budget remained. Truncate to what's left.
+        var namesBudget = budget - namesPrefix.length;
+        if (namesBudget > 0) {
+          sections.push(namesPrefix + names.slice(0, namesBudget));
+        }
+      }
+
+      // Belt-and-suspenders: the per-chunk budget accounting above should
+      // already keep the assembled string within KIT_CONTEXT_MAX_CHARS, but
+      // the "\n\n" join separators between sections aren't accounted for in
+      // `budget`, so hard-cap the final string as a last line of defense
+      // (Copilot review on #246).
+      var assembled = sections.join("\n\n");
+      return assembled.length > KIT_CONTEXT_MAX_CHARS ? assembled.slice(0, KIT_CONTEXT_MAX_CHARS) : assembled;
+    }
+
     function renderDraft(draft) {
       doc.getElementById("review-empty").hidden = true;
       doc.getElementById("draft-review").hidden = false;
@@ -1013,9 +1250,18 @@
       submit.textContent = "✦ Conjuring…";
       updateGate();
       try {
+        // genie#239 — resolve the real kit context (tokens/primitives), not
+        // just the display name. Best-effort: falls back to `selectedKit.name`
+        // alone if context-gathering throws (see buildKitContext's header).
+        var kitContext = selectedKit.name;
+        try {
+          kitContext = await buildKitContext(bridge, selectedKit.id, selectedKit.name);
+        } catch {
+          /* fall back to the display name — generation must still proceed. */
+        }
         var result = await bridge.callTool(CONJURE_TOOL, {
           kitId: selectedKit.id,
-          kit: selectedKit.name,
+          kit: kitContext,
           prompt: prompt.value.trim(),
           model: modelSelect.value,
         });
@@ -1149,6 +1395,14 @@
       },
       showProgress: function (message) {
         if (inFlight) showProgress(message);
+      },
+      // Exposed for direct unit testing of context-gathering behavior (token
+      // files, root styles.css, component sampling, deadline handling)
+      // without having to drive the full submitGenerate flow end to end.
+      // `deadlineMs` lets tests override KIT_CONTEXT_DEADLINE_MS so the
+      // "deadline elapses" case doesn't have to wait on the real 8s value.
+      buildKitContext: function (hostBridge, kitId, kitName, deadlineMs) {
+        return buildKitContext(hostBridge, kitId, kitName, deadlineMs);
       },
     };
   }
@@ -1877,6 +2131,7 @@
   if (typeof window !== "undefined" && window.__genieViewerTestHooks) {
     window.__genieViewerTestHooks.MANIFEST_URL = MANIFEST_URL;
     window.__genieViewerTestHooks.DEFAULT_CARD_HEIGHT = DEFAULT_CARD_HEIGHT;
+    window.__genieViewerTestHooks.KIT_CONTEXT_DEADLINE_MS = KIT_CONTEXT_DEADLINE_MS;
     window.__genieViewerTestHooks.parseViewport = parseViewport;
     window.__genieViewerTestHooks.groupByGroup = groupByGroup;
     window.__genieViewerTestHooks.computeGroupOrder = computeGroupOrder;
