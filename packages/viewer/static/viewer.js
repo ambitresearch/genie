@@ -119,31 +119,9 @@
   var DEFAULT_HOST_TOOL_TIMEOUT_MS = 60_000;
 
   /**
-   * Sentinel passed as `callTool`'s `callTimeoutMs` for the conjure call: "do not apply a
-   * client-side deadline to this request" (genie#241 / genie#243 Copilot review).
-   *
-   * A prior fix here picked a fixed 150s client deadline — 30s past the server's
-   * then-`DEFAULT_LLM_REQUEST_TIMEOUT_MS` (120s) — reasoning that 150s must outlast one LLM call.
-   * That's wrong on two counts the Copilot review on #243 called out: (1)
-   * `GENIE_LLM_REQUEST_TIMEOUT_MS` bounds EACH HTTP attempt, not the call as a whole — `conjure`
-   * can run the schema-retry loop (`component-response.ts`, up to two full model calls) and each of
-   * THOSE is separately wrapped in `withRetry` (`llm/retry.ts`), which can make up to `1 +
-   * GENIE_LLM_RETRY_MAX` (default 4) attempts with exponential backoff between them; and (2) both
-   * the per-request timeout and the retry ceiling are operator-configurable env vars, so no fixed
-   * client-side number can be derived that's guaranteed to outlast every valid deployment's worst
-   * case — a slow-but-legitimate generation can still finish after any such constant has already
-   * rejected the call.
-   *
-   * Rather than guess another (still-wrong) fixed ceiling, or thread the server's live env config
-   * across the postMessage boundary just to recompute one client-side number, the conjure call
-   * takes NO client deadline at all: `createHostBridge` skips scheduling a timer when this sentinel
-   * is passed, and the call resolves/rejects whenever the host actually answers `tools/call` —
-   * nothing here can time out early. Host lifecycle already covers the "genuinely stuck" case
-   * without a timer: `destroy()` rejects every pending call the moment the host tears the frame
-   * down (`ui/resource-teardown`), and the host's own transport-level request handling is what
-   * actually bounds a hung generation. Generic calls (list-kits, etc.) are unaffected — they keep
-   * the fixed 60s `DEFAULT_HOST_TOOL_TIMEOUT_MS` above, since those are cheap round trips with no
-   * LLM/retry variability behind them.
+   * Sentinel: "do not apply a client-side deadline to this request" (genie#241 / genie#243). Passed
+   * as `callTool`'s `callTimeoutMs` for conjure only. See `docs/developer/architecture.md` →
+   * "The conjure call takes no client deadline" for why no fixed ceiling is derivable.
    */
   var NO_CLIENT_DEADLINE = null;
 
@@ -1094,8 +1072,10 @@
     ) {
       return false;
     }
+    // Copilot (round 5) — an EMPTY diff is a valid answer: `buildUnifiedDiff` returns "" when the
+    // model returns a byte-identical file set, and `refineOutputShape.diff` is a bare `z.string()`.
+    // Only the type and size guards protect anything here.
     if (typeof value.diff !== "string") return false;
-    if (!value.diff.trim()) return false;
     if (value.diff.length > DIFF_MAX_LENGTH) return false;
     return isConjureResult({
       componentName: value.componentName,
@@ -1163,7 +1143,7 @@
   // resolve.
   var LOCAL_REF = "(?!\\s*(?:data:|#))";
   var EXTERNAL_ATTR_URL_PATTERN = new RegExp(
-    '\\b(?:src|href|srcset|data)\\s*=\\s*(?:"' +
+    '\\b(?:src|href|srcset|data|poster)\\s*=\\s*(?:"' +
       LOCAL_REF +
       '[^"]+"' +
       "|'" +
@@ -4299,11 +4279,31 @@
     } else if (typeof state.onRefine === "function") {
       refineButton.addEventListener("click", function () {
         // AC2/S2 — resolve LAZILY: the pane paints before `read_file` lands and only the source
-        // subpanel is repainted, so this handler's captured `state.source` would stay `null`
-        // forever.
-        var liveSource =
-          typeof state.resolveSource === "function" ? state.resolveSource() : state.source;
-        state.onRefine(buildRefineContext(state.kitId, component, "default", liveSource));
+        // subpanel is repainted, so a captured `state.source` would stay `null` forever. Copilot
+        // (round 5) — lazy is still too EARLY while that read is in flight: the button is live from
+        // first paint, so an eager click handed Review a null baseline and reported a component the
+        // host could read perfectly well as unreadable. Await the pending read instead.
+        function handoff(source) {
+          state.onRefine(buildRefineContext(state.kitId, component, "default", source));
+        }
+        var live = typeof state.resolveSource === "function" ? state.resolveSource() : state.source;
+        var pending =
+          typeof state.resolvePendingSource === "function" ? state.resolvePendingSource() : null;
+        if (live !== null && live !== undefined) return handoff(live);
+        if (!pending || typeof pending.then !== "function") return handoff(live);
+        // Say so, rather than looking dead — and make a second click a no-op.
+        refineButton.disabled = true;
+        refineButton.setAttribute("aria-disabled", "true");
+        function release(source) {
+          refineButton.disabled = false;
+          refineButton.removeAttribute("aria-disabled");
+          // A full re-render during the await detaches this button; the user moved on.
+          if (refineButton.isConnected === false) return;
+          handoff(source === undefined ? null : source);
+        }
+        pending.then(release, function () {
+          release(null);
+        });
       });
     }
 
@@ -4722,6 +4722,10 @@
         // baseline forever.
         resolveSource: function () {
           return latestSource;
+        },
+        // ...and the in-flight read behind it, so an eager click can await rather than give up.
+        resolvePendingSource: function () {
+          return pendingSourceRead;
         },
         hostAvailable: Boolean(hostBridge),
         // Copilot review (PR #248, AC13) — gates the Refine button separately from source-read

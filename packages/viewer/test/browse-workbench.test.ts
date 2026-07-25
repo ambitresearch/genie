@@ -24,7 +24,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { JSDOM } from "jsdom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VIEWER_JS = readFileSync(resolve(HERE, "../static/viewer.js"), "utf8");
@@ -1062,7 +1062,7 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     controller.teardown();
   });
 
-  it("passes the Refine context through to onRefine and routes to Review (Copilot #5)", () => {
+  it("passes the Refine context through to onRefine and routes to Review (Copilot #5)", async () => {
     const { hooks, document, window } = loadShell();
     let received: unknown = null;
     const controller = hooks.initBrowseController(document, {
@@ -1088,13 +1088,18 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     const refineButton = document.querySelector<HTMLButtonElement>("[data-refine-action]");
     refineButton!.click();
 
+    // The handoff is DEFERRED while the component's `read_file` is in flight
+    // (PR #250 round 5): clicking Refine on first paint used to hand Review a
+    // null baseline for a component the host could read. The route change is
+    // the same, it just lands after the pending read settles.
+    await vi.waitFor(() => expect(received).not.toBeNull());
     expect(received).toMatchObject({ kitId: "kit-a", group: "surfaces", componentName: "Card" });
     expect(new window.URL(window.location.href).searchParams.get("route")).toBe("review");
 
     controller.teardown();
   });
 
-  it("actually routes to (renders/focuses) Review on Refine when wired to a real product shell, not just the URL (Copilot review, PR #248)", () => {
+  it("actually routes to (renders/focuses) Review on Refine when wired to a real product shell, not just the URL (Copilot review, PR #248)", async () => {
     // Regression for a bug where the Browse `onRefine` handoff only called
     // `writeRoute` — updating `?route=review` in the address bar — without
     // ever calling the shell's `renderRoute`/`navigate`, so the Browse view
@@ -1123,7 +1128,13 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     const refineButton = document.querySelector<HTMLButtonElement>("[data-refine-action]");
     refineButton!.click();
 
-    expect(new window.URL(window.location.href).searchParams.get("route")).toBe("review");
+    // The handoff is DEFERRED while the component's `read_file` is in flight
+    // (PR #250 round 5): clicking Refine on first paint used to hand Review a
+    // null baseline for a component the host could read. The route change is
+    // the same, it just lands after the pending read settles.
+    await vi.waitFor(() =>
+      expect(new window.URL(window.location.href).searchParams.get("route")).toBe("review"),
+    );
     const browseView = document.querySelector<HTMLElement>('[data-route-view="browse"]');
     const reviewView = document.querySelector<HTMLElement>('[data-route-view="review"]');
     expect(browseView?.hidden).toBe(true);

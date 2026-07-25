@@ -269,3 +269,11 @@ Residual limitation: this cannot detect a navigation that fails after an initial
 document errors out client-side once loaded), nor a same-origin response whose body renders as a
 blank or broken page while returning 200. A fetch-level check only sees the HTTP status, not the
 rendered result, so those remain indistinguishable from a real successful preview.
+
+### The conjure call takes no client deadline
+
+Sentinel passed as `callTool`'s `callTimeoutMs` for the conjure call: "do not apply a client-side deadline to this request" (genie#241 / genie#243 Copilot review).
+
+A prior fix here picked a fixed 150s client deadline — 30s past the server's then-`DEFAULT_LLM_REQUEST_TIMEOUT_MS` (120s) — reasoning that 150s must outlast one LLM call. That's wrong on two counts the Copilot review on #243 called out: (1) `GENIE_LLM_REQUEST_TIMEOUT_MS` bounds EACH HTTP attempt, not the call as a whole — `conjure` can run the schema-retry loop (`component-response.ts`, up to two full model calls) and each of THOSE is separately wrapped in `withRetry` (`llm/retry.ts`), which can make up to `1 + GENIE_LLM_RETRY_MAX` (default 4) attempts with exponential backoff between them; and (2) both the per-request timeout and the retry ceiling are operator-configurable env vars, so no fixed client-side number can be derived that's guaranteed to outlast every valid deployment's worst case — a slow-but-legitimate generation can still finish after any such constant has already rejected the call.
+
+Rather than guess another (still-wrong) fixed ceiling, or thread the server's live env config across the postMessage boundary just to recompute one client-side number, the conjure call takes NO client deadline at all: `createHostBridge` skips scheduling a timer when this sentinel is passed, and the call resolves/rejects whenever the host actually answers `tools/call` — nothing here can time out early. Host lifecycle already covers the "genuinely stuck" case without a timer: `destroy()` rejects every pending call the moment the host tears the frame down (`ui/resource-teardown`), and the host's own transport-level request handling is what actually bounds a hung generation. Generic calls (list-kits, etc.) are unaffected — they keep the fixed 60s `DEFAULT_HOST_TOOL_TIMEOUT_MS` above, since those are cheap round trips with no LLM/retry variability behind them.

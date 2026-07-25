@@ -104,10 +104,13 @@ describe("isRefineResult", () => {
     expect(isRefineResult(conjureResult())).toBe(false);
   });
 
-  it("rejects a non-string or empty diff", () => {
+  it("rejects a non-string diff, but not an empty one", () => {
     const { isRefineResult } = loadHooks();
     expect(isRefineResult(refineResult({ diff: 42 }))).toBe(false);
-    expect(isRefineResult(refineResult({ diff: "" }))).toBe(false);
+    // This assertion used to demand `false`, which encoded a real defect: the
+    // server's `buildUnifiedDiff` returns "" for a byte-identical refine, so
+    // rejecting it mislabelled a truthful no-op as an unverifiable host reply.
+    expect(isRefineResult(refineResult({ diff: "" }))).toBe(true);
   });
 
   it("rejects extra keys beyond the canonical shape", () => {
@@ -2725,5 +2728,144 @@ describe("PR #250 fourth review round", () => {
     await vi.waitFor(() => {
       expect(shell.document.getElementById("draft-name")!.textContent).toBe("Primary buttons");
     });
+  });
+});
+
+describe("PR #250 fifth review round", () => {
+  it("accepts a refine result whose diff is empty, because a no-op refine is valid", () => {
+    const hooks = loadHooks();
+    // Server contract: `refineOutputShape.diff` is a bare `z.string()`
+    // (`refine.ts`), and `buildUnifiedDiff` returns `""` whenever every path is
+    // byte-identical on both sides. Rejecting that turns a truthful "the model
+    // changed nothing" answer into "the host returned a result this viewer
+    // cannot verify" — a lie about the host.
+    expect(hooks.isRefineResult({ ...refineResult(), diff: "" })).toBe(true);
+    // The type and size guards are the real protections and must survive.
+    expect(hooks.isRefineResult({ ...refineResult(), diff: null })).toBe(false);
+    expect(hooks.isRefineResult({ ...refineResult(), diff: "x".repeat(262145) })).toBe(false);
+  });
+
+  it("renders a no-change refine without a phantom diff section", () => {
+    const hooks = loadHooks();
+    // `parseUnifiedDiff("")` must stay zeroed so the review pane can hide the
+    // section rather than print "0 files changed" as if that were a finding.
+    const stats = hooks.parseUnifiedDiff("");
+    expect(stats).toEqual({ additions: 0, deletions: 0, files: [] });
+  });
+
+  it("fails the CSP check for a remote <video poster>", () => {
+    const hooks = loadHooks();
+    // `media-src` has no fallback of its own under `default-src 'none'`, so the
+    // poster frame is blocked and the card renders visibly broken — exactly the
+    // outcome this gate exists to catch before Apply.
+    expect(
+      hooks.violatesEmbeddedCsp('<video poster="https://example.test/frame.png"></video>'),
+    ).toBe(true);
+    expect(hooks.violatesEmbeddedCsp('<video poster="data:image/png;base64,AAA"></video>')).toBe(
+      false,
+    );
+  });
+
+  it("hands Review the real source when Refine is clicked before the read settles", async () => {
+    // The lazy `resolveSource()` fixed the STALE closure, but not the EARLY
+    // one: between first paint and `read_file` resolving, the button is live
+    // and `latestSource` is still `null`, so an eager click reported "could not
+    // read" for a component whose bytes arrived milliseconds later.
+    const shell = loadShell();
+    let releaseRead: (value: unknown) => void = () => {};
+    const readGate = new Promise((resolve) => {
+      releaseRead = resolve;
+    });
+    const bridge = {
+      callTool(name: string) {
+        if (name === "mcp__genie__read_file") {
+          return readGate.then(() => ({ content: CARD_SOURCE, encoding: "utf-8" }));
+        }
+        if (name === "mcp__genie__list_kits") return Promise.resolve({ kits: [] });
+        return Promise.resolve({});
+      },
+      destroy() {},
+    };
+    const shellController = shell.hooks.initProductShell(shell.document, bridge, {});
+    const browse = shell.hooks.initBrowseController(shell.document, {
+      hostBridge: bridge,
+      kitId: "kit-a",
+      kitName: "kit",
+      onRefine: (context: unknown) => shellController.setRefineContext(context),
+    });
+    browse.update(BROWSE_MANIFEST);
+    browse.setHostBridge(bridge);
+
+    const item = Array.from(shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    item!.click();
+    await vi.waitFor(() => {
+      expect(shell.document.querySelector<HTMLElement>("[data-refine-action]")).not.toBeNull();
+    });
+    // Deliberately click WHILE the read is still in flight.
+    expect(shell.document.getElementById("browse-detail")!.textContent).toMatch(/Loading source/i);
+    shell.document.querySelector<HTMLButtonElement>("[data-refine-action]")!.click();
+    releaseRead(null);
+
+    await vi.waitFor(() => {
+      expect((shell.document.getElementById("draft-review") as HTMLElement).hidden).toBe(false);
+    });
+    expect((shell.document.getElementById("review-empty") as HTMLElement).hidden).toBe(true);
+    expect(
+      shell.document.querySelector("#review-preview iframe")!.getAttribute("srcdoc"),
+    ).toContain("Card from the kit");
+  });
+
+  it("keeps Refine inert while the pending read is being awaited", async () => {
+    const shell = loadShell();
+    let releaseRead: (value: unknown) => void = () => {};
+    const readGate = new Promise((resolve) => {
+      releaseRead = resolve;
+    });
+    let reads = 0;
+    const bridge = {
+      callTool(name: string) {
+        if (name === "mcp__genie__read_file") {
+          reads += 1;
+          return readGate.then(() => ({ content: CARD_SOURCE, encoding: "utf-8" }));
+        }
+        if (name === "mcp__genie__list_kits") return Promise.resolve({ kits: [] });
+        return Promise.resolve({});
+      },
+      destroy() {},
+    };
+    const shellController = shell.hooks.initProductShell(shell.document, bridge, {});
+    const browse = shell.hooks.initBrowseController(shell.document, {
+      hostBridge: bridge,
+      kitId: "kit-a",
+      kitName: "kit",
+      onRefine: (context: unknown) => shellController.setRefineContext(context),
+    });
+    browse.update(BROWSE_MANIFEST);
+    browse.setHostBridge(bridge);
+    Array.from(shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]'))
+      .find((el) => el.dataset.componentName === "Card")!
+      .click();
+    await vi.waitFor(() => {
+      expect(shell.document.querySelector<HTMLElement>("[data-refine-action]")).not.toBeNull();
+    });
+
+    const button = shell.document.querySelector<HTMLButtonElement>("[data-refine-action]")!;
+    button.click();
+    // A second click during the await must not queue a second handoff, and the
+    // control must say so rather than looking dead.
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    button.click();
+    releaseRead(null);
+
+    await vi.waitFor(() => {
+      expect((shell.document.getElementById("draft-review") as HTMLElement).hidden).toBe(false);
+    });
+    // One draft, not two — the disabled window is what guarantees it.
+    expect(shell.document.getElementById("draft-label")!.textContent).toMatch(/draft #1/i);
+    // And the await reuses the in-flight read rather than issuing another.
+    expect(reads).toBe(1);
   });
 });
