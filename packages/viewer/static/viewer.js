@@ -1090,12 +1090,18 @@
      * @param {{callTool(name:string,args:object):Promise<object>}} hostBridge
      * @param {string} kitId
      * @param {string} kitName
+     * @param {number} [deadlineMs] Overall wall-clock budget in ms. Defaults
+     *   to `KIT_CONTEXT_DEADLINE_MS`; overridable so tests can exercise the
+     *   "deadline elapses" path without waiting on the real production
+     *   value (Copilot review on #246 — a test previously waited on the
+     *   real 8s `KIT_CONTEXT_DEADLINE_MS`, adding 8s of real wall-clock time
+     *   to every run that hit it).
      * @returns {Promise<string>}
      */
-    async function buildKitContext(hostBridge, kitId, kitName) {
+    async function buildKitContext(hostBridge, kitId, kitName, deadlineMs) {
       var sections = ['UI kit "' + kitName + '" (id: ' + kitId + ').'];
       var budget = KIT_CONTEXT_MAX_CHARS - sections[0].length;
-      var deadline = Date.now() + KIT_CONTEXT_DEADLINE_MS;
+      var deadline = Date.now() + (typeof deadlineMs === "number" ? deadlineMs : KIT_CONTEXT_DEADLINE_MS);
       function remaining() {
         return deadline - Date.now();
       }
@@ -1158,23 +1164,43 @@
         var fileReply = reads[i].fileReply;
         if (fileReply && fileReply.encoding === "utf-8" && typeof fileReply.content === "string") {
           var heading = isStyleRead ? "--- " + reads[i].label + " ---" : "--- component: " + reads[i].label + " ---";
-          var chunk = heading + "\n" + fileReply.content.slice(0, budget);
+          // The heading itself counts against `budget` too — slicing only the
+          // file content and then prepending the heading on top of that
+          // slice let the assembled chunk exceed `budget` (Copilot review on
+          // #246).
+          var contentBudget = budget - heading.length - 1; /* -1 for the "\n" join */
+          if (contentBudget <= 0) continue;
+          var chunk = heading + "\n" + fileReply.content.slice(0, contentBudget);
           sections.push(chunk);
           budget -= chunk.length;
         }
         /* an unreadable/timed-out file must not sink the whole context. */
       }
 
-      if (components.length) {
+      if (components.length && budget > 0) {
+        var namesPrefix = "Existing primitives/components: ";
         var names = components
           .map(function (component) {
             return component.group + "/" + component.name;
           })
           .join(", ");
-        sections.push("Existing primitives/components: " + names);
+        // Same accounting bug as above: this line was appended unconditionally
+        // AFTER the budget-tracked loop, so it could push the assembled
+        // context past KIT_CONTEXT_MAX_CHARS (and conjure's own kit-schema
+        // cap) regardless of how much budget remained. Truncate to what's left.
+        var namesBudget = budget - namesPrefix.length;
+        if (namesBudget > 0) {
+          sections.push(namesPrefix + names.slice(0, namesBudget));
+        }
       }
 
-      return sections.join("\n\n");
+      // Belt-and-suspenders: the per-chunk budget accounting above should
+      // already keep the assembled string within KIT_CONTEXT_MAX_CHARS, but
+      // the "\n\n" join separators between sections aren't accounted for in
+      // `budget`, so hard-cap the final string as a last line of defense
+      // (Copilot review on #246).
+      var assembled = sections.join("\n\n");
+      return assembled.length > KIT_CONTEXT_MAX_CHARS ? assembled.slice(0, KIT_CONTEXT_MAX_CHARS) : assembled;
     }
 
     function renderDraft(draft) {
@@ -1373,8 +1399,10 @@
       // Exposed for direct unit testing of context-gathering behavior (token
       // files, root styles.css, component sampling, deadline handling)
       // without having to drive the full submitGenerate flow end to end.
-      buildKitContext: function (hostBridge, kitId, kitName) {
-        return buildKitContext(hostBridge, kitId, kitName);
+      // `deadlineMs` lets tests override KIT_CONTEXT_DEADLINE_MS so the
+      // "deadline elapses" case doesn't have to wait on the real 8s value.
+      buildKitContext: function (hostBridge, kitId, kitName, deadlineMs) {
+        return buildKitContext(hostBridge, kitId, kitName, deadlineMs);
       },
     };
   }
@@ -2103,6 +2131,7 @@
   if (typeof window !== "undefined" && window.__genieViewerTestHooks) {
     window.__genieViewerTestHooks.MANIFEST_URL = MANIFEST_URL;
     window.__genieViewerTestHooks.DEFAULT_CARD_HEIGHT = DEFAULT_CARD_HEIGHT;
+    window.__genieViewerTestHooks.KIT_CONTEXT_DEADLINE_MS = KIT_CONTEXT_DEADLINE_MS;
     window.__genieViewerTestHooks.parseViewport = parseViewport;
     window.__genieViewerTestHooks.groupByGroup = groupByGroup;
     window.__genieViewerTestHooks.computeGroupOrder = computeGroupOrder;

@@ -551,7 +551,38 @@ describe("buildKitContext (genie#239 / Copilot review on #246)", () => {
 
     const context = await shell.buildKitContext(bridge, "acme-kit", "Acme");
 
-    expect(context.length).toBeLessThanOrEqual(20_000 + 200 /* headings/section joins slack */);
+    // Regression for Copilot review on #246: this used to allow slack
+    // because headings were appended to an already-sliced chunk (so a chunk
+    // could exceed its remaining budget) and the "\n\n" join separators
+    // between sections weren't accounted for at all. The assembled string
+    // must now be a hard cap at KIT_CONTEXT_MAX_CHARS.
+    expect(context.length).toBeLessThanOrEqual(20_000);
+  });
+
+  it("truncates the trailing components-inventory line rather than letting it push the assembled context past KIT_CONTEXT_MAX_CHARS", async () => {
+    const shell = shellWithProductInit();
+    const bigChunk = "x".repeat(19_950);
+    const manyComponents = Array.from({ length: 200 }, (_, i) => ({
+      group: "group" + i,
+      name: "Component" + i,
+      path: "components/Component" + i + ".tsx",
+    }));
+    const { bridge } = bridgeWith({
+      mcp__genie__list_files: () => Promise.resolve({ files: [{ path: "styles.css" }] }),
+      mcp__genie__list_components: () => Promise.resolve({ components: manyComponents }),
+      mcp__genie__read_file: (args: { path: string }) => {
+        if (args.path === "styles.css") return Promise.resolve({ content: bigChunk, encoding: "utf-8" });
+        return Promise.reject(new Error("unexpected read"));
+      },
+    });
+
+    const context = await shell.buildKitContext(bridge, "acme-kit", "Acme");
+
+    // Regression for Copilot review on #246: the components-inventory line
+    // used to be appended unconditionally AFTER the budget-tracked loop, so
+    // it could push the total past KIT_CONTEXT_MAX_CHARS (and past conjure's
+    // own 100k kit-schema cap) regardless of how much budget remained.
+    expect(context.length).toBeLessThanOrEqual(20_000);
   });
 
   it("proceeds with partial context once the shared deadline elapses, instead of waiting on every read", async () => {
@@ -569,16 +600,25 @@ describe("buildKitContext (genie#239 / Copilot review on #246)", () => {
       },
     });
 
+    // Regression for Copilot review on #246: this test previously exercised
+    // the real, production KIT_CONTEXT_DEADLINE_MS (8s) by omitting the
+    // deadline argument, which meant it genuinely blocked for ~8s of real
+    // wall-clock time on every focused and full test run. buildKitContext
+    // now takes an injectable deadline override specifically so tests like
+    // this one can exercise the "deadline elapses" branch with a short,
+    // deterministic budget instead.
+    const injectedDeadlineMs = 25;
     const start = Date.now();
-    const context = await shell.buildKitContext(bridge, "acme-kit", "Acme");
+    const context = await shell.buildKitContext(bridge, "acme-kit", "Acme", injectedDeadlineMs);
     const elapsed = Date.now() - start;
 
     expect(readCalls).toBe(1);
     expect(context).toBe('UI kit "Acme" (id: acme-kit).');
-    // Bounded by KIT_CONTEXT_DEADLINE_MS (8s), not the host bridge's 60s
-    // per-call timeout — generous slack for CI jitter.
-    expect(elapsed).toBeLessThan(15_000);
-  }, 20_000);
+    // Bounded by the injected deadline, not the host bridge's 60s per-call
+    // timeout or the real production KIT_CONTEXT_DEADLINE_MS — generous
+    // slack for CI jitter while still being far shorter than either.
+    expect(elapsed).toBeLessThan(2_000);
+  });
 
   it("falls back to the display name alone when both list tools are unavailable", async () => {
     const shell = shellWithProductInit();
