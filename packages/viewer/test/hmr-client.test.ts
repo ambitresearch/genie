@@ -500,7 +500,7 @@ describe("initMcpApp — standard tool result delivery", () => {
     host.emit({
       jsonrpc: "2.0",
       id: initialize.id,
-      result: { protocolVersion: "2026-01-26", hostCapabilities: { serverTools: true } },
+      result: { protocolVersion: "2026-01-26", hostCapabilities: { serverTools: {} } },
     });
     expect(host.parentPostMessage).toHaveBeenCalledWith(
       expect.objectContaining({ method: "ui/notifications/initialized" }),
@@ -757,7 +757,7 @@ describe("initMcpApp — standard tool result delivery", () => {
     host.emit({
       jsonrpc: "2.0",
       id: initialize.id,
-      result: { protocolVersion: "2026-01-26", hostCapabilities: { serverTools: true } },
+      result: { protocolVersion: "2026-01-26", hostCapabilities: { serverTools: {} } },
     });
 
     expect(observed).toEqual([document.documentElement, document.body]);
@@ -809,7 +809,7 @@ describe("initMcpApp — standard tool result delivery", () => {
         data: {
           jsonrpc: "2.0",
           id: initialize.id,
-          result: { protocolVersion: "2026-01-26", hostCapabilities: { serverTools: true } },
+          result: { protocolVersion: "2026-01-26", hostCapabilities: { serverTools: {} } },
         },
       }),
     );

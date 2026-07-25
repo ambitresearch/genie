@@ -503,7 +503,7 @@ describe("MCP-App handshake capability gate", () => {
     dispatch({
       jsonrpc: "2.0",
       id: initializeRequest.id,
-      result: { hostCapabilities: { serverTools: true } },
+      result: { hostCapabilities: { serverTools: {} } },
     });
 
     expect(onUnavailable).not.toHaveBeenCalled();
