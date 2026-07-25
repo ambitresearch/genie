@@ -51,7 +51,7 @@ Automated pre-Apply checks include:
 - proposed paths contained in the selected UI kit under `components/<group>/<Name>/`;
 - structured output matching the expected schema;
 - embedded-tier CSP safety: no remote subresources, no web fonts, and no inline script;
-- the preview actually rendered.
+- the sandboxed preview frame parsed the document, not that the component painted correctly.
 
 Kit-wide validation is intentionally pending before Apply. genie's `validate` tool scans
 the UI kit on disk, so it can only run after the draft has been written, and its result is

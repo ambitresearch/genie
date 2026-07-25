@@ -1242,18 +1242,39 @@
     return only;
   }
 
+  function componentPrefix(result) {
+    var group = (result && result.group) || "";
+    var name = (result && result.componentName) || "";
+    return "components/" + group + "/" + name + "/";
+  }
+
+  function isInsidePrefix(path, prefix) {
+    return (
+      typeof path === "string" &&
+      FILE_PATH_PATTERN.test(path) &&
+      path.indexOf(prefix) === 0 &&
+      path.indexOf("..") === -1
+    );
+  }
+
+  /**
+   * Copilot (round 4) — ONE containment predicate for both the proposed writes and the deletions
+   * the diff implies. Deletes are derived from untrusted model output, so checking only `files`
+   * let a malformed reply name any path in the kit; `plan` would then authorise that exact path
+   * and `delete_files` would honour it.
+   */
   function isContained(result) {
     if (!result || !Array.isArray(result.files) || !result.files.length) return false;
-    var prefix = "components/" + result.group + "/" + result.componentName + "/";
-    return result.files.every(function (file) {
-      return (
-        file &&
-        typeof file.path === "string" &&
-        FILE_PATH_PATTERN.test(file.path) &&
-        file.path.indexOf(prefix) === 0 &&
-        file.path.indexOf("..") === -1
-      );
+    var prefix = componentPrefix(result);
+    var writesOk = result.files.every(function (file) {
+      return Boolean(file) && isInsidePrefix(file.path, prefix);
     });
+    return (
+      writesOk &&
+      deletedPathsFromDiff(result.diff).every(function (path) {
+        return isInsidePrefix(path, prefix);
+      })
+    );
   }
 
   /**
@@ -1566,6 +1587,17 @@
     return out;
   }
 
+  /**
+   * Bytes this entry occupies on disk. Binary files arrive base64-encoded, so measuring the TEXT
+   * overstates the write by ~4/3. Mirrors `byteLengthOf` in the server's `write_files`.
+   */
+  function entryByteLength(entry) {
+    var data = (entry && entry.content) || "";
+    if (!entry || entry.encoding !== "base64") return utf8ByteLength(data);
+    var padding = data.slice(-2) === "==" ? 2 : data.slice(-1) === "=" ? 1 : 0;
+    return Math.floor((data.length * 3) / 4) - padding;
+  }
+
   function buildPlanArgs(draft, kitId) {
     var result = (draft && draft.result) || {};
     var files = result.files || [];
@@ -1575,8 +1607,11 @@
     var args = { kitId: kitId, writes: writes };
     // Copilot (round 2) — AC7/AC11 require the DELETE paths too. A path the draft also rewrites is
     // not a deletion, so it never enters `deletes`.
+    // Copilot (round 4) — the plan IS the authorisation boundary, so it never names a path outside
+    // this component's folder even though the checklist above already blocks such a draft.
+    var prefix = componentPrefix(result);
     var deletes = deletedPathsFromDiff(result.diff).filter(function (path) {
-      return writes.indexOf(path) === -1;
+      return writes.indexOf(path) === -1 && isInsidePrefix(path, prefix);
     });
     if (deletes.length) args.deletes = deletes;
     return args;
@@ -1997,7 +2032,7 @@
       // No `allow-same-origin`: an untrusted draft can never reach the viewer's origin, storage or
       // the host bridge.
       frame.setAttribute("sandbox", "allow-scripts");
-      frame.setAttribute("title", draft.result.componentName + " preview");
+      frame.setAttribute("title", presentName(draft) + " preview");
       frame.setAttribute("loading", "eager");
       frame.addEventListener("load", function () {
         var current = store.current();
@@ -2133,8 +2168,19 @@
         kitId: source.kitId,
         kitLabel: source.kitLabel,
         model: source.model,
+        displayName: source.displayName || "",
         componentInKit: false,
       };
+    }
+
+    /**
+     * Copilot (round 4) — `buildRefineContext` carries the UI kit's own user-facing name, which
+     * need not equal the directory the component lives in. Everything the reviewer READS uses it;
+     * every tool argument keeps `result.componentName`, which is what the server addresses.
+     */
+    function presentName(draft) {
+      var info = meta[draft.id];
+      return (info && info.displayName) || draft.result.componentName;
     }
 
     function onAcknowledge(id, value) {
@@ -2167,7 +2213,7 @@
       if (el.empty) el.empty.hidden = true;
       if (el.draft) el.draft.hidden = false;
       if (el.stageLabel) {
-        el.stageLabel.textContent = draft.result.componentName + " — " + draft.label;
+        el.stageLabel.textContent = presentName(draft) + " — " + draft.label;
       }
       if (el.draftLabel) el.draftLabel.textContent = draft.label;
       if (el.persistenceNote) {
@@ -2178,7 +2224,7 @@
             ? "Written to your kit. Later drafts stay in this session until you apply them."
             : "This draft is held only in this viewer session. Nothing has been written to your kit.";
       }
-      if (el.draftName) el.draftName.textContent = draft.result.componentName;
+      if (el.draftName) el.draftName.textContent = presentName(draft);
       renderSummary(draft);
       renderSwitcher();
 
@@ -2240,9 +2286,10 @@
         kitId: info.kitId || "",
         kitLabel: info.kitLabel || "",
         model: info.model || "",
+        displayName: info.displayName || "",
         componentInKit: Boolean(info.componentInKit),
       };
-      log("genie", note || "Drafted " + result.componentName + " — " + draft.label + ".");
+      log("genie", note || "Drafted " + presentName(draft) + " — " + draft.label + ".");
       renderPreview(draft);
       render();
       announce(draft.label + " ready for review. Nothing has been written to your kit.");
@@ -2321,7 +2368,7 @@
         el.dialogFiles.replaceChildren();
         for (var i = 0; i < draft.result.files.length; i++) {
           var entry = draft.result.files[i];
-          var size = utf8ByteLength(entry.content);
+          var size = entryByteLength(entry);
           totalBytes += size;
           var item = doc.createElement("li");
           var path = doc.createElement("code");
@@ -2354,7 +2401,7 @@
         var count = draft.result.files.length;
         el.dialogDetail.textContent =
           "Writing " +
-          draft.result.componentName +
+          presentName(draft) +
           " into " +
           (confirmInfo.kitLabel || confirmInfo.kitId || "your UI kit") +
           " — " +
@@ -2492,7 +2539,7 @@
       }
 
       var written = outcome.writtenPaths.length;
-      var message = "Applied " + draft.result.componentName + " — " + written + " file";
+      var message = "Applied " + presentName(draft) + " — " + written + " file";
       message += written === 1 ? " written." : "s written.";
       // Copilot #9 (PR #250) — the bytes ARE on disk (never written twice), but an apply whose
       // post-write scan did not complete, or came back dirty, is not a VERIFIED success.
@@ -3493,11 +3540,14 @@
               kitId: context.kitId,
               kitLabel: context.kitId,
               model: "",
+              displayName: context.displayName || "",
               // It came OUT of the kit, so `refine` can load it as its source.
               componentInKit: true,
               source: "browse",
             },
-            "Opened " + context.componentName + " from Browse — current kit source.",
+            "Opened " +
+              (context.displayName || context.componentName) +
+              " from Browse — current kit source.",
           );
           seeded = true;
         }
@@ -3944,24 +3994,9 @@
     treeEl.className = "browse-tree";
     treeEl.id = "browse-tree-nav";
 
-    // Copilot #13 (AC14, 720–1099px) — a 44px group rail whose activation opens an IDENTIFIABLE
-    // overlay tree, rather than only shrinking every row label to its first letter (which left
-    // same-initial components visually indistinguishable and offered no way to open real
-    // navigation). `.tree-sidebar`'s CSS at this breakpoint hides `#browse-tree-nav` off-canvas by
-    // default and only the rail toggle is visible; activating it reveals `#browse-tree-nav` as a
-    // real overlay (`browse-tree--overlay-open`) without covering focus invisibly — the toggle
-    // itself IS the 44px rail control, and its `aria-expanded`/ `aria-controls` make the
-    // relationship programmatically discoverable.
-    //
-    // Copilot review (PR #248) — this rail toggle, the overlay `treeEl`, and the <720px
-    // `compactNav` below are now ALWAYS built, even for the empty-kit and no-match states. The
-    // earlier revision returned before building any of this responsive chrome for those two states,
-    // so at the 720–1099px breakpoint (where `.tree-sidebar` collapses the raw sidebar column to
-    // 44px and hides `#browse-tree-nav` off-canvas by default) their message +
-    // Clear-filter/Generate action rendered directly inside that 44px column instead of inside the
-    // overlay, risking unusable/overflowing layout. The empty/no-match content is now placed INSIDE
-    // `treeEl` (see below), so it participates in the same rail/overlay/compact-nav responsive
-    // behavior as the real tree.
+    // The 44px group rail, its overlay tree, and the <720px `compactNav` are ALWAYS built — including
+    // for the empty-kit and no-match states: see `docs/developer/architecture.md` → "Browse
+    // responsive navigation".
     var railToggle = doc.createElement("button");
     railToggle.type = "button";
     railToggle.className = "browse-tree__rail-toggle";
@@ -4368,23 +4403,9 @@
     } else {
       iframe.setAttribute("height", String(DEFAULT_CARD_HEIGHT));
     }
-    // Copilot review (PR #248) — an `<iframe>` does NOT reliably emit `error` for a failed
-    // navigation: per spec/observed browser behavior, a 404/500 response or even most
-    // CSP-frame-ancestors blocks still fire `load` once the (error) document finishes loading —
-    // `error` only fires for lower-level failures (DNS/network refusal), which this same-origin
-    // preview path essentially never hits. A pure `load`/`error` listener pair therefore mislabels
-    // most real preview failures as "Preview · Default". Pragmatic mitigation: `component.path` is
-    // always a same-origin, server-relative URL, so probe it with a same-origin `fetch` BEFORE
-    // pointing the iframe at it — an HTTP-level failure response is a reliable signal `load` cannot
-    // give us. If the probe can't run at all (no `fetch`, e.g. a stripped test `doc.defaultView`)
-    // this degrades to the original `load`/`error`-only behavior rather than ever blocking the
-    // preview outright.
-    //
-    // Residual limitation: this still cannot detect a navigation that fails AFTER an initial 200
-    // (e.g. the iframe document errors out client-side once loaded), nor a same-origin response
-    // whose body renders as a blank/broken page while returning 200 (a fetch-level check only sees
-    // the HTTP status, not the rendered result) — those remain indistinguishable from a real
-    // successful preview by this heuristic.
+    // An `<iframe>` does not reliably emit `error` for a failed navigation, so probe the same-origin
+    // `component.path` with `fetch` first. Rationale and residual limits:
+    // `docs/developer/architecture.md` → "Browse preview failure detection".
     var probeFetch =
       doc.defaultView && typeof doc.defaultView.fetch === "function" ? doc.defaultView.fetch : null;
     var markBroken = function () {
@@ -4936,8 +4957,12 @@
             groups: groups.indexOf(group) === -1 ? groups.concat([group]) : groups,
           };
         }
+        // Copilot (round 4) — `select()` already renders. Forcing a SECOND render started a second
+        // `read_file` and replaced the `pendingSourceRead` the caller awaits below, so a transient
+        // failure on that redundant read reported a stale view even when the first read succeeded.
+        // Clearing the dedup key makes the single `select()` render perform the fresh read.
+        lastRenderedSelectionKey = null;
         select({ group: group, componentName: componentName });
-        renderAll(true);
         // `null` means the read failed (or was base64), so the panel is stale — reject, and let
         // the caller turn that into AC14's "written, but the view is stale" note.
         if (!hostBridge) return Promise.resolve();

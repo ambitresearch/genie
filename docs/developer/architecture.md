@@ -43,15 +43,17 @@ baseline
        ├─ Approve + gates green → approved draft
        │    └─ Confirm Apply → plan → write_files → [delete_files] → applied
        │       (kit validation advisory; refresh gates only the "live in Browse" claim)
-       └─ navigate away → drafts are discarded silently (no confirmation prompt)
+       └─ in-app route change → reversible; draft state remains in memory
 
 Any failure → remain on the last good draft; never report a false applied state.
 ```
 
-Navigating away — a route link, browser Back, or a reload — **discards unapplied drafts without
-warning**. There is deliberately no `beforeunload` handler and no route guard: a confirmation
-prompt in the embedded tier would fire inside the host's own frame, and no M7-03 acceptance
-criterion calls for one. Apply is the only durability boundary.
+In-app route changes — a route link, or browser Back/Forward between genie's own routes — are
+reversible: the Review store stays alive, so drafts, selection, approval state, and
+acknowledgements survive. A full reload, tab close, or host teardown destroys that in-memory
+session without warning. There is deliberately no `beforeunload` handler: a confirmation prompt
+in the embedded tier would fire inside the host's own frame, and no M7-03 acceptance criterion
+calls for one. Drafts are never persisted; Apply is the only durability boundary.
 
 ### Partial apply is not an apply
 
@@ -90,12 +92,12 @@ Checklist rows are backed by real inputs:
 | UI-kit containment               | proposed paths under `components/<group>/<Name>/` for the selected kit       |
 | Structured output schema         | normalized `conjure`/`refine` result                                         |
 | Embedded-tier CSP safety         | proposed HTML/CSS bytes; no remote subresources, web fonts, or inline script |
-| Preview rendered                 | actual draft iframe render result                                            |
+| Preview document parsed          | sandboxed draft iframe `load` event; proves parse, not paint                 |
 | Kit-wide validation              | deferred, advisory `validate` tool result after Apply                        |
 | Visual/a11y spot-checks          | explicit manual acknowledgement                                              |
 
 The pre-Apply gate may use only checks that can run against the proposed draft bytes and
-runtime render result. Kit-wide `validate` scans the UI kit on disk, so it remains pending
+runtime parse signal. Kit-wide `validate` scans the UI kit on disk, so it remains pending
 before Apply and is never shown as green before a write. After the write, kit-wide
 validation is advisory rather than gating: a kit-wide `validate` call can return its
 payload only in `content[].text` with no `structuredContent`, which the viewer's MCP host
@@ -229,3 +231,41 @@ iframe, card, iframe.
 Stdio relies on the harness-owned child-process boundary. HTTP exposes `POST /mcp` and
 `GET /health`, with optional static Bearer enforcement, genie's OAuth server, or upstream
 OIDC verification. See [Security model](security.md).
+
+### Browse responsive navigation
+
+At the 720–1099px breakpoint Browse renders a 44px group rail whose activation opens an
+identifiable overlay tree, rather than only shrinking every row label to its first letter — which
+left same-initial components visually indistinguishable and offered no way to open real navigation.
+`.tree-sidebar`'s CSS at this breakpoint hides `#browse-tree-nav` off-canvas by default and only the
+rail toggle is visible; activating it reveals `#browse-tree-nav` as a real overlay
+(`browse-tree--overlay-open`) without covering focus invisibly. The toggle itself is the 44px rail
+control, and its `aria-expanded` / `aria-controls` make the relationship programmatically
+discoverable.
+
+The rail toggle, the overlay tree, and the <720px compact nav are always built, including for the
+empty-kit and no-match states. An earlier revision returned before building any of this responsive
+chrome for those two states, so at 720–1099px — where `.tree-sidebar` collapses the raw sidebar
+column to 44px — their message plus Clear-filter/Generate action rendered directly inside that 44px
+column instead of inside the overlay, risking unusable or overflowing layout. Empty and no-match
+content is now placed inside the tree element, so it participates in the same rail, overlay, and
+compact-nav responsive behaviour as the real tree.
+
+### Browse preview failure detection
+
+An `<iframe>` does not reliably emit `error` for a failed navigation. Per spec and observed browser
+behaviour, a 404/500 response — or even most CSP `frame-ancestors` blocks — still fires `load` once
+the error document finishes loading. `error` only fires for lower-level failures such as DNS or
+network refusal, which the same-origin preview path essentially never hits, so a pure `load`/`error`
+listener pair mislabels most real preview failures as a successful default preview.
+
+The pragmatic mitigation: `component.path` is always a same-origin, server-relative URL, so it is
+probed with a same-origin `fetch` before the iframe is pointed at it. An HTTP-level failure response
+is a reliable signal that `load` cannot give us. If the probe cannot run at all — no `fetch`, for
+example under a stripped test `defaultView` — this degrades to the original `load`/`error`-only
+behaviour rather than ever blocking the preview outright.
+
+Residual limitation: this cannot detect a navigation that fails after an initial 200 (the iframe
+document errors out client-side once loaded), nor a same-origin response whose body renders as a
+blank or broken page while returning 200. A fetch-level check only sees the HTTP status, not the
+rendered result, so those remain indistinguishable from a real successful preview.

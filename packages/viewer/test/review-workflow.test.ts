@@ -1472,10 +1472,13 @@ const CARD_SOURCE = `${MARKER}\n<div class="card">Card from the kit</div>`;
 function loadBrowseToReview(
   source: string | null,
   opts: { onApplied?: (applied: Record<string, unknown>) => unknown } = {},
+  manifest: Record<string, unknown> = BROWSE_MANIFEST,
 ) {
   const shell = loadShell();
+  const calls: string[] = [];
   const bridge = {
     callTool(name: string) {
+      calls.push(name);
       if (name === "mcp__genie__read_file") {
         return Promise.resolve(source === null ? {} : { content: source, encoding: "utf-8" });
       }
@@ -1494,9 +1497,9 @@ function loadBrowseToReview(
     kitName: "kit",
     onRefine: (context: unknown) => shellController.setRefineContext(context),
   });
-  browse.update(BROWSE_MANIFEST);
+  browse.update(manifest);
   browse.setHostBridge(bridge);
-  return { ...shell, browse, shellController };
+  return { ...shell, browse, shellController, calls };
 }
 
 async function refineFromBrowse(shell: ReturnType<typeof loadBrowseToReview>) {
@@ -2584,5 +2587,143 @@ describe("PR #250 third review round", () => {
   it("surfaces the stale-view note when the post-apply re-read fails", async () => {
     const shell = loadBrowseToReview(null);
     await expect(shell.browse.openComponent("actions", "Button")).rejects.toThrow();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Copilot review round 4 on PR #250. Nine findings; five were         */
+/* documentation-accuracy and are fixed in `docs/`. These four are     */
+/* behavioural, and the first is a real privilege-escalation hole:     */
+/* the delete list is derived from the MODEL'S diff, which no          */
+/* containment check ever saw.                                        */
+/* ------------------------------------------------------------------ */
+describe("PR #250 fourth review round", () => {
+  /** A refine reply whose unified diff removes `path` (`+++ /dev/null`). */
+  function deletingDraft(path: string) {
+    return refineResult({
+      diff: [
+        `diff --git a/${path} b/${path}`,
+        `--- a/${path}`,
+        "+++ /dev/null",
+        "@@ -1 +0,0 @@",
+        "-<div>gone</div>",
+        "",
+      ].join("\n"),
+    });
+  }
+
+  function containmentOf(result: Record<string, unknown>) {
+    const { computeChecklist } = loadHooks();
+    const rows = computeChecklist({ result, renderState: "pass" }) as {
+      id: string;
+      state: string;
+    }[];
+    return rows.find((row) => row.id === "containment")!;
+  }
+
+  it("fails containment when the diff deletes another component's file", () => {
+    // Finding 1 — `components/actions/Other/Other.html` satisfies FILE_PATH_PATTERN
+    // and would be waved through by a path-shape check alone.
+    expect(containmentOf(deletingDraft("components/actions/Other/Other.html")).state).toBe("fail");
+  });
+
+  it("fails containment when the diff deletes a kit-root file", () => {
+    expect(containmentOf(deletingDraft("styles.css")).state).toBe("fail");
+  });
+
+  it("keeps containment green for a delete inside the component's own folder", () => {
+    expect(containmentOf(deletingDraft("components/actions/Button/old.html")).state).toBe("pass");
+  });
+
+  it("never asks the plan to authorise a delete outside the component folder", () => {
+    // Defence in depth: the checklist gate above blocks Apply, but the plan is the
+    // authorisation boundary — `delete_files` accepts any path the plan globbed.
+    const { buildPlanArgs } = loadHooks();
+    for (const escape of ["styles.css", "components/actions/Other/Other.html"]) {
+      const args = buildPlanArgs({ result: deletingDraft(escape) }, "kit-a") as {
+        deletes?: string[];
+      };
+      expect(args.deletes ?? []).not.toContain(escape);
+    }
+    const kept = buildPlanArgs(
+      { result: deletingDraft("components/actions/Button/old.html") },
+      "kit-a",
+    ) as { deletes?: string[] };
+    expect(kept.deletes).toEqual(["components/actions/Button/old.html"]);
+  });
+
+  it("reports decoded bytes, not base64 characters, in the Apply confirmation", () => {
+    // Finding 2 — binary entries arrive base64-encoded, so measuring the *text*
+    // overstates what lands on disk by ~4/3. Mirror write_files' `byteLengthOf`.
+    const payload = Buffer.from("PNGDATA-PNGDATA").toString("base64");
+    const wired = loadWired(HAPPY_REPLIES);
+    wired.controller.addDraft(
+      conjureResult({
+        files: [
+          fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Go</button>\n`),
+          {
+            path: "components/actions/Button/icon.png",
+            content: payload,
+            mimeType: "image/png",
+            encoding: "base64",
+          },
+        ],
+      }),
+      { kitId: "my-kit", kitLabel: "My Kit", model: "m", componentInKit: false },
+    );
+    makeGreen(wired.document, wired.controller);
+    wired.document.querySelector<HTMLButtonElement>("#decision-approve")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-button")!.click();
+
+    const row = Array.from(wired.document.querySelectorAll("#apply-confirm-files li")).find((li) =>
+      li.textContent?.includes("icon.png"),
+    )!;
+    expect(row.textContent).toContain(`${15} bytes`);
+    expect(row.textContent).not.toContain(`${payload.length} bytes`);
+  });
+
+  it("re-reads the applied component's source exactly once", async () => {
+    // Finding 3 — `select()` already renders, so a forced second render started a
+    // second `read_file` and REPLACED the pending read the caller awaits. A
+    // transient failure on that second read reported a stale view even though the
+    // first had already succeeded.
+    const shell = loadBrowseToReview(CARD_SOURCE);
+    shell.calls.length = 0;
+    await shell.browse.openComponent("surfaces", "Card");
+    const reads = shell.calls.filter((name) => name === "mcp__genie__read_file");
+    expect(reads).toHaveLength(1);
+  });
+
+  it("keeps the Browse display name when a component enters Review", async () => {
+    // Finding 4 — the manifest's `name` is the user-facing identity and need not
+    // match the directory. Review used to rename the component to its directory.
+    const shell = loadBrowseToReview(CARD_SOURCE, {}, {
+      ...BROWSE_MANIFEST,
+      groups: ["actions"],
+      components: [
+        {
+          name: "Primary buttons",
+          group: "actions",
+          path: "components/actions/Button/Button.html",
+          viewport: "480x320",
+          hash: "sha256-CCC=",
+          lastModified: "2026-07-01T00:00:00.000Z",
+        },
+      ],
+    } as Record<string, unknown>);
+    const item = Array.from(shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Primary buttons",
+    );
+    item!.click();
+    await vi.waitFor(() => {
+      expect(shell.document.querySelector<HTMLElement>("[data-refine-action]")).not.toBeNull();
+      expect(shell.document.getElementById("browse-detail")!.textContent).not.toMatch(
+        /Loading source/i,
+      );
+    });
+    shell.document.querySelector<HTMLButtonElement>("[data-refine-action]")!.click();
+    await vi.waitFor(() => {
+      expect(shell.document.getElementById("draft-name")!.textContent).toBe("Primary buttons");
+    });
   });
 });

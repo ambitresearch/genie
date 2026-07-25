@@ -37,8 +37,9 @@ requires a fresh confirmation and a fresh plan.
 ## Rendering untrusted Review data
 
 Diffs, source, model messages, tool errors, and diagnostics are rendered as data, not as
-markup. User-visible diagnostics are redacted before display so secrets and local absolute
-paths do not leak through the Review rail, checklist, or failure messages.
+markup. User-visible diagnostics redact bearer tokens and `api-key`, `token`, or `secret`
+assignments before display, then cap the message at 500 characters. Filesystem paths surfaced
+by host errors are shown as-is.
 
 Embedded Review keeps the same CSP posture as other embedded cards: `default-src 'none'`
 and `connect-src 'none'`. It uses only the host MCP bridge for Refine and Apply; the
