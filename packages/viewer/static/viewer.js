@@ -992,10 +992,36 @@
    * through on the strength of the two fields the viewer happens to use.
    */
   /**
+   * DRO-242 (fail closed, Copilot review round 6) — JSON Schema's
+   * `maxLength`/`minLength` count Unicode CODE POINTS, but JS `String.length`
+   * counts UTF-16 CODE UNITS — every character outside the Basic Multilingual
+   * Plane (astral characters: most emoji, some CJK extensions) is one code
+   * point but TWO code units (a surrogate pair). A schema-valid string near
+   * either bound (e.g. exactly `maxLength` emoji) would be wrongly
+   * accepted/rejected by a raw `.length` comparison. Counting via the
+   * string iterator (`for...of` / spread) is code-point-aware — it steps
+   * over full surrogate pairs — and this early-exits once `max` is
+   * exceeded rather than materializing an array for a large string.
+   */
+  function isCodePointLengthWithinBounds(value, min, max) {
+    var count = 0;
+    // Iterated purely for its code-point-aware stepping; the yielded
+    // character itself isn't needed.
+    for (var _ of value) {
+      count += 1;
+      if (count > max) return false;
+    }
+    return count >= min;
+  }
+
+  /**
    * DRO-242 (fail closed, Copilot review round 5) — `files[].content`'s
    * canonical bounds (`packages/server/src/llm/schema.ts`'s `minLength: 1,
    * maxLength: 65536`). Previously only the empty string was rejected; an
-   * oversized (>64KiB) `content` string still passed.
+   * oversized (>64KiB) `content` string still passed. Round 6: bounds are
+   * checked in Unicode code points via `isCodePointLengthWithinBounds`, not
+   * UTF-16 code units, so astral characters (e.g. many emoji) are counted
+   * correctly.
    */
   var CONTENT_MAX_LENGTH = 65536;
 
@@ -1006,8 +1032,7 @@
       typeof value.path === "string" &&
       FILE_PATH_PATTERN.test(value.path) &&
       typeof value.content === "string" &&
-      value.content.length >= 1 &&
-      value.content.length <= CONTENT_MAX_LENGTH &&
+      isCodePointLengthWithinBounds(value.content, 1, CONTENT_MAX_LENGTH) &&
       typeof value.mimeType === "string" &&
       MIME_TYPE_PATTERN.test(value.mimeType) &&
       (value.encoding === "utf-8" || value.encoding === "base64"),
@@ -1069,7 +1094,8 @@
     }
     if (
       value.subtitle !== undefined &&
-      (typeof value.subtitle !== "string" || value.subtitle.length > SUBTITLE_MAX_LENGTH)
+      (typeof value.subtitle !== "string" ||
+        !isCodePointLengthWithinBounds(value.subtitle, 0, SUBTITLE_MAX_LENGTH))
     ) {
       return false;
     }

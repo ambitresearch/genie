@@ -284,6 +284,24 @@ describe("Generate workflow state", () => {
         files: [{ ...valid.files[0], content: "x".repeat(65537) }, valid.files[1]],
       }),
     ).toBe(false);
+    // Astral-character boundary (Copilot review round 6 on PR #245):
+    // `maxLength` counts Unicode CODE POINTS, not UTF-16 code units. A
+    // string of exactly 65536 astral characters (each a surrogate PAIR,
+    // so `.length` reads 131072) is schema-VALID and must be ACCEPTED; one
+    // MORE astral character (65537 code points) must be rejected. A naive
+    // `.length` check gets both of these backwards.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], content: "\u{1F600}".repeat(65536) }, valid.files[1]],
+      }),
+    ).toBe(true);
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], content: "\u{1F600}".repeat(65537) }, valid.files[1]],
+      }),
+    ).toBe(false);
     // manifestEntry.viewport dimensions outside the canonical [1, 4096]
     // integer range — fractions, zero, negatives, over-max, NaN, and
     // Infinity are all schema violations a bare `typeof === "number"` check
@@ -323,6 +341,21 @@ describe("Generate workflow state", () => {
       hooks.isConjureResult({
         ...valid,
         manifestEntry: { ...valid.manifestEntry, subtitle: "x".repeat(257) },
+      }),
+    ).toBe(false);
+    // Astral-character boundary for subtitle, same reasoning as content
+    // above: exactly 256 astral code points must be accepted even though
+    // `.length` reads 512; 257 must be rejected.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { ...valid.manifestEntry, subtitle: "\u{1F600}".repeat(256) },
+      }),
+    ).toBe(true);
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { ...valid.manifestEntry, subtitle: "\u{1F600}".repeat(257) },
       }),
     ).toBe(false);
     // manifestEntry.tags over the 16-item maxItems.
