@@ -53,6 +53,11 @@
     --color-accent-2: oklch(56% 0.115 38);
     --color-on-accent: #171614;
 
+    /* M7-03 (#235) review workspace tokens — local to the review flow. */
+    --color-review-card: #ffffff;
+    --color-review-add: #2a7a42;
+    --color-review-del: #b5503a;
+
     /* Structural ink-blue — links / focus only. */
     --color-focus: oklch(52% 0.14 265);
 
@@ -123,6 +128,9 @@
     --color-hairline-2: oklch(40% 0.014 75);
     --color-accent: oklch(74% 0.1 46);
     --color-accent-2: oklch(64% 0.11 42); /* DRO-743: 5.27:1 on dark paper */
+    --color-review-card: var(--color-paper-2);
+    --color-review-add: oklch(72% 0.13 150);
+    --color-review-del: oklch(70% 0.14 35);
   }
 
   @media (prefers-color-scheme: dark) {
@@ -141,6 +149,9 @@
       --color-hairline-2: oklch(40% 0.014 75);
       --color-accent: oklch(74% 0.1 46);
       --color-accent-2: oklch(64% 0.11 42); /* DRO-743: 5.27:1 on dark paper */
+      --color-review-card: var(--color-paper-2);
+      --color-review-add: oklch(72% 0.13 150);
+      --color-review-del: oklch(70% 0.14 35);
     }
   }
 }
@@ -668,6 +679,219 @@
     padding: 64px var(--space-xl);
   }
 
+  /* M7-03 (#235) — Review workspace shell.
+     Empty Review keeps the centred 760px card above; once the three-pane
+     workspace is present, the route becomes the full instrument surface. */
+  #review-view.review-view:has(.review-layout:not([hidden])) {
+    width: 100%;
+    margin-inline: 0;
+    padding: 0;
+  }
+
+  .review-layout {
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr) 320px;
+    height: calc(100vh - 56px);
+    background: var(--color-paper);
+    border-top: var(--rule-hair) solid var(--color-hairline);
+  }
+
+  /* The mock dims only the rail's background rect (fill #faf8f5 @ 0.7), not its
+     text. An element-wide `opacity` would composite the text down too, and
+     --color-ink-3 is tuned to land exactly on AA against paper — so any
+     multiplier drops it below 4.5:1 (axe measured 3.85:1). The rail already
+     reads as distinct from the stage: paper against the stage's paper-2, plus
+     the hairline. Recess via surface colour, never via opacity. */
+  .review-conversation {
+    min-width: 0;
+    /* The rail is the grid's first column, so without an inline gutter its
+       eyebrow renders flush against the viewport edge and reads as clipped. */
+    padding-inline: var(--space-md);
+    overflow-y: auto;
+    color: var(--color-ink-2);
+    background: var(--color-paper);
+    border-right: var(--rule-hair) solid var(--color-hairline);
+  }
+
+  .review-conversation__log {
+    display: flex;
+    flex-direction: column;
+    padding-block: var(--space-xs);
+  }
+
+  .review-stage {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: auto;
+    background: var(--color-paper-2);
+  }
+
+  .review-stage__label {
+    flex: 0 0 auto;
+    padding: 10px var(--space-md);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--color-ink-3);
+    text-align: center;
+    text-transform: uppercase;
+    border-bottom: var(--rule-hair) solid var(--color-hairline-2);
+  }
+
+  .review-preview {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: flex-start;
+    justify-content: center;
+    min-width: 0;
+    padding: 40px var(--space-lg);
+  }
+
+  .review-preview iframe {
+    max-width: 100%;
+    border: var(--rule-hair) solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+    background: var(--color-review-card);
+  }
+
+  .review-preview__frame {
+    max-width: 100%;
+    border: var(--rule-hair) solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+    background: var(--color-review-card);
+  }
+
+  .review-stage .review-empty {
+    width: min(calc(100% - 2 * var(--space-lg)), 520px);
+    margin: 72px auto;
+  }
+
+  .review-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow-y: auto;
+    background: var(--color-paper);
+    border-left: var(--rule-hair) solid var(--color-hairline);
+  }
+
+  .review-rail-toggle,
+  .review-segmented {
+    display: none;
+  }
+
+  @media (min-width: 720px) and (max-width: 1099px) {
+    .review-layout {
+      grid-template-columns: minmax(0, 1fr) 320px;
+    }
+
+    .review-rail-toggle {
+      position: fixed;
+      top: calc(56px + var(--space-sm));
+      left: var(--space-sm);
+      z-index: 25;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 44px;
+      min-height: 44px;
+      color: var(--color-ink);
+      background: var(--color-paper);
+      border: var(--rule-hair) solid var(--color-hairline);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+    }
+
+    .review-conversation {
+      position: fixed;
+      inset-block: 56px 0;
+      left: 0;
+      z-index: 24;
+      width: 280px;
+      transform: translateX(-100%);
+      visibility: hidden;
+    }
+
+    .review-layout:has(.review-rail-toggle[aria-expanded="true"]) .review-conversation,
+    .review-conversation--open {
+      transform: translateX(0);
+      visibility: visible;
+    }
+  }
+
+  @media (max-width: 719px) {
+    .review-layout {
+      grid-template-columns: minmax(0, 1fr);
+      height: calc(100vh - 56px);
+    }
+
+    .review-conversation {
+      display: none;
+    }
+
+    .review-segmented {
+      position: sticky;
+      top: 56px;
+      z-index: 15;
+      display: flex;
+      gap: var(--space-2xs);
+      padding: var(--space-xs) var(--space-md);
+      background: var(--color-paper);
+      border-bottom: var(--rule-hair) solid var(--color-hairline);
+    }
+
+    .review-segmented__option {
+      display: inline-flex;
+      flex: 1 1 0;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: var(--space-xs) var(--space-sm);
+      color: var(--color-ink-2);
+      background: transparent;
+      border: var(--rule-hair) solid var(--color-hairline);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+    }
+
+    .review-segmented__option[aria-selected="true"],
+    .review-segmented__option[aria-pressed="true"] {
+      color: var(--color-ink);
+      font-weight: 600;
+      background: var(--color-paper-3);
+      border-color: var(--color-hairline-2);
+    }
+
+    .review-preview {
+      padding: var(--space-lg) var(--space-md);
+    }
+
+    /* The segmented control swaps panes by setting `data-active-pane` on
+       `#review-view` (see `setPane` in viewer.js). Exactly one of the stage /
+       panel is shown, and the panel is presented as a bottom sheet. */
+    #review-view[data-active-pane="review"] .review-stage {
+      display: none;
+    }
+
+    #review-view[data-active-pane="preview"] .review-panel {
+      display: none;
+    }
+
+    #review-view[data-active-pane="review"] .review-panel {
+      position: fixed;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 30;
+      max-height: min(72vh, 640px);
+      border-top: var(--rule-hair) solid var(--color-hairline);
+      border-left: 0;
+      box-shadow: 0 -8px 24px oklch(30% 0.02 70 / 0.12);
+    }
+  }
+
   .prompt-card__controls {
     display: grid;
     grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
@@ -980,20 +1204,429 @@
     text-transform: uppercase;
   }
 
+  /* M7-03 (#235) — this summary now lives in the ~205px review panel column
+     rather than the old full-width article, where a `max-content` label track
+     plus a 24px gap starved values to 78px and wrapped each across three lines.
+     Design 6 §02-preview-refine stacks label above value here, so mirror that. */
   .draft-review dl {
     display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: var(--space-xs) var(--space-lg);
+    grid-template-columns: minmax(0, 1fr);
     padding-top: var(--space-md);
     border-top: var(--rule-hair) solid var(--color-hairline);
   }
 
   .draft-review dt {
+    margin-top: var(--space-sm);
     color: var(--color-ink-3);
+  }
+
+  .draft-review dt:first-of-type {
+    margin-top: 0;
   }
 
   .draft-review dd {
     margin: 0;
+  }
+
+  /* M7-03 (#235) — Review + Refine workspace components.
+     Clay is reserved for the generation/refine controls only: Refine, Apply,
+     and any explicit @genie marker. Structural approval stays ink/neutral. */
+  .chat-bubble {
+    padding: 10px var(--space-sm);
+    font-size: 11px;
+    border-radius: var(--radius-md);
+  }
+
+  .chat-bubble--user {
+    margin: 12px var(--space-md) 8px 40px;
+    color: var(--color-ink-2);
+    /* Mixed against the conversation's own backdrop, never `transparent`:
+       an alpha surface leaves the text contrast dependent on whatever
+       happens to scroll behind it (and axe cannot compute it at all). */
+    background: color-mix(in oklch, var(--color-paper-3) 70%, var(--color-paper));
+  }
+
+  .chat-bubble--genie {
+    margin: 4px 40px 12px var(--space-md);
+    color: var(--color-ink);
+    background: color-mix(in oklch, var(--color-review-card) 70%, var(--color-paper));
+    border: var(--rule-hair) solid var(--color-hairline);
+  }
+
+  .chat-bubble__body {
+    display: block;
+  }
+
+  .chat-timestamp {
+    display: block;
+    margin-top: var(--space-2xs);
+    font-size: 10px;
+    color: var(--color-ink-3);
+  }
+
+  .review-draft-header,
+  .review-diff,
+  .review-checklist,
+  .review-controls,
+  .refine-section,
+  .review-decision,
+  .review-apply,
+  .review-status {
+    padding: var(--space-md) var(--space-lg);
+    border-bottom: var(--rule-hair) solid
+      color-mix(in oklch, var(--color-hairline) 55%, transparent);
+  }
+
+  .review-draft-header {
+    display: grid;
+    gap: var(--space-2xs);
+  }
+
+  .review-draft-header #draft-name {
+    color: var(--color-ink);
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+
+  .review-draft-header__note {
+    font-size: var(--text-xs);
+    color: var(--color-ink-3);
+  }
+
+  .review-draft-switcher {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2xs);
+    margin-top: var(--space-xs);
+  }
+
+  .review-draft-switcher__option {
+    min-height: 44px;
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--text-xs);
+    color: var(--color-ink);
+    background: var(--color-paper);
+    border: var(--rule-hair) solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .review-draft-switcher__option[aria-pressed="true"] {
+    font-weight: 600;
+    background: var(--color-paper-3);
+    border-color: var(--color-hairline-2);
+  }
+
+  .review-controls {
+    display: grid;
+    gap: var(--space-xs);
+  }
+
+  .review-controls__heading {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--color-ink-2);
+  }
+
+  .review-controls__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-xs);
+    align-items: center;
+    font-size: var(--text-xs);
+    color: var(--color-ink-2);
+  }
+
+  .review-diff {
+    display: grid;
+    gap: var(--space-sm);
+  }
+
+  .review-diff__stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+
+  /* The `+`/`-` sign is written into textContent by `renderDiffStats`, so no
+     `::before` pseudo-element here — that would render `++12` / `−-3`. */
+  .diff-stat--add {
+    color: var(--color-review-add);
+  }
+
+  .diff-stat--del {
+    color: var(--color-review-del);
+  }
+
+  .review-diff__files {
+    display: grid;
+    gap: var(--space-2xs);
+    font-size: var(--text-xs);
+    color: var(--color-ink-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .review-diff__file {
+    font-family: var(--font-mono);
+    overflow-wrap: anywhere;
+  }
+
+  .review-checklist {
+    display: grid;
+    gap: var(--space-xs);
+    margin: 0;
+    padding-left: var(--space-lg);
+    list-style: none;
+    font-size: var(--text-xs);
+  }
+
+  .check-item {
+    display: grid;
+    grid-template-columns: 16px 1fr;
+    gap: var(--space-xs);
+    align-items: start;
+    color: var(--color-ink-3);
+  }
+
+  .check-item__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    min-height: 16px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1;
+  }
+
+  .check-item__label {
+    display: block;
+    font-size: 12px;
+  }
+
+  .check-item__detail {
+    display: block;
+    /* `.check-item` is `16px 1fr`; the detail is a third child, so auto-placement
+       would drop it into row 2 of the *icon* track and wrap it one word per line.
+       Pin it to the text column so it wraps under its own label. */
+    grid-column: 2;
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--color-ink-3);
+  }
+
+  .check-item--pass .check-item__icon:empty::before {
+    content: "✓";
+  }
+
+  .check-item--fail .check-item__icon:empty::before {
+    content: "!";
+  }
+
+  .check-item--pending .check-item__icon:empty::before,
+  .check-item--manual .check-item__icon:empty::before {
+    content: "○";
+  }
+
+  .check-item--pass {
+    color: var(--color-review-add);
+  }
+
+  .check-item--fail {
+    color: var(--color-review-del);
+  }
+
+  .check-item--pending,
+  .check-item--manual {
+    color: var(--color-ink-3);
+  }
+
+  .refine-section {
+    display: grid;
+    gap: var(--space-xs);
+  }
+
+  .refine-section__label {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--color-ink-2);
+  }
+
+  .refine-input {
+    width: 100%;
+    min-height: 80px;
+    padding: var(--space-xs) var(--space-sm);
+    color: var(--color-ink);
+    background: var(--color-review-card);
+    border: var(--rule-hair) solid var(--color-hairline);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    resize: vertical;
+  }
+
+  .refine-input::placeholder {
+    color: var(--color-ink-3);
+  }
+
+  .refine-status,
+  .review-status,
+  .apply-blockers {
+    display: grid;
+    gap: var(--space-2xs);
+    margin: 0;
+    padding-left: var(--space-md);
+    font-size: var(--text-xs);
+    color: var(--color-ink-2);
+  }
+
+  .apply-blockers__item {
+    list-style: disc;
+  }
+
+  .review-decision {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-md);
+  }
+
+  .review-apply {
+    display: grid;
+    gap: var(--space-xs);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: var(--space-xs) var(--space-md);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .btn-clay {
+    color: var(--color-on-accent);
+    background: var(--color-accent);
+    border: 0;
+  }
+
+  .btn-clay:hover:not(:disabled):not([aria-disabled="true"]) {
+    background: var(--color-accent);
+    box-shadow: var(--shadow-sm);
+    transform: translateY(-1px);
+  }
+
+  .btn-ink {
+    color: var(--color-paper);
+    background: var(--color-ink);
+    border: 0;
+  }
+
+  .btn-ink:hover:not(:disabled):not([aria-disabled="true"]) {
+    background: var(--color-ink-2);
+  }
+
+  .btn-neutral {
+    color: var(--color-ink-2);
+    background: transparent;
+    border: 1.5px solid var(--color-hairline);
+  }
+
+  .btn-neutral:hover:not(:disabled):not([aria-disabled="true"]) {
+    border-color: var(--color-hairline-2);
+  }
+
+  .review-panel .btn-clay,
+  .review-apply .btn {
+    width: 100%;
+  }
+
+  .review-decision .btn {
+    width: 100%;
+  }
+
+  .btn:disabled,
+  .btn[aria-disabled="true"] {
+    cursor: not-allowed;
+    opacity: 1;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .btn-clay:disabled,
+  .btn-clay[aria-disabled="true"],
+  .btn-ink:disabled,
+  .btn-ink[aria-disabled="true"] {
+    color: var(--color-ink-2);
+    background-color: var(--color-paper-3);
+    background-image: repeating-linear-gradient(
+      -45deg,
+      transparent 0 6px,
+      color-mix(in oklch, var(--color-paper) 34%, transparent) 6px 10px
+    );
+  }
+
+  .btn-neutral:disabled,
+  .btn-neutral[aria-disabled="true"] {
+    color: var(--color-ink-2);
+    background: var(--color-paper-3);
+    border-style: dashed;
+  }
+
+  .review-dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: grid;
+    place-items: center;
+    padding: var(--space-lg);
+  }
+
+  .review-dialog__backdrop {
+    position: absolute;
+    inset: 0;
+    background: oklch(10% 0.004 60 / 0.42);
+  }
+
+  .review-dialog__panel {
+    position: relative;
+    z-index: 1;
+    width: min(100%, 420px);
+    padding: var(--space-lg);
+    color: var(--color-ink);
+    background: var(--color-paper);
+    border: var(--rule-hair) solid var(--color-hairline);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+  }
+
+  .review-dialog__files {
+    display: grid;
+    gap: var(--space-2xs);
+    max-height: 200px;
+    margin: var(--space-sm) 0;
+    padding-left: var(--space-md);
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--color-ink-2);
+  }
+
+  .review-dialog__actions {
+    display: flex;
+    gap: var(--space-sm);
+    justify-content: flex-end;
+    margin-top: var(--space-md);
   }
 
   /*
@@ -1191,9 +1824,29 @@
     display: none !important;
   }
 
+  #review-view.review-view:has(.review-layout:not([hidden])) {
+    padding: 0;
+  }
+
   @media (prefers-reduced-motion: no-preference) {
     .ds-card {
       transition: box-shadow var(--dur-base, 200ms) ease;
+    }
+
+    .btn-clay,
+    .btn-ink,
+    .btn-neutral {
+      transition:
+        border-color 120ms ease,
+        box-shadow 120ms ease,
+        transform 120ms ease,
+        background-color 120ms ease;
+    }
+
+    .review-conversation {
+      transition:
+        transform 150ms ease-out,
+        visibility 150ms ease-out;
     }
   }
 
@@ -1209,6 +1862,14 @@
   @media (prefers-reduced-motion: reduce) {
     .generate-progress__skeleton {
       animation: none;
+    }
+
+    .btn-clay,
+    .btn-ink,
+    .btn-neutral,
+    .review-conversation,
+    .review-panel {
+      transition: none;
     }
   }
 

@@ -7,7 +7,7 @@ coding agent.
 
 1. [Install and configure genie](installation.md).
 2. [Connect your coding agent](harnesses.md).
-3. [Run the component workflow](workflow.md).
+3. [Run the component workflow](workflow.md), including Review, approval, and Apply.
 4. Use [Troubleshooting](troubleshooting.md) when the server or preview does not behave
    as expected.
 
@@ -20,6 +20,9 @@ that `planId` to `write_files` or `delete_files`.
 
 That separation matters. A model may propose content, but it cannot write arbitrary
 paths without a matching plan.
+
+In the viewer, generated and refined results are session-only drafts until you explicitly
+approve and Apply them. Approve records a decision; only Apply writes to the UI kit.
 
 ## Supported surfaces
 

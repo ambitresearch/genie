@@ -419,12 +419,31 @@ describe("Refine handoff context", () => {
     const { hooks } = loadHooks();
     const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
     const context = hooks.buildRefineContext("kit-a", component, "default");
+    // M7-03 widened this contract: Review needs the component's bytes and its
+    // canonical kit path to seed a real, checkable draft. With no source
+    // supplied both stay null/derived rather than silently absent.
     expect(context).toEqual({
       kitId: "kit-a",
       group: "actions",
       componentName: "Primary buttons",
       variant: "default",
+      source: null,
+      path: "components/actions/Primary buttons/Primary buttons.html",
     });
+  });
+
+  it("carries the component's real bytes and kit path so Review can review them", () => {
+    const { hooks } = loadHooks();
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    const context = hooks.buildRefineContext("kit-a", component, "default", "<div>hi</div>");
+    expect(context.source).toBe("<div>hi</div>");
+    expect(context.path).toBe("components/actions/Primary buttons/Primary buttons.html");
+  });
+
+  it("treats an empty source as no source at all, never as reviewable bytes", () => {
+    const { hooks } = loadHooks();
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    expect(hooks.buildRefineContext("kit-a", component, "default", "").source).toBeNull();
   });
 });
 

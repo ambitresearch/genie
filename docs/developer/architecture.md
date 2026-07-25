@@ -25,6 +25,76 @@ Persistence crosses a separate plan boundary. `plan` records the authorized writ
 delete globs; middleware checks the `planId`, expiry, and every requested path before
 `write_files` or `delete_files` reaches the store.
 
+## Review, approval, and Apply transaction
+
+The Review surface keeps proposed component bytes in viewer memory as session drafts.
+`draft #N` is immutable: accepted refine output or a supported deterministic tweak creates
+`draft #(N+1)` rather than mutating the prior draft. The viewer keeps the last good draft
+selected on refine, render, preflight validation, planning, writing, post-write validation,
+refresh, or host failures. Drafts are not durable across page reload.
+
+The state machine is explicit:
+
+```text
+baseline
+  └─ Generate or Refine succeeds → draft #N (unapproved)
+       ├─ Request Changes → current draft, refine input focused, no mutation
+       ├─ refine/tweak/selection change → draft #(N+1), approval invalidated
+       ├─ Approve + gates green → approved draft
+       │    └─ Confirm Apply → plan → write_files → applied
+       │       (kit validation advisory; refresh gates only the "live in Browse" claim)
+       └─ discard/navigate → confirmation when unapplied work would be lost
+
+Any failure → remain on the last good draft; never report a false applied state.
+```
+
+Approval is stored against the current draft identity. Any new draft, deterministic
+change, file-set change, or selected-draft change invalidates it structurally; Apply
+cannot infer approval from focus, checklist color, or draft existence. **Approve** and
+**Request Changes** perform no persistence.
+
+Checklist rows are backed by real inputs:
+
+| Check                            | Source                                                                       |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| `@genie` first-line marker       | proposed preview file bytes                                                  |
+| `<Name>/<Name>.html` consistency | proposed file paths and component identity                                   |
+| UI-kit containment               | proposed paths under `components/<group>/<Name>/` for the selected kit       |
+| Structured output schema         | normalized `conjure`/`refine` result                                         |
+| Embedded-tier CSP safety         | proposed HTML/CSS bytes; no remote subresources, web fonts, or inline script |
+| Preview rendered                 | actual draft iframe render result                                            |
+| Kit-wide validation              | deferred, advisory `validate` tool result after Apply                        |
+| Visual/a11y spot-checks          | explicit manual acknowledgement                                              |
+
+The pre-Apply gate may use only checks that can run against the proposed draft bytes and
+runtime render result. Kit-wide `validate` scans the UI kit on disk, so it remains pending
+before Apply and is never shown as green before a write. After the write, kit-wide
+validation is advisory rather than gating: a kit-wide `validate` call can return its
+payload only in `content[].text` with no `structuredContent`, which the viewer's MCP host
+bridge requires, so validation can be unavailable without turning a successful write into
+a reported failure. A non-zero `bad` count is also not evidence that the just-applied
+component is broken — a freshly seeded kit already fails its own marker check against its
+seed `index.html`.
+
+Apply has one persistence path: after explicit user confirmation, call `mcp__genie__plan`
+with the exact write/delete path scope, call `mcp__genie__write_files` with the returned
+`planId` and the exact approved draft payload, then run kit validation and refresh the
+manifest/preview. Generate, Refine, Approve, Request Changes, deterministic controls,
+selection, and navigation must not call `plan`, `write_files`, or `delete_files`.
+
+Refine calls `mcp__genie__refine` with `{kitId, componentName, instruction, region?,
+model}` and reads the component from the kit. A newly generated draft is therefore not
+refinable until it has been applied to the UI kit; the viewer must disable Refine with
+that reason rather than simulate a client-side edit.
+
+Failure recovery is fail-closed for the write path. Invalid model output, missing
+components, expired or missing plans, path rejection, partial or failed writes, and host
+disconnects during planning or writing keep the last good draft available, display the real
+reason after redaction, and require a fresh confirmation before a new plan is made.
+Post-write kit validation failures and refresh failures are different: the write already
+succeeded, so recovery is never a new plan or write — the viewer reports the write as
+complete and adds the advisory validation note or a stale-view warning instead.
+
 ## Validation and preview
 
 The validation surface checks `@genie` markers, render constraints, and variant drift.

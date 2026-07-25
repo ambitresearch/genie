@@ -121,6 +121,10 @@
   var LIST_FILES_TOOL = "mcp__genie__list_files";
   var READ_FILE_TOOL = "mcp__genie__read_file";
   var LIST_COMPONENTS_TOOL = "mcp__genie__list_components";
+  var REFINE_TOOL = "mcp__genie__refine";
+  var PLAN_TOOL = "mcp__genie__plan";
+  var WRITE_FILES_TOOL = "mcp__genie__write_files";
+  var VALIDATE_TOOL = "mcp__genie__validate";
 
   /**
    * Kit-relative path prefix that marks a file as design-token source (genie#239).
@@ -1183,6 +1187,1446 @@
     };
   }
 
+  /* ------------------------------------------------------------------ *
+   * M7-03 (#235) — Review → Refine → Approve → Apply.
+   *
+   * Everything below is deliberately pure: the reducer, the gates and the
+   * checks take plain values and return plain values, so the safety rules
+   * that matter (nothing writes without an explicit, confirmed Apply; any
+   * change to the draft drops approval) are testable without a DOM or a
+   * host. The DOM layer further down only reads these results.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Mirror of `packages/server/src/validate/marker.ts`. Kept byte-compatible
+   * on purpose: the viewer's marker check must agree with the server's, or a
+   * draft could look green here and be rejected on write.
+   */
+  var MARKER_REGEX = /^<!--\s*@genie\s+group="[^"]*"[^>]*-->/;
+
+  /** A refine diff is display-only, but it is still untrusted host text. */
+  var DIFF_MAX_LENGTH = 262144;
+
+  /**
+   * Refine returns the conjure payload plus a unified diff. Validating it
+   * through `isConjureResult` (rather than a parallel implementation) keeps
+   * the two paths from drifting apart.
+   */
+  function isRefineResult(value) {
+    if (!isPlainObject(value)) return false;
+    if (
+      !hasOnlyKeys(value, ["componentName", "group", "files", "manifestEntry", "usage", "diff"])
+    ) {
+      return false;
+    }
+    if (typeof value.diff !== "string") return false;
+    if (!value.diff.trim()) return false;
+    if (value.diff.length > DIFF_MAX_LENGTH) return false;
+    return isConjureResult({
+      componentName: value.componentName,
+      group: value.group,
+      files: value.files,
+      manifestEntry: value.manifestEntry,
+      usage: value.usage,
+    });
+  }
+
+  /**
+   * Count the real changed lines in a unified diff. AC5 forbids cosmetic
+   * statistics, so `+++`/`---` file headers are excluded and the file list is
+   * taken from the diff itself rather than from the draft's file array.
+   */
+  function parseUnifiedDiff(diff) {
+    var stats = { additions: 0, deletions: 0, files: [] };
+    if (typeof diff !== "string" || !diff) return stats;
+    var lines = diff.split("\n");
+    var seen = Object.create(null);
+    function noteFile(path) {
+      if (!path || path === "/dev/null") return;
+      if (seen[path]) return;
+      seen[path] = true;
+      stats.files.push(path);
+    }
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (line.indexOf("diff --git ") === 0) {
+        var parts = line.slice("diff --git ".length).split(" ");
+        noteFile(stripDiffPathPrefix(parts[parts.length - 1]));
+        continue;
+      }
+      // Header checks must run before the +/- counters, and must be exact:
+      // an ADDED line whose content starts `++ ` is not a `+++ ` header.
+      if (line.indexOf("+++ ") === 0 && line.indexOf("++++") !== 0) {
+        noteFile(stripDiffPathPrefix(line.slice(4).split("\t")[0]));
+        continue;
+      }
+      if (line.indexOf("--- ") === 0 && line.indexOf("----") !== 0) continue;
+      if (line.charAt(0) === "+") stats.additions += 1;
+      else if (line.charAt(0) === "-") stats.deletions += 1;
+    }
+    return stats;
+  }
+
+  function stripDiffPathPrefix(path) {
+    if (typeof path !== "string") return "";
+    var trimmed = path.trim();
+    if (trimmed.indexOf("a/") === 0 || trimmed.indexOf("b/") === 0) return trimmed.slice(2);
+    return trimmed;
+  }
+
+  /*
+   * Embedded-tier CSP is `default-src 'none'` with no web fonts (RFC G-5), so
+   * a draft that reaches for the network cannot render in the host and must
+   * never be written. These patterns are intentionally broad — a false
+   * positive costs the user one refine; a false negative ships a broken card.
+   */
+  var REMOTE_ATTR_URL_PATTERN = /\b(?:src|href|srcset|data)\s*=\s*["']?\s*(?:https?:)?\/\//i;
+  var REMOTE_CSS_URL_PATTERN = /url\(\s*["']?\s*(?:https?:)?\/\//i;
+  var REMOTE_IMPORT_PATTERN = /@import\s+["']\s*(?:https?:)?\/\//i;
+  var SCRIPT_TAG_PATTERN = /<script\b/i;
+  var FONT_FACE_PATTERN = /@font-face/i;
+
+  function violatesEmbeddedCsp(content) {
+    if (typeof content !== "string") return false;
+    return (
+      REMOTE_ATTR_URL_PATTERN.test(content) ||
+      REMOTE_CSS_URL_PATTERN.test(content) ||
+      REMOTE_IMPORT_PATTERN.test(content) ||
+      SCRIPT_TAG_PATTERN.test(content) ||
+      FONT_FACE_PATTERN.test(content)
+    );
+  }
+
+  /** The canonical `components/<group>/<Name>/<Name>.html` preview entry. */
+  function findPreviewFile(result) {
+    if (!result || !Array.isArray(result.files)) return null;
+    var expected =
+      "components/" +
+      result.group +
+      "/" +
+      result.componentName +
+      "/" +
+      result.componentName +
+      ".html";
+    for (var i = 0; i < result.files.length; i++) {
+      if (result.files[i] && result.files[i].path === expected) return result.files[i];
+    }
+    return null;
+  }
+
+  function isContained(result) {
+    if (!result || !Array.isArray(result.files) || !result.files.length) return false;
+    var prefix = "components/" + result.group + "/" + result.componentName + "/";
+    return result.files.every(function (file) {
+      return (
+        file &&
+        typeof file.path === "string" &&
+        FILE_PATH_PATTERN.test(file.path) &&
+        file.path.indexOf(prefix) === 0 &&
+        file.path.indexOf("..") === -1
+      );
+    });
+  }
+
+  /**
+   * The review checklist. Every entry is backed by a real result — nothing is
+   * decorative. `kind` drives the gate: `auto` must pass, `manual` needs an
+   * explicit acknowledgement, and `deferred` can never be green before the
+   * write because its source (`validate`'s full scan) is kit-wide and only
+   * meaningful once the bytes are on disk.
+   */
+  function computeChecklist(input) {
+    var result = input && input.result;
+    if (!result) return [];
+    var renderState = (input && input.renderState) || "pending";
+    var acks = (input && input.manualAcks) || {};
+
+    var preview = findPreviewFile(result);
+    var schemaOk = isConjureResult(result) || isRefineResult(result);
+    var cspOk =
+      Array.isArray(result.files) &&
+      result.files.every(function (file) {
+        return !violatesEmbeddedCsp(file && file.content);
+      });
+    var markerOk = Boolean(
+      preview &&
+      typeof preview.content === "string" &&
+      MARKER_REGEX.test(preview.content.split("\n", 1)[0]),
+    );
+
+    function auto(id, label, ok, detail) {
+      return { id: id, label: label, kind: "auto", state: ok ? "pass" : "fail", detail: detail };
+    }
+    function manual(id, label, detail) {
+      return {
+        id: id,
+        label: label,
+        kind: "manual",
+        state: acks[id] ? "pass" : "pending",
+        detail: detail,
+      };
+    }
+
+    return [
+      auto("schema", "Structured output matches the component schema", schemaOk),
+      auto("marker", "@genie marker on the preview's first line", markerOk),
+      auto(
+        "preview-file",
+        "Self-consistent " + result.componentName + "/" + result.componentName + ".html",
+        Boolean(preview) && hasMatchingHtmlPreview(result.files),
+      ),
+      auto("containment", "Every path stays inside this component's folder", isContained(result)),
+      auto("csp", "Embedded CSP safe — no remote assets, fonts or script", cspOk),
+      {
+        id: "render",
+        label: "Preview renders without errors",
+        kind: "auto",
+        state: renderState === "pass" ? "pass" : renderState === "fail" ? "fail" : "pending",
+        detail: null,
+      },
+      {
+        id: "kit-validate",
+        label: "Kit-wide validation",
+        kind: "deferred",
+        state: "pending",
+        detail: "Runs against your kit after Apply — a draft is not on disk yet.",
+      },
+      manual("visual-intent", "Matches your visual intent"),
+      manual("a11y-spot", "Keyboard and contrast spot-check"),
+    ];
+  }
+
+  /**
+   * The review reducer. Drafts are append-only and immutable; approval is
+   * bound to a specific draft's identity, so AC9's rule ("any change drops
+   * approval") is structural rather than a thing we must remember to do.
+   */
+  function createReviewStore() {
+    var drafts = [];
+    var currentNumber = 0;
+    var approvedDraftId = null;
+    var decision = "none";
+    var manualAcks = {};
+    var renderState = "pending";
+    var appliedDraftId = null;
+    var writtenPaths = [];
+    var sequence = 0;
+
+    function findCurrent() {
+      for (var i = 0; i < drafts.length; i++) {
+        if (drafts[i].number === currentNumber) return drafts[i];
+      }
+      return null;
+    }
+
+    function findById(id) {
+      for (var i = 0; i < drafts.length; i++) {
+        if (drafts[i].id === id) return drafts[i];
+      }
+      return null;
+    }
+
+    function dropApproval() {
+      approvedDraftId = null;
+      if (decision === "approved") decision = "none";
+    }
+
+    return {
+      addDraft: function (result, source) {
+        sequence += 1;
+        var number = drafts.length + 1;
+        var draft = {
+          id: "draft-" + sequence,
+          number: number,
+          label: "draft #" + number,
+          result: result,
+          source: source || "generate",
+        };
+        drafts.push(draft);
+        currentNumber = number;
+        // A new draft is a new thing to look at: acknowledgements, render
+        // state and any prior decision all belong to the draft they were
+        // made against, never to its successor.
+        manualAcks = {};
+        renderState = "pending";
+        decision = "none";
+        approvedDraftId = null;
+        return draft;
+      },
+      select: function (number) {
+        for (var i = 0; i < drafts.length; i++) {
+          if (drafts[i].number === number) {
+            currentNumber = number;
+            manualAcks = {};
+            renderState = "pending";
+            decision = "none";
+            dropApproval();
+            return drafts[i];
+          }
+        }
+        return null;
+      },
+      approve: function () {
+        var current = findCurrent();
+        if (!current) return false;
+        approvedDraftId = current.id;
+        decision = "approved";
+        return true;
+      },
+      requestChanges: function () {
+        if (!findCurrent()) return false;
+        dropApproval();
+        decision = "changes-requested";
+        return true;
+      },
+      acknowledge: function (id, value) {
+        if (value) manualAcks[id] = true;
+        else delete manualAcks[id];
+        // Changing what you have vouched for changes what you approved.
+        dropApproval();
+      },
+      setRenderState: function (state) {
+        renderState = state;
+      },
+      /**
+       * Stamp the applied marker onto a SPECIFIC draft (`draftId`), never
+       * "whatever is current when the write resolves". Apply is async and the
+       * deterministic-tweak sliders stay live during flight, so `current()` can
+       * have moved on to a brand-new, unwritten draft by the time this runs —
+       * which would both block that draft forever and leave the draft that was
+       * actually written still applyable (duplicate write).
+       */
+      markApplied: function (paths, draftId) {
+        var target = draftId ? findById(draftId) : findCurrent();
+        if (!target) return false;
+        appliedDraftId = target.id;
+        writtenPaths = Array.isArray(paths) ? paths.slice() : [];
+        return true;
+      },
+      reset: function () {
+        drafts = [];
+        currentNumber = 0;
+        approvedDraftId = null;
+        decision = "none";
+        manualAcks = {};
+        renderState = "pending";
+        appliedDraftId = null;
+        writtenPaths = [];
+      },
+      current: findCurrent,
+      isApproved: function () {
+        var current = findCurrent();
+        return Boolean(current && approvedDraftId === current.id);
+      },
+      state: function () {
+        var current = findCurrent();
+        return {
+          drafts: drafts.slice(),
+          currentNumber: currentNumber,
+          currentId: current ? current.id : null,
+          approvedDraftId: approvedDraftId,
+          decision: decision,
+          manualAcks: manualAcks,
+          renderState: renderState,
+          appliedDraftId: appliedDraftId,
+          writtenPaths: writtenPaths.slice(),
+        };
+      },
+    };
+  }
+
+  /**
+   * Enumerate every reason Apply is unavailable. Returning the list (rather
+   * than just a boolean) is the point: AC10 requires the UI to say what is
+   * missing instead of showing a dead button.
+   */
+  function computeApplyGate(input) {
+    var state = (input && input.state) || {};
+    var checklist = (input && input.checklist) || [];
+    var blockers = [];
+    var current = null;
+    var drafts = state.drafts || [];
+    for (var i = 0; i < drafts.length; i++) {
+      if (drafts[i].number === state.currentNumber) current = drafts[i];
+    }
+
+    if (!current) {
+      blockers.push("Generate or refine a draft before applying.");
+    } else {
+      if (state.appliedDraftId === current.id) {
+        blockers.push("This draft is already applied to your kit.");
+      }
+      if (state.approvedDraftId !== current.id) {
+        blockers.push("Approve this draft before applying.");
+      }
+    }
+
+    for (var j = 0; j < checklist.length; j++) {
+      var entry = checklist[j];
+      if (!entry || entry.kind === "deferred") continue;
+      if (entry.state === "fail") {
+        blockers.push(entry.label + " — this check is failing.");
+      } else if (entry.state === "pending") {
+        blockers.push(
+          entry.kind === "manual"
+            ? "Confirm: " + entry.label + "."
+            : entry.label + " — this check has not finished.",
+        );
+      }
+    }
+
+    if (!(input && input.hostCanWrite)) {
+      blockers.push("Applying needs an MCP-capable host that can write to your kit.");
+    }
+    if (input && input.inFlight) {
+      blockers.push("An apply is already in progress.");
+    }
+
+    return { enabled: blockers.length === 0, blockers: blockers };
+  }
+
+  /**
+   * Refine reads a component's *current source from the kit*, so it cannot
+   * touch a draft that has never been written (the server answers
+   * `ERR_COMPONENT_NOT_FOUND`). Rather than simulate a refine client-side, we
+   * disable it and say why.
+   */
+  function canRefine(input) {
+    var options = input || {};
+    if (!options.hostAvailable) {
+      return {
+        enabled: false,
+        reason: "Refine needs an MCP-capable host. Standalone review stays read-only.",
+      };
+    }
+    if (!options.componentInKit) {
+      return {
+        enabled: false,
+        reason: "Refine edits a component in your UI kit. Apply this draft first, then refine it.",
+      };
+    }
+    if (options.inFlight) {
+      return { enabled: false, reason: "A refine is already running." };
+    }
+    if (!String(options.instruction == null ? "" : options.instruction).trim()) {
+      return { enabled: false, reason: "Describe the change you want." };
+    }
+    return { enabled: true, reason: "" };
+  }
+
+  /** Scope the write plan to exactly this draft's paths — nothing wider. */
+  function buildPlanArgs(draft, kitId) {
+    var files = (draft && draft.result && draft.result.files) || [];
+    return {
+      kitId: kitId,
+      writes: files.map(function (file) {
+        return file.path;
+      }),
+    };
+  }
+
+  /**
+   * Map conjure/refine file entries onto `write_files`' input. The server
+   * accepts exactly one of `data` or `localPath`; the viewer only ever holds
+   * in-memory content, so `localPath` is never emitted.
+   */
+  function buildWriteFilesArgs(planId, draft) {
+    var files = (draft && draft.result && draft.result.files) || [];
+    return {
+      planId: planId,
+      files: files.map(function (file) {
+        return {
+          path: file.path,
+          data: file.content,
+          mimeType: file.mimeType,
+          encoding: file.encoding,
+        };
+      }),
+    };
+  }
+
+  /*
+   * Deterministic tweaks (AC8) are capability-detected, not assumed: a control
+   * only appears when the component actually declares a matching numeric
+   * custom property. The allowlist keeps the tweak to values that cannot
+   * smuggle a URL or an expression into the card.
+   */
+  var DETERMINISTIC_CONTROL_SPECS = [
+    { pattern: /(?:^|-)radius(?:-|$)/i, label: "Corner radius", min: 0, max: 64, step: 1 },
+    {
+      pattern: /(?:^|-)(?:padding|gap|spacing|inset)(?:-|$)/i,
+      label: "Spacing",
+      min: 0,
+      max: 96,
+      step: 1,
+    },
+    { pattern: /(?:^|-)font-size(?:-|$)/i, label: "Font size", min: 8, max: 72, step: 1 },
+    { pattern: /(?:^|-)border-width(?:-|$)/i, label: "Border width", min: 0, max: 16, step: 1 },
+  ];
+  var CUSTOM_PROPERTY_DECLARATION =
+    /(--[a-z0-9-]+)\s*:\s*(-?\d+(?:\.\d+)?)(px|rem|em)\s*(?=[;}])/gi;
+
+  function detectDeterministicControls(files) {
+    var controls = [];
+    if (!Array.isArray(files)) return controls;
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      if (!file || typeof file.content !== "string") continue;
+      CUSTOM_PROPERTY_DECLARATION.lastIndex = 0;
+      var match;
+      while ((match = CUSTOM_PROPERTY_DECLARATION.exec(file.content)) !== null) {
+        var property = match[1];
+        var spec = null;
+        for (var s = 0; s < DETERMINISTIC_CONTROL_SPECS.length; s++) {
+          if (DETERMINISTIC_CONTROL_SPECS[s].pattern.test(property.slice(2))) {
+            spec = DETERMINISTIC_CONTROL_SPECS[s];
+            break;
+          }
+        }
+        if (!spec) continue;
+        controls.push({
+          // Occurrence-unique: a property declared twice in one file (`:root`
+          // plus a theme/media override is routine CSS) would otherwise share
+          // an id, so the slider would show one declaration's value and the
+          // string `.replace` below would rewrite the FIRST textual match —
+          // a different declaration than the one the slider read.
+          id: i + ":" + match.index + ":" + property,
+          fileIndex: i,
+          offset: match.index,
+          property: property,
+          label: spec.label,
+          value: Number(match[2]),
+          unit: match[3],
+          min: spec.min,
+          max: spec.max,
+          step: spec.step,
+          declaration: match[0],
+        });
+      }
+    }
+    return controls;
+  }
+
+  /**
+   * Apply a tweak by rewriting only the declared value, returning a fresh
+   * result. Drafts are immutable, so the caller records the outcome as a new
+   * draft — which, per AC9, drops any approval.
+   */
+  function applyDeterministicTweak(result, controlId, value) {
+    if (!result || !Array.isArray(result.files)) return null;
+    var controls = detectDeterministicControls(result.files);
+    var control = null;
+    for (var i = 0; i < controls.length; i++) {
+      if (controls[i].id === controlId) {
+        control = controls[i];
+        break;
+      }
+    }
+    if (!control) return null;
+    var numeric = Number(value);
+    if (!isFinite(numeric) || numeric < control.min || numeric > control.max) return null;
+
+    var replacement = control.property + ":" + numeric + control.unit;
+    var files = result.files.map(function (file, index) {
+      if (index !== control.fileIndex) return file;
+      return {
+        path: file.path,
+        // Slice-replace at the recorded offset, never a string `.replace` —
+        // that rewrites the first textual match, which is a different
+        // declaration whenever the property appears more than once.
+        content:
+          file.content.slice(0, control.offset) +
+          replacement +
+          file.content.slice(control.offset + control.declaration.length),
+        mimeType: file.mimeType,
+        encoding: file.encoding,
+      };
+    });
+    var next = {};
+    for (var key in result) {
+      if (Object.prototype.hasOwnProperty.call(result, key)) next[key] = result[key];
+    }
+    next.files = files;
+    return next;
+  }
+
+  function isPlanResult(value) {
+    return Boolean(isPlainObject(value) && typeof value.planId === "string" && value.planId);
+  }
+
+  function isWriteFilesResult(value) {
+    return Boolean(
+      isPlainObject(value) &&
+      Array.isArray(value.writtenPaths) &&
+      value.writtenPaths.every(function (path) {
+        return typeof path === "string";
+      }),
+    );
+  }
+
+  /**
+   * Render diff statistics. Every value comes from `parseUnifiedDiff`, and
+   * every path is written as text — a diff is host-supplied, untrusted data.
+   */
+  function renderDiffFiles(doc, target, stats) {
+    if (!target) return;
+    target.replaceChildren();
+    var files = (stats && stats.files) || [];
+    for (var i = 0; i < files.length; i++) {
+      var item = doc.createElement("li");
+      item.className = "review-diff__file";
+      item.textContent = files[i];
+      target.append(item);
+    }
+  }
+
+  function renderDiffStats(doc, target, stats) {
+    if (!target) return;
+    target.replaceChildren();
+    var additions = doc.createElement("span");
+    additions.className = "diff-stat diff-stat--add";
+    additions.textContent = "+" + ((stats && stats.additions) || 0);
+    var deletions = doc.createElement("span");
+    deletions.className = "diff-stat diff-stat--del";
+    deletions.textContent = "-" + ((stats && stats.deletions) || 0);
+    target.append(additions, deletions);
+  }
+
+  /** Blockers are plain sentences; render them as data, never as markup. */
+  function renderBlockers(doc, target, blockers) {
+    if (!target) return;
+    target.replaceChildren();
+    var list = blockers || [];
+    for (var i = 0; i < list.length; i++) {
+      var item = doc.createElement("li");
+      item.className = "apply-blockers__item";
+      item.textContent = list[i];
+      target.append(item);
+    }
+    target.hidden = list.length === 0;
+  }
+
+  var CHECK_ICONS = { pass: "✓", fail: "✕", pending: "…" };
+
+  function renderChecklist(doc, target, checklist, onToggle) {
+    if (!target) return;
+    target.replaceChildren();
+    var entries = checklist || [];
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      var item = doc.createElement("li");
+      item.className =
+        "check-item check-item--" +
+        entry.state +
+        (entry.kind === "manual" ? " check-item--manual" : "");
+      item.setAttribute("data-check-id", entry.id);
+      item.setAttribute("data-check-kind", entry.kind);
+
+      var icon = doc.createElement("span");
+      icon.className = "check-item__icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent =
+        entry.kind === "manual" && entry.state !== "pass" ? "○" : CHECK_ICONS[entry.state];
+
+      if (entry.kind === "manual" && typeof onToggle === "function") {
+        var label = doc.createElement("label");
+        label.className = "check-item__label";
+        var box = doc.createElement("input");
+        box.type = "checkbox";
+        box.checked = entry.state === "pass";
+        box.setAttribute("data-check-toggle", entry.id);
+        box.addEventListener("change", createCheckToggleHandler(onToggle, entry.id, box));
+        var text = doc.createElement("span");
+        text.textContent = entry.label;
+        label.append(box, text);
+        item.append(icon, label);
+      } else {
+        var span = doc.createElement("span");
+        span.className = "check-item__label";
+        span.textContent = entry.label;
+        item.append(icon, span);
+      }
+
+      if (entry.detail) {
+        var detail = doc.createElement("span");
+        detail.className = "check-item__detail";
+        detail.textContent = entry.detail;
+        item.append(detail);
+      }
+      target.append(item);
+    }
+  }
+
+  function createCheckToggleHandler(onToggle, id, box) {
+    return function () {
+      onToggle(id, box.checked);
+    };
+  }
+
+  /**
+   * M7-03 (#235) — the review workspace controller. Owns every DOM mutation in
+   * `#review-view` and delegates every decision to the pure helpers above, so
+   * the gating rules stay testable without a DOM. Nothing here writes to the
+   * kit: `runApply` is the only path to disk, and it is reachable only through
+   * an explicit confirmation dialog behind a fully-satisfied gate.
+   *
+   * @param {Document} doc
+   * @param {{
+   *   getBridge: () => object|null|undefined,
+   *   announce?: (message: string) => void,
+   * }} opts
+   */
+  function initReviewController(doc, opts) {
+    var el = {
+      view: doc.getElementById("review-view"),
+      layout: doc.getElementById("review-layout"),
+      segmented: doc.getElementById("review-segmented"),
+      log: doc.getElementById("review-conversation-log"),
+      stageLabel: doc.getElementById("review-stage-label"),
+      empty: doc.getElementById("review-empty"),
+      preview: doc.getElementById("review-preview"),
+      draft: doc.getElementById("draft-review"),
+      draftLabel: doc.getElementById("draft-label"),
+      draftName: doc.getElementById("draft-name"),
+      summary: doc.getElementById("draft-summary"),
+      switcher: doc.getElementById("review-draft-switcher"),
+      diff: doc.getElementById("review-diff"),
+      diffStats: doc.getElementById("review-diff-stats"),
+      diffFiles: doc.getElementById("review-diff-files"),
+      checklist: doc.getElementById("review-checklist"),
+      controls: doc.getElementById("review-controls"),
+      refineInput: doc.getElementById("refine-input"),
+      refineSubmit: doc.getElementById("refine-submit"),
+      refineStatus: doc.getElementById("refine-status"),
+      approve: doc.getElementById("decision-approve"),
+      requestChanges: doc.getElementById("decision-request-changes"),
+      apply: doc.getElementById("apply-button"),
+      blockers: doc.getElementById("apply-blockers"),
+      status: doc.getElementById("review-status"),
+      live: doc.getElementById("review-live"),
+      dialog: doc.getElementById("apply-confirm"),
+      dialogHeading: doc.getElementById("apply-confirm-heading"),
+      dialogFiles: doc.getElementById("apply-confirm-files"),
+      dialogCancel: doc.getElementById("apply-confirm-cancel"),
+      dialogAccept: doc.getElementById("apply-confirm-accept"),
+      railToggle: doc.getElementById("review-rail-toggle"),
+      rail: doc.getElementById("review-conversation"),
+      panel: doc.getElementById("review-panel"),
+      segments: doc.querySelectorAll("[data-review-pane]"),
+    };
+    if (!el.view || !el.checklist || !el.apply) return null;
+
+    var store = createReviewStore();
+    // Per-draft presentation state, keyed by draft id: the kit each draft
+    // belongs to, whether refine can target it (it must exist in the kit) and
+    // its rendered preview outcome.
+    var meta = Object.create(null);
+    var inFlight = false;
+    // Monotonic ticket claimed before every await so a superseded async reply
+    // can be discarded instead of landing on a draft the user has moved past.
+    var generation = 0;
+    var dialogReturnFocus = null;
+
+    function currentMeta() {
+      var draft = store.current();
+      return (draft && meta[draft.id]) || null;
+    }
+
+    function announce(message) {
+      if (el.live) el.live.textContent = message;
+      if (opts && typeof opts.announce === "function") opts.announce(message);
+    }
+
+    function log(role, text) {
+      if (!el.log || !text) return;
+      var item = doc.createElement("li");
+      item.className = "chat-bubble chat-bubble--" + role;
+      var body = doc.createElement("p");
+      body.className = "chat-bubble__body";
+      body.textContent = text;
+      var stamp = doc.createElement("time");
+      stamp.className = "chat-timestamp";
+      var now = new Date();
+      stamp.dateTime = now.toISOString();
+      stamp.textContent = now.toLocaleTimeString();
+      item.append(body, stamp);
+      el.log.append(item);
+    }
+
+    /** Render the draft into a sandboxed, same-origin-less preview frame. */
+    function renderPreview(draft) {
+      if (!el.preview) return;
+      el.preview.replaceChildren();
+      var file = findPreviewFile(draft.result);
+      if (!file) {
+        store.setRenderState("fail");
+        el.preview.hidden = true;
+        return;
+      }
+      store.setRenderState("pending");
+      // A `load`/`error` from a REPLACED frame must not stamp render state onto
+      // whatever draft is current by the time it fires.
+      var owner = draft.id;
+      var frame = doc.createElement("iframe");
+      frame.className = "review-preview__frame";
+      // No `allow-same-origin`: an untrusted draft can never reach the
+      // viewer's origin, storage or the host bridge.
+      frame.setAttribute("sandbox", "allow-scripts");
+      frame.setAttribute("title", draft.result.componentName + " preview");
+      frame.setAttribute("loading", "eager");
+      frame.addEventListener("load", function () {
+        var current = store.current();
+        if (!current || current.id !== owner) return;
+        store.setRenderState("pass");
+        render();
+      });
+      frame.addEventListener("error", function () {
+        var current = store.current();
+        if (!current || current.id !== owner) return;
+        store.setRenderState("fail");
+        render();
+      });
+      frame.srcdoc = file.content;
+      el.preview.append(frame);
+      el.preview.hidden = false;
+    }
+
+    function renderSummary(draft) {
+      if (!el.summary) return;
+      el.summary.replaceChildren();
+      var info = meta[draft.id] || {};
+      var rows = [
+        ["UI kit", info.kitLabel || info.kitId || "Unknown"],
+        ["Group", draft.result.group],
+        ["Origin", draft.source === "browse" ? "Browse" : "Generate"],
+        ["Proposed files", String(draft.result.files.length)],
+      ];
+      if (info.model) rows.push(["Model", info.model]);
+      for (var i = 0; i < rows.length; i++) {
+        var dt = doc.createElement("dt");
+        dt.textContent = rows[i][0];
+        var dd = doc.createElement("dd");
+        dd.textContent = rows[i][1];
+        el.summary.append(dt, dd);
+      }
+    }
+
+    function renderSwitcher() {
+      if (!el.switcher) return;
+      var drafts = store.state().drafts;
+      el.switcher.replaceChildren();
+      el.switcher.hidden = drafts.length < 2;
+      if (drafts.length < 2) return;
+      var current = store.current();
+      for (var i = 0; i < drafts.length; i++) {
+        var button = doc.createElement("button");
+        button.type = "button";
+        button.className = "review-draft-switcher__option";
+        button.textContent = drafts[i].label;
+        button.setAttribute(
+          "aria-pressed",
+          String(Boolean(current && current.id === drafts[i].id)),
+        );
+        button.addEventListener("click", createSelectHandler(drafts[i].number));
+        el.switcher.append(button);
+      }
+    }
+
+    function createSelectHandler(number) {
+      return function () {
+        var draft = store.select(number);
+        if (!draft) return;
+        // Claim the generation: a Refine already awaiting a response was
+        // issued against the draft we just navigated AWAY from. Without this
+        // its late reply still satisfies `ticket === generation` and lands as
+        // a successor to the wrong draft.
+        generation += 1;
+        renderPreview(draft);
+        render();
+        announce("Reviewing " + draft.label + ".");
+      };
+    }
+
+    function renderControls(draft) {
+      if (!el.controls) return;
+      el.controls.replaceChildren();
+      var controls = detectDeterministicControls(draft.result.files);
+      el.controls.hidden = controls.length === 0;
+      if (controls.length === 0) return;
+      var heading = doc.createElement("p");
+      heading.className = "review-controls__heading";
+      heading.textContent = "Deterministic tweaks";
+      el.controls.append(heading);
+      for (var i = 0; i < controls.length; i++) {
+        var control = controls[i];
+        var row = doc.createElement("div");
+        row.className = "review-controls__row";
+        var label = doc.createElement("label");
+        var inputId = "control-" + i;
+        label.setAttribute("for", inputId);
+        label.textContent = control.label;
+        var input = doc.createElement("input");
+        input.type = "range";
+        input.id = inputId;
+        input.min = String(control.min);
+        input.max = String(control.max);
+        input.step = String(control.step);
+        input.value = String(control.value);
+        // Frozen during flight: a slider dragged mid-apply spawns a new draft
+        // and moves `current` off the draft actually being written.
+        input.disabled = inFlight;
+        input.addEventListener("change", createControlHandler(control.id, input));
+        row.append(label, input);
+        el.controls.append(row);
+      }
+    }
+
+    function createControlHandler(controlId, input) {
+      return function () {
+        var draft = store.current();
+        if (!draft) return;
+        var next = applyDeterministicTweak(draft.result, controlId, Number(input.value));
+        if (!next) return;
+        var info = meta[draft.id] || {};
+        // id is `fileIndex:offset:--property`.
+        var property = controlId.split(":").slice(2).join(":");
+        // A tweaked draft is new bytes that are NOT in the kit, even when its
+        // parent had been applied — inheriting `componentInKit: true` would
+        // re-enable Refine, which reads the kit's older source and would
+        // silently discard the tweak.
+        addDraft(
+          next,
+          {
+            kitId: info.kitId,
+            kitLabel: info.kitLabel,
+            model: info.model,
+            componentInKit: false,
+          },
+          "Adjusted " + property + ".",
+        );
+      };
+    }
+
+    function onAcknowledge(id, value) {
+      store.acknowledge(id, value);
+      render();
+      announce(value ? "Checked off " + id + "." : "Cleared " + id + ".");
+    }
+
+    function render() {
+      var draft = store.current();
+      var state = store.state();
+      var bridge = opts.getBridge();
+      var hostAvailable = Boolean(bridge);
+
+      if (!draft) {
+        if (el.empty) el.empty.hidden = false;
+        if (el.draft) el.draft.hidden = true;
+        if (el.preview) el.preview.hidden = true;
+        if (el.stageLabel) el.stageLabel.textContent = "Nothing to preview yet";
+        renderBlockers(doc, el.blockers, ["No draft is loaded yet."]);
+        el.apply.disabled = true;
+        if (el.approve) el.approve.disabled = true;
+        if (el.requestChanges) el.requestChanges.disabled = true;
+        if (el.refineSubmit) el.refineSubmit.disabled = true;
+        if (el.checklist) el.checklist.replaceChildren();
+        return;
+      }
+
+      var info = meta[draft.id] || {};
+      if (el.empty) el.empty.hidden = true;
+      if (el.draft) el.draft.hidden = false;
+      if (el.stageLabel) {
+        el.stageLabel.textContent = draft.result.componentName + " — " + draft.label;
+      }
+      if (el.draftLabel) el.draftLabel.textContent = draft.label;
+      if (el.draftName) el.draftName.textContent = draft.result.componentName;
+      renderSummary(draft);
+      renderSwitcher();
+
+      var stats = parseUnifiedDiff(draft.result.diff);
+      var hasDiff = stats.files.length > 0 || stats.additions > 0 || stats.deletions > 0;
+      if (el.diff) el.diff.hidden = !hasDiff;
+      renderDiffStats(doc, el.diffStats, stats);
+      renderDiffFiles(doc, el.diffFiles, stats);
+
+      var checklist = computeChecklist({
+        result: draft.result,
+        renderState: state.renderState,
+        manualAcks: state.manualAcks,
+      });
+      renderChecklist(doc, el.checklist, checklist, onAcknowledge);
+      renderControls(draft);
+
+      var gate = computeApplyGate({
+        state: state,
+        checklist: checklist,
+        hostCanWrite: hostAvailable,
+        inFlight: inFlight,
+      });
+      el.apply.disabled = !gate.enabled;
+      renderBlockers(doc, el.blockers, gate.blockers);
+
+      var approved = store.isApproved();
+      if (el.approve) {
+        el.approve.disabled = inFlight || approved;
+        el.approve.setAttribute("aria-pressed", String(approved));
+      }
+      if (el.requestChanges) {
+        el.requestChanges.disabled = inFlight || state.decision === "changes-requested";
+      }
+
+      var refine = canRefine({
+        hostAvailable: hostAvailable,
+        componentInKit: Boolean(info.componentInKit),
+        inFlight: inFlight,
+        instruction: el.refineInput ? el.refineInput.value : "",
+      });
+      if (el.refineSubmit) el.refineSubmit.disabled = !refine.enabled;
+      if (el.refineStatus && !inFlight) {
+        el.refineStatus.textContent = refine.enabled ? "" : refine.reason || "";
+      }
+    }
+
+    /**
+     * Record a draft (from Generate, from Refine, or from a deterministic
+     * tweak) and make it the one under review.
+     */
+    function addDraft(result, info, note) {
+      var draft = store.addDraft(result, info.source);
+      meta[draft.id] = {
+        kitId: info.kitId || "",
+        kitLabel: info.kitLabel || "",
+        model: info.model || "",
+        componentInKit: Boolean(info.componentInKit),
+      };
+      log("genie", note || "Drafted " + result.componentName + " — " + draft.label + ".");
+      renderPreview(draft);
+      render();
+      announce(draft.label + " ready for review. Nothing has been written to your kit.");
+      return draft;
+    }
+
+    async function submitRefine() {
+      var draft = store.current();
+      var info = currentMeta();
+      var bridge = opts.getBridge();
+      if (!draft || !info || !bridge || inFlight) return;
+      var instruction = el.refineInput ? el.refineInput.value.trim() : "";
+      var gate = canRefine({
+        hostAvailable: true,
+        componentInKit: info.componentInKit,
+        inFlight: false,
+        instruction: instruction,
+      });
+      if (!gate.enabled) return;
+
+      // Claim the generation BEFORE the await: the tweak sliders, the draft
+      // switcher and route navigation all stay live during flight, so a
+      // superseded reply must never land on a draft the user has moved past.
+      generation += 1;
+      var ticket = generation;
+      inFlight = true;
+      render();
+      if (el.refineStatus) el.refineStatus.textContent = "Refining…";
+      log("user", instruction);
+      var outcome;
+      try {
+        outcome = await runRefine({
+          bridge: bridge,
+          kitId: info.kitId,
+          componentName: draft.result.componentName,
+          instruction: instruction,
+          model: info.model,
+        });
+      } finally {
+        // Without `finally`, any throw here strands `inFlight` and permanently
+        // disables both Refine and Apply with no recovery path.
+        if (ticket === generation) inFlight = false;
+      }
+      if (ticket !== generation) return;
+      if (!outcome.ok) {
+        if (el.refineStatus) el.refineStatus.textContent = outcome.message || "Refine failed.";
+        announce(outcome.message || "Refine failed.");
+        render();
+        return;
+      }
+      if (el.refineStatus) el.refineStatus.textContent = "";
+      if (el.refineInput) el.refineInput.value = "";
+      addDraft(outcome.result, info, "Refined: " + instruction);
+    }
+
+    function openApplyConfirm() {
+      var draft = store.current();
+      if (!draft || !el.dialog) return;
+      if (el.dialogFiles) {
+        el.dialogFiles.replaceChildren();
+        for (var i = 0; i < draft.result.files.length; i++) {
+          var item = doc.createElement("li");
+          item.textContent = draft.result.files[i].path;
+          el.dialogFiles.append(item);
+        }
+      }
+      dialogReturnFocus = doc.activeElement;
+      el.dialog.hidden = false;
+      // `aria-modal="true"` is a promise that focus cannot leave. Honour it:
+      // `inert` removes the background from the tab order *and* the a11y tree
+      // in browsers that support it; the keydown trap below is the fallback.
+      setBackgroundInert(true);
+      if (el.dialogHeading) el.dialogHeading.focus();
+    }
+
+    /** Take the review workspace out of the tab order while the dialog is up. */
+    function setBackgroundInert(on) {
+      var nodes = [el.layout, el.segmented];
+      for (var i = 0; i < nodes.length; i++) {
+        if (!nodes[i]) continue;
+        if (on) {
+          nodes[i].setAttribute("inert", "");
+          nodes[i].setAttribute("aria-hidden", "true");
+        } else {
+          nodes[i].removeAttribute("inert");
+          nodes[i].removeAttribute("aria-hidden");
+        }
+      }
+    }
+
+    /** Cycle Tab within the dialog so focus can never land behind the overlay. */
+    function trapDialogFocus(event) {
+      if (event.key !== "Tab" || !el.dialog || el.dialog.hidden) return;
+      var focusable = [el.dialogCancel, el.dialogAccept].filter(function (node) {
+        return node && !node.disabled;
+      });
+      if (focusable.length === 0) return;
+      var first = focusable[0];
+      var last = focusable[focusable.length - 1];
+      var active = doc.activeElement;
+      if (event.shiftKey && (active === first || active === el.dialogHeading)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      } else if (focusable.indexOf(active) === -1 && active !== el.dialogHeading) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    function closeApplyConfirm() {
+      if (!el.dialog) return;
+      el.dialog.hidden = true;
+      setBackgroundInert(false);
+      if (dialogReturnFocus && typeof dialogReturnFocus.focus === "function") {
+        dialogReturnFocus.focus();
+      }
+      dialogReturnFocus = null;
+    }
+
+    async function confirmApply() {
+      var draft = store.current();
+      var info = currentMeta();
+      var bridge = opts.getBridge();
+      closeApplyConfirm();
+      if (!draft || !info || !bridge || inFlight) return;
+
+      generation += 1;
+      var ticket = generation;
+      inFlight = true;
+      render();
+      if (el.status) el.status.textContent = "Writing files to your kit…";
+      var outcome;
+      try {
+        outcome = await runApply({
+          bridge: bridge,
+          kitId: info.kitId,
+          draft: draft,
+          approved: store.isApproved(),
+        });
+      } finally {
+        if (ticket === generation) inFlight = false;
+      }
+
+      if (!outcome.ok) {
+        if (el.status) el.status.textContent = outcome.message || "Apply failed.";
+        announce(outcome.message || "Apply failed. Nothing was written.");
+        render();
+        return;
+      }
+
+      // Stamp the draft that was ACTUALLY written, not `current()` — a tweak
+      // slider dragged mid-flight moves `current` to a new, unwritten draft.
+      store.markApplied(outcome.writtenPaths, draft.id);
+      meta[draft.id].componentInKit = true;
+
+      // AC13 — the write landing is NOT the whole story: success is only
+      // reported once the manifest and preview have been refreshed and Browse
+      // can open the component with the live bytes. AC14 — if that refresh
+      // fails we must not silently claim it worked, but we also must not
+      // report the APPLY as failed: the bytes are genuinely on disk, and
+      // saying otherwise would push the user into a pointless second write.
+      var refreshFailed = false;
+      if (typeof opts.onApplied === "function") {
+        if (el.status) el.status.textContent = "Refreshing your kit…";
+        try {
+          await opts.onApplied({
+            kitId: info.kitId,
+            group: draft.result.group,
+            componentName: draft.result.componentName,
+            writtenPaths: outcome.writtenPaths,
+          });
+        } catch {
+          // The bytes are already on disk; only the view is stale. The reason
+          // is surfaced as a stale-view note, not as a failed Apply.
+          refreshFailed = true;
+        }
+      }
+
+      var written = outcome.writtenPaths.length;
+      var message = "Applied " + draft.result.componentName + " — " + written + " file";
+      message += written === 1 ? " written." : "s written.";
+      if (outcome.validation === null) {
+        message += " Kit validation did not run.";
+      } else if (outcome.validation && outcome.validation.bad > 0) {
+        message += " Kit validation flagged " + outcome.validation.bad + " component(s).";
+      }
+      if (refreshFailed) {
+        message += " The kit view could not be refreshed — reload to see it in Browse.";
+      }
+      if (el.status) el.status.textContent = message;
+      log("genie", message);
+      announce(message);
+      render();
+    }
+
+    function setPane(pane) {
+      for (var i = 0; i < el.segments.length; i++) {
+        var button = el.segments[i];
+        var active = button.getAttribute("data-review-pane") === pane;
+        button.setAttribute("aria-selected", String(active));
+        // Roving tabindex: a tablist is one Tab stop, arrows move within it.
+        button.tabIndex = active ? 0 : -1;
+      }
+      if (el.view) el.view.setAttribute("data-active-pane", pane);
+    }
+
+    function createPaneHandler(button) {
+      return function () {
+        setPane(button.getAttribute("data-review-pane"));
+      };
+    }
+
+    function focusPane(index) {
+      var count = el.segments.length;
+      if (!count) return;
+      var next = ((index % count) + count) % count;
+      var button = el.segments[next];
+      setPane(button.getAttribute("data-review-pane"));
+      // Selection follows focus, so the newly-active tab is the one Tab stop
+      // and must actually receive focus for the change to be perceivable.
+      button.focus();
+    }
+
+    function createPaneKeyHandler(index) {
+      return function (event) {
+        var key = event.key;
+        var target;
+        if (key === "ArrowRight" || key === "ArrowDown") target = index + 1;
+        else if (key === "ArrowLeft" || key === "ArrowUp") target = index - 1;
+        else if (key === "Home") target = 0;
+        else if (key === "End") target = el.segments.length - 1;
+        else return;
+        event.preventDefault();
+        focusPane(target);
+      };
+    }
+
+    if (el.refineSubmit) el.refineSubmit.addEventListener("click", submitRefine);
+    if (el.refineInput) el.refineInput.addEventListener("input", render);
+    if (el.approve) {
+      el.approve.addEventListener("click", function () {
+        store.approve();
+        render();
+        announce("Draft approved. Apply to kit is now available.");
+      });
+    }
+    if (el.requestChanges) {
+      el.requestChanges.addEventListener("click", function () {
+        store.requestChanges();
+        render();
+        announce("Changes requested. Approval cleared.");
+        if (el.refineInput) el.refineInput.focus();
+      });
+    }
+    el.apply.addEventListener("click", openApplyConfirm);
+    if (el.dialogCancel) el.dialogCancel.addEventListener("click", closeApplyConfirm);
+    if (el.dialogAccept) el.dialogAccept.addEventListener("click", confirmApply);
+    if (el.dialog) {
+      el.dialog.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          closeApplyConfirm();
+          return;
+        }
+        trapDialogFocus(event);
+      });
+    }
+    if (el.railToggle && el.rail) {
+      el.railToggle.addEventListener("click", function () {
+        var open = el.railToggle.getAttribute("aria-expanded") === "true";
+        el.railToggle.setAttribute("aria-expanded", String(!open));
+        el.rail.classList.toggle("review-conversation--open", !open);
+      });
+    }
+    for (var s = 0; s < el.segments.length; s++) {
+      el.segments[s].addEventListener("click", createPaneHandler(el.segments[s]));
+      // AC19 / Design 6 §14 — `setPane` gives this tablist a roving tabindex,
+      // which makes the whole group ONE Tab stop. Without arrow keys the
+      // inactive tab is then completely unreachable by keyboard: Tab skips it
+      // (tabIndex -1) and nothing else moves selection. Left/Right wrap,
+      // Home/End jump to the ends, per the WAI-ARIA tabs pattern.
+      el.segments[s].addEventListener("keydown", createPaneKeyHandler(s));
+    }
+    setPane("preview");
+    render();
+
+    return {
+      addDraft: addDraft,
+      logUser: function (text) {
+        log("user", text);
+      },
+      refresh: render,
+      state: store.state,
+    };
+  }
+
+  /**
+   * Refine: one tool call, no writes, fail closed on a malformed reply.
+   */
+  async function runRefine(options) {
+    var args = {
+      kitId: options.kitId,
+      componentName: options.componentName,
+      instruction: options.instruction,
+      model: options.model,
+    };
+    if (options.region) args.region = options.region;
+    var reply;
+    try {
+      reply = await options.bridge.callTool(REFINE_TOOL, args, NO_CLIENT_DEADLINE);
+    } catch (error) {
+      return {
+        ok: false,
+        message: safeHostMessage(
+          error && error.message,
+          "The host could not refine this component.",
+        ),
+      };
+    }
+    if (!isRefineResult(reply)) {
+      return { ok: false, message: "The host returned a refine result this viewer cannot verify." };
+    }
+    return { ok: true, result: reply };
+  }
+
+  /**
+   * The one and only path in the viewer that may write. Order is a contract:
+   * `plan` (scoped to this draft's paths) → `write_files` (with that plan) →
+   * `validate` (advisory, post-write). A failure before the write leaves the
+   * kit untouched; a failure after it is reported honestly rather than
+   * retroactively "un-applied".
+   */
+  async function runApply(options) {
+    var draft = options && options.draft;
+    if (!draft || !draft.result) {
+      return { ok: false, message: "There is no draft to apply.", writtenPaths: [] };
+    }
+    // Fail closed: only an explicit `true` may reach `plan`/`write_files`. A
+    // missing or undefined `approved` is an omission, never consent.
+    if (options.approved !== true) {
+      return { ok: false, message: "Approve this draft before applying.", writtenPaths: [] };
+    }
+
+    var planArgs = buildPlanArgs(draft, options.kitId);
+    var planReply;
+    try {
+      planReply = await options.bridge.callTool(PLAN_TOOL, planArgs, NO_CLIENT_DEADLINE);
+    } catch (error) {
+      return {
+        ok: false,
+        message: safeHostMessage(
+          error && error.message,
+          "The host could not prepare a write plan. Nothing was written.",
+        ),
+        writtenPaths: [],
+      };
+    }
+    if (!isPlanResult(planReply)) {
+      return {
+        ok: false,
+        message: "The host returned a write plan this viewer cannot verify. Nothing was written.",
+        writtenPaths: [],
+      };
+    }
+
+    var writeReply;
+    try {
+      writeReply = await options.bridge.callTool(
+        WRITE_FILES_TOOL,
+        buildWriteFilesArgs(planReply.planId, draft),
+        NO_CLIENT_DEADLINE,
+      );
+    } catch (error) {
+      return {
+        ok: false,
+        message: safeHostMessage(error && error.message, "The host could not write these files."),
+        writtenPaths: [],
+      };
+    }
+    if (!isWriteFilesResult(writeReply)) {
+      return {
+        ok: false,
+        message: "The host returned a write result this viewer cannot verify.",
+        writtenPaths: [],
+      };
+    }
+
+    var expected = planArgs.writes;
+    var written = writeReply.writtenPaths;
+    var missing = expected.filter(function (path) {
+      return written.indexOf(path) === -1;
+    });
+    if (missing.length) {
+      return {
+        ok: false,
+        message:
+          "Partial write: " +
+          written.length +
+          " of " +
+          expected.length +
+          " files reached your kit. Re-check the component before applying again.",
+        writtenPaths: written,
+        missingPaths: missing,
+      };
+    }
+
+    // Post-write scan is advisory. The bytes are already on disk, so a scan
+    // failure must not be reported as a failed apply — that would be a lie
+    // that pushes the user toward a redundant second write.
+    var validation = null;
+    try {
+      var validateReply = await options.bridge.callTool(
+        VALIDATE_TOOL,
+        { kitId: options.kitId },
+        NO_CLIENT_DEADLINE,
+      );
+      if (isPlainObject(validateReply)) validation = validateReply;
+    } catch {
+      validation = null;
+    }
+
+    return { ok: true, writtenPaths: written, validation: validation, planId: planReply.planId };
+  }
+
   function safeHostMessage(value, fallback) {
     var message = typeof value === "string" && value.trim() ? value.trim() : fallback;
     return message
@@ -1286,7 +2730,8 @@
     };
   }
 
-  function initProductShell(doc, bridge) {
+  function initProductShell(doc, bridge, opts) {
+    opts = opts || {};
     var win = doc.defaultView;
     var form = doc.getElementById("generate-form");
     if (!win || !form) return;
@@ -1575,26 +3020,43 @@
         : assembled;
     }
 
+    // M7-03 (#235) — the review workspace owns every draft's presentation now.
+    // `initProductShell` only hands it the draft plus the kit/model context it
+    // was generated under; all gating, checklist and apply behavior lives in
+    // `initReviewController`.
+    var review = initReviewController(doc, {
+      getBridge: function () {
+        return bridge;
+      },
+      announce: function (message) {
+        status.textContent = message;
+      },
+      // Supplied by the boot path, which owns the Browse controller and the
+      // manifest. Absent in unit tests that drive the review controller alone.
+      onApplied: function (applied) {
+        if (typeof opts.onApplied !== "function") return undefined;
+        return Promise.resolve(opts.onApplied(applied)).then(function () {
+          // AC13 — only once Browse actually holds the applied component do
+          // we route the user there. Navigating first would flash an empty or
+          // stale detail panel; navigating on failure would strand them on a
+          // view that cannot show what they just wrote.
+          navigate("browse", false, true);
+        });
+      },
+    });
+
     function renderDraft(draft) {
-      doc.getElementById("review-empty").hidden = true;
-      doc.getElementById("draft-review").hidden = false;
-      doc.getElementById("draft-label").textContent = draft.label;
-      doc.getElementById("draft-name").textContent = draft.result.componentName;
-      var summary = doc.getElementById("draft-summary");
-      summary.replaceChildren();
-      var values = [
-        ["UI kit", kitSelect.options[kitSelect.selectedIndex].textContent],
-        ["Group", draft.result.group],
-        ["Proposed files", String(draft.result.files.length)],
-        ["Model", modelSelect.options[modelSelect.selectedIndex].textContent],
-      ];
-      for (var i = 0; i < values.length; i++) {
-        var dt = doc.createElement("dt");
-        var dd = doc.createElement("dd");
-        dt.textContent = values[i][0];
-        dd.textContent = values[i][1];
-        summary.append(dt, dd);
-      }
+      if (!review) return;
+      var option = kitSelect.options[kitSelect.selectedIndex];
+      review.addDraft(draft.result, {
+        kitId: kitSelect.value,
+        kitLabel: option ? option.textContent : kitSelect.value,
+        model: modelSelect.value,
+        // A fresh Conjure draft is not in the kit yet, so Refine (which reads
+        // the component's current source from the kit) cannot target it until
+        // it has been applied.
+        componentInKit: false,
+      });
     }
 
     async function submitGenerate(event) {
@@ -1818,13 +3280,12 @@
       var detail = doc.getElementById("review-empty-detail");
       if (heading && detail) {
         if (context) {
-          heading.textContent = "Refine handoff received";
+          heading.textContent = "Could not open this component for review";
           detail.textContent =
-            "Refine and Apply arrive in the next workflow milestone. The component context below was passed from Browse.";
+            "Browse could not read this component's current source, so there is nothing to review yet. Reopen it from Browse once its source loads.";
         } else {
           heading.textContent = "No draft to review";
-          detail.textContent =
-            "Conjure a component first. Review and Apply arrive in the next workflow milestone.";
+          detail.textContent = "Conjure a component, or open one from Browse to refine it.";
         }
       }
       if (!dl) return;
@@ -1873,7 +3334,41 @@
       // calls `writeRoute` AND `renderRoute` (moving focus into Review), so
       // Refine actually lands the user in Review instead of a stale Browse.
       setRefineContext: function (context) {
-        renderRefineContext(context);
+        // AC2/S2 — a Browse handoff must land a REAL, reviewable draft, not a
+        // read-only metadata card. `buildRefineContext` carries the bytes
+        // Browse already read, so the component's current source becomes the
+        // review baseline: it renders in the preview frame, runs the whole
+        // checklist, and (being genuinely present in the kit) unlocks Refine.
+        var seeded = false;
+        if (review && context && context.source && context.path && context.componentName) {
+          review.addDraft(
+            {
+              componentName: context.componentName,
+              group: context.group,
+              files: [
+                {
+                  path: context.path,
+                  content: context.source,
+                  mimeType: "text/html",
+                  encoding: "utf-8",
+                },
+              ],
+            },
+            {
+              kitId: context.kitId,
+              kitLabel: context.kitId,
+              model: "",
+              // It came OUT of the kit, so `refine` can load it as its source.
+              componentInKit: true,
+              source: "browse",
+            },
+            "Opened " + context.componentName + " from Browse — current kit source.",
+          );
+          seeded = true;
+        }
+        // Only fall back to the context card when no draft could be seeded;
+        // otherwise it would sit under a populated review as dead metadata.
+        renderRefineContext(seeded ? null : context);
         navigate("review", false, true);
       },
       // Exposed for direct unit testing of context-gathering behavior (token
@@ -2214,12 +3709,24 @@
    * @param {string} variant
    * @returns {{kitId: string, group: string, componentName: string, variant: string}}
    */
-  function buildRefineContext(kitId, component, variant) {
+  function buildRefineContext(kitId, component, variant, source) {
+    var group = (component && component.group) || "";
+    var componentName = (component && component.componentName) || "";
     return {
       kitId: kitId || "",
-      group: (component && component.group) || "",
-      componentName: (component && component.componentName) || "",
+      group: group,
+      componentName: componentName,
       variant: variant || "default",
+      // AC2/S2 — Review accepts a Browse selection, not just a Conjure draft.
+      // Browse has ALREADY read the component's current bytes off disk (for
+      // its own detail preview); carrying them through here is what lets the
+      // handoff seed a REAL review draft instead of a metadata placeholder.
+      // `null` when the source read failed or the tier is source-less, which
+      // the receiver treats as "context only, no draft".
+      source: typeof source === "string" && source ? source : null,
+      path: group && componentName
+        ? "components/" + group + "/" + componentName + "/" + componentName + ".html"
+        : "",
     };
   }
 
@@ -2627,7 +4134,17 @@
       container.appendChild(refineExplain);
     } else if (typeof state.onRefine === "function") {
       refineButton.addEventListener("click", function () {
-        state.onRefine(buildRefineContext(state.kitId, component, "default"));
+        // AC2/S2 — read the source LAZILY, at click time. The controller
+        // paints the detail pane before the async `read_file` resolves and
+        // then patches only the source subpanel (so the live preview iframe
+        // is not torn down), which means this handler's captured `state`
+        // still carries `source: null` long after the bytes have landed.
+        // `resolveSource` reads the controller's latest bytes instead, so a
+        // Refine handoff carries a real review baseline. Direct unit tests
+        // render with a plain `state.source` and fall through to it.
+        var liveSource =
+          typeof state.resolveSource === "function" ? state.resolveSource() : state.source;
+        state.onRefine(buildRefineContext(state.kitId, component, "default", liveSource));
       });
     }
 
@@ -2987,6 +4504,7 @@
         update: function () {},
         setHostBridge: function () {},
         refresh: function () {},
+        openComponent: function () {},
         teardown: function () {},
       };
     }
@@ -3012,6 +4530,10 @@
     // component (identity unchanged, content/path changed) while an older
     // read for the PRIOR content is still in flight.
     var renderGeneration = 0;
+    // Bytes of the currently selected component, once `read_file` resolves.
+    // Reset to `null` on every (re)render so a stale body can never be
+    // attributed to a newly selected component.
+    var latestSource = null;
 
     function currentSearch() {
       return searchInput ? searchInput.value || "" : "";
@@ -3070,6 +4592,14 @@
         component: component,
         source: source,
         sourceLoading: sourceLoading,
+        // AC2/S2 — the Refine button resolves the component's bytes through
+        // this at click time. The render-time `source` above is `null` for
+        // the first paint of a host-backed selection (the read is still in
+        // flight), and only the source subpanel is repainted when it lands,
+        // so a snapshot would hand Review an empty baseline forever.
+        resolveSource: function () {
+          return latestSource;
+        },
         hostAvailable: Boolean(hostBridge),
         // Copilot review (PR #248, AC13) — gates the Refine button
         // separately from source-read availability; see `refineEnabled`'s
@@ -3152,6 +4682,7 @@
       // show a distinct LOADING state, not the settled-failure copy; the
       // failure copy is reserved for when the async read below actually
       // resolves to `null`.
+      latestSource = null;
       renderBrowseDetail(
         doc,
         detailContainer,
@@ -3179,6 +4710,7 @@
         // place, guarded by the generation/selection checks above, instead
         // of a full `renderBrowseDetail` that would tear down and re-fetch
         // the still-live preview iframe just to paint the resolved source.
+        latestSource = source;
         renderBrowseDetailSource(
           doc,
           detailContainer,
@@ -3289,6 +4821,34 @@
       // file, so the selected preview/source panel picks up the repaint
       // instead of silently going stale.
       refresh: function () {
+        renderAll(true);
+      },
+      // AC13 — after an Apply, Browse must OPEN the component that was just
+      // written, showing the LIVE bytes.
+      //
+      // This deliberately does NOT re-fetch the manifest: the embedded tier
+      // ships `connect-src 'none'`, so there is no network refresh available
+      // there at all. Instead it merges the just-written entry into the
+      // in-memory manifest when it is new (a first-time Apply), which is
+      // exactly the state a manifest re-read would have produced, and HMR
+      // reconciles the authoritative copy on its next tick. `select` then
+      // re-reads the component's source through the host bridge, so the
+      // detail panel shows what is actually on disk rather than the draft
+      // that was held in the review workspace.
+      openComponent: function (group, componentName) {
+        if (!group || !componentName) return;
+        var components = (manifest && manifest.components) || [];
+        var known = components.some(function (component) {
+          return component.group === group && component.componentName === componentName;
+        });
+        if (!known) {
+          manifest = {
+            name: manifest && manifest.name,
+            components: components.concat([{ group: group, componentName: componentName }]),
+            groups: (manifest && manifest.groups) || [],
+          };
+        }
+        select({ group: group, componentName: componentName });
         renderAll(true);
       },
       teardown: function () {
@@ -4140,7 +5700,16 @@
         // marker wrongly flagged their Generate tab "Host unavailable". Start the
         // shell in the pending state and let initMcpApp resolve ready/unavailable
         // from the actual host handshake.
-        var shellController = initProductShell(doc, undefined);
+        var shellController = initProductShell(doc, undefined, {
+          // AC13 — close the loop after a successful Apply: put the applied
+          // component into Browse and re-read its bytes from disk. A throw
+          // here surfaces as the truthful "written, but the kit view could
+          // not be refreshed" state rather than a false success or a bogus
+          // apply failure.
+          onApplied: function (applied) {
+            browseController.openComponent(applied.group, applied.componentName);
+          },
+        });
         initMcpApp(doc, {
           onTeardown: teardownHmr,
           onReady: function (bridge) {
@@ -4194,7 +5763,14 @@
         // via `createStandaloneSourceBridge`'s same-origin relative fetch,
         // rather than a hard-coded null bridge that made `fetchSource`
         // always resolve `null`.
-        var standaloneShellController = initProductShell(doc, null);
+        var standaloneShellController = initProductShell(doc, null, {
+          // AC13 — same close-the-loop contract as the embedded tier.
+          // `browseController` is assigned immediately below; this closure
+          // only ever runs long after boot, so the reference is safe.
+          onApplied: function (applied) {
+            browseController.openComponent(applied.group, applied.componentName);
+          },
+        });
         var browseController = initBrowseController(doc, {
           hostBridge: createStandaloneSourceBridge(fetchImpl),
           kitId: manifest && manifest.name,
@@ -4320,5 +5896,24 @@
     window.__genieViewerTestHooks.extractToolResultManifest = extractToolResultManifest;
     window.__genieViewerTestHooks.createStandaloneSourceBridge = createStandaloneSourceBridge;
     window.__genieViewerTestHooks.focusVisibleBrowseNavControl = focusVisibleBrowseNavControl;
+
+    // M7-03 (#235) — review → refine → approve → apply.
+    window.__genieViewerTestHooks.isRefineResult = isRefineResult;
+    window.__genieViewerTestHooks.parseUnifiedDiff = parseUnifiedDiff;
+    window.__genieViewerTestHooks.computeChecklist = computeChecklist;
+    window.__genieViewerTestHooks.createReviewStore = createReviewStore;
+    window.__genieViewerTestHooks.computeApplyGate = computeApplyGate;
+    window.__genieViewerTestHooks.canRefine = canRefine;
+    window.__genieViewerTestHooks.buildPlanArgs = buildPlanArgs;
+    window.__genieViewerTestHooks.buildWriteFilesArgs = buildWriteFilesArgs;
+    window.__genieViewerTestHooks.detectDeterministicControls = detectDeterministicControls;
+    window.__genieViewerTestHooks.applyDeterministicTweak = applyDeterministicTweak;
+    window.__genieViewerTestHooks.runRefine = runRefine;
+    window.__genieViewerTestHooks.runApply = runApply;
+    window.__genieViewerTestHooks.renderDiffFiles = renderDiffFiles;
+    window.__genieViewerTestHooks.renderDiffStats = renderDiffStats;
+    window.__genieViewerTestHooks.renderBlockers = renderBlockers;
+    window.__genieViewerTestHooks.renderChecklist = renderChecklist;
+    window.__genieViewerTestHooks.initReviewController = initReviewController;
   }
 })();
