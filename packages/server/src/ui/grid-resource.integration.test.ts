@@ -28,7 +28,12 @@ import { JSDOM, VirtualConsole } from "jsdom";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { Manifest, ManifestCard } from "../manifest/index.js";
-import { MANIFEST_ELEMENT_ID, inlineManifest, inlineViewerAssets } from "./grid-resource.js";
+import {
+  MANIFEST_ELEMENT_ID,
+  collectInlineCspHashes,
+  inlineManifest,
+  inlineViewerAssets,
+} from "./grid-resource.js";
 
 // The real shipped viewer static dir — one level under packages/server → ../../viewer/static.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -130,5 +135,45 @@ describe("M4-06 integration — real viewer assets + real assembly", () => {
     expect(rendered.querySelector(".ds-empty")).not.toBeNull();
     expect(rendered.querySelectorAll("iframe").length).toBe(0);
     expect(rendered.querySelector(".ds-error")).toBeNull();
+  });
+
+  // ── Regression: NUL (and other HTML-parser-lossy) bytes in viewer.js ────────
+  //
+  // The embedded `ui://` tier's CSP allow-lists the inline <script>'s exact
+  // SHA-256 hash, computed from `viewer.js`'s bytes BEFORE they are wrapped in
+  // a <script> tag and (re-)parsed as HTML text. Per the HTML spec, an HTML
+  // parser replaces any literal NUL (U+0000) byte in text content with U+FFFD
+  // (the replacement character) — this is a browser-enforced, non-optional
+  // tokenizer rule, not a bug in any one engine. If `viewer.js` (or any other
+  // inlined asset) ever contains a raw NUL byte, the byte the browser actually
+  // executes differs from the byte `cspSha256` hashed, the computed hash no
+  // longer matches what the browser recomputes at parse time, and the CSP
+  // silently blocks the ENTIRE inline script — every card fails to render
+  // with no visible error (only a CSP console warning). This exact defect
+  // shipped once (a a NUL byte used as an ad hoc delimiter deep in the Browse
+  // compact-select wiring) and was caught only by the `viewer E2E gate` full
+  // browser run, not by any DOM-level unit test — hence this guard, so a
+  // reviewer/CI catches it at the byte level without needing a real browser.
+  it("the real viewer.js contains no NUL bytes (would desync the CSP hash from what a browser parses)", () => {
+    expect(realViewerJs).not.toContain("\u0000");
+    expect(realIndexHtml).not.toContain("\u0000");
+    expect(realViewerCss).not.toContain("\u0000");
+  });
+
+  it("the inlined <script>/<style> bytes a browser re-parses hash to the SAME CSP allow-list value computed pre-inline", () => {
+    const doc = assemble(manifest([card()]));
+    const { hashes } = inlineViewerAssets(realIndexHtml, realViewerJs, realViewerCss);
+
+    // Re-derive the hashes from what a real HTML parser sees after the fact
+    // (jsdom, same as `bootRealViewer`) rather than from the pre-inline
+    // strings — this is the exact seam a NUL-byte (or similar lossy-parse)
+    // regression breaks: the pre-inline hash and the post-parse hash diverge.
+    const parsedHashes = collectInlineCspHashes(doc);
+    for (const hash of hashes.scriptHashes) {
+      expect(parsedHashes.scriptHashes).toContain(hash);
+    }
+    for (const hash of hashes.styleHashes) {
+      expect(parsedHashes.styleHashes).toContain(hash);
+    }
   });
 });

@@ -1928,6 +1928,9 @@
     compactSelect.appendChild(placeholderOption);
 
     var allItems = [];
+    // Parallel lookup for the compact <select>'s options — see the option
+    // construction below for why this replaced a delimited `value` string.
+    var compactOptionEntries = [];
     // Roving tabindex (a11y): exactly ONE item is in Tab order at a time.
     // `tabbableCandidate` tracks that single item as we walk the tree so a
     // LATER-discovered selected row can demote an EARLIER first-row
@@ -1975,7 +1978,20 @@
         allItems.push(item);
 
         var option = doc.createElement("option");
-        option.value = group.name + " " + component.componentName;
+        // Encode (group, componentName) as the option's index into a parallel
+        // lookup array rather than packing both into `value` as a delimited
+        // string. A delimiter character (even a NUL, which is NOT a valid
+        // XML/HTML character and gets replaced with U+FFFD by the HTML
+        // parser's tokenizer during the CSP-hashed embedded-tier inlining —
+        // silently corrupting this exact inline <script> and invalidating
+        // its SHA-256 CSP hash, which is what caused every card to fail to
+        // render under the `ui://` vehicle) can never safely round-trip
+        // through a re-parsed HTML document. Group/component names may
+        // themselves contain any character (including spaces or the
+        // delimiter candidate), so no delimiter is truly safe — only an
+        // out-of-band index is.
+        option.value = String(compactOptionEntries.length);
+        compactOptionEntries.push({ group: group.name, componentName: component.componentName });
         option.textContent = group.name + " / " + component.componentName;
         if (isSelected) option.selected = true;
         compactSelect.appendChild(option);
@@ -1984,10 +2000,10 @@
     }
 
     compactSelect.addEventListener("change", function () {
-      var value = compactSelect.value;
-      var sep = value.indexOf(" ");
-      if (sep === -1) return;
-      select({ group: value.slice(0, sep), componentName: value.slice(sep + 1) });
+      var index = Number(compactSelect.value);
+      var entry = compactOptionEntries[index];
+      if (!entry) return;
+      select({ group: entry.group, componentName: entry.componentName });
     });
     compactNav.appendChild(compactSelect);
 
