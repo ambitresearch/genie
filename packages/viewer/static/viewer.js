@@ -133,6 +133,21 @@
   // eslint-disable-next-line no-control-regex
   var URL_EDGE_C0_RE = /^[\x00- ]+|[\x00- ]+$/g;
   var URL_HTML_METACHAR_RE = /[<>"'`]/g;
+  /**
+   * Percent-ENCODE the URL metacharacters rather than dropping them. Deleting `'` silently
+   * retargets a legitimate manifest path (`.../O'Reilly/preview.html`) at a different file; the
+   * escape resolves to the byte the manifest actually names. Still a global replace over a regex
+   * that always matches `<`, `'` and `"`, so it remains a recognised escaping sanitizer.
+   */
+  var URL_METACHAR_ESCAPES = { "<": "%3C", ">": "%3E", '"': "%22", "'": "%27", "`": "%60" };
+  function escapeUrlMetachar(ch) {
+    return URL_METACHAR_ESCAPES[ch];
+  }
+  /**
+   * WHATWG resolves `\\` exactly like `//` against a special (http/https/file) base, so
+   * `\\evil.example/x` is protocol-relative and lands off-origin. Match on either slash.
+   */
+  var URL_LEADING_SLASHES_RE = /^[/\\]{2}/;
   var ANY_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
   var SAFE_FRAME_SCHEME_RE = /^(?:https?|data):/i;
 
@@ -146,7 +161,7 @@
    * @returns {boolean}
    */
   function isSafeFrameSrc(url) {
-    if (!url || url.slice(0, 2) === "//") return false;
+    if (!url || URL_LEADING_SLASHES_RE.test(url)) return false;
     if (!ANY_URL_SCHEME_RE.test(url)) return true;
     return SAFE_FRAME_SCHEME_RE.test(url);
   }
@@ -160,7 +175,7 @@
     var url = value
       .replace(URL_TAB_OR_NEWLINE_RE, "")
       .replace(URL_EDGE_C0_RE, "")
-      .replace(URL_HTML_METACHAR_RE, "");
+      .replace(URL_HTML_METACHAR_RE, escapeUrlMetachar);
     return isSafeFrameSrc(url) ? url : "about:blank";
   }
 
@@ -882,15 +897,6 @@
   /**
    * Rationale relocated verbatim to `docs/developer/architecture.md`
    * (“`files[]` entry validation”) — viewer.js is capped at 256 KiB (#253).
-   *
-   * DRO-242 (fail closed, Copilot review round 6) — JSON Schema's `maxLength`/`minLength` count
-   * Unicode CODE POINTS, but JS `String.length` counts UTF-16 CODE UNITS — every character outside
-   * the Basic Multilingual Plane (astral characters: most emoji, some CJK extensions) is one code
-   * point but TWO code units (a surrogate pair). A schema-valid string near either bound (e.g.
-   * exactly `maxLength` emoji) would be wrongly accepted/rejected by a raw `.length` comparison.
-   * Counting via the string iterator (`for...of` / spread) is code-point-aware — it steps over full
-   * surrogate pairs — and this early-exits once `max` is exceeded rather than materializing an
-   * array for a large string.
    */
   function isCodePointLengthWithinBounds(value, min, max) {
     var count = 0;
@@ -944,6 +950,10 @@
    * segment (self-consistent `Button/Button.html`, not `Button/Wrong.html`) — mirrors
    * `HTML_FILE_CONTAINS` in `packages/server/src/llm/schema.ts`.
    */
+  function isHtmlFileEntry(file) {
+    return /\.html$/.test(file.path);
+  }
+
   function hasMatchingHtmlPreview(files) {
     return files.some(function (file) {
       var match = /^components\/[a-z0-9-]+\/([A-Z][A-Za-z0-9]{1,63})\/([^/]+)$/.exec(file.path);
@@ -1039,10 +1049,17 @@
     return true;
   }
 
-  function isConjureResult(value) {
+  /**
+   * The payload shape every reviewable draft shares, whatever produced it. Rationale relocated
+   * verbatim to `docs/developer/architecture.md` (“Validating a Browse baseline on its own
+   * terms”) — viewer.js is capped at 256 KiB (#253).
+   *
+   * @param {unknown} value
+   * @returns {boolean}
+   */
+  function hasReviewableCore(value) {
     return Boolean(
       isPlainObject(value) &&
-      hasOnlyKeys(value, ["componentName", "group", "files", "manifestEntry", "usage"]) &&
       typeof value.componentName === "string" &&
       COMPONENT_NAME_PATTERN.test(value.componentName) &&
       typeof value.group === "string" &&
@@ -1051,11 +1068,39 @@
       value.files.length >= 1 &&
       value.files.length <= 12 &&
       value.files.every(isConjureFileEntry) &&
-      hasUniquePaths(value.files) &&
+      hasUniquePaths(value.files),
+    );
+  }
+
+  function isConjureResult(value) {
+    return Boolean(
+      hasReviewableCore(value) &&
+      hasOnlyKeys(value, ["componentName", "group", "files", "manifestEntry", "usage"]) &&
       hasMatchingHtmlPreview(value.files) &&
       isManifestEntry(value.manifestEntry) &&
       isConjureUsage(value.usage),
     );
+  }
+
+  /**
+   * Copilot (round 9) — a Browse handoff, and any deterministic tweak of one, never made a
+   * model call: it has no `usage` and no conjure `manifestEntry`. Forcing it through
+   * `isConjureResult` failed the `schema` row forever and pinned Apply shut. Fabricating a
+   * zero-token `usage` would put a lie in the summary’s Tokens row, so validate what the
+   * payload actually is. `diff` is optional: `applyDeterministicTweak` copies every own key and
+   * adds a recomputed one.
+   *
+   * @param {unknown} value
+   * @returns {boolean}
+   */
+  function isBrowseBaseline(value) {
+    if (!hasReviewableCore(value)) return false;
+    if (!hasOnlyKeys(value, ["componentName", "group", "files", "diff"])) return false;
+    // The preview pane still needs something to render, but `Card/preview.html` is a legitimate
+    // kit entry point, so the canonical `<Name>/<Name>.html` rule cannot apply here.
+    if (!value.files.some(isHtmlFileEntry)) return false;
+    if (value.diff === undefined) return true;
+    return typeof value.diff === "string" && value.diff.length <= DIFF_MAX_LENGTH;
   }
 
   function createDraftStore() {
@@ -1329,7 +1374,7 @@
     var acks = (input && input.manualAcks) || {};
 
     var preview = resolvePreviewFile(result);
-    var schemaOk = isConjureResult(result) || isRefineResult(result);
+    var schemaOk = isConjureResult(result) || isRefineResult(result) || isBrowseBaseline(result);
     var cspOk =
       Array.isArray(result.files) &&
       result.files.every(function (file) {
@@ -5262,15 +5307,8 @@
   }
 
   /**
-   * True when component membership/order OR declared group order changed — i.e. the grid itself
-   * must be torn down and rebuilt. Deliberately excludes `hash` (a real per-card reload via
-   * `diffManifestHashes` is enough) AND excludes `tags`/`subtitle`/`lastModified` — those never
-   * change what the GRID renders, only Browse's detail panel (see `manifestBrowseMetadataChanged`
-   * below for that comparison). Critically, `lastModified` is derived from `stat(absPath).mtime` on
-   * every compile (`packages/server/src/manifest/compiler.ts`), so it changes on EVERY real edit;
-   * including it here would force the expensive full-grid `renderManifestUpdate` path on every
-   * ordinary content-hash-changing edit instead of the lightweight per-card `reloadCardByPath`
-   * path.
+   * Rationale relocated verbatim to `docs/developer/architecture.md`
+   * (“Structural manifest changes”) — viewer.js is capped at 256 KiB (#253).
    *
    * @param {object} prev
    * @param {object} next

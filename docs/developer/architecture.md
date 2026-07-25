@@ -324,6 +324,23 @@ CodeQL alerts 2/4/5/7 (js/xss-through-dom, js/xss, js/client-side-unvalidated-ur
 
 The WHATWG URL parser removes ASCII tab/LF/CR from ANYWHERE in a URL and trims leading and trailing "C0 control or space" BEFORE it detects the scheme, so `java\tscript:alert(1)` and " javascript:alert(1)" both parse as `javascript:`. Normalize exactly the same way first, or a scheme allowlist is trivially bypassed. Then allow relative paths (the common case) plus http/https/data — `data:` is a real embedded-manifest transport and lands in an opaque origin. Protocol-relative `//host/x` is rejected: it is off-origin but carries no scheme to match.
 
+### `files[]` entry validation (DRO-242)
+
+DRO-242 (fail closed, Copilot review round 6) — JSON Schema's `maxLength`/`minLength` count Unicode CODE POINTS, but JS `String.length` counts UTF-16 CODE UNITS — every character outside the Basic Multilingual Plane (astral characters: most emoji, some CJK extensions) is one code point but TWO code units (a surrogate pair). A schema-valid string near either bound (e.g. exactly `maxLength` emoji) would be wrongly accepted/rejected by a raw `.length` comparison. Counting via the string iterator (`for...of` / spread) is code-point-aware — it steps over full surrogate pairs — and this early-exits once `max` is exceeded rather than materializing an array for a large string.
+
+### Validating a Browse baseline on its own terms (Copilot review round 9)
+
+A draft can reach Review by two very different roads, and only one of them involves a model. `conjure`/`refine` return a generated payload that owes the full model-output contract: a `manifestEntry`, a token `usage`, and the canonical `<Name>/<Name>.html` naming rule (`hasMatchingHtmlPreview`, mirroring `HTML_FILE_CONTAINS` in `packages/server/src/llm/schema.ts`). A Browse handoff is the opposite: it is bytes that already exist in the kit, read straight off disk, with no generation step behind them.
+
+Routing both through `isConjureResult` meant every Browse baseline failed the `schema` checklist row permanently, which pinned the Apply gate shut — and because `applyDeterministicTweak` copies every own key of its parent and adds a recomputed `diff`, a tweak of a Browse baseline inherited the same unsatisfiable shape and could never enable Apply either.
+
+Fabricating a zero-token `usage` to make the conjure predicate pass would have been cheaper, but it would put a lie in the draft summary's Tokens row. Instead the shared structural rules live in `hasReviewableCore` (plain object, `componentName`, `group`, 1–12 valid `files[]` entries, unique paths) and each road adds only what it genuinely owes:
+
+- `isConjureResult` = core + exactly `{componentName, group, files, manifestEntry, usage}` + the canonical HTML naming rule + a valid `manifestEntry` + a valid `usage`.
+- `isBrowseBaseline` = core + exactly `{componentName, group, files, diff?}` + at least one `.html` file so the preview pane has something to render + a `diff` that, when present, is a string within `DIFF_MAX_LENGTH`.
+
+The naming rule deliberately moved out of the shared core. `Card/preview.html` is a legitimate kit entry point that the compiler's own `walkPreviewFiles` accepts, so it can never satisfy `<Name>/<Name>.html`; demanding that of existing kit source would fail valid kits. It still applies to conjure and refine output, where it is a real constraint on what the model must return.
+
 ### `manifestEntry` validation (DRO-242)
 
 DRO-242 (fail closed) — validates `manifestEntry` against conjure's canonical output schema (`packages/server/src/tools/conjure.ts` / `packages/server/src/llm/schema.ts`'s `Viewport` $def): `viewport.width`/ `viewport.height` are required integers in `[1, 4096]` (Copilot review round 5 — a bare `typeof === "number"` check still accepted fractions, `0`/negatives, values above 4096, `NaN`, and `Infinity`, none of which the canonical schema permits), and both `manifestEntry` and `viewport` are `.strict()` — no keys beyond `viewport`/`subtitle`/`tags` (resp. `width`/`height`) are allowed. `subtitle` (`maxLength: 256`) and `tags` (`maxItems: 16`, each a string) are optional but, when present, must respect those same bounds. An object-like-but-empty `manifestEntry: {}` (missing `viewport` entirely) must be rejected, not just checked for being a plain object.
@@ -341,6 +358,10 @@ DRO-242 (fail closed) — a single `files[]` entry from an untrusted host reply,
 Wire the tree + detail panes together against a live manifest: owns the current selection (deep-link-aware — Decision #7), re-projects the tree on search/manifest changes, and re-renders detail atomically on selection (AC5 — "stale content from the prior selection is not shown as current", satisfied because both panes are rebuilt from the SAME `tree`/`selection` read on every call, never patched piecemeal).
 
 Used by BOTH vehicles now (Copilot #1): the fetch tier calls this with `hostBridge: null` (no MCP host), and the embedded `ui://genie/grid` tier calls it with the real host bridge once the handshake resolves (`setHostBridge`), so Refine/source-read still route through the host (AC12/AC13). Call sites are gated on `#browse-workbench` existing, which only the fixture-only grid tests omit.
+
+### Structural manifest changes
+
+True when component membership/order OR declared group order changed — i.e. the grid itself must be torn down and rebuilt. Deliberately excludes `hash` (a real per-card reload via `diffManifestHashes` is enough) AND excludes `tags`/`subtitle`/`lastModified` — those never change what the GRID renders, only Browse's detail panel (see `manifestBrowseMetadataChanged` for that comparison). Critically, `lastModified` is derived from `stat(absPath).mtime` on every compile (`packages/server/src/manifest/compiler.ts`), so it changes on EVERY real edit; including it here would force the expensive full-grid `renderManifestUpdate` path on every ordinary content-hash-changing edit instead of the lightweight per-card `reloadCardByPath` path.
 
 ### Browse metadata-only manifest changes
 

@@ -3034,14 +3034,21 @@ describe("CodeQL — iframe src taint (alerts 2, 4, 5, 7)", () => {
     expect(hooks.safeFrameSrc(embedded)).toBe(embedded);
   });
 
-  it("strips HTML metacharacters that can never appear in a serialized URL", async () => {
+  it("escapes HTML metacharacters that can never appear in a serialized URL", async () => {
     const hooks = await loadHooks();
     // WHATWG URL serialization always percent-encodes `<`, `>`, `"` and `'`, so a raw one is
-    // always an injection attempt -- and dropping them is what CodeQL recognises as a barrier
-    // (`MetacharEscapeSanitizer`), which is how alerts 8-10 clear.
-    expect(hooks.safeFrameSrc('components/a"onload=x/B.html')).toBe("components/aonload=x/B.html");
-    expect(hooks.safeFrameSrc("components/a<script>/B.html")).toBe("components/ascript/B.html");
-    expect(hooks.safeFrameSrc("components/a'b/B.html")).toBe("components/ab/B.html");
+    // always an injection attempt -- and a global replace over a regex that always matches `<`,
+    // `'` and `"` is what CodeQL recognises as a barrier (`MetacharEscapeSanitizer`), which is how
+    // alerts 8-10 clear. Copilot round 9: this originally DELETED the character, which silently
+    // retargeted a legitimate `.../O'Reilly/preview.html` at a different file. Escaping keeps the
+    // barrier and resolves to the byte the manifest actually names.
+    expect(hooks.safeFrameSrc('components/a"onload=x/B.html')).toBe(
+      "components/a%22onload=x/B.html",
+    );
+    expect(hooks.safeFrameSrc("components/a<script>/B.html")).toBe(
+      "components/a%3Cscript%3E/B.html",
+    );
+    expect(hooks.safeFrameSrc("components/a'b/B.html")).toBe("components/a%27b/B.html");
   });
 
   it("neutralises javascript: and other script-bearing schemes", async () => {
@@ -3285,5 +3292,167 @@ describe("round 7 — inherited style-src hashes", () => {
     const { document, controller } = loadWired(HAPPY_REPLIES);
     controller.addDraft(conjureResult(), { kitId: "my-kit", kitLabel: "My Kit" });
     expect((document.getElementById("review-preview-note") as HTMLElement).hidden).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Copilot review round 9 — findings 36-37
+ * ------------------------------------------------------------------ */
+
+/** Exactly what `setRefineContext` seeds: no `manifestEntry`, no `usage`. */
+function browseBaseline(overrides: Record<string, unknown> = {}) {
+  return {
+    componentName: "Button",
+    group: "actions",
+    files: [fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Go</button>\n`)],
+    ...overrides,
+  };
+}
+
+type ChecklistRow = { id: string; state: string };
+
+function schemaRow(result: unknown, hooks: Hooks) {
+  const rows = hooks.computeChecklist({ result, renderState: "ok" }) as ChecklistRow[];
+  return rows.find((row) => row.id === "schema") as ChecklistRow;
+}
+
+describe("F36 — a Browse baseline is validated on its own terms", () => {
+  it("passes the schema check for a Browse seed that has no usage or manifestEntry", () => {
+    const hooks = loadHooks();
+    // A Browse handoff never made a model call, so there is no `usage` to
+    // report and no conjure `manifestEntry`. Forcing it through
+    // `isConjureResult` failed the row forever and pinned Apply shut.
+    expect(schemaRow(browseBaseline(), hooks).state).toBe("pass");
+  });
+
+  it("passes the schema check for a deterministic tweak of a Browse baseline", () => {
+    const hooks = loadHooks();
+    // `applyDeterministicTweak` copies every own key and adds a recomputed
+    // `diff`, so the tweak of a Browse seed is `{componentName, group, files, diff}`.
+    const tweaked = browseBaseline({ diff: "" });
+    expect(schemaRow(tweaked, hooks).state).toBe("pass");
+  });
+
+  it("still fails the schema check when a Browse-shaped payload has a bad file entry", () => {
+    const hooks = loadHooks();
+    const bad = browseBaseline({ files: [{ path: "x.html", content: "hi" }] });
+    expect(schemaRow(bad, hooks).state).toBe("fail");
+  });
+
+  it("still fails the schema check when two Browse files share a path", () => {
+    const hooks = loadHooks();
+    const dupe = browseBaseline({
+      files: [
+        fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>a</button>\n`),
+        fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>b</button>\n`),
+      ],
+    });
+    expect(schemaRow(dupe, hooks).state).toBe("fail");
+  });
+
+  it("still fails the schema check when a Browse payload carries no html at all", () => {
+    const hooks = loadHooks();
+    // The preview pane must have something to render; a css-only payload is not reviewable.
+    const cssOnly = browseBaseline({
+      files: [
+        {
+          path: "components/actions/Button/Button.css",
+          content: ".b{color:red}",
+          mimeType: "text/css",
+          encoding: "utf-8" as const,
+        },
+      ],
+    });
+    expect(schemaRow(cssOnly, hooks).state).toBe("fail");
+  });
+
+  it("accepts a non-canonical preview.html, which conjure output still may not use", () => {
+    const hooks = loadHooks();
+    // `Card/preview.html` is a legitimate kit entry point (see the preview-file row), but
+    // `hasMatchingHtmlPreview` mirrors the MODEL-OUTPUT schema, so conjure keeps owing the
+    // canonical `<Name>/<Name>.html` form.
+    const files = [
+      fileEntry("components/surfaces/Card/preview.html", `${MARKER}\n<div>Card</div>\n`),
+    ];
+    expect(
+      schemaRow(browseBaseline({ componentName: "Card", group: "surfaces", files }), hooks).state,
+    ).toBe("pass");
+    expect(
+      hooks.isConjureResult(conjureResult({ componentName: "Card", group: "surfaces", files })),
+    ).toBe(false);
+  });
+
+  it("does not relax the conjure shape: a model reply still owes a usage", () => {
+    const hooks = loadHooks();
+    // Positive control for the negative above — a payload carrying a
+    // `manifestEntry` claims to be a model reply, so it must carry `usage` too.
+    const noUsage = conjureResult();
+    delete (noUsage as Record<string, unknown>).usage;
+    expect(hooks.isConjureResult(noUsage)).toBe(false);
+    expect(schemaRow(noUsage, hooks).state).toBe("fail");
+  });
+
+  it("renders a PASSING schema row after a real Browse handoff", async () => {
+    const shell = loadBrowseToReview(CARD_SOURCE);
+    await refineFromBrowse(shell);
+    const row = shell.document.querySelector('[data-check-id="schema"]');
+    // Positive control: the row must actually exist, or the assertion below
+    // would pass on a null-shaped nothing.
+    expect(row).not.toBeNull();
+    expect(row!.className).not.toContain("check-item--fail");
+    expect(row!.className).toContain("check-item--pass");
+  });
+});
+
+describe("F37 — safeFrameSrc matches browser URL resolution", () => {
+  it("rejects a backslash protocol-relative URL", () => {
+    const hooks = loadHooks();
+    // WHATWG treats `\` as `/` for special schemes, so on an https page
+    // `\\evil.example/x` resolves to `https://evil.example/x`.
+    expect(hooks.safeFrameSrc("\\\\evil.example/x")).toBe("about:blank");
+  });
+
+  it("rejects the mixed slash/backslash protocol-relative forms", () => {
+    const hooks = loadHooks();
+    expect(hooks.safeFrameSrc("/\\evil.example/x")).toBe("about:blank");
+    expect(hooks.safeFrameSrc("\\/evil.example/x")).toBe("about:blank");
+  });
+
+  it("still rejects the plain protocol-relative form", () => {
+    const hooks = loadHooks();
+    expect(hooks.safeFrameSrc("//evil.example/x")).toBe("about:blank");
+  });
+
+  it("preserves an apostrophe in a manifest path by encoding it", () => {
+    const hooks = loadHooks();
+    // Deleting the quote silently retargets the frame at a DIFFERENT file.
+    // Percent-encoding resolves to the same path the manifest names.
+    const out = hooks.safeFrameSrc("components/actions/O'Reilly/preview.html");
+    expect(out).not.toBe("about:blank");
+    expect(out).toBe("components/actions/O%27Reilly/preview.html");
+    expect(decodeURIComponent(out)).toBe("components/actions/O'Reilly/preview.html");
+  });
+
+  it("encodes rather than deletes the remaining HTML metacharacters", () => {
+    const hooks = loadHooks();
+    expect(hooks.safeFrameSrc('a"b')).toBe("a%22b");
+    expect(hooks.safeFrameSrc("a<b>c")).toBe("a%3Cb%3Ec");
+    expect(hooks.safeFrameSrc("a`b")).toBe("a%60b");
+  });
+
+  it("leaves an ordinary relative manifest path untouched", () => {
+    const hooks = loadHooks();
+    expect(hooks.safeFrameSrc("components/actions/Button/preview.html")).toBe(
+      "components/actions/Button/preview.html",
+    );
+  });
+
+  it("still allows https and data, and still rejects javascript", () => {
+    const hooks = loadHooks();
+    expect(hooks.safeFrameSrc("https://example.com/x")).toBe("https://example.com/x");
+    expect(hooks.safeFrameSrc("data:text/html;base64,PGI+aGk8L2I+")).toBe(
+      "data:text/html;base64,PGI+aGk8L2I+",
+    );
+    expect(hooks.safeFrameSrc("javascript:alert(1)")).toBe("about:blank");
   });
 });
