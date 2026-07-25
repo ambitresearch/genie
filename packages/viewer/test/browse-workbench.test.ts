@@ -181,7 +181,12 @@ describe("computeVariantTabs (Decision #5 — no schema invention)", () => {
   it("returns only Default as available; Hover/Focus/Disabled are declared-but-disabled", () => {
     const { hooks } = loadHooks();
     const tabs = hooks.computeVariantTabs({ componentName: "Button" });
-    expect(tabs.map((t: { id: string }) => t.id)).toEqual(["default", "hover", "focus", "disabled"]);
+    expect(tabs.map((t: { id: string }) => t.id)).toEqual([
+      "default",
+      "hover",
+      "focus",
+      "disabled",
+    ]);
     const [def, hover, focus, disabled] = tabs;
     expect(def.available).toBe(true);
     expect(hover.available).toBe(false);
@@ -404,9 +409,7 @@ describe("renderBrowseTree — roving tabindex (Copilot #9)", () => {
       componentName: "Card",
     });
 
-    const items = Array.from(
-      container.querySelectorAll('[role="treeitem"]'),
-    ) as HTMLElement[];
+    const items = Array.from(container.querySelectorAll('[role="treeitem"]')) as HTMLElement[];
     const tabbable = items.filter((item) => item.getAttribute("tabindex") === "0");
     expect(tabbable).toHaveLength(1);
     expect(tabbable[0].dataset.componentName).toBe("Card");
@@ -548,7 +551,9 @@ describe("initBrowseController — HMR integration (Copilot #15, AC3/AC15)", () 
     const cardItem = document.querySelector<HTMLElement>(
       '[role="treeitem"][data-component-name="Card"]',
     );
-    cardItem!.dispatchEvent(new (document.defaultView as Window).MouseEvent("click", { bubbles: true }));
+    cardItem!.dispatchEvent(
+      new (document.defaultView as Window).MouseEvent("click", { bubbles: true }),
+    );
     expect(document.querySelector(".browse-breadcrumb")?.textContent).toContain("Card");
 
     // Typing a filter that excludes "Card" from the VISIBLE tree must not
@@ -567,9 +572,7 @@ describe("initBrowseController — HMR integration (Copilot #15, AC3/AC15)", () 
 
 describe("initBrowseController — deep-link kitId guard (Copilot #8)", () => {
   it("serializes kitId into the URL on selection", () => {
-    const { hooks, document, window } = loadShell(
-      "https://viewer.example.test/?route=browse",
-    );
+    const { hooks, document, window } = loadShell("https://viewer.example.test/?route=browse");
     const controller = hooks.initBrowseController(document, {
       hostBridge: null,
       kitId: "kit-a",
@@ -803,7 +806,9 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     search.value = "does-not-match-card";
     search.dispatchEvent(new document.defaultView!.Event("input", { bubbles: true }));
 
-    expect(document.querySelector("#browse-detail")?.textContent).not.toMatch(/no longer available/i);
+    expect(document.querySelector("#browse-detail")?.textContent).not.toMatch(
+      /no longer available/i,
+    );
     expect(document.querySelector(".browse-breadcrumb")?.textContent).toContain("Card");
 
     controller.teardown();
@@ -838,7 +843,9 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     const updated = {
       ...MANIFEST,
       components: MANIFEST.components.map((c) =>
-        c.name === "Card" ? { ...c, hash: "sha256-NEW=", path: "components/surfaces/Card/preview.html" } : c,
+        c.name === "Card"
+          ? { ...c, hash: "sha256-NEW=", path: "components/surfaces/Card/preview.html" }
+          : c,
       ),
     };
     controller.update(updated);
@@ -1096,7 +1103,10 @@ describe("extractToolResultManifest (Copilot #1 — embedded workbench sync)", (
       _meta: {
         "genie/embeddedManifest": {
           ...MANIFEST,
-          components: MANIFEST.components.map((c) => ({ ...c, path: "https://cdn.example.test/x" })),
+          components: MANIFEST.components.map((c) => ({
+            ...c,
+            path: "https://cdn.example.test/x",
+          })),
         },
       },
     };

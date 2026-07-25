@@ -487,7 +487,9 @@
       metadata && metadata[TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY] !== undefined
         ? metadata[TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY]
         : structured && structured.embeddedManifest;
-    return embeddedManifest && canRenderEmbeddedManifest(embeddedManifest) ? embeddedManifest : null;
+    return embeddedManifest && canRenderEmbeddedManifest(embeddedManifest)
+      ? embeddedManifest
+      : null;
   }
 
   function renderToolResult(doc, grid, result) {
@@ -1631,7 +1633,9 @@
         item.className = "browse-tree__item";
         item.textContent = component.componentName;
         var isSelected =
-          selected && selected.group === group.name && selected.componentName === component.componentName;
+          selected &&
+          selected.group === group.name &&
+          selected.componentName === component.componentName;
         item.setAttribute("aria-selected", isSelected ? "true" : "false");
         if (isSelected) item.classList.add("browse-tree__item--active");
         item.dataset.group = group.name;
@@ -1683,7 +1687,7 @@
 
     function moveFocus(fromIndex, delta) {
       if (allItems.length === 0) return;
-      var next = ((fromIndex + delta) % allItems.length + allItems.length) % allItems.length;
+      var next = (((fromIndex + delta) % allItems.length) + allItems.length) % allItems.length;
       for (var i = 0; i < allItems.length; i++) allItems[i].setAttribute("tabindex", "-1");
       allItems[next].setAttribute("tabindex", "0");
       allItems[next].focus();
@@ -1747,7 +1751,11 @@
     var breadcrumb = doc.createElement("p");
     breadcrumb.className = "browse-breadcrumb";
     breadcrumb.textContent =
-      (state.kitName || state.kitId || "kit") + " / " + component.group + " / " + component.componentName;
+      (state.kitName || state.kitId || "kit") +
+      " / " +
+      component.group +
+      " / " +
+      component.componentName;
     container.appendChild(breadcrumb);
 
     var heading = doc.createElement("div");
@@ -1830,7 +1838,7 @@
       if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
         event.preventDefault();
         var delta = event.key === "ArrowRight" ? 1 : -1;
-        var next = ((index + delta) % tabButtons.length + tabButtons.length) % tabButtons.length;
+        var next = (((index + delta) % tabButtons.length) + tabButtons.length) % tabButtons.length;
         for (var i = 0; i < tabButtons.length; i++) tabButtons[i].setAttribute("tabindex", "-1");
         tabButtons[next].setAttribute("tabindex", "0");
         tabButtons[next].focus();
@@ -1900,7 +1908,10 @@
       ["Viewport", component.viewport],
       ["Hash", component.hash],
       ["Last modified", component.lastModified],
-      ["Tags", Array.isArray(component.tags) && component.tags.length ? component.tags.join(", ") : null],
+      [
+        "Tags",
+        Array.isArray(component.tags) && component.tags.length ? component.tags.join(", ") : null,
+      ],
     ];
     for (var m = 0; m < metaRows.length; m++) {
       var value = metaRows[m][1];
@@ -1952,7 +1963,8 @@
       copyStatus.setAttribute("aria-live", "polite");
       copyStatus.className = "browse-source__copy-status";
       copyButton.addEventListener("click", function () {
-        var clipboard = doc.defaultView && doc.defaultView.navigator && doc.defaultView.navigator.clipboard;
+        var clipboard =
+          doc.defaultView && doc.defaultView.navigator && doc.defaultView.navigator.clipboard;
         var reportSuccess = function () {
           copyStatus.textContent = "Copied.";
         };
@@ -2188,7 +2200,8 @@
     }
 
     treeContainer.addEventListener("click", function (event) {
-      var clear = event.target && event.target.closest && event.target.closest("[data-clear-filter]");
+      var clear =
+        event.target && event.target.closest && event.target.closest("[data-clear-filter]");
       if (clear && searchInput) {
         searchInput.value = "";
         renderAll();
@@ -2208,10 +2221,7 @@
     if (win) {
       try {
         var initial = parseSelection(new win.URL(win.location.href).searchParams);
-        if (
-          initial &&
-          (!initial.kitId || !options.kitId || initial.kitId === options.kitId)
-        ) {
+        if (initial && (!initial.kitId || !options.kitId || initial.kitId === options.kitId)) {
           selection = { group: initial.group, componentName: initial.componentName };
         }
       } catch {
