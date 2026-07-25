@@ -194,12 +194,19 @@ const markdownFilesUnder = (dir: string): string[] => {
 
 // Vue does not interpolate inside fenced blocks, inline code spans, or any element carrying
 // `v-pre` -- the repo's established escape hatch for showing literal `${{ secrets.X }}` syntax.
-// Strip all three before looking for a live interpolation. Fences may be indented (inside a list).
+// Drop all three before looking for a live interpolation. Fences may be indented (inside a list).
+//
+// `v-pre` is exempted by LINE rather than by matching the element, deliberately. Every use in
+// `docs/` is single-line, a line-scoped filter cannot be defeated by nesting the way a
+// tag-stripping regex can, and a hypothetical multi-line `v-pre` block would only exempt its
+// opening line -- i.e. it fails toward a noisy guard rather than a silent one.
 const stripCode = (markdown: string): string =>
   markdown
     .replace(/^[ \t]*(`{3,}|~{3,})[\s\S]*?^[ \t]*\1/gm, "")
-    .replace(/<([a-z]+)[^>]*\sv-pre[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replace(/`[^`\n]*`/g, "");
+    .replace(/`[^`\n]*`/g, "")
+    .split("\n")
+    .filter((line) => !line.includes("v-pre"))
+    .join("\n");
 
 describe("VitePress compilation safety", () => {
   it("keeps Vue interpolation syntax out of published markdown prose", () => {
