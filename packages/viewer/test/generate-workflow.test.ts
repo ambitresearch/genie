@@ -592,3 +592,102 @@ describe("buildKitContext (genie#239 / Copilot review on #246)", () => {
     expect(context).toBe('UI kit "Acme" (id: acme-kit).');
   });
 });
+
+describe("MCP-App handshake capability gate", () => {
+  function fakeHostWindow() {
+    const listeners: Record<string, Array<(event: unknown) => void>> = {};
+    const posted: unknown[] = [];
+    const parent = {
+      postMessage: (message: unknown) => posted.push(message),
+    };
+    const win = {
+      parent,
+      document: { documentElement: null, body: null },
+      addEventListener: (type: string, listener: (event: unknown) => void) => {
+        (listeners[type] ||= []).push(listener);
+      },
+      removeEventListener: (type: string, listener: (event: unknown) => void) => {
+        listeners[type] = (listeners[type] || []).filter((l) => l !== listener);
+      },
+      setTimeout: () => 0,
+      clearTimeout: () => {},
+      ResizeObserver: undefined,
+    };
+    function dispatch(data: unknown) {
+      for (const listener of listeners.message || []) {
+        listener({ source: parent, data });
+      }
+    }
+    return { win, posted, dispatch };
+  }
+
+  it("does not hand over a live bridge when the host omits hostCapabilities.serverTools", () => {
+    const { hooks } = loadHooks();
+    const { win, posted, dispatch } = fakeHostWindow();
+    const onReady = vi.fn();
+    const onUnavailable = vi.fn();
+
+    hooks.initMcpApp(
+      { getElementById: () => null, querySelectorAll: () => [] },
+      {
+        win,
+        onReady,
+        onUnavailable,
+      },
+    );
+
+    const initializeRequest = posted.at(-1) as { id: number };
+    dispatch({ jsonrpc: "2.0", id: initializeRequest.id, result: { hostCapabilities: {} } });
+
+    expect(onReady).not.toHaveBeenCalled();
+    expect(onUnavailable).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not hand over a live bridge when hostCapabilities is absent entirely", () => {
+    const { hooks } = loadHooks();
+    const { win, posted, dispatch } = fakeHostWindow();
+    const onReady = vi.fn();
+    const onUnavailable = vi.fn();
+
+    hooks.initMcpApp(
+      { getElementById: () => null, querySelectorAll: () => [] },
+      {
+        win,
+        onReady,
+        onUnavailable,
+      },
+    );
+
+    const initializeRequest = posted.at(-1) as { id: number };
+    dispatch({ jsonrpc: "2.0", id: initializeRequest.id, result: {} });
+
+    expect(onReady).not.toHaveBeenCalled();
+    expect(onUnavailable).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands over a live bridge when the host advertises hostCapabilities.serverTools", () => {
+    const { hooks } = loadHooks();
+    const { win, posted, dispatch } = fakeHostWindow();
+    const onReady = vi.fn();
+    const onUnavailable = vi.fn();
+
+    hooks.initMcpApp(
+      { getElementById: () => null, querySelectorAll: () => [] },
+      {
+        win,
+        onReady,
+        onUnavailable,
+      },
+    );
+
+    const initializeRequest = posted.at(-1) as { id: number };
+    dispatch({
+      jsonrpc: "2.0",
+      id: initializeRequest.id,
+      result: { hostCapabilities: { serverTools: {} } },
+    });
+
+    expect(onUnavailable).not.toHaveBeenCalled();
+    expect(onReady).toHaveBeenCalledTimes(1);
+  });
+});
