@@ -1041,6 +1041,75 @@ describe.skipIf(!chromiumAvailable)(
       });
     }, 30_000);
 
+    // ── F40 (Copilot round 13) — WCAG 2.2 AA §1.4.10 Reflow names 320×256 CSS
+    // px as the floor every surface must survive (400% zoom of 1280×1024), so
+    // the short viewport below is the standard, not a contrived edge case. The
+    // overlay is `position: fixed`: anything past the fold is not merely off
+    // screen, it is unreachable, because scrolling the page behind the dialog
+    // does not move the panel at all.
+    it("M7-03 \u2014 the apply dialog stays reachable on a short viewport instead of clipping its controls", async () => {
+      await withPopulatedReview(1024, 256, async (_page, frame) => {
+        await approveDraft(frame);
+        await frame.click("#apply-button");
+        await frame.waitForSelector("#apply-confirm:not([hidden])", { timeout: 5_000 });
+
+        const box = await frame.evaluate(() => {
+          const panel = document.querySelector<HTMLElement>(".review-dialog__panel");
+          const accept = document.getElementById("apply-confirm-accept");
+          const cancel = document.getElementById("apply-confirm-cancel");
+          if (!panel || !accept || !cancel) throw new Error("missing apply dialog controls");
+          const edges = (el: Element) => {
+            const rect = el.getBoundingClientRect();
+            return { top: rect.top, bottom: rect.bottom };
+          };
+          return {
+            viewport: window.innerHeight,
+            panel: edges(panel),
+            accept: edges(accept),
+            cancel: edges(cancel),
+            overflows: panel.scrollHeight > panel.clientHeight,
+            scrollable: /auto|scroll/.test(getComputedStyle(panel).overflowY),
+          };
+        });
+
+        // The panel itself never leaves the overlay, and the overlay's
+        // `--space-lg` gutter survives the bound — `100vh` would also stop the
+        // spill, but by welding the panel to the viewport edges on exactly the
+        // viewports that can least afford to lose the breathing room.
+        expect(box.panel.top).toBeGreaterThanOrEqual(12);
+        expect(box.panel.bottom).toBeLessThanOrEqual(box.viewport - 12);
+        // Bounding it is only half the fix: whatever no longer fits has to
+        // become reachable, or the clipping just moves inside the border.
+        expect(box.overflows).toBe(true);
+        expect(box.scrollable).toBe(true);
+
+        // A new scroll container is a new a11y surface — axe fails one that no
+        // keyboard user can reach. Scan the state the user lands in: scrolling
+        // first would park the heading half outside the clip and reduce this to
+        // an unresolvable-background "incomplete".
+        await assertNoBlockingViolationsInFrame(frame);
+
+        // ...and "reachable" is the assertion that actually bites. Without a
+        // scroll container the page behind the fixed overlay scrolls instead,
+        // which moves these controls by exactly 0px.
+        await frame.locator("#apply-confirm-accept").scrollIntoViewIfNeeded();
+        const reached = await frame.evaluate(() => {
+          const accept = document.getElementById("apply-confirm-accept");
+          const cancel = document.getElementById("apply-confirm-cancel");
+          if (!accept || !cancel) throw new Error("missing apply dialog controls");
+          const edges = (el: Element) => {
+            const rect = el.getBoundingClientRect();
+            return { top: rect.top, bottom: rect.bottom };
+          };
+          return { viewport: window.innerHeight, accept: edges(accept), cancel: edges(cancel) };
+        });
+        expect(reached.accept.top).toBeGreaterThanOrEqual(0);
+        expect(reached.accept.bottom).toBeLessThanOrEqual(reached.viewport);
+        expect(reached.cancel.top).toBeGreaterThanOrEqual(0);
+        expect(reached.cancel.bottom).toBeLessThanOrEqual(reached.viewport);
+      });
+    }, 30_000);
+
     // ── AC19 — the segmented pane control only EXISTS below 720px, so a
     // Tab-order assertion taken at 1440 physically cannot see it. Roving
     // tabindex means exactly one tab stop, and the inactive tab is reachable

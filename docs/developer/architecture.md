@@ -462,3 +462,26 @@ the problem. Instead the dialog's own focus is blurred, matching what a browser 
 focused element's subtree becomes hidden, and the incoming route's normal focus handling takes
 over. `closeApplyConfirm` distinguishes the two cases on a strict `=== true` flag because it is
 also registered directly as a click listener, where the first argument is an `Event`.
+
+### The apply dialog is bound to the viewport
+
+Apply is the one irreversible step in the review workflow, so its confirmation dialog has to stay
+operable on every viewport — including the 320×256 CSS px floor that WCAG 2.2 AA §1.4.10 Reflow
+defines as 400% zoom of a 1280×1024 desktop.
+
+The overlay is `position: fixed`, and that changes the consequence of overflow. In normal document
+flow a too-tall element merely spills and the page scrolls to it. Here the panel does not move when
+the page scrolls, and the background is `inert`, so anything past the fold is not off screen — it is
+unreachable. Measured in Chromium at 1024×400 with a realistic file list, the panel ended 62px below
+the fold with Cancel and Write both inside that band, and scrolling the page by 784px moved them by
+exactly 0px.
+
+The panel is therefore capped with `max-height: 100%` and made a scroll container. Capping alone
+would only move the clipping inside the border, so the two declarations are a pair. `100%` resolves
+against the overlay's content box rather than the viewport, which preserves the overlay's
+`--space-lg` gutter; `100vh` would also stop the spill, but by welding the panel to the screen edges
+on exactly the viewports that can least afford to lose the breathing room.
+
+The nested file list keeps its own `max-height` cap. On roomy viewports that cap is what scrolls and
+the panel never overflows at all; the panel's own scrolling is the safety net for the short-viewport
+case the inner cap cannot rescue.

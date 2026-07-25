@@ -1637,6 +1637,13 @@
     position: relative;
     z-index: 1;
     width: min(100%, 420px);
+    /* Copilot (round 13) — the overlay is `position: fixed`, so a panel taller
+       than the viewport does not merely spill: it is unreachable, because
+       scrolling the page behind the dialog moves it by exactly 0px and the
+       background is `inert`. `100%` resolves against the overlay's content box,
+       which keeps the outer `--space-lg` gutter on every viewport. */
+    max-height: 100%;
+    overflow-y: auto;
     padding: var(--space-lg);
     color: var(--color-ink);
     background: var(--color-paper);
