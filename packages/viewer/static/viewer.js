@@ -726,6 +726,26 @@
     );
   }
 
+  /**
+   * DRO-242 (fail closed) — validates a single `list_kits` reply entry
+   * against its canonical output shape (`{ id, name, owner, updatedAt,
+   * canEdit }`, `packages/server/src/tools/list_kits.ts`). `owner`, when
+   * present, must be a string too — it is rendered directly into the kit
+   * `<option>` label (`kits[i].owner || "local"`), so a non-string owner
+   * (e.g. an object) would otherwise reach `textContent` interpolation as
+   * `[object Object]` instead of being rejected up front.
+   */
+  function isKitEntry(kit) {
+    return Boolean(
+      isPlainObject(kit) &&
+      typeof kit.id === "string" &&
+      kit.id &&
+      typeof kit.name === "string" &&
+      typeof kit.canEdit === "boolean" &&
+      (kit.owner === undefined || typeof kit.owner === "string"),
+    );
+  }
+
   function selectInitialKit(kits, remembered) {
     var editable = Array.isArray(kits)
       ? kits.filter(function (kit) {
@@ -743,18 +763,61 @@
     return editable.length === 1 ? editable[0].id : "";
   }
 
+  /**
+   * DRO-242 — a "plain object" for schema-validation purposes: not `null`,
+   * not an array, and not any other non-object primitive. Both
+   * `isConjureResult` and `loadKits`' reply/entry checks use this so a host
+   * that swaps an expected object for an array (or vice versa) fails closed
+   * instead of accidentally satisfying a loose `typeof x === "object"` check
+   * (which is also `true` for arrays and `null` is falsy but worth being
+   * explicit about).
+   */
+  function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+
+  /**
+   * DRO-242 — a single `files[]` entry from an untrusted host reply. Only
+   * the two fields the viewer actually reads (`path`, `content`) are
+   * required here; `mimeType`/`encoding` are validated server-side
+   * (COMPONENT_SCHEMA / conjure's output schema) but are not load-bearing
+   * for anything the viewer itself renders, so requiring them here would
+   * make the viewer reject an otherwise-valid reply on a field it never
+   * touches.
+   */
+  function isConjureFileEntry(value) {
+    return Boolean(
+      isPlainObject(value) &&
+      typeof value.path === "string" &&
+      value.path &&
+      typeof value.content === "string",
+    );
+  }
+
+  /**
+   * DRO-242 (fail closed) — validates an untrusted `conjure` host reply
+   * against the canonical `{ componentName, group, files, manifestEntry }`
+   * shape (COMPONENT_SCHEMA / conjure's ConjureResult) before it is allowed
+   * to reach `drafts.add`/`renderDraft`. Previously this only checked that
+   * `files` was an array and `manifestEntry`/`usage` were truthy objects —
+   * a host could return `files: [{}]` or `files: [null]` and it would pass
+   * straight through to the Review surface. Every `files[]` entry is now
+   * individually validated via `isConjureFileEntry`, and `manifestEntry`/
+   * `usage` must themselves be plain objects (not arrays) rather than any
+   * truthy `typeof … === "object"` value.
+   */
   function isConjureResult(value) {
     return Boolean(
-      value &&
-      typeof value === "object" &&
+      isPlainObject(value) &&
       typeof value.componentName === "string" &&
       value.componentName.trim() &&
       typeof value.group === "string" &&
+      value.group &&
       Array.isArray(value.files) &&
-      value.manifestEntry &&
-      typeof value.manifestEntry === "object" &&
-      value.usage &&
-      typeof value.usage === "object",
+      value.files.length > 0 &&
+      value.files.every(isConjureFileEntry) &&
+      isPlainObject(value.manifestEntry) &&
+      isPlainObject(value.usage),
     );
   }
 
@@ -1042,14 +1105,20 @@
       }
       try {
         var reply = await bridge.callTool(LIST_KITS_TOOL, {});
-        if (!Array.isArray(reply.kits)) throw new Error("The host returned malformed UI-kit data.");
+        if (!isPlainObject(reply) || !Array.isArray(reply.kits)) {
+          throw new Error("The host returned malformed UI-kit data.");
+        }
+        // DRO-242 (fail closed) — every entry must be structurally valid
+        // (list_kits' own `{ id, name, owner, updatedAt, canEdit }` output
+        // schema) before it is trusted at all; a single malformed entry
+        // rejects the whole reply rather than being silently dropped. Only
+        // AFTER that structural check does the existing `canEdit === true`
+        // gating filter down to the editable subset.
+        if (!reply.kits.every(isKitEntry)) {
+          throw new Error("The host returned malformed UI-kit data.");
+        }
         kits = reply.kits.filter(function (kit) {
-          return (
-            kit &&
-            kit.canEdit === true &&
-            typeof kit.id === "string" &&
-            typeof kit.name === "string"
-          );
+          return kit.canEdit === true;
         });
         kitSelect.replaceChildren();
         if (!kits.length) {
@@ -1877,6 +1946,9 @@
     window.__genieViewerTestHooks.canConjure = canConjure;
     window.__genieViewerTestHooks.selectInitialKit = selectInitialKit;
     window.__genieViewerTestHooks.isConjureResult = isConjureResult;
+    window.__genieViewerTestHooks.isConjureFileEntry = isConjureFileEntry;
+    window.__genieViewerTestHooks.isKitEntry = isKitEntry;
+    window.__genieViewerTestHooks.isPlainObject = isPlainObject;
     window.__genieViewerTestHooks.createDraftStore = createDraftStore;
     window.__genieViewerTestHooks.createHostBridge = createHostBridge;
     window.__genieViewerTestHooks.initProductShell = initProductShell;

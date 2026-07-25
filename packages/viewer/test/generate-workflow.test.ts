@@ -113,6 +113,64 @@ describe("Generate workflow state", () => {
     expect(hooks.isConjureResult({ ...valid, files: undefined })).toBe(false);
     expect(hooks.isConjureResult({ ...valid, componentName: "" })).toBe(false);
   });
+
+  it("fails closed on a conjure draft with malformed files/manifestEntry/usage (DRO-242)", () => {
+    const { hooks } = loadHooks();
+    const valid = {
+      componentName: "StatusCard",
+      group: "surfaces",
+      files: [{ path: "components/surfaces/StatusCard/StatusCard.tsx", content: "export {}" }],
+      manifestEntry: { viewport: { width: 480, height: 240 } },
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    };
+    expect(hooks.isConjureResult(valid)).toBe(true);
+
+    // Empty files array — no draft content at all.
+    expect(hooks.isConjureResult({ ...valid, files: [] })).toBe(false);
+    // A files[] entry missing its content — partial file (the issue's own example).
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ path: "components/surfaces/StatusCard/StatusCard.tsx" }],
+      }),
+    ).toBe(false);
+    // A files[] entry that is a bare string, not an object.
+    expect(hooks.isConjureResult({ ...valid, files: ["not-an-object"] })).toBe(false);
+    // A null entry inside files[].
+    expect(hooks.isConjureResult({ ...valid, files: [null] })).toBe(false);
+    // manifestEntry missing entirely.
+    expect(hooks.isConjureResult({ ...valid, manifestEntry: undefined })).toBe(false);
+    // manifestEntry is an array, not a plain object.
+    expect(hooks.isConjureResult({ ...valid, manifestEntry: [] })).toBe(false);
+    // usage missing entirely.
+    expect(hooks.isConjureResult({ ...valid, usage: undefined })).toBe(false);
+    // usage is an array, not a plain object.
+    expect(hooks.isConjureResult({ ...valid, usage: [] })).toBe(false);
+    // The whole reply is an array rather than an object.
+    expect(hooks.isConjureResult([valid])).toBe(false);
+  });
+
+  it("fails closed on malformed list_kits entries (DRO-242)", () => {
+    const { hooks } = loadHooks();
+    const valid = { id: "acme-kit", name: "Acme", owner: "team", updatedAt: "now", canEdit: true };
+    expect(hooks.isKitEntry(valid)).toBe(true);
+
+    // Missing id.
+    expect(hooks.isKitEntry({ ...valid, id: undefined })).toBe(false);
+    // Empty-string id.
+    expect(hooks.isKitEntry({ ...valid, id: "" })).toBe(false);
+    // Missing name.
+    expect(hooks.isKitEntry({ ...valid, name: undefined })).toBe(false);
+    // canEdit is not a boolean (e.g. a truthy string).
+    expect(hooks.isKitEntry({ ...valid, canEdit: "true" })).toBe(false);
+    // owner present but not a string.
+    expect(hooks.isKitEntry({ ...valid, owner: { name: "team" } })).toBe(false);
+    // owner omitted entirely is fine (list_kits defaults it server-side).
+    expect(hooks.isKitEntry({ id: "acme-kit", name: "Acme", canEdit: true })).toBe(true);
+    // The entry itself is an array, not a plain object.
+    expect(hooks.isKitEntry([valid])).toBe(false);
+    expect(hooks.isKitEntry(null)).toBe(false);
+  });
 });
 
 describe("MCP host bridge", () => {
@@ -233,6 +291,33 @@ describe("Generate surface DOM states", () => {
     );
     expect((embedded.document.getElementById("kit-select") as HTMLSelectElement).disabled).toBe(
       true,
+    );
+  });
+
+  it("fails closed and shows an error when list_kits returns non-array or malformed entries (DRO-242)", async () => {
+    const nonArray = loadShell();
+    nonArray.hooks.initProductShell(nonArray.document, {
+      callTool: async () => ({ kits: "not-an-array" }),
+      destroy: () => {},
+    });
+    await settle();
+    expect(nonArray.document.getElementById("generate-error")?.hidden).toBe(false);
+    expect(nonArray.document.getElementById("kit-state")?.textContent).toContain(
+      "could not be loaded",
+    );
+    expect((nonArray.document.getElementById("kit-select") as HTMLSelectElement).value).toBe("");
+
+    const malformedEntry = loadShell();
+    malformedEntry.hooks.initProductShell(malformedEntry.document, {
+      // Editable kit missing its id — a structurally invalid entry must
+      // reject the whole reply (fail closed), not just be silently dropped.
+      callTool: async () => ({ kits: [{ name: "Acme", canEdit: true }] }),
+      destroy: () => {},
+    });
+    await settle();
+    expect(malformedEntry.document.getElementById("generate-error")?.hidden).toBe(false);
+    expect((malformedEntry.document.getElementById("kit-select") as HTMLSelectElement).value).toBe(
+      "",
     );
   });
 
