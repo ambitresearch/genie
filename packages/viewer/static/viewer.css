@@ -344,6 +344,15 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+    /* Copilot review (PR #248) — as the `1fr` grid-track column of
+       `.browse-workbench`, this panel's min-width defaults to `auto`
+       (its content's intrinsic width), so long unbreakable strings like a
+       full-length hash or a tag list force the whole grid column (and the
+       page) to overflow horizontally instead of shrinking/wrapping. Give it
+       an explicit shrink boundary and let long tokens break rather than
+       overflow. */
+    min-width: 0;
+    overflow-wrap: break-word;
   }
 
   .browse-detail__placeholder {

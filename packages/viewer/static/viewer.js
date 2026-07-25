@@ -103,6 +103,16 @@
    * `viewer.js` stays byte-identical across all three vehicles (RFC G-5).
    */
   var MANIFEST_ELEMENT_ID = "manifest";
+  // Copilot review (PR #248) — `buildGridDocument` (packages/server/src/ui/
+  // grid-resource.ts) inlines a SECOND data island under this id, carrying
+  // the full, UNFILTERED kit manifest, whenever the embedded `ui://genie/
+  // grid?...` resource's `#manifest` island was scoped down by a
+  // `componentName`/`group` query param. Browse must seed itself from THIS
+  // island (falling back to `#manifest` when it's absent — the common,
+  // already-full-kit case) so a deep link into one component can still
+  // navigate the rest of the kit, instead of being stuck with a one-
+  // component tree.
+  var MANIFEST_FULL_ELEMENT_ID = "manifest-full";
   var TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY = "genie/embeddedManifest";
   var MCP_APP_PROTOCOL_VERSION = "2026-01-26";
   var mcpAppRequestId = 0;
@@ -1425,6 +1435,24 @@
     // beyond that existed before this issue; full refine/apply is M7-03).
     function renderRefineContext(context) {
       var dl = doc.getElementById("review-refine-context");
+      // Copilot review (PR #248) — when a Refine handoff context IS present,
+      // "Conjure a component first" is misleading: the user just came FROM
+      // a component (via Browse's Refine action), not from a blank state.
+      // Swap the empty-state heading/detail copy to reflect that a refine
+      // target was supplied, while still noting full refine/apply is M7-03.
+      var heading = doc.getElementById("review-empty-heading");
+      var detail = doc.getElementById("review-empty-detail");
+      if (heading && detail) {
+        if (context) {
+          heading.textContent = "Refine handoff received";
+          detail.textContent =
+            "Refine and Apply arrive in the next workflow milestone. The component context below was passed from Browse.";
+        } else {
+          heading.textContent = "No draft to review";
+          detail.textContent =
+            "Conjure a component first. Review and Apply arrive in the next workflow milestone.";
+        }
+      }
       if (!dl) return;
       dl.replaceChildren();
       if (!context) {
@@ -1916,7 +1944,7 @@
     var railToggle = doc.createElement("button");
     railToggle.type = "button";
     railToggle.className = "browse-tree__rail-toggle";
-    railToggle.setAttribute("aria-haspopup", "true");
+    railToggle.setAttribute("aria-haspopup", "tree");
     railToggle.setAttribute("aria-expanded", "false");
     railToggle.setAttribute("aria-controls", "browse-tree-nav");
     railToggle.setAttribute("aria-label", "Open UI kit navigation");
@@ -2005,8 +2033,15 @@
     placeholderOption.value = "";
     placeholderOption.textContent = "Choose a component…";
     placeholderOption.disabled = true;
-    if (!selected) placeholderOption.selected = true;
     compactSelect.appendChild(placeholderOption);
+    // Tracks whether `selected` (if any) actually matched a component that
+    // survived the current filter. If the selected component was filtered
+    // out of the tree, no <option> below will carry `selected = true`, so
+    // the placeholder is selected instead — otherwise the browser silently
+    // falls back to selecting the FIRST real option, misrepresenting the
+    // compact <select> as pointing at a component that isn't actually the
+    // detail pane/breadcrumb's selection (Copilot review: bug #21).
+    var selectedOptionFound = false;
 
     var allItems = [];
     // Parallel lookup for the compact <select>'s options — see the option
@@ -2074,11 +2109,16 @@
         option.value = String(compactOptionEntries.length);
         compactOptionEntries.push({ group: group.name, componentName: component.componentName });
         option.textContent = group.name + " / " + component.componentName;
-        if (isSelected) option.selected = true;
+        if (isSelected) {
+          option.selected = true;
+          selectedOptionFound = true;
+        }
         compactSelect.appendChild(option);
       }
       treeEl.appendChild(section);
     }
+
+    if (!selectedOptionFound) placeholderOption.selected = true;
 
     compactSelect.addEventListener("change", function () {
       var index = Number(compactSelect.value);
@@ -2178,7 +2218,7 @@
     if (state.registered) {
       var marker = doc.createElement("span");
       marker.className = "genie-marker";
-      marker.setAttribute("aria-label", "Genie synced");
+      marker.setAttribute("aria-label", "Genie registered");
       marker.textContent = "@genie";
       titleWrap.appendChild(marker);
       titleWrap.appendChild(doc.createTextNode(" "));
@@ -2318,17 +2358,51 @@
     } else {
       iframe.setAttribute("height", String(DEFAULT_CARD_HEIGHT));
     }
-    iframe.addEventListener("load", function () {
+    // Copilot review (PR #248) — an `<iframe>` does NOT reliably emit
+    // `error` for a failed navigation: per spec/observed browser behavior, a
+    // 404/500 response or even most CSP-frame-ancestors blocks still fire
+    // `load` once the (error) document finishes loading — `error` only
+    // fires for lower-level failures (DNS/network refusal), which this
+    // same-origin preview path essentially never hits. A pure `load`/`error`
+    // listener pair therefore mislabels most real preview failures as
+    // "Preview · Default". Pragmatic mitigation: `component.path` is always
+    // a same-origin, server-relative URL, so probe it with a same-origin
+    // `fetch` BEFORE pointing the iframe at it — an HTTP-level failure
+    // response is a reliable signal `load` cannot give us. If the probe
+    // can't run at all (no `fetch`, e.g. a stripped test `doc.defaultView`)
+    // this degrades to the original `load`/`error`-only behavior rather than
+    // ever blocking the preview outright.
+    //
+    // Residual limitation: this still cannot detect a navigation that fails
+    // AFTER an initial 200 (e.g. the iframe document errors out client-side
+    // once loaded), nor a same-origin response whose body renders as a
+    // blank/broken page while returning 200 (a fetch-level check only sees
+    // the HTTP status, not the rendered result) — those remain
+    // indistinguishable from a real successful preview by this heuristic.
+    var probeFetch =
+      doc.defaultView && typeof doc.defaultView.fetch === "function" ? doc.defaultView.fetch : null;
+    var markBroken = function () {
       if (stage.classList.contains("browse-preview--broken")) return;
-      label.textContent = "Preview · Default";
-    });
-    iframe.addEventListener("error", function () {
       stage.classList.add("browse-preview--broken");
       stage.replaceChildren();
       var broken = doc.createElement("p");
       broken.textContent = "Preview unavailable.";
       stage.appendChild(broken);
+    };
+    if (probeFetch && component.path) {
+      probeFetch(component.path)
+        .then(function (response) {
+          if (!response || !response.ok) markBroken();
+        })
+        .catch(function () {
+          markBroken();
+        });
+    }
+    iframe.addEventListener("load", function () {
+      if (stage.classList.contains("browse-preview--broken")) return;
+      label.textContent = "Preview · Default";
     });
+    iframe.addEventListener("error", markBroken);
     stage.appendChild(iframe);
     container.appendChild(stage);
 
@@ -2369,7 +2443,37 @@
     // Source panel (AC10) — sanitized plain text, progressive truncation.
     var sourceBox = doc.createElement("div");
     sourceBox.className = "browse-source";
+    // Copilot review (PR #248) — a generic `div` with only `aria-label` has
+    // no accessible ROLE, so assistive tech has nowhere to expose that
+    // label as a landmark/section name; the "Component source" label was
+    // effectively unreachable. `role="region"` makes this a labelled
+    // landmark region, giving the source controls an announced section
+    // context.
+    sourceBox.setAttribute("role", "region");
     sourceBox.setAttribute("aria-label", "Component source");
+    // Copilot review (PR #248) — a stable marker so a later source-only
+    // update (see `renderBrowseDetailSource`) can locate and replace just
+    // this subpanel instead of rebuilding the entire detail pane (which
+    // would tear down and re-fetch the still-valid preview iframe above).
+    sourceBox.setAttribute("data-browse-source-panel", "true");
+    renderBrowseSourceBoxContent(doc, sourceBox, state);
+    container.appendChild(sourceBox);
+  }
+
+  /**
+   * Builds the source subpanel's content (source text / loading / error
+   * copy) into an already-created `sourceBox` container. Extracted from
+   * `renderBrowseDetail` so the source-read settle handler can update just
+   * this subpanel in place (Copilot review, PR #248) rather than replacing
+   * the whole detail pane — including its live preview iframe — every time
+   * an async source read resolves.
+   *
+   * @param {Document} doc
+   * @param {Element} sourceBox
+   * @param {{source?: string|null, sourceLoading?: boolean, hostAvailable: boolean}} state
+   */
+  function renderBrowseSourceBoxContent(doc, sourceBox, state) {
+    sourceBox.replaceChildren();
     if (typeof state.source === "string") {
       var sanitized = sanitizeSourceForDisplay(state.source);
       var pre = doc.createElement("pre");
@@ -2427,7 +2531,31 @@
         : "Source inspection requires an MCP-capable host bridge.";
       sourceBox.appendChild(unavailable);
     }
-    container.appendChild(sourceBox);
+  }
+
+  /**
+   * Updates ONLY the source subpanel of an already-rendered detail pane, in
+   * place — leaving the breadcrumb/heading/variant tabs/preview iframe
+   * untouched. Used by the async source-read settle handler (guarded by the
+   * caller's render-generation check) so resolving a source read no longer
+   * tears down and re-fetches a perfectly valid live preview iframe just to
+   * paint the source text underneath it (Copilot review, PR #248).
+   *
+   * Falls back to a full `renderBrowseDetail` re-render if the subpanel
+   * marker isn't found (e.g. an older/differently-shaped container), so
+   * behavior degrades safely rather than silently doing nothing.
+   *
+   * @param {Document} doc
+   * @param {Element} container
+   * @param {object} state
+   */
+  function renderBrowseDetailSource(doc, container, state) {
+    var sourceBox = container.querySelector('[data-browse-source-panel="true"]');
+    if (!sourceBox) {
+      renderBrowseDetail(doc, container, state);
+      return;
+    }
+    renderBrowseSourceBoxContent(doc, sourceBox, state);
   }
 
   /**
@@ -2573,16 +2701,20 @@
         // separately from source-read availability; see `refineEnabled`'s
         // own comment above.
         refineAvailable: refineEnabled,
-        // Copilot review (PR #248) — `writeRoute` only persists the URL; it
-        // does not render the Review view or fire `popstate`, so Browse
-        // stayed visible with `?route=review` in the address bar (the
-        // controller is exercised standalone in tests, with no product
-        // shell attached, so the URL write must stay here). The shell side
-        // (`setRefineContext`, in `initProductShell`) additionally routes
-        // through its own `navigate`, which re-renders/focuses Review when a
-        // real shell IS attached (the normal boot() path).
+        // Copilot review (PR #248) — this previously called
+        // `writeRoute(win, "review", false)` (a PUSH) unconditionally, before
+        // the real shell's `setRefineContext` (`initProductShell`) ran its
+        // own `navigate("review", false, true)` — which itself does a
+        // SECOND `writeRoute` push plus render/focus. That put two
+        // identical "review" history entries on the stack, so a single Back
+        // press after a Refine handoff landed back on "review" instead of
+        // Browse. `replace: true` here means this write is never itself a
+        // second history entry — it only ensures the URL reflects "review"
+        // when no shell is attached at all (the controller is exercised
+        // standalone in tests with no shell), while a REAL shell's own push
+        // (via `navigate`) remains the only entry Back has to undo.
         onRefine: function (context) {
-          if (win) writeRoute(win, "review", false);
+          if (win) writeRoute(win, "review", true);
           if (typeof options.onRefine === "function") options.onRefine(context);
         },
       };
@@ -2669,7 +2801,15 @@
         ) {
           return;
         }
-        renderBrowseDetail(doc, detailContainer, detailStateFor(resolved.component, source, false));
+        // Copilot review (PR #248) — update only the source subpanel in
+        // place, guarded by the generation/selection checks above, instead
+        // of a full `renderBrowseDetail` that would tear down and re-fetch
+        // the still-live preview iframe just to paint the resolved source.
+        renderBrowseDetailSource(
+          doc,
+          detailContainer,
+          detailStateFor(resolved.component, source, false),
+        );
       });
     }
 
@@ -2692,6 +2832,12 @@
       if (clear && searchInput) {
         searchInput.value = "";
         renderAll();
+        // Copilot review (PR #248) — after clearing the filter, `renderAll()`
+        // rebuilds the tree DOM and the "Clear filter" button (which had
+        // focus) is detached, so focus silently drops to <body>. Return
+        // focus to the search input so the user can immediately continue
+        // typing/keyboard-navigating without hunting for a focus target.
+        searchInput.focus();
       }
     });
 
@@ -2990,19 +3136,17 @@
   }
 
   /**
-   * True when component membership/order, declared group order, OR any
-   * Browse-rendered metadata field changed. Content-only `hash` changes
-   * still take the lightweight per-card reload path via `diffManifestHashes`
-   * — deliberately NOT compared here.
-   *
-   * Copilot review (PR #248) — the identity fingerprint below originally
-   * covered only path/sourcePath/name/group/viewport. Browse's detail panel
-   * (`renderBrowseDetail`) also renders `tags`, `subtitle` (breadcrumb), and
-   * `lastModified` straight from the manifest; a manifest update that changes
-   * ONLY one of those (no path/name/group/viewport/hash change) used to be
-   * invisible to both this check and `diffManifestHashes`, so
-   * `onManifestUpdate` never fired and the visible detail panel went stale.
-   * Comparing the full Browse-relevant projection closes that gap.
+   * True when component membership/order OR declared group order changed —
+   * i.e. the grid itself must be torn down and rebuilt. Deliberately
+   * excludes `hash` (a real per-card reload via `diffManifestHashes` is
+   * enough) AND excludes `tags`/`subtitle`/`lastModified` — those never
+   * change what the GRID renders, only Browse's detail panel (see
+   * `manifestBrowseMetadataChanged` below for that comparison). Critically,
+   * `lastModified` is derived from `stat(absPath).mtime` on every compile
+   * (`packages/server/src/manifest/compiler.ts`), so it changes on EVERY
+   * real edit; including it here would force the expensive full-grid
+   * `renderManifestUpdate` path on every ordinary content-hash-changing
+   * edit instead of the lightweight per-card `reloadCardByPath` path.
    *
    * @param {object} prev
    * @param {object} next
@@ -3020,9 +3164,6 @@
           name: component.name || "",
           group: component.group || "",
           viewport: component.viewport || "",
-          subtitle: component.subtitle || "",
-          lastModified: component.lastModified || "",
-          tags: Array.isArray(component.tags) ? component.tags : [],
         });
       }
       return JSON.stringify({
@@ -3031,6 +3172,45 @@
       });
     }
     return identity(prev) !== identity(next);
+  }
+
+  /**
+   * True when any Browse-rendered metadata field (`tags`, `subtitle`,
+   * `lastModified`) changed for any component, independent of `hash`/
+   * structural identity.
+   *
+   * Copilot review (PR #248) — Browse's detail panel (`renderBrowseDetail`)
+   * renders `tags`, `subtitle` (breadcrumb), and `lastModified` straight
+   * from the manifest; a manifest update that changes ONLY one of those (no
+   * path/name/group/viewport/hash change) was invisible to both
+   * `manifestStructureChanged` and `diffManifestHashes`, so `onManifestUpdate`
+   * never fired and the visible Browse detail went stale. This is checked
+   * SEPARATELY from `manifestStructureChanged` (rather than folded into it)
+   * so it only ever triggers Browse's own re-render, never the full-grid
+   * rebuild path — see that function's doc for why `lastModified` in
+   * particular must stay out of the grid-rebuild decision.
+   *
+   * @param {object} prev
+   * @param {object} next
+   * @returns {boolean}
+   */
+  function manifestBrowseMetadataChanged(prev, next) {
+    function projection(manifest) {
+      var components = (manifest && manifest.components) || [];
+      var cards = [];
+      for (var i = 0; i < components.length; i++) {
+        var component = components[i] || {};
+        var key = component.sourcePath || component.path || String(i);
+        cards.push({
+          key: key,
+          subtitle: component.subtitle || "",
+          lastModified: component.lastModified || "",
+          tags: Array.isArray(component.tags) ? component.tags : [],
+        });
+      }
+      return JSON.stringify(cards);
+    }
+    return projection(prev) !== projection(next);
   }
 
   /** Re-render from a fresh manifest while preserving the active search query. */
@@ -3153,6 +3333,14 @@
         }
         if (total > 0) bumpReloadCounter(doc, total);
       }
+      // Copilot review (PR #248) — checked against the PRE-update
+      // `lastManifest` (below reassigns it), independent of `structureChanged`/
+      // `contentChangedPaths`, so a metadata-only edit (tags/subtitle/
+      // lastModified, with no path/name/group/viewport/hash change) still
+      // notifies Browse even though it's invisible to the grid-rebuild
+      // decision above.
+      var metadataChanged =
+        Boolean(lastManifest) && manifestBrowseMetadataChanged(lastManifest, next);
       lastManifest = next;
       // M7-02 (#234) — HMR-safe Browse: re-project the SAME live tree/
       // selection against the fresh manifest on every update (structural or
@@ -3169,11 +3357,12 @@
       // (which re-runs `fetchSource`), so a selected component's preview and
       // source panel silently reloaded every 2 seconds with nothing to show
       // for it. `structureChanged` (a genuinely new/removed group or
-      // component) or a non-empty `contentChangedPaths` (a real per-card
-      // hash diff) are the only two ways `next` can differ from
-      // `lastManifest` in a way Browse should react to.
+      // component), a non-empty `contentChangedPaths` (a real per-card hash
+      // diff), or `metadataChanged` (a Browse-visible metadata-only edit) are
+      // the only ways `next` can differ from `lastManifest` in a way Browse
+      // should react to.
       if (
-        (structureChanged || contentChangedPaths.length > 0) &&
+        (structureChanged || contentChangedPaths.length > 0 || metadataChanged) &&
         typeof opts.onManifestUpdate === "function"
       ) {
         opts.onManifestUpdate(next);
@@ -3346,10 +3535,13 @@
    * `<script>`) is ever parsed here.
    *
    * @param {Document} doc
+   * @param {string=} elementId defaults to {@link MANIFEST_ELEMENT_ID}; pass
+   *   {@link MANIFEST_FULL_ELEMENT_ID} to read the full-kit island instead
+   *   (Copilot review, PR #248 — see that constant's own comment).
    * @returns {object | null}
    */
-  function readInlineManifest(doc) {
-    var el = doc.getElementById(MANIFEST_ELEMENT_ID);
+  function readInlineManifest(doc, elementId) {
+    var el = doc.getElementById(elementId || MANIFEST_ELEMENT_ID);
     if (!el) return null;
     // Only a JSON data block counts — never an executable script.
     var type = (el.getAttribute && el.getAttribute("type")) || "";
@@ -3508,6 +3700,16 @@
         // the one tier it was built for. Best-effort, like the fetch path
         // below: a throw here must never take down an otherwise-good render.
 
+        // Copilot review (PR #248) — Browse must navigate the WHOLE kit even
+        // when this embedded resource's PRIMARY `#manifest` island (`inline`,
+        // used for the grid view above and the HMR diff baseline below) was
+        // pre-filtered to one `componentName`/`group` by `buildGridDocument`.
+        // `#manifest-full` (only emitted when the request WAS filtered — see
+        // `MANIFEST_FULL_ELEMENT_ID`'s own doc) carries the same kit,
+        // unfiltered; fall back to `inline` when it's absent, the common
+        // already-full-kit case where there's nothing to widen.
+        var browseSeedManifest = readInlineManifest(doc, MANIFEST_FULL_ELEMENT_ID) || inline;
+
         // Copilot #1 (AC1/AC12/AC13) — embedded Browse must actually
         // initialize the workbench too, not just leave content in the
         // hidden `#grid`. `hostBridge` starts `null` (the handshake hasn't
@@ -3516,8 +3718,8 @@
         // controller, so any selection/filter already made survives.
         var browseController = initBrowseController(doc, {
           hostBridge: null,
-          kitId: inline && inline.name,
-          kitName: inline && inline.name,
+          kitId: browseSeedManifest && browseSeedManifest.name,
+          kitName: browseSeedManifest && browseSeedManifest.name,
           onRefine: function (context) {
             if (shellController && shellController.setRefineContext) {
               shellController.setRefineContext(context);
@@ -3525,14 +3727,16 @@
           },
         });
 
-        // Copilot review (PR #248) — seed the controller with the manifest
-        // that's ALREADY inlined, mirroring the standalone tier's fix
-        // (Copilot #2 above). `initHmr({initialManifest})` only records that
-        // value as its OWN diff baseline — it never calls `onManifestUpdate`
-        // for it — so without this explicit `update()`, embedded Browse
-        // rendered the empty-kit placeholder until a later tool-result or
-        // HMR message arrived (and stayed empty forever if neither did).
-        browseController.update(inline);
+        // Copilot review (PR #248) — seed the controller with the FULL kit
+        // manifest (falling back to whatever's inlined as `#manifest` when
+        // there's no separate full island), mirroring the standalone tier's
+        // fix (Copilot #2 above). `initHmr({initialManifest})` only records
+        // `inline` as its OWN diff baseline — it never calls
+        // `onManifestUpdate` for it — so without this explicit `update()`,
+        // embedded Browse rendered the empty-kit placeholder until a later
+        // tool-result or HMR message arrived (and stayed empty forever if
+        // neither did).
+        browseController.update(browseSeedManifest);
 
         var teardownHmr = function () {};
         try {
@@ -3702,6 +3906,7 @@
     window.__genieViewerTestHooks.readInlineManifest = readInlineManifest;
     window.__genieViewerTestHooks.wireSearch = wireSearch;
     window.__genieViewerTestHooks.MANIFEST_ELEMENT_ID = MANIFEST_ELEMENT_ID;
+    window.__genieViewerTestHooks.MANIFEST_FULL_ELEMENT_ID = MANIFEST_FULL_ELEMENT_ID;
     window.__genieViewerTestHooks.boot = boot;
     // M4-04 (DRO-266) — HMR client seam.
     window.__genieViewerTestHooks.HMR_PATH = HMR_PATH;
@@ -3713,6 +3918,7 @@
     window.__genieViewerTestHooks.applyHmrMessage = applyHmrMessage;
     window.__genieViewerTestHooks.diffManifestHashes = diffManifestHashes;
     window.__genieViewerTestHooks.manifestStructureChanged = manifestStructureChanged;
+    window.__genieViewerTestHooks.manifestBrowseMetadataChanged = manifestBrowseMetadataChanged;
     window.__genieViewerTestHooks.renderManifestUpdate = renderManifestUpdate;
     window.__genieViewerTestHooks.bumpReloadCounter = bumpReloadCounter;
     window.__genieViewerTestHooks.hmrSocketUrl = hmrSocketUrl;

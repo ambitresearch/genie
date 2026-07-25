@@ -339,29 +339,64 @@ describe("diffManifestHashes (AC4)", () => {
       ).toBe(false);
     });
 
-    it("detects tags/subtitle/lastModified-only changes (Copilot review, PR #248)", () => {
-      // Browse's detail panel renders `tags`, `subtitle` (breadcrumb), and
-      // `lastModified` straight from the manifest, but the identity
-      // fingerprint used to compare only path/sourcePath/name/group/
-      // viewport. A manifest update that changed ONLY one of these fields
-      // (no path/name/group/viewport/hash change) was invisible to both
-      // this check and `diffManifestHashes`, so `onManifestUpdate` never
-      // fired and the visible Browse detail panel went stale.
+    it("does NOT treat tags/subtitle/lastModified-only changes as structural (Copilot review, PR #248)", () => {
+      // `lastModified` is derived from `stat(absPath).mtime` on every real
+      // compile (packages/server/src/manifest/compiler.ts), so it changes on
+      // EVERY genuine edit. Including it (or the other Browse-only metadata
+      // fields) in the STRUCTURAL fingerprint would force the expensive
+      // full-grid `renderManifestUpdate` rebuild path on every ordinary
+      // content-hash-changing edit instead of the lightweight per-card
+      // `reloadCardByPath` path — see `manifestBrowseMetadataChanged` below
+      // for the separate check that keeps Browse's detail panel in sync
+      // with these fields without forcing a grid rebuild.
       const { hooks } = setup();
       const prev = twoCardManifest();
 
       const nextLastModified = twoCardManifest();
       (nextLastModified.components as Array<Record<string, unknown>>)[0]!.lastModified =
         "2026-07-02T00:00:00.000Z";
-      expect(hooks.manifestStructureChanged(prev, nextLastModified)).toBe(true);
+      expect(hooks.manifestStructureChanged(prev, nextLastModified)).toBe(false);
 
       const nextTags = twoCardManifest();
       (nextTags.components as Array<Record<string, unknown>>)[0]!.tags = ["new-tag"];
-      expect(hooks.manifestStructureChanged(prev, nextTags)).toBe(true);
+      expect(hooks.manifestStructureChanged(prev, nextTags)).toBe(false);
 
       const nextSubtitle = twoCardManifest();
       (nextSubtitle.components as Array<Record<string, unknown>>)[0]!.subtitle = "New subtitle";
-      expect(hooks.manifestStructureChanged(prev, nextSubtitle)).toBe(true);
+      expect(hooks.manifestStructureChanged(prev, nextSubtitle)).toBe(false);
+    });
+  });
+
+  describe("manifestBrowseMetadataChanged", () => {
+    it("detects tags/subtitle/lastModified-only changes that manifestStructureChanged/diffManifestHashes both miss (Copilot review, PR #248)", () => {
+      // Browse's detail panel renders `tags`, `subtitle` (breadcrumb), and
+      // `lastModified` straight from the manifest. A manifest update that
+      // changed ONLY one of these fields (no path/name/group/viewport/hash
+      // change) was invisible to both `manifestStructureChanged` and
+      // `diffManifestHashes`, so `onManifestUpdate` never fired and the
+      // visible Browse detail panel went stale. This check is kept SEPARATE
+      // from `manifestStructureChanged` so it triggers only Browse's own
+      // re-render, never the full-grid rebuild path.
+      const { hooks } = setup();
+      const prev = twoCardManifest();
+
+      const nextLastModified = twoCardManifest();
+      (nextLastModified.components as Array<Record<string, unknown>>)[0]!.lastModified =
+        "2026-07-02T00:00:00.000Z";
+      expect(hooks.manifestBrowseMetadataChanged(prev, nextLastModified)).toBe(true);
+
+      const nextTags = twoCardManifest();
+      (nextTags.components as Array<Record<string, unknown>>)[0]!.tags = ["new-tag"];
+      expect(hooks.manifestBrowseMetadataChanged(prev, nextTags)).toBe(true);
+
+      const nextSubtitle = twoCardManifest();
+      (nextSubtitle.components as Array<Record<string, unknown>>)[0]!.subtitle = "New subtitle";
+      expect(hooks.manifestBrowseMetadataChanged(prev, nextSubtitle)).toBe(true);
+    });
+
+    it("returns false when nothing Browse-relevant changed", () => {
+      const { hooks } = setup();
+      expect(hooks.manifestBrowseMetadataChanged(twoCardManifest(), twoCardManifest())).toBe(false);
     });
   });
 

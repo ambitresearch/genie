@@ -72,6 +72,20 @@ export const GRID_RESOURCE_MIME = "text/html;profile=mcp-app";
 
 /** The DOM id `viewer.js` reads the inlined manifest from (must match it). */
 export const MANIFEST_ELEMENT_ID = "manifest";
+/**
+ * Copilot review (PR #248) — a query-bearing embedded `ui://genie/grid?…
+ * &componentName=…` resource pre-filters the PRIMARY `#manifest` island down
+ * to just the requested component (`buildGridDocument` applies
+ * `filterManifest` before inlining, so the grid view only ever shows what
+ * the query asked for). But Browse — the navigable tree covering the WHOLE
+ * kit — was seeded from that SAME filtered island, so once inside a
+ * single-component embedded resource it could never navigate to any other
+ * component in the kit. This second island carries the FULL (unfiltered,
+ * still path-rewritten) manifest so Browse can navigate the whole kit while
+ * `#manifest` / the query params still drive the grid view's filter and
+ * Browse's initial selection.
+ */
+export const MANIFEST_FULL_ELEMENT_ID = "manifest-full";
 export const TOOL_RESULT_SHELL_META = "genie-tool-result-shell";
 
 /** Legacy sibling asset URIs retained for older experimental hosts. */
@@ -289,10 +303,19 @@ export function escapeJsonForScript(json: string): string {
  * (defensive — the shipped shell always has one) the script is prepended, which
  * still parses before the body script. The manifest is JSON-escaped so a
  * hostile component name/path can't break out of the script element.
+ *
+ * `elementId` defaults to {@link MANIFEST_ELEMENT_ID}; `buildGridDocument`
+ * passes {@link MANIFEST_FULL_ELEMENT_ID} for the second, unfiltered island
+ * (Copilot review, PR #248 — see that constant's doc comment) so Browse can
+ * navigate the whole kit even from a component-filtered embedded resource.
  */
-export function inlineManifest(indexHtml: string, manifest: Manifest): string {
+export function inlineManifest(
+  indexHtml: string,
+  manifest: Manifest,
+  elementId: string = MANIFEST_ELEMENT_ID,
+): string {
   const json = escapeJsonForScript(JSON.stringify(manifest));
-  const tag = `<script type="application/json" id="${MANIFEST_ELEMENT_ID}">${json}</script>`;
+  const tag = `<script type="application/json" id="${elementId}">${json}</script>`;
   const headClose = indexHtml.indexOf("</head>");
   if (headClose === -1) return tag + indexHtml;
   return indexHtml.slice(0, headClose) + tag + indexHtml.slice(headClose);
@@ -659,12 +682,23 @@ export async function buildGridDocument(
   });
 
   let manifest: Manifest = emptyManifest();
+  // Copilot review (PR #248) — the FULL (unfiltered, still card-path-
+  // rewritten) manifest for the second `#manifest-full` island, only
+  // actually populated (and only differs from `manifest`) when the request
+  // carries a `componentName`/`group` filter. Kept `undefined` otherwise so
+  // no second island is inlined for the common, already-full-kit case.
+  let fullManifest: Manifest | undefined;
   if (kitDir !== null) {
     try {
       manifest = await deps.compile(kitDir);
     } catch {
       manifest = emptyManifest(); // uncompiled/missing kit → empty grid, not an error
     }
+    const isFiltered = params.componentName !== undefined || params.group !== undefined;
+    // Capture the compiled-but-unfiltered manifest BEFORE filtering (below
+    // reassigns `manifest`), so the full-kit island reuses this compilation
+    // instead of paying for `deps.compile` twice.
+    if (isFiltered) fullManifest = manifest;
     manifest = filterManifest(manifest, {
       componentName: params.componentName,
       group: params.group,
@@ -677,6 +711,16 @@ export async function buildGridDocument(
       cardAssetKit: deps.cardAssetKit,
       onPreviewHtml: addHashes,
     });
+    if (fullManifest !== undefined) {
+      fullManifest = await rewriteCardPaths(fullManifest, {
+        kitId: params.kitId as string,
+        kitDir,
+        previewsBaseUrl: deps.previewsBaseUrl,
+        readPreviewBytes: deps.readPreviewBytes,
+        cardAssetKit: deps.cardAssetKit,
+        onPreviewHtml: addHashes,
+      });
+    }
   }
 
   let indexHtml: string;
@@ -709,8 +753,15 @@ export async function buildGridDocument(
   // than re-deriving it from the final HTML) keeps the hash tied to exactly
   // the JSON text `inlineManifest` embeds.
   scriptHashes.add(cspSha256(escapeJsonForScript(JSON.stringify(manifest))));
+  let document = inlineManifest(inlinedAssets.html, manifest);
+  if (fullManifest !== undefined) {
+    // Copilot review (PR #248) — inline the second, unfiltered island so
+    // Browse can navigate the whole kit; hash it too (same requirement as
+    // above) so the CSP allow-list actually permits it to execute/parse.
+    scriptHashes.add(cspSha256(escapeJsonForScript(JSON.stringify(fullManifest))));
+    document = inlineManifest(document, fullManifest, MANIFEST_FULL_ELEMENT_ID);
+  }
   const cspMeta = buildCspMeta(deps.previewsBaseUrl, currentHashes(), deps.exactFrameDomains);
-  const document = inlineManifest(inlinedAssets.html, manifest);
   return injectCspMeta(
     params.kitId === undefined ? markToolResultShell(document) : document,
     cspMeta,

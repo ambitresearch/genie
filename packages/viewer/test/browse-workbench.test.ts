@@ -372,6 +372,37 @@ describe("Browse detail DOM", () => {
     expect(container.querySelector(".browse-metadata")).toBeTruthy();
   });
 
+  it("detects a failed preview via a same-origin fetch probe even when the iframe only ever fires 'load' (Copilot review, PR #248)", async () => {
+    // Real browsers fire `load` (never `error`) even for a 404/500 response
+    // document — `error` only fires for lower-level network failures. This
+    // regression drives ONLY `load` (never `error`), the way a real failed
+    // navigation actually behaves, and asserts the fetch-probe mitigation
+    // still surfaces "Preview unavailable" instead of silently mislabeling
+    // the failure as a successful "Preview · Default".
+    const { hooks, document, window } = loadShell();
+    (window as unknown as { fetch: typeof fetch }).fetch = (() =>
+      Promise.resolve({ ok: false, status: 404 })) as unknown as typeof fetch;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    hooks.renderBrowseDetail(document, container, {
+      kitId: "kit-a",
+      kitName: "kit",
+      component,
+      source: null,
+      hostAvailable: false,
+    });
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    // Simulate the real-browser behavior: `load` fires even for the failed
+    // navigation's error document, `error` never fires at all.
+    iframe.dispatchEvent(new (document.defaultView as Window).Event("load"));
+    // Let the fetch probe's microtask queue settle.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(container.querySelector(".browse-preview--broken")).toBeTruthy();
+    expect(container.textContent).toMatch(/preview unavailable/i);
+  });
+
   it("renders a removed-selection state and returns null focus target info when HMR drops the component", () => {
     const { hooks, document } = loadShell();
     const container = document.createElement("div");
@@ -1165,34 +1196,6 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
   });
 });
 
-describe("renderBrowseTree — roving tabindex (Copilot #9)", () => {
-  it("demotes the first row's tabindex when a LATER row is selected, leaving exactly one tab stop", () => {
-    const { hooks, document } = loadShell();
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const tree = hooks.projectManifestToTree(MANIFEST, "");
-    // "Card" (surfaces) is the SECOND rendered row; select it.
-    hooks.renderBrowseTree(document, container, tree, null, () => {}, {
-      group: "surfaces",
-      componentName: "Card",
-    });
-
-    const items = Array.from(container.querySelectorAll('[role="treeitem"]')) as HTMLElement[];
-    const zeroTabIndex = items.filter((el) => el.getAttribute("tabindex") === "0");
-    expect(zeroTabIndex).toHaveLength(1);
-    expect(zeroTabIndex[0].dataset.componentName).toBe("Card");
-  });
-});
-
-// Copilot review (PR #248) — a "renderBrowseDetail — preview iframe tabindex
-// + tab semantics (Copilot #10/#18)" describe block duplicated the
-// roving-tabindex/iframe-tabindex/tab-a11y/loading-label assertions already
-// covered above by "renderBrowseDetail — iframe/tab a11y wiring (Copilot
-// #10/#18)" (which additionally asserts the aria-labelledby↔active-tab
-// wiring and the source-loading state). Removed the duplicate rather than
-// keeping two copies that would both need editing on any future behavior
-// change.
-
 describe("extractToolResultManifest (Copilot #1 — embedded workbench sync)", () => {
   it("extracts the embedded manifest from _meta the same way renderToolResult does", () => {
     const { hooks } = loadHooks();
@@ -1402,8 +1405,7 @@ describe("boot() error surfacing into the visible Browse workbench (Copilot revi
 
   it("surfaces a non-ok manifest response error into #browse-detail, not just the hidden #grid", async () => {
     const { hooks, document } = loadShell();
-    const notOkFetch = async () =>
-      ({ ok: false, status: 500, json: async () => ({}) }) as Response;
+    const notOkFetch = async () => ({ ok: false, status: 500, json: async () => ({}) }) as Response;
 
     await hooks.boot(document, notOkFetch);
 
@@ -1412,5 +1414,62 @@ describe("boot() error surfacing into the visible Browse workbench (Copilot revi
 
     const detail = document.getElementById("browse-detail") as HTMLElement;
     expect(detail.querySelector(".ds-error")).not.toBeNull();
+  });
+});
+
+describe("boot() seeds Browse from the full unfiltered manifest island (Copilot review, PR #248)", () => {
+  // Regression: a query-bearing embedded `ui://genie/grid?...&componentName=...`
+  // resource pre-filters the PRIMARY `#manifest` island to one component
+  // (`buildGridDocument` applies `filterManifest` before inlining it —
+  // packages/server/src/ui/grid-resource.ts). Browse used to be seeded from
+  // that SAME filtered island, so a deep link into one component could never
+  // navigate to any other component in the kit. `buildGridDocument` now also
+  // emits a second, unfiltered `#manifest-full` island specifically for
+  // Browse to seed itself from.
+
+  it("navigates the WHOLE kit tree even though #manifest is filtered to one component", async () => {
+    const { hooks, document } = loadShell();
+    const filtered = {
+      ...MANIFEST,
+      components: MANIFEST.components.filter((c) => c.name === "Card"),
+    };
+    const manifestNode = document.createElement("script");
+    manifestNode.id = "manifest";
+    manifestNode.type = "application/json";
+    manifestNode.textContent = JSON.stringify(filtered);
+    document.head.appendChild(manifestNode);
+    const fullNode = document.createElement("script");
+    fullNode.id = "manifest-full";
+    fullNode.type = "application/json";
+    fullNode.textContent = JSON.stringify(MANIFEST);
+    document.head.appendChild(fullNode);
+
+    await hooks.boot(document, async () => ({ ok: false }));
+
+    // The hidden #grid still only ever renders the filtered, query-scoped
+    // view (unchanged behavior) …
+    const grid = document.getElementById("grid") as HTMLElement;
+    expect(grid.querySelectorAll(".ds-card")).toHaveLength(1);
+
+    // … but Browse's tree must show BOTH components from the full manifest,
+    // not just the one #manifest was filtered down to.
+    const treeItems = Array.from(document.querySelectorAll('[role="treeitem"]')) as HTMLElement[];
+    const names = treeItems.map((el) => el.dataset.componentName).sort();
+    expect(names).toEqual(["Card", "Primary buttons"]);
+  });
+
+  it("falls back to the primary #manifest island when #manifest-full is absent (the common, already-full-kit case)", async () => {
+    const { hooks, document } = loadShell();
+    const manifestNode = document.createElement("script");
+    manifestNode.id = "manifest";
+    manifestNode.type = "application/json";
+    manifestNode.textContent = JSON.stringify(MANIFEST);
+    document.head.appendChild(manifestNode);
+
+    await hooks.boot(document, async () => ({ ok: false }));
+
+    const treeItems = Array.from(document.querySelectorAll('[role="treeitem"]')) as HTMLElement[];
+    const names = treeItems.map((el) => el.dataset.componentName).sort();
+    expect(names).toEqual(["Card", "Primary buttons"]);
   });
 });

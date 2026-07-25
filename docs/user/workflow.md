@@ -67,6 +67,11 @@ session (localhost/`file://`) the button is visibly disabled and explains why. R
 itself never writes to the kit — persistence remains the explicit plan → write_files
 workflow above.
 
+The read-only source panel works in every vehicle, including the standalone
+localhost/`file://` viewer: it fetches source files via a same-origin relative
+request rather than the MCP host tool bridge, so it needs no model credentials
+or host connection to display a component's file.
+
 At narrower widths the tree collapses to a 44px group rail (720–1099px) with an
 identifiable overlay for opening it, and then to a compact breadcrumb plus a "Jump to a
 component" dropdown (below 720px) — no surface ever requires horizontal scrolling of its
@@ -77,7 +82,6 @@ structural chrome.
 Type a component name in the filter to narrow the tree by name, group, or tag while you
 work. A filter that matches nothing shows a scoped "no match" state with a Clear filter
 action — distinct from an empty UI kit, which instead offers a link to Generate.
-
 
 ## Projects and screens
 
