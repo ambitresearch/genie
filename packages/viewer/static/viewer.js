@@ -108,6 +108,62 @@
   var mcpAppRequestId = 0;
   var LIST_KITS_TOOL = "mcp__genie__list_kits";
   var CONJURE_TOOL = "mcp__genie__conjure";
+  var LIST_FILES_TOOL = "mcp__genie__list_files";
+  var READ_FILE_TOOL = "mcp__genie__read_file";
+  var LIST_COMPONENTS_TOOL = "mcp__genie__list_components";
+
+  /**
+   * Kit-relative path prefix that marks a file as design-token source (genie#239).
+   * `create_kit`'s starter tree and every fixture/demo kit put token files
+   * under `tokens/` (see `packages/viewer/test/fixtures/kit/tokens/colors.css`),
+   * so this is the same convention `conjure`'s system prompt already asks the
+   * model to look for (tokens, primitives, house style) — just resolved from
+   * real kit files instead of the caller inventing them.
+   */
+  var TOKENS_DIR_PREFIX = "tokens/";
+
+  /**
+   * Canonical root stylesheet a kit may keep its shared variables/import
+   * closure in, alongside (or instead of) `tokens/**`. The viewer's own
+   * static serving (`packages/viewer/README.md:106`, `packages/viewer/src/
+   * config.ts:234`) and HMR both treat root `styles.css` as token context, so
+   * `buildKitContext` must include it too — otherwise a kit that keeps its
+   * house style here (rather than under `tokens/`) sends no styling context
+   * at all (Copilot review on #246).
+   */
+  var ROOT_STYLES_PATH = "styles.css";
+
+  /**
+   * Hard caps on how much kit context genie#239's `buildKitContext` will ever
+   * read into the `conjure` call. `read_file` already caps a single file at
+   * 256 KiB (`MAX_FILE_BYTES`, read_file.ts) — this bounds the *count* of
+   * token files read (a kit could have dozens) and the *total* character
+   * budget handed to the model, so a token-heavy kit can't balloon the
+   * request or blow past `conjure`'s own 100_000-char `kit` field cap
+   * (conjure.ts `conjureInputShape`).
+   */
+  var KIT_CONTEXT_MAX_TOKEN_FILES = 12;
+  var KIT_CONTEXT_MAX_CHARS = 20_000;
+
+  /**
+   * How many existing components' file contents `buildKitContext` will read
+   * for primitive/house-style context, beyond the bare group/name inventory
+   * (Copilot review on #246: metadata alone gives the model no actual
+   * primitive code to match). Small — a handful of representative components
+   * is enough context without ballooning the request.
+   */
+  var KIT_CONTEXT_MAX_COMPONENT_FILES = 5;
+
+  /**
+   * Overall wall-clock budget (ms) for ALL of `buildKitContext`'s tool calls
+   * combined. Each individual `read_file`/`list_*` call still inherits the
+   * host bridge's normal per-call timeout (60s), so serial reads could
+   * otherwise stall `conjure` by many minutes (Copilot review on #246).
+   * Context-gathering is best-effort by design, so once this deadline is hit
+   * we proceed with whatever partial context has resolved so far rather than
+   * waiting on slower calls.
+   */
+  var KIT_CONTEXT_DEADLINE_MS = 8_000;
 
   /**
    * Fallback card height (px) for a named/unparseable viewport (e.g. "desktop").
@@ -685,6 +741,20 @@
           win.clearTimeout(initializeTimer);
           initializeTimer = null;
         }
+        // A host can complete the `ui/initialize` handshake without actually
+        // advertising tool-proxy support. MCP Apps signals that support via
+        // `hostCapabilities.serverTools` in the InitializeResult — gate on it
+        // explicitly instead of treating any successful reply as "ready",
+        // otherwise a handshake-only host still enables Conjure and only
+        // fails later at `tools/call` time.
+        var serverToolsAvailable = Boolean(
+          data.result && data.result.hostCapabilities && data.result.hostCapabilities.serverTools,
+        );
+        if (!serverToolsAvailable) {
+          post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+          onUnavailable();
+          return;
+        }
         post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
         hostBridge = createHostBridge(win, host, opts.onProgress);
         onReady(hostBridge, data.result);
@@ -978,6 +1048,198 @@
       progress.hidden = false;
     }
 
+    /**
+     * True when a kit-relative path is design-token/house-style source: either
+     * inside `tokens/**` or the canonical root `styles.css` (Copilot review on
+     * #246 — the root file carries a kit's shared variables/import closure
+     * just as much as `tokens/**` does; see `ROOT_STYLES_PATH`'s doc comment).
+     */
+    function isKitStyleContextFile(path) {
+      return path === ROOT_STYLES_PATH || path.indexOf(TOKENS_DIR_PREFIX) === 0;
+    }
+
+    /**
+     * Resolve `promise` but never wait longer than `ms` for it: resolves to
+     * `null` (rather than rejecting) on timeout OR on the wrapped promise's own
+     * rejection, so callers can `Promise.all` a batch of these without any one
+     * slow/failing call sinking the others or the overall deadline (Copilot
+     * review on #246 — `buildKitContext`'s tool calls used to run serially,
+     * each inheriting the host bridge's full 60s per-call timeout).
+     */
+    function withDeadline(promise, ms) {
+      return new Promise(function (resolve) {
+        var settled = false;
+        var timer = win.setTimeout(
+          function () {
+            if (settled) return;
+            settled = true;
+            resolve(null);
+          },
+          Math.max(0, ms),
+        );
+        promise.then(
+          function (value) {
+            if (settled) return;
+            settled = true;
+            win.clearTimeout(timer);
+            resolve(value);
+          },
+          function () {
+            if (settled) return;
+            settled = true;
+            win.clearTimeout(timer);
+            resolve(null);
+          },
+        );
+      });
+    }
+
+    /**
+     * genie#239 — resolve the SELECTED kit's real compiled context (tokens +
+     * primitives/components) instead of handing `conjure` just its display
+     * name. Reuses tools the viewer's host already exposes — `list_files`,
+     * `read_file`, `list_components` — so this needs no new server contract
+     * and `conjure`'s `kit` field stays the free-form string it already is
+     * (#233/M7-01: "reuse the existing conjure contract, this is not a
+     * redesign of the generation engine").
+     *
+     * All tool calls (the two `list_*` calls, then every `read_file` call) run
+     * CONCURRENTLY and share one overall `KIT_CONTEXT_DEADLINE_MS` wall-clock
+     * budget — not the host bridge's full per-call timeout — so a slow or
+     * unresponsive host can delay `conjure` by at most that budget, not by
+     * minutes (Copilot review on #246).
+     *
+     * Best-effort by design: any tool failure or deadline miss here (a host
+     * that doesn't implement these verbs yet, a slow kit, etc.) degrades to
+     * partial context, and total failure falls back to the OLD
+     * display-name-only behavior rather than blocking generation — losing
+     * kit-fidelity is strictly better than losing the ability to generate at
+     * all.
+     *
+     * @param {{callTool(name:string,args:object):Promise<object>}} hostBridge
+     * @param {string} kitId
+     * @param {string} kitName
+     * @param {number} [deadlineMs] Overall wall-clock budget in ms. Defaults
+     *   to `KIT_CONTEXT_DEADLINE_MS`; overridable so tests can exercise the
+     *   "deadline elapses" path without waiting on the real production
+     *   value (Copilot review on #246 — a test previously waited on the
+     *   real 8s `KIT_CONTEXT_DEADLINE_MS`, adding 8s of real wall-clock time
+     *   to every run that hit it).
+     * @returns {Promise<string>}
+     */
+    async function buildKitContext(hostBridge, kitId, kitName, deadlineMs) {
+      var sections = ['UI kit "' + kitName + '" (id: ' + kitId + ")."];
+      var budget = KIT_CONTEXT_MAX_CHARS - sections[0].length;
+      var deadline =
+        Date.now() + (typeof deadlineMs === "number" ? deadlineMs : KIT_CONTEXT_DEADLINE_MS);
+      function remaining() {
+        return deadline - Date.now();
+      }
+
+      var results = await Promise.all([
+        withDeadline(hostBridge.callTool(LIST_FILES_TOOL, { kitId: kitId }), remaining()),
+        withDeadline(hostBridge.callTool(LIST_COMPONENTS_TOOL, { kitId: kitId }), remaining()),
+      ]);
+      var filesReply = results[0];
+      var componentsReply = results[1];
+
+      var files = Array.isArray(filesReply && filesReply.files) ? filesReply.files : [];
+      // Root `styles.css` is prioritized ahead of `tokens/**` entries so it
+      // survives KIT_CONTEXT_MAX_TOKEN_FILES truncation on token-heavy kits.
+      var styleFiles = files
+        .filter(function (entry) {
+          return entry && typeof entry.path === "string" && isKitStyleContextFile(entry.path);
+        })
+        .sort(function (a, b) {
+          return (a.path === ROOT_STYLES_PATH ? 0 : 1) - (b.path === ROOT_STYLES_PATH ? 0 : 1);
+        })
+        .slice(0, KIT_CONTEXT_MAX_TOKEN_FILES);
+
+      var components = Array.isArray(componentsReply && componentsReply.components)
+        ? componentsReply.components
+        : [];
+      var componentSampleTargets = components
+        .filter(function (entry) {
+          return entry && typeof entry.path === "string";
+        })
+        .slice(0, KIT_CONTEXT_MAX_COMPONENT_FILES);
+
+      // Read every style file and the bounded component sample concurrently —
+      // each individually capped by the SAME shared deadline — rather than in
+      // series, so one slow file can't crowd out the rest of the budget.
+      var readTargets = styleFiles
+        .map(function (entry) {
+          return { path: entry.path, label: entry.path };
+        })
+        .concat(
+          componentSampleTargets.map(function (entry) {
+            return {
+              path: entry.path,
+              label: entry.group + "/" + entry.name + " (" + entry.path + ")",
+            };
+          }),
+        );
+
+      var reads = await Promise.all(
+        readTargets.map(function (target) {
+          return withDeadline(
+            hostBridge.callTool(READ_FILE_TOOL, { kitId: kitId, path: target.path }),
+            remaining(),
+          ).then(function (fileReply) {
+            return { label: target.label, fileReply: fileReply };
+          });
+        }),
+      );
+
+      var styleReadCount = styleFiles.length;
+      for (var i = 0; i < reads.length && budget > 0; i++) {
+        var isStyleRead = i < styleReadCount;
+        var fileReply = reads[i].fileReply;
+        if (fileReply && fileReply.encoding === "utf-8" && typeof fileReply.content === "string") {
+          var heading = isStyleRead
+            ? "--- " + reads[i].label + " ---"
+            : "--- component: " + reads[i].label + " ---";
+          // The heading itself counts against `budget` too — slicing only the
+          // file content and then prepending the heading on top of that
+          // slice let the assembled chunk exceed `budget` (Copilot review on
+          // #246).
+          var contentBudget = budget - heading.length - 1; /* -1 for the "\n" join */
+          if (contentBudget <= 0) continue;
+          var chunk = heading + "\n" + fileReply.content.slice(0, contentBudget);
+          sections.push(chunk);
+          budget -= chunk.length;
+        }
+        /* an unreadable/timed-out file must not sink the whole context. */
+      }
+
+      if (components.length && budget > 0) {
+        var namesPrefix = "Existing primitives/components: ";
+        var names = components
+          .map(function (component) {
+            return component.group + "/" + component.name;
+          })
+          .join(", ");
+        // Same accounting bug as above: this line was appended unconditionally
+        // AFTER the budget-tracked loop, so it could push the assembled
+        // context past KIT_CONTEXT_MAX_CHARS (and conjure's own kit-schema
+        // cap) regardless of how much budget remained. Truncate to what's left.
+        var namesBudget = budget - namesPrefix.length;
+        if (namesBudget > 0) {
+          sections.push(namesPrefix + names.slice(0, namesBudget));
+        }
+      }
+
+      // Belt-and-suspenders: the per-chunk budget accounting above should
+      // already keep the assembled string within KIT_CONTEXT_MAX_CHARS, but
+      // the "\n\n" join separators between sections aren't accounted for in
+      // `budget`, so hard-cap the final string as a last line of defense
+      // (Copilot review on #246).
+      var assembled = sections.join("\n\n");
+      return assembled.length > KIT_CONTEXT_MAX_CHARS
+        ? assembled.slice(0, KIT_CONTEXT_MAX_CHARS)
+        : assembled;
+    }
+
     function renderDraft(draft) {
       doc.getElementById("review-empty").hidden = true;
       doc.getElementById("draft-review").hidden = false;
@@ -1025,9 +1287,18 @@
       submit.textContent = "✦ Conjuring…";
       updateGate();
       try {
+        // genie#239 — resolve the real kit context (tokens/primitives), not
+        // just the display name. Best-effort: falls back to `selectedKit.name`
+        // alone if context-gathering throws (see buildKitContext's header).
+        var kitContext = selectedKit.name;
+        try {
+          kitContext = await buildKitContext(bridge, selectedKit.id, selectedKit.name);
+        } catch {
+          /* fall back to the display name — generation must still proceed. */
+        }
         var result = await bridge.callTool(CONJURE_TOOL, {
           kitId: selectedKit.id,
-          kit: selectedKit.name,
+          kit: kitContext,
           prompt: prompt.value.trim(),
           model: modelSelect.value,
         });
@@ -1191,6 +1462,14 @@
         if (inFlight) showProgress(message);
       },
       setRefineContext: renderRefineContext,
+      // Exposed for direct unit testing of context-gathering behavior (token
+      // files, root styles.css, component sampling, deadline handling)
+      // without having to drive the full submitGenerate flow end to end.
+      // `deadlineMs` lets tests override KIT_CONTEXT_DEADLINE_MS so the
+      // "deadline elapses" case doesn't have to wait on the real 8s value.
+      buildKitContext: function (hostBridge, kitId, kitName, deadlineMs) {
+        return buildKitContext(hostBridge, kitId, kitName, deadlineMs);
+      },
     };
   }
 
@@ -1520,37 +1799,14 @@
     container.replaceChildren();
     var select = typeof onSelect === "function" ? onSelect : function () {};
 
-    if (tree.isEmptyKit) {
-      var emptyBox = doc.createElement("div");
-      emptyBox.className = "browse-tree__empty";
-      var heading = doc.createElement("p");
-      heading.textContent = "No components yet — Conjure your first component.";
-      var link = doc.createElement("a");
-      link.setAttribute("href", "?route=generate");
-      link.setAttribute("data-route-link", "generate");
-      link.textContent = "Go to Generate";
-      emptyBox.append(heading, link);
-      container.appendChild(emptyBox);
-      return;
-    }
-
-    if (tree.isNoMatch) {
-      var noMatchBox = doc.createElement("div");
-      noMatchBox.className = "browse-tree__no-match";
-      var noMatchMsg = doc.createElement("p");
-      noMatchMsg.textContent = 'No components match "' + (activeSearch || "") + '".';
-      var clear = doc.createElement("button");
-      clear.type = "button";
-      clear.setAttribute("data-clear-filter", "true");
-      clear.textContent = "Clear filter";
-      noMatchBox.append(noMatchMsg, clear);
-      container.appendChild(noMatchBox);
-      return;
-    }
-
     var treeEl = doc.createElement("div");
-    treeEl.setAttribute("role", "tree");
-    treeEl.setAttribute("aria-label", "UI kit components");
+    // Copilot review (PR #248, a11y) — `role="tree"` requires ARIA
+    // `treeitem` children (`aria-required-children`); it's only set once we
+    // know we're building the REAL tree branch below. The empty-kit and
+    // no-match states render a plain message/action instead, so `treeEl`
+    // stays a plain unlabeled `div` for those (still gets the rail-toggle/
+    // overlay/compact-nav responsive treatment — just not the `tree` role
+    // it doesn't structurally satisfy).
     treeEl.className = "browse-tree";
     treeEl.id = "browse-tree-nav";
 
@@ -1564,6 +1820,18 @@
     // (`browse-tree--overlay-open`) without covering focus invisibly — the
     // toggle itself IS the 44px rail control, and its `aria-expanded`/
     // `aria-controls` make the relationship programmatically discoverable.
+    //
+    // Copilot review (PR #248) — this rail toggle, the overlay `treeEl`, and
+    // the <720px `compactNav` below are now ALWAYS built, even for the
+    // empty-kit and no-match states. The earlier revision returned before
+    // building any of this responsive chrome for those two states, so at
+    // the 720–1099px breakpoint (where `.tree-sidebar` collapses the raw
+    // sidebar column to 44px and hides `#browse-tree-nav` off-canvas by
+    // default) their message + Clear-filter/Generate action rendered
+    // directly inside that 44px column instead of inside the overlay,
+    // risking unusable/overflowing layout. The empty/no-match content is
+    // now placed INSIDE `treeEl` (see below), so it participates in the
+    // same rail/overlay/compact-nav responsive behavior as the real tree.
     var railToggle = doc.createElement("button");
     railToggle.type = "button";
     railToggle.className = "browse-tree__rail-toggle";
@@ -1576,7 +1844,9 @@
       var open = treeEl.classList.toggle("browse-tree--overlay-open");
       railToggle.setAttribute("aria-expanded", open ? "true" : "false");
       if (open) {
-        var firstTabbable = treeEl.querySelector('[role="treeitem"][tabindex="0"]');
+        var firstTabbable = treeEl.querySelector(
+          '[role="treeitem"][tabindex="0"], [data-clear-filter], [data-route-link]',
+        );
         if (firstTabbable && typeof firstTabbable.focus === "function") firstTabbable.focus();
       }
     });
@@ -1600,6 +1870,53 @@
     compactBreadcrumb.textContent = selected
       ? selected.group + " / " + selected.componentName
       : "No component selected";
+    compactNav.appendChild(compactBreadcrumb);
+
+    if (tree.isEmptyKit) {
+      var emptyBox = doc.createElement("div");
+      emptyBox.className = "browse-tree__empty";
+      var heading = doc.createElement("p");
+      heading.textContent = "No components yet — Conjure your first component.";
+      var link = doc.createElement("a");
+      link.setAttribute("href", "?route=generate");
+      link.setAttribute("data-route-link", "generate");
+      link.textContent = "Go to Generate";
+      emptyBox.append(heading, link);
+      treeEl.appendChild(emptyBox);
+      // Copilot review (PR #248) — <720px hides `treeEl` entirely (CSS) and
+      // shows only `compactNav`, so the message needs its OWN copy there
+      // too, not just inside the (now off-canvas-at-this-width) tree.
+      compactNav.appendChild(emptyBox.cloneNode(true));
+      container.append(railToggle, treeEl, compactNav);
+      return;
+    }
+
+    if (tree.isNoMatch) {
+      var noMatchBox = doc.createElement("div");
+      noMatchBox.className = "browse-tree__no-match";
+      var noMatchMsg = doc.createElement("p");
+      noMatchMsg.textContent = 'No components match "' + (activeSearch || "") + '".';
+      var clear = doc.createElement("button");
+      clear.type = "button";
+      clear.setAttribute("data-clear-filter", "true");
+      clear.textContent = "Clear filter";
+      noMatchBox.append(noMatchMsg, clear);
+      treeEl.appendChild(noMatchBox);
+      // Copilot review (PR #248) — same <720px rationale as isEmptyKit
+      // above: give the compact nav its own live copy of the Clear-filter
+      // action rather than one hidden inside the off-canvas tree. The
+      // `container`-level click handler on `[data-clear-filter]` (below)
+      // matches by attribute, not by node identity, so either copy works.
+      compactNav.appendChild(noMatchBox.cloneNode(true));
+      container.append(railToggle, treeEl, compactNav);
+      return;
+    }
+
+    // Real tree branch — now safe to declare the ARIA `tree` role, since
+    // only `treeitem` children (built below) get appended to `treeEl`.
+    treeEl.setAttribute("role", "tree");
+    treeEl.setAttribute("aria-label", "UI kit components");
+
     var compactSelect = doc.createElement("select");
     compactSelect.className = "browse-tree__compact-select";
     compactSelect.setAttribute("aria-label", "Jump to a component");
@@ -1672,7 +1989,7 @@
       if (sep === -1) return;
       select({ group: value.slice(0, sep), componentName: value.slice(sep + 1) });
     });
-    compactNav.append(compactBreadcrumb, compactSelect);
+    compactNav.appendChild(compactSelect);
 
     function activate(item) {
       select({ group: item.dataset.group, componentName: item.dataset.componentName });
@@ -1733,7 +2050,7 @@
    *
    * @param {Document} doc
    * @param {HTMLElement} container
-   * @param {{kitId: string, kitName?: string, component: object, source: string|null|undefined, sourceLoading?: boolean, hostAvailable: boolean, registered?: boolean, validated?: boolean, onRefine?: (ctx: object) => void}} state
+   * @param {{kitId: string, kitName?: string, component: object, source: string|null|undefined, sourceLoading?: boolean, hostAvailable: boolean, refineAvailable?: boolean, registered?: boolean, validated?: boolean, onRefine?: (ctx: object) => void}} state
    */
   function renderBrowseDetail(doc, container, state) {
     container.replaceChildren();
@@ -1779,14 +2096,19 @@
     refineButton.className = "btn-clay";
     refineButton.setAttribute("data-refine-action", "true");
     refineButton.textContent = "Refine →";
-    if (!state.hostAvailable) {
+    // Copilot review (PR #248, AC13) — gated on `refineAvailable` (a real
+    // MCP-App host bridge), NOT `hostAvailable` (which is also true for the
+    // standalone source-read-only adapter and would wrongly enable Refine
+    // for browser-only users — see `refineEnabled`'s comment in
+    // `initBrowseController`).
+    if (!state.refineAvailable) {
       refineButton.disabled = true;
       refineButton.setAttribute("aria-disabled", "true");
     }
     heading.appendChild(refineButton);
     container.appendChild(heading);
 
-    if (!state.hostAvailable) {
+    if (!state.refineAvailable) {
       var refineExplain = doc.createElement("p");
       refineExplain.className = "browse-refine-explain";
       refineExplain.textContent =
@@ -1838,7 +2160,21 @@
       if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
         event.preventDefault();
         var delta = event.key === "ArrowRight" ? 1 : -1;
-        var next = (((index + delta) % tabButtons.length) + tabButtons.length) % tabButtons.length;
+        // Copilot review (PR #248) — with only Default enabled (Decision
+        // #5), a single step always landed on a disabled declared-but-
+        // unavailable tab, which cannot receive focus: `tabButtons[next]`
+        // kept `tabindex=-1` and `.focus()` was a no-op, so the roving
+        // tabindex silently stuck (ArrowRight then did nothing on repeat,
+        // since focus never actually left Default). Step past every
+        // disabled tab in the arrow's direction; if every OTHER tab is
+        // disabled, this converges back on the current index and is a
+        // harmless no-op, matching a single real tab in the tablist.
+        var next = index;
+        for (var step = 0; step < tabButtons.length; step++) {
+          next = (((next + delta) % tabButtons.length) + tabButtons.length) % tabButtons.length;
+          if (!tabButtons[next].disabled) break;
+        }
+        if (tabButtons[next].disabled) return;
         for (var i = 0; i < tabButtons.length; i++) tabButtons[i].setAttribute("tabindex", "-1");
         tabButtons[next].setAttribute("tabindex", "0");
         tabButtons[next].focus();
@@ -2054,6 +2390,16 @@
     var manifest = { components: [], groups: [] };
     var selection = null; // {group, componentName}
     var hostBridge = options.hostBridge || null;
+    // Copilot review (PR #248, AC13) — source-read capability and Refine
+    // capability are NOT the same thing. `hostBridge` here may be the
+    // standalone `createStandaloneSourceBridge` adapter, which only ever
+    // supports `mcp__genie__read_file` and explicitly rejects everything
+    // else (never Refine/Conjure — Decision #6). `refineEnabled` tracks the
+    // REAL MCP-App host bridge only, and is flipped true exclusively by
+    // `setHostBridge` (the embedded tier's post-handshake callback) — the
+    // standalone tier never calls `setHostBridge`, so this stays false there
+    // even though `hostBridge` is truthy for source reads.
+    var refineEnabled = false;
     // AC3/Copilot #7 — a monotonic generation counter. Every `renderAll()`
     // call bumps it and captures its own value; an in-flight async source
     // read is only allowed to commit if the generation it captured is STILL
@@ -2121,6 +2467,10 @@
         source: source,
         sourceLoading: sourceLoading,
         hostAvailable: Boolean(hostBridge),
+        // Copilot review (PR #248, AC13) — gates the Refine button
+        // separately from source-read availability; see `refineEnabled`'s
+        // own comment above.
+        refineAvailable: refineEnabled,
         onRefine: function (context) {
           if (win) writeRoute(win, "review", false);
           if (typeof options.onRefine === "function") options.onRefine(context);
@@ -2248,6 +2598,12 @@
       // the whole controller (and losing the live selection/filter state).
       setHostBridge: function (nextBridge) {
         hostBridge = nextBridge || null;
+        // Copilot review (PR #248, AC13) — `setHostBridge` is ONLY ever
+        // called from the embedded tier's real MCP-App handshake
+        // (`onReady`/`onUnavailable` in `boot()`), never by the standalone
+        // tier's `createStandaloneSourceBridge` path. So this is exactly the
+        // signal that a real, Refine-capable host is present.
+        refineEnabled = Boolean(nextBridge);
         renderAll();
       },
       teardown: function () {
@@ -2605,14 +2961,16 @@
 
     function applyFetchedManifest(next) {
       if (!next) return;
-      if (!lastManifest || manifestStructureChanged(lastManifest, next)) {
+      var structureChanged = !lastManifest || manifestStructureChanged(lastManifest, next);
+      var contentChangedPaths = [];
+      if (structureChanged) {
         renderManifestUpdate(doc, grid, next);
         bumpReloadCounter(doc, 1);
       } else {
-        var changed = diffManifestHashes(lastManifest, next);
+        contentChangedPaths = diffManifestHashes(lastManifest, next);
         var total = 0;
-        for (var i = 0; i < changed.length; i++) {
-          total += reloadCardByPath(grid, changed[i], ++hmrReloadToken);
+        for (var i = 0; i < contentChangedPaths.length; i++) {
+          total += reloadCardByPath(grid, contentChangedPaths[i], ++hmrReloadToken);
         }
         if (total > 0) bumpReloadCounter(doc, total);
       }
@@ -2622,7 +2980,25 @@
       // content-only alike), never resetting an unrelated selection/filter
       // (see `initBrowseController`'s own doc for why re-resolving-by-
       // identity is safe here).
-      if (typeof opts.onManifestUpdate === "function") opts.onManifestUpdate(next);
+      //
+      // Copilot review (PR #248) — but only when the manifest actually
+      // changed. Standalone/localhost Browse polls every
+      // `HMR_POLL_INTERVAL_MS` (2s) unconditionally (no WebSocket), and
+      // every one of those ticks used to call `onManifestUpdate` even for a
+      // byte-equivalent response — `initBrowseController.update()` treats
+      // that as "manifest changed" unconditionally and re-renders detail
+      // (which re-runs `fetchSource`), so a selected component's preview and
+      // source panel silently reloaded every 2 seconds with nothing to show
+      // for it. `structureChanged` (a genuinely new/removed group or
+      // component) or a non-empty `contentChangedPaths` (a real per-card
+      // hash diff) are the only two ways `next` can differ from
+      // `lastManifest` in a way Browse should react to.
+      if (
+        (structureChanged || contentChangedPaths.length > 0) &&
+        typeof opts.onManifestUpdate === "function"
+      ) {
+        opts.onManifestUpdate(next);
+      }
     }
 
     function finishManifestFetch() {
@@ -2850,12 +3226,38 @@
         // path (no `..` segments, no scheme, no leading slash) — the same
         // boundary a real host's read-file tool would enforce server-side
         // (AC16), kept here since this adapter has no server to defer to.
+        //
+        // Copilot review (PR #248) — the original check only rejected a
+        // literal `..` substring and a literal leading `/`, which the browser
+        // URL parser doesn't treat as the only escape hatches: (1) it treats
+        // backslashes as forward slashes for http(s) URLs, so
+        // `\\evil.example/x` resolves same as `//evil.example/x` (protocol-
+        // relative, off-origin) without ever containing a literal `/` at
+        // index 0; and (2) a percent-encoded segment (`%2e%2e`, `%2E%2e`,
+        // etc.) doesn't contain the literal string `..` pre-decode, but
+        // normalizes to `..` once `fetchImpl` (the real `fetch`) parses it.
+        // Decode first, then reject on backslashes, any leading separator,
+        // and any decoded `.`/`..` segment — closing both bypasses.
         var path = args.path;
+        var decodedPath;
+        try {
+          decodedPath = decodeURIComponent(path);
+        } catch {
+          return Promise.reject(new Error("Refusing to read an unsafe path."));
+        }
+        var segments = decodedPath.split(/[\\/]+/);
+        var hasUnsafeSegment = segments.some(function (segment) {
+          return segment === "." || segment === "..";
+        });
         if (
           !path ||
-          path.indexOf("..") !== -1 ||
+          path.indexOf("\\") !== -1 ||
+          decodedPath.indexOf("\\") !== -1 ||
+          hasUnsafeSegment ||
           /^[a-z][a-z0-9+.-]*:/i.test(path) ||
-          path.charAt(0) === "/"
+          /^[a-z][a-z0-9+.-]*:/i.test(decodedPath) ||
+          path.charAt(0) === "/" ||
+          decodedPath.charAt(0) === "/"
         ) {
           return Promise.reject(new Error("Refusing to read an unsafe path."));
         }
@@ -2910,6 +3312,15 @@
             }
           },
         });
+
+        // Copilot review (PR #248) — seed the controller with the manifest
+        // that's ALREADY inlined, mirroring the standalone tier's fix
+        // (Copilot #2 above). `initHmr({initialManifest})` only records that
+        // value as its OWN diff baseline — it never calls `onManifestUpdate`
+        // for it — so without this explicit `update()`, embedded Browse
+        // rendered the empty-kit placeholder until a later tool-result or
+        // HMR message arrived (and stayed empty forever if neither did).
+        browseController.update(inline);
 
         var teardownHmr = function () {};
         try {
@@ -3044,6 +3455,7 @@
   if (typeof window !== "undefined" && window.__genieViewerTestHooks) {
     window.__genieViewerTestHooks.MANIFEST_URL = MANIFEST_URL;
     window.__genieViewerTestHooks.DEFAULT_CARD_HEIGHT = DEFAULT_CARD_HEIGHT;
+    window.__genieViewerTestHooks.KIT_CONTEXT_DEADLINE_MS = KIT_CONTEXT_DEADLINE_MS;
     window.__genieViewerTestHooks.parseViewport = parseViewport;
     window.__genieViewerTestHooks.groupByGroup = groupByGroup;
     window.__genieViewerTestHooks.computeGroupOrder = computeGroupOrder;

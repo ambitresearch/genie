@@ -896,7 +896,7 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     const { hooks, document, window } = loadShell();
     let received: unknown = null;
     const controller = hooks.initBrowseController(document, {
-      hostBridge: { callTool: () => Promise.resolve({}), destroy: () => {} },
+      hostBridge: null,
       kitId: "kit-a",
       kitName: "kit",
       onRefine: (context: unknown) => {
@@ -904,6 +904,11 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
       },
     });
     controller.update(MANIFEST);
+    // Refine requires a REAL MCP-App host, signaled only via `setHostBridge`
+    // (see PR #248 review — AC13). Passing `hostBridge` at construction is
+    // what the standalone tier's source-read-only adapter also does, and
+    // must NOT by itself enable Refine.
+    controller.setHostBridge({ callTool: () => Promise.resolve({}), destroy: () => {} });
 
     const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
       (el) => el.dataset.componentName === "Card",
