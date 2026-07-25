@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/ambitresearch/genie/compare/viewer-v0.1.1...viewer-v0.1.2) (2026-07-25)
+
+
+### Bug Fixes
+
+* **viewer:** pass real kit context (tokens/primitives) to conjure ([#246](https://github.com/ambitresearch/genie/issues/246)) ([7fe8626](https://github.com/ambitresearch/genie/commit/7fe8626dc83e36f5aa53ce894c36be03163d8af2))
+
 ## [0.1.1](https://github.com/ambitresearch/genie/compare/viewer-v0.1.0...viewer-v0.1.1) (2026-07-20)
 
 
