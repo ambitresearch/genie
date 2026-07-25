@@ -217,8 +217,15 @@ describe("startWatcher", () => {
   });
 
   it("AC3: independent debounce windows per type — a tokens burst doesn't hold back a ready preview flush", async () => {
+    // A larger, explicit debounce window (well above the 100ms default) so
+    // the "sample the gap between the two flushes" assertion below has
+    // generous margin on both sides instead of racing a loaded/slow CI box
+    // with only ~30ms of slack either way (the original 100ms-default
+    // version of this test intermittently failed in CI for exactly that
+    // reason).
+    const testDebounceMs = 300;
     const onChange = vi.fn();
-    const handle = startWatcher(root, onChange);
+    const handle = startWatcher(root, onChange, { debounceMs: testDebounceMs });
     stop = handle.stop;
     await sleep(150);
     onChange.mockClear();
@@ -227,20 +234,20 @@ describe("startWatcher", () => {
     await writeFile(join(root, "components", "actions", "Button.html"), "<div/>");
     // ...then, before the preview debounce window elapses, start a fresh
     // tokens burst that keeps re-arming ITS OWN window.
-    await sleep(40);
+    await sleep(120);
     await writeFile(join(root, "tokens", "a.css"), "a");
-    await sleep(40);
+    await sleep(120);
     await writeFile(join(root, "tokens", "b.css"), "b");
     // The preview window (armed at t=0) should have already flushed by
-    // ~t=100; the tokens window (last armed at t=40, re-armed at t=80)
-    // flushes around t=180. Sample at t=150: preview must be flushed,
-    // tokens must NOT be flushed yet.
-    await sleep(70); // total elapsed since first write ~150ms
+    // ~t=300; the tokens window (last armed at t=120, re-armed at t=240)
+    // flushes around t=540. Sample well inside that gap: preview must be
+    // flushed, tokens must NOT be flushed yet.
+    await sleep(150); // total elapsed since first write ~390ms
     expect(onChange.mock.calls.some(([c]: [WatcherChange]) => c.type === "preview")).toBe(true);
     expect(onChange.mock.calls.some(([c]: [WatcherChange]) => c.type === "tokens")).toBe(false);
 
     // Now let the tokens window finish too.
-    await sleep(SETTLE_MS);
+    await sleep(testDebounceMs + 250);
     const tokensCalls = onChange.mock.calls.filter(([c]: [WatcherChange]) => c.type === "tokens");
     expect(tokensCalls.length).toBe(1);
     expect(new Set(tokensCalls[0]![0].paths)).toEqual(
@@ -349,16 +356,29 @@ describe("startWatcher", () => {
     await writeFile(join(root, "components", "actions", "ToDelete.html"), "<div/>");
 
     const onChange = vi.fn();
-    const handle = startWatcher(root, onChange);
+    // A larger explicit debounce window (well above the 100ms default) gives
+    // the three concurrent fs mutations below generous margin to all land
+    // inside ONE debounce cycle even on a loaded/slow CI box — the original
+    // 100ms-default version of this test intermittently split into two
+    // cycles (dropping "added" from the batch this assertion inspects)
+    // because chokidar can observe near-simultaneous fs events a few tens of
+    // ms apart, which is enough to straddle a 100ms window under load.
+    const testDebounceMs = 300;
+    const handle = startWatcher(root, onChange, { debounceMs: testDebounceMs });
     stop = handle.stop;
     await sleep(150);
     stderrLines.length = 0;
     onChange.mockClear();
 
-    await writeFile(join(root, "components", "actions", "Freshly.html"), "<div/>"); // added
-    await writeFile(join(root, "components", "actions", "ToChange.html"), "<div>x</div>"); // changed
-    await unlink(join(root, "components", "actions", "ToDelete.html")); // deleted
-    await sleep(SETTLE_MS);
+    // Fire all three mutations concurrently rather than sequentially, so
+    // none of them can be delayed behind another's `await` and pushed
+    // outside the debounce window.
+    await Promise.all([
+      writeFile(join(root, "components", "actions", "Freshly.html"), "<div/>"), // added
+      writeFile(join(root, "components", "actions", "ToChange.html"), "<div>x</div>"), // changed
+      unlink(join(root, "components", "actions", "ToDelete.html")), // deleted
+    ]);
+    await sleep(testDebounceMs + 250);
 
     const previewCall = onChange.mock.calls.find(([c]: [WatcherChange]) => c.type === "preview");
     expect(previewCall).toBeDefined();
