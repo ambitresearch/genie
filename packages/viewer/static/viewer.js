@@ -1277,6 +1277,18 @@
     var status = doc.getElementById("app-status");
     var drafts = createDraftStore();
     var kits = [];
+    // DRO-242 (fail closed, Copilot review round 5/6) — a monotonic
+    // "discovery generation" counter. `loadKits()` captures the current
+    // value on entry; if a NEWER call has started (bridge swapped via
+    // `setBridge`/`setUnavailable`, or a fresh refresh triggered) by the
+    // time an OLDER call's `await bridge.callTool(...)` resolves — in
+    // either order, since network replies can complete out of order — the
+    // older call's resolution/rejection must not mutate `kits`/the DOM at
+    // all. Without this, a stale in-flight discovery whose reply finally
+    // arrives after a newer (possibly malformed-and-already-failed-closed)
+    // one could resurrect trusted `kits` state and silently re-enable
+    // Conjure/Retry on data a subsequent call had already invalidated.
+    var kitDiscoveryGeneration = 0;
     var inFlight = false;
     var hostAvailable = Boolean(bridge);
     var hostPending = bridge === undefined;
@@ -1627,6 +1639,12 @@
 
     async function loadKits() {
       if (hostPending) return;
+      // DRO-242 (fail closed, Copilot review round 6) — claim this call's
+      // generation BEFORE any `await`, so any call already in flight is
+      // immediately superseded and every check below can tell whether IT is
+      // still the latest.
+      kitDiscoveryGeneration += 1;
+      var myGeneration = kitDiscoveryGeneration;
       if (!bridge) {
         kitState.textContent =
           "Conjure requires an MCP-capable host. Use the genie MCP workflow from your coding host.";
@@ -1650,6 +1668,14 @@
       kits = [];
       try {
         var reply = await bridge.callTool(LIST_KITS_TOOL, {});
+        // DRO-242 (fail closed, Copilot review round 6) — a NEWER discovery
+        // (triggered by `setBridge`/`setUnavailable` racing ahead of this
+        // `await`) has already claimed the generation counter. Replies can
+        // resolve out of order — an older call's `callTool` promise may
+        // settle AFTER a newer one's, in either success or failure — so this
+        // stale call must not mutate `kits` or the DOM at all; whatever the
+        // newer call decided (or is still deciding) must win.
+        if (myGeneration !== kitDiscoveryGeneration) return;
         // DRO-242 (fail closed, Copilot review round 4) — the canonical
         // `list_kits` output schema is strict at the reply level
         // (`additionalProperties: false`,
@@ -1701,6 +1727,10 @@
               : "Choose the UI kit this draft should match.";
         }
       } catch (error) {
+        // DRO-242 (fail closed, Copilot review round 6) — a stale call's
+        // rejection must not clobber a newer call's (possibly already
+        // successful) state either.
+        if (myGeneration !== kitDiscoveryGeneration) return;
         // `kits` was already reset to `[]` above, before validation ran, so
         // it can never retain a previously-successful discovery here. Clear
         // the `<select>` DOM to match — otherwise a stale `<option>` list

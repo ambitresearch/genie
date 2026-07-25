@@ -745,6 +745,74 @@ describe("Generate surface DOM states", () => {
     expect((document.getElementById("conjure-button") as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("ignores an older, out-of-order list_kits reply after a newer discovery has already superseded it (DRO-242)", async () => {
+    // Copilot review round 6 on PR #245: `setBridge` calls `loadKits()`
+    // without cancelling or versioning any call already in flight. Network
+    // replies do not have to resolve in call order — an OLDER discovery's
+    // `callTool` promise can settle AFTER a NEWER one's. If the older call's
+    // resolution is allowed to mutate `kits`/the DOM regardless, it can
+    // resurrect a stale (or, as here, malformed-and-rejected) state on top
+    // of whatever the newer call already decided.
+    const { hooks, document } = loadShell();
+    let resolveFirst: (value: unknown) => void = () => {};
+    const first = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    let callCount = 0;
+    const bridge = {
+      callTool: (name: string) => {
+        if (name === "mcp__genie__list_kits") {
+          callCount += 1;
+          // The FIRST call (older) is left pending — it resolves later,
+          // out of order, once we've already observed the second call's
+          // result below.
+          if (callCount === 1) return first;
+          // The SECOND call (newer) resolves immediately with a malformed
+          // reply — this is the call whose fail-closed outcome must win.
+          return Promise.resolve({ kits: "not-an-array" });
+        }
+        return Promise.reject(new Error("conjure should not be called in this test"));
+      },
+      destroy: () => {},
+    };
+    const controller = hooks.initProductShell(document, bridge);
+    // Trigger the second (newer) discovery before the first has settled —
+    // e.g. a rapid host reconnect while the initial discovery was still
+    // in flight.
+    controller.setBridge(bridge);
+    await settle();
+
+    const kitSelect = document.getElementById("kit-select") as HTMLSelectElement;
+    // The newer call's malformed reply must have already failed closed.
+    expect(callCount).toBe(2);
+    expect(kitSelect.value).toBe("");
+    expect(kitSelect.disabled).toBe(true);
+    expect(document.getElementById("kit-state")?.textContent).toContain("could not be loaded");
+
+    // Now the STALE first call finally resolves with a well-formed,
+    // editable kit — arriving strictly after the newer call already
+    // rejected. It must be silently ignored: no re-populating `kits`, no
+    // re-enabling the `<select>`/Conjure gate on data a newer call has
+    // already superseded.
+    resolveFirst({
+      kits: [
+        {
+          id: "stale-kit",
+          name: "Stale",
+          owner: "team",
+          updatedAt: "2026-01-01T00:00:00Z",
+          canEdit: true,
+        },
+      ],
+    });
+    await settle();
+
+    expect(kitSelect.value).toBe("");
+    expect(kitSelect.disabled).toBe(true);
+    expect(document.getElementById("kit-state")?.textContent).toContain("could not be loaded");
+    expect((document.getElementById("conjure-button") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("submits once, retains the exact draft, routes to Review, and announces success", async () => {
     const { hooks, window, document } = loadShell();
     const result = {
