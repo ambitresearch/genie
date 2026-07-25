@@ -524,6 +524,9 @@
     box.className = "ds-error";
     box.textContent = detail;
     grid.appendChild(box);
+    // Copilot review (PR #248) — `grid` is hidden once Browse is the visible
+    // surface; mirror this into the workbench so the error is actually seen.
+    renderBrowseWorkbenchError(doc, detail);
   }
 
   /**
@@ -1461,7 +1464,16 @@
       showProgress: function (message) {
         if (inFlight) showProgress(message);
       },
-      setRefineContext: renderRefineContext,
+      // Copilot review (PR #248) — `writeRoute` alone only updates the URL;
+      // it never renders the newly-active view or fires `popstate`, so a
+      // Refine handoff left the Browse view visible with `?route=review` in
+      // the address bar. Route through the shell's own `navigate`, which both
+      // calls `writeRoute` AND `renderRoute` (moving focus into Review), so
+      // Refine actually lands the user in Review instead of a stale Browse.
+      setRefineContext: function (context) {
+        renderRefineContext(context);
+        navigate("review", false, true);
+      },
       // Exposed for direct unit testing of context-gathering behavior (token
       // files, root styles.css, component sampling, deadline handling)
       // without having to drive the full submitGenerate flow end to end.
@@ -1502,6 +1514,31 @@
   }
 
   /**
+   * Copilot review (PR #248) — `#grid` is `hidden` in the shipped
+   * `index.html` (Browse workbench is the visible surface now); both
+   * `renderError` and `renderToolResultError` wrote ONLY into that hidden
+   * element, so a failed manifest fetch or a `ui/notifications/tool-result`
+   * error left Browse showing its ordinary "Select a component…"
+   * placeholder forever — the user had no visible signal anything failed.
+   * Mirror the same message into the visible `#browse-detail` pane (a
+   * no-op, like the rest of Browse wiring, when that element isn't present
+   * — e.g. the fixture-only grid tests).
+   *
+   * @param {Document} doc
+   * @param {string} detail
+   */
+  function renderBrowseWorkbenchError(doc, detail) {
+    var detailContainer = doc.getElementById("browse-detail");
+    if (!detailContainer) return;
+    detailContainer.replaceChildren();
+    var box = doc.createElement("div");
+    box.className = "ds-error";
+    box.setAttribute("role", "alert");
+    box.textContent = detail;
+    detailContainer.appendChild(box);
+  }
+
+  /**
    * Render a visible error state in the grid (never throw out of `boot`) — a
    * failed manifest fetch should tell the developer what to do, not blow up
    * the page.
@@ -1514,11 +1551,15 @@
     grid.replaceChildren();
     var box = doc.createElement("div");
     box.className = "ds-error";
-    box.textContent =
+    var message =
       "Could not load the preview manifest (" +
       detail +
       "). Run the genie MCP server against this kit first.";
+    box.textContent = message;
     grid.appendChild(box);
+    // Copilot review (PR #248) — `grid` is hidden once Browse is the visible
+    // surface; mirror this into the workbench so the error is actually seen.
+    renderBrowseWorkbenchError(doc, message);
   }
 
   // ── Browse UI-kit workbench (M7-02 / #234) ─────────────────────────────────
@@ -1795,6 +1836,46 @@
    * @param {(selection: {group:string, componentName:string}) => void=} onSelect
    * @param {{group:string, componentName:string}|null=} selected
    */
+  function isElementVisible(doc, el) {
+    if (!el) return false;
+    var win = doc.defaultView;
+    if (!win || typeof win.getComputedStyle !== "function") return true;
+    var style = win.getComputedStyle(el);
+    return style.display !== "none" && style.visibility !== "hidden";
+  }
+
+  /**
+   * Copilot review (PR #248) — the removed-selection focus fallback used to
+   * try ONLY the full tree's `[tabindex="0"]` treeitem, then the search
+   * input. At the responsive breakpoints below 1100px, though, that treeitem
+   * still exists in the DOM but is hidden (`visibility: hidden` in the
+   * 720–1099px rail-overlay mode, `display: none` in the <720px compact
+   * mode) — so `.focus()` on it silently failed, and neither the rail toggle
+   * nor the compact `<select>` (the ACTUAL visible navigation control at
+   * those widths) was ever tried before falling through to search. Walk the
+   * candidates in specificity order and focus the first one that's both
+   * present and visible.
+   *
+   * @param {Document} doc
+   * @param {HTMLElement} treeContainer
+   * @param {HTMLElement|null} searchInput
+   */
+  function focusVisibleBrowseNavControl(doc, treeContainer, searchInput) {
+    var candidates = [
+      treeContainer.querySelector('[role="treeitem"][tabindex="0"]'),
+      treeContainer.querySelector(".browse-tree__rail-toggle"),
+      treeContainer.querySelector(".browse-tree__compact-select"),
+      searchInput,
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (el && typeof el.focus === "function" && isElementVisible(doc, el)) {
+        el.focus();
+        return;
+      }
+    }
+  }
+
   function renderBrowseTree(doc, container, tree, activeSearch, onSelect, selected) {
     container.replaceChildren();
     var select = typeof onSelect === "function" ? onSelect : function () {};
@@ -2400,7 +2481,12 @@
     var detailContainer = doc.getElementById("browse-detail");
     var searchInput = doc.getElementById("q");
     if (!workbench || !treeContainer || !detailContainer) {
-      return { update: function () {}, setHostBridge: function () {}, teardown: function () {} };
+      return {
+        update: function () {},
+        setHostBridge: function () {},
+        refresh: function () {},
+        teardown: function () {},
+      };
     }
 
     var manifest = { components: [], groups: [] };
@@ -2487,6 +2573,14 @@
         // separately from source-read availability; see `refineEnabled`'s
         // own comment above.
         refineAvailable: refineEnabled,
+        // Copilot review (PR #248) — `writeRoute` only persists the URL; it
+        // does not render the Review view or fire `popstate`, so Browse
+        // stayed visible with `?route=review` in the address bar (the
+        // controller is exercised standalone in tests, with no product
+        // shell attached, so the URL write must stay here). The shell side
+        // (`setRefineContext`, in `initProductShell`) additionally routes
+        // through its own `navigate`, which re-renders/focuses Review when a
+        // real shell IS attached (the normal boot() path).
         onRefine: function (context) {
           if (win) writeRoute(win, "review", false);
           if (typeof options.onRefine === "function") options.onRefine(context);
@@ -2541,11 +2635,10 @@
       var resolved = resolveSelection(unfilteredTree, selection);
       if (!resolved.found) {
         renderBrowseDetailRemoved(doc, detailContainer, { componentName: selection.componentName });
-        // Move focus to the nearest valid navigation control (AC/a11y): the
-        // tree itself, if it has any tabbable item, else the search input.
-        var firstItem = treeContainer.querySelector('[role="treeitem"][tabindex="0"]');
-        if (firstItem && typeof firstItem.focus === "function") firstItem.focus();
-        else if (searchInput) searchInput.focus();
+        // Move focus to the nearest valid navigation control (AC/a11y) —
+        // whichever one is actually visible at the current breakpoint (see
+        // `focusVisibleBrowseNavControl`'s own doc comment).
+        focusVisibleBrowseNavControl(doc, treeContainer, searchInput);
         return;
       }
 
@@ -2664,6 +2757,18 @@
         // (or vice versa), which must re-evaluate `hostAvailable`/source
         // fetching for the SAME selection, not be skipped by the identity
         // dedup in `renderAll`.
+        renderAll(true);
+      },
+      // Copilot review (PR #248) — a live `card.changed`/`tokens.changed`
+      // HMR push (WS or postMessage) doesn't carry a new manifest at all —
+      // it's purely a content-repaint signal for whatever the CURRENT
+      // manifest already describes. `update()` above requires a manifest
+      // argument and is the wrong tool here; `refresh()` re-renders the
+      // selected detail (forcing past the identity dedup, exactly like
+      // `update(true)`/`setHostBridge` do) against the manifest already on
+      // file, so the selected preview/source panel picks up the repaint
+      // instead of silently going stale.
+      refresh: function () {
         renderAll(true);
       },
       teardown: function () {
@@ -2885,8 +2990,19 @@
   }
 
   /**
-   * True when component membership/order or declared group order changed.
-   * Content-only hash changes keep the lightweight per-card reload path.
+   * True when component membership/order, declared group order, OR any
+   * Browse-rendered metadata field changed. Content-only `hash` changes
+   * still take the lightweight per-card reload path via `diffManifestHashes`
+   * — deliberately NOT compared here.
+   *
+   * Copilot review (PR #248) — the identity fingerprint below originally
+   * covered only path/sourcePath/name/group/viewport. Browse's detail panel
+   * (`renderBrowseDetail`) also renders `tags`, `subtitle` (breadcrumb), and
+   * `lastModified` straight from the manifest; a manifest update that changes
+   * ONLY one of those (no path/name/group/viewport/hash change) used to be
+   * invisible to both this check and `diffManifestHashes`, so
+   * `onManifestUpdate` never fired and the visible detail panel went stale.
+   * Comparing the full Browse-relevant projection closes that gap.
    *
    * @param {object} prev
    * @param {object} next
@@ -2904,6 +3020,9 @@
           name: component.name || "",
           group: component.group || "",
           viewport: component.viewport || "",
+          subtitle: component.subtitle || "",
+          lastModified: component.lastModified || "",
+          tags: Array.isArray(component.tags) ? component.tags : [],
         });
       }
       return JSON.stringify({
@@ -3099,6 +3218,23 @@
       }
       var reloaded = applyHmrMessage(grid, rawData);
       if (reloaded > 0) bumpReloadCounter(doc, reloaded);
+      // Copilot review (PR #248) — `card.changed`/`tokens.changed` (and the
+      // legacy `refresh` message normalizing to the same commands) previously
+      // reloaded ONLY the hidden `#grid`'s iframes via `applyHmrMessage`
+      // above. Neither `onManifestUpdate` (fired only by the fetch-manifest
+      // path in `applyFetchedManifest`) nor anything else told Browse's
+      // selected detail iframe to refresh, so it stayed visibly stale on a
+      // live per-card/token push even though the grid updated correctly.
+      // `onCardOrTokensChanged` lets the boot() call sites force a Browse
+      // detail re-render (bypassing the identity-selection dedup) on these
+      // normalized commands specifically.
+      if (
+        command &&
+        (command.kind === "card" || command.kind === "tokens") &&
+        typeof opts.onCardOrTokensChanged === "function"
+      ) {
+        opts.onCardOrTokensChanged(command);
+      }
     }
 
     // ── Transport 2: the postMessage bridge (embedded ui:// tier) ────────────
@@ -3309,8 +3445,24 @@
         var hasUnsafeSegment = segments.some(function (segment) {
           return segment === "." || segment === "..";
         });
+        // Copilot review (PR #248) — the WHATWG URL parser (and therefore
+        // `fetch`) strips leading/trailing "C0 control or space" characters
+        // (tabs, newlines, plain spaces, etc.) BEFORE scheme detection, so a
+        // value like "\nhttps://evil.example/x" has no leading scheme letter
+        // by the raw-string checks below yet is still parsed as an absolute,
+        // cross-origin URL once handed to `fetchImpl`. Reject any leading or
+        // trailing character in that stripped set up front so the scheme/
+        // separator checks below can't be bypassed by hiding them behind
+        // whitespace the parser would normalize away.
+        // Intentional: \x00-\x20 is exactly the WHATWG "C0 control or
+        // space" set the URL parser trims before scheme detection; that is
+        // the bypass being closed.
+        // eslint-disable-next-line no-control-regex
+        var URL_C0_OR_SPACE_RE = /^[ - ]|[ - ]$/;
         if (
           !path ||
+          URL_C0_OR_SPACE_RE.test(path) ||
+          URL_C0_OR_SPACE_RE.test(decodedPath) ||
           path.indexOf("\\") !== -1 ||
           decodedPath.indexOf("\\") !== -1 ||
           hasUnsafeSegment ||
@@ -3388,6 +3540,14 @@
             initialManifest: inline,
             onManifestUpdate: function (next) {
               browseController.update(next);
+            },
+            // Copilot review (PR #248) — see `onCardOrTokensChanged`'s doc
+            // comment in `initHmr` and `refresh`'s in `initBrowseController`:
+            // a per-card/token HMR push carries no new manifest, so only a
+            // forced re-render of the currently selected detail (against the
+            // manifest already on file) picks it up.
+            onCardOrTokensChanged: function () {
+              browseController.refresh();
             },
           });
         } catch {
@@ -3488,6 +3648,11 @@
             onManifestUpdate: function (next) {
               browseController.update(next);
             },
+            // Copilot review (PR #248) — same gap as the embedded tier
+            // above: a per-card/token HMR push carries no new manifest.
+            onCardOrTokensChanged: function () {
+              browseController.refresh();
+            },
           });
         } catch {
           /* live refresh is an enhancement, never a boot blocker */
@@ -3567,5 +3732,6 @@
     window.__genieViewerTestHooks.initBrowseController = initBrowseController;
     window.__genieViewerTestHooks.extractToolResultManifest = extractToolResultManifest;
     window.__genieViewerTestHooks.createStandaloneSourceBridge = createStandaloneSourceBridge;
+    window.__genieViewerTestHooks.focusVisibleBrowseNavControl = focusVisibleBrowseNavControl;
   }
 })();

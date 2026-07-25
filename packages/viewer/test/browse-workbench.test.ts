@@ -29,6 +29,7 @@ import { describe, expect, it } from "vitest";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VIEWER_JS = readFileSync(resolve(HERE, "../static/viewer.js"), "utf8");
 const VIEWER_HTML = readFileSync(resolve(HERE, "../static/index.html"), "utf8");
+const VIEWER_CSS = readFileSync(resolve(HERE, "../static/viewer.css"), "utf8");
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Hooks = Record<string, (...args: any[]) => any>;
@@ -750,6 +751,84 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     controller.teardown();
   });
 
+  it("falls through to the rail-toggle when the full tree's treeitem is hidden at the responsive breakpoint (Copilot review, PR #248)", () => {
+    // Regression: at the 720-1099px breakpoint the full tree is
+    // `visibility: hidden` (rail-overlay mode) while `.browse-tree__rail-
+    // toggle` is the actual visible navigation control. The old fallback
+    // tried only the (hidden) treeitem, found `.focus()` silently failed
+    // (jsdom performs the focus but the element is not "visible" per our
+    // check), then jumped straight to search — skipping the rail toggle
+    // entirely. Simulate the breakpoint with inline `visibility: hidden` on
+    // the treeitem (styles jsdom's `getComputedStyle` DOES report, unlike
+    // the CSS `@media` rule that would normally cause it).
+    const { hooks, document } = loadShell();
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const firstItem = document.querySelector<HTMLElement>('[role="treeitem"]');
+    firstItem!.click();
+
+    // Simulate the rail-overlay breakpoint: the full tree's treeitem is
+    // hidden from focus/AT, the rail toggle is the visible control. A
+    // stylesheet rule (rather than inline styles) so it still applies after
+    // `controller.update()` below rebuilds the tree DOM from scratch.
+    const style = document.createElement("style");
+    style.textContent = '[role="treeitem"] { visibility: hidden; }';
+    document.head.appendChild(style);
+    expect(document.querySelector(".browse-tree__rail-toggle")).toBeTruthy();
+
+    const withoutSelected = {
+      ...MANIFEST,
+      components: MANIFEST.components.filter((c) => c.name !== "Primary buttons"),
+    };
+    controller.update(withoutSelected);
+
+    // Re-query: `renderBrowseTree` rebuilds the tree container's DOM from
+    // scratch on every render, so a reference captured before `update()`
+    // would be a stale/detached node even if focus correctly landed on the
+    // freshly-rendered equivalent element.
+    expect(document.activeElement).toBe(document.querySelector(".browse-tree__rail-toggle"));
+
+    controller.teardown();
+  });
+
+  it("falls through to the compact select when both the tree and rail toggle are hidden at the narrowest breakpoint (Copilot review, PR #248)", () => {
+    const { hooks, document } = loadShell();
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const firstItem = document.querySelector<HTMLElement>('[role="treeitem"]');
+    firstItem!.click();
+
+    // Simulate the <720px compact breakpoint: tree + rail toggle both
+    // `display: none`, only the compact `<select>` is visible. A stylesheet
+    // rule (rather than inline styles) so it still applies after
+    // `controller.update()` below rebuilds the tree DOM from scratch.
+    const style = document.createElement("style");
+    style.textContent = '[role="treeitem"], .browse-tree__rail-toggle { display: none; }';
+    document.head.appendChild(style);
+    expect(document.querySelector(".browse-tree__compact-select")).toBeTruthy();
+
+    const withoutSelected = {
+      ...MANIFEST,
+      components: MANIFEST.components.filter((c) => c.name !== "Primary buttons"),
+    };
+    controller.update(withoutSelected);
+
+    // Re-query for the same stale-node reason as the rail-toggle test above.
+    expect(document.activeElement).toBe(document.querySelector(".browse-tree__compact-select"));
+
+    controller.teardown();
+  });
+
   it("re-resolves the SAME selection after a manifest update that keeps it, without resetting the active filter", () => {
     const { hooks, document } = loadShell();
     const controller = hooks.initBrowseController(document, {
@@ -924,6 +1003,44 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     controller.teardown();
   });
 
+  it("actually routes to (renders/focuses) Review on Refine when wired to a real product shell, not just the URL (Copilot review, PR #248)", () => {
+    // Regression for a bug where the Browse `onRefine` handoff only called
+    // `writeRoute` — updating `?route=review` in the address bar — without
+    // ever calling the shell's `renderRoute`/`navigate`, so the Browse view
+    // stayed visible and focus never moved into Review. `setRefineContext`
+    // (in `initProductShell`) must route through the shell's own `navigate`.
+    const { hooks, document, window } = loadShell();
+    const shellController = hooks.initProductShell(document, null);
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+      onRefine: (context: unknown) => {
+        if (shellController && shellController.setRefineContext) {
+          shellController.setRefineContext(context);
+        }
+      },
+    });
+    controller.update(MANIFEST);
+    controller.setHostBridge({ callTool: () => Promise.resolve({}), destroy: () => {} });
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+
+    const refineButton = document.querySelector<HTMLButtonElement>("[data-refine-action]");
+    refineButton!.click();
+
+    expect(new window.URL(window.location.href).searchParams.get("route")).toBe("review");
+    const browseView = document.querySelector<HTMLElement>('[data-route-view="browse"]');
+    const reviewView = document.querySelector<HTMLElement>('[data-route-view="review"]');
+    expect(browseView?.hidden).toBe(true);
+    expect(reviewView?.hidden).toBe(false);
+
+    controller.teardown();
+  });
+
   it("reads sourcePath (not the rewritten embedded transport path) for host source inspection (Copilot #4)", async () => {
     const { hooks, document } = loadShell();
     const calls: Array<{ path: string }> = [];
@@ -1021,6 +1138,31 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
       bridge.callTool("mcp__genie__read_file", { path: "https://evil.example/x" }),
     ).rejects.toThrow();
   });
+
+  it("refuses a path hiding a scheme behind leading/trailing whitespace the URL parser would strip (Copilot review, PR #248)", async () => {
+    // The WHATWG URL parser (and therefore `fetch`) strips leading/trailing
+    // C0-control-or-space characters BEFORE scheme detection. A value like
+    // "\nhttps://evil.example/x" doesn't start with a scheme letter by a
+    // literal string check, but still resolves as an absolute cross-origin
+    // URL once the real `fetch` parses it — so the guard must reject
+    // leading/trailing whitespace/control characters, not just a literal
+    // leading scheme.
+    const { hooks } = loadHooks();
+    const bridge = hooks.createStandaloneSourceBridge(() =>
+      Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve("nope") }),
+    );
+    await expect(
+      bridge.callTool("mcp__genie__read_file", { path: "\nhttps://evil.example/x" }),
+    ).rejects.toThrow();
+    await expect(
+      bridge.callTool("mcp__genie__read_file", { path: "\thttps://evil.example/x" }),
+    ).rejects.toThrow();
+    await expect(
+      bridge.callTool("mcp__genie__read_file", {
+        path: "components/actions/Button/preview.html \n",
+      }),
+    ).rejects.toThrow();
+  });
 });
 
 describe("renderBrowseTree — roving tabindex (Copilot #9)", () => {
@@ -1042,63 +1184,14 @@ describe("renderBrowseTree — roving tabindex (Copilot #9)", () => {
   });
 });
 
-describe("renderBrowseDetail — preview iframe tabindex + tab semantics (Copilot #10/#18)", () => {
-  it("keeps the preview iframe out of Tab order like createCard's iframe", () => {
-    const { hooks, document } = loadShell();
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
-    hooks.renderBrowseDetail(document, container, {
-      kitId: "kit-a",
-      kitName: "kit",
-      component,
-      source: null,
-      hostAvailable: false,
-    });
-    const iframe = container.querySelector("iframe");
-    expect(iframe?.getAttribute("tabindex")).toBe("-1");
-  });
-
-  it("wires each variant tab's aria-controls to the labelled tabpanel preview stage", () => {
-    const { hooks, document } = loadShell();
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
-    hooks.renderBrowseDetail(document, container, {
-      kitId: "kit-a",
-      kitName: "kit",
-      component,
-      source: null,
-      hostAvailable: false,
-    });
-    const tabs = Array.from(container.querySelectorAll('[role="tab"]')) as HTMLElement[];
-    const panel = container.querySelector('[role="tabpanel"]') as HTMLElement;
-    expect(panel).toBeTruthy();
-    for (const tab of tabs) {
-      expect(tab.getAttribute("aria-controls")).toBe(panel.id);
-    }
-    expect(panel.getAttribute("aria-labelledby")).toBe(tabs[0].id);
-  });
-
-  it("shows a loading preview label until the iframe load event fires (Copilot #16)", () => {
-    const { hooks, document } = loadShell();
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
-    hooks.renderBrowseDetail(document, container, {
-      kitId: "kit-a",
-      kitName: "kit",
-      component,
-      source: null,
-      hostAvailable: false,
-    });
-    const label = container.querySelector(".stage-label");
-    expect(label?.textContent).toMatch(/loading/i);
-    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
-    iframe.dispatchEvent(new (document.defaultView as Window).Event("load"));
-    expect(label?.textContent).toBe("Preview · Default");
-  });
-});
+// Copilot review (PR #248) — a "renderBrowseDetail — preview iframe tabindex
+// + tab semantics (Copilot #10/#18)" describe block duplicated the
+// roving-tabindex/iframe-tabindex/tab-a11y/loading-label assertions already
+// covered above by "renderBrowseDetail — iframe/tab a11y wiring (Copilot
+// #10/#18)" (which additionally asserts the aria-labelledby↔active-tab
+// wiring and the source-loading state). Removed the duplicate rather than
+// keeping two copies that would both need editing on any future behavior
+// change.
 
 describe("extractToolResultManifest (Copilot #1 — embedded workbench sync)", () => {
   it("extracts the embedded manifest from _meta the same way renderToolResult does", () => {
@@ -1230,5 +1323,94 @@ describe("initBrowseController — search filtering does not re-fetch source (Co
     expect(calls).toHaveLength(2);
 
     controller.teardown();
+  });
+
+  it("refresh() force-re-renders the selected detail (and re-fetches source) with NO new manifest — for live card.changed/tokens.changed HMR pushes (Copilot review, PR #248)", () => {
+    // Regression: a live `card.changed`/`tokens.changed` HMR push (WS/
+    // postMessage) carries no manifest at all — only `update(manifest)`
+    // existed to force a detail re-render, and it requires a manifest
+    // argument. Without a manifest-less `refresh()`, Browse's selected
+    // detail preview/source panel had no way to react to these pushes and
+    // stayed silently stale even though the (hidden) grid's iframes reloaded
+    // correctly via `applyHmrMessage`.
+    const { hooks, document } = loadShell();
+    const calls: Array<{ path: string }> = [];
+    const hostBridge = {
+      callTool: (_name: string, args: { path: string }) => {
+        calls.push(args);
+        return Promise.resolve({ content: "source text" });
+      },
+      destroy: () => {},
+    };
+    const controller = hooks.initBrowseController(document, {
+      hostBridge,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+    expect(calls).toHaveLength(1);
+
+    // No manifest change at all — same object identity even — yet refresh()
+    // must still force a fresh detail render + source read.
+    controller.refresh();
+    expect(calls).toHaveLength(2);
+
+    controller.teardown();
+  });
+});
+
+describe("preview-stage responsive width (Copilot review, PR #248)", () => {
+  it("clamps the detail preview iframe to the stage's width instead of letting a fixed viewport width overflow narrow panes", () => {
+    // jsdom doesn't compute layout, so this asserts the actual CSS rule
+    // exists rather than a rendered width. Without a `max-width` on
+    // `.preview-stage iframe`, a manifest-declared wide viewport (e.g. 480px)
+    // overflows a narrower pane (e.g. a 320px mobile stage), which is a
+    // no-horizontal-scroll responsive-contract violation.
+    const stageIframeRuleMatch = VIEWER_CSS.match(/\.preview-stage\s+iframe\s*{[^}]*}/);
+    expect(stageIframeRuleMatch).toBeTruthy();
+    expect(stageIframeRuleMatch![0]).toMatch(/max-width:\s*100%/);
+  });
+});
+
+describe("boot() error surfacing into the visible Browse workbench (Copilot review, PR #248)", () => {
+  // Regression: `#grid` is `hidden` once Browse is the visible surface, but
+  // `renderError`/`renderToolResultError` used to write ONLY into it. A
+  // failed manifest fetch left Browse showing its ordinary "Select a
+  // component…" placeholder forever, with no visible signal anything failed.
+
+  it("surfaces a fetch-throw error into #browse-detail, not just the hidden #grid", async () => {
+    const { hooks, document } = loadShell();
+    const failingFetch = async () => {
+      throw new Error("network down");
+    };
+
+    await expect(hooks.boot(document, failingFetch)).resolves.toBeUndefined();
+
+    const grid = document.getElementById("grid") as HTMLElement;
+    expect(grid.querySelector(".ds-error")).not.toBeNull();
+
+    const detail = document.getElementById("browse-detail") as HTMLElement;
+    const detailError = detail.querySelector(".ds-error");
+    expect(detailError).not.toBeNull();
+    expect(detailError?.textContent?.toLowerCase()).toContain("could not load");
+  });
+
+  it("surfaces a non-ok manifest response error into #browse-detail, not just the hidden #grid", async () => {
+    const { hooks, document } = loadShell();
+    const notOkFetch = async () =>
+      ({ ok: false, status: 500, json: async () => ({}) }) as Response;
+
+    await hooks.boot(document, notOkFetch);
+
+    const grid = document.getElementById("grid") as HTMLElement;
+    expect(grid.querySelector(".ds-error")).not.toBeNull();
+
+    const detail = document.getElementById("browse-detail") as HTMLElement;
+    expect(detail.querySelector(".ds-error")).not.toBeNull();
   });
 });

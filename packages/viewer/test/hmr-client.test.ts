@@ -338,6 +338,31 @@ describe("diffManifestHashes (AC4)", () => {
         ),
       ).toBe(false);
     });
+
+    it("detects tags/subtitle/lastModified-only changes (Copilot review, PR #248)", () => {
+      // Browse's detail panel renders `tags`, `subtitle` (breadcrumb), and
+      // `lastModified` straight from the manifest, but the identity
+      // fingerprint used to compare only path/sourcePath/name/group/
+      // viewport. A manifest update that changed ONLY one of these fields
+      // (no path/name/group/viewport/hash change) was invisible to both
+      // this check and `diffManifestHashes`, so `onManifestUpdate` never
+      // fired and the visible Browse detail panel went stale.
+      const { hooks } = setup();
+      const prev = twoCardManifest();
+
+      const nextLastModified = twoCardManifest();
+      (nextLastModified.components as Array<Record<string, unknown>>)[0]!.lastModified =
+        "2026-07-02T00:00:00.000Z";
+      expect(hooks.manifestStructureChanged(prev, nextLastModified)).toBe(true);
+
+      const nextTags = twoCardManifest();
+      (nextTags.components as Array<Record<string, unknown>>)[0]!.tags = ["new-tag"];
+      expect(hooks.manifestStructureChanged(prev, nextTags)).toBe(true);
+
+      const nextSubtitle = twoCardManifest();
+      (nextSubtitle.components as Array<Record<string, unknown>>)[0]!.subtitle = "New subtitle";
+      expect(hooks.manifestStructureChanged(prev, nextSubtitle)).toBe(true);
+    });
   });
 
   it("returns [] when nothing changed", () => {
@@ -914,6 +939,46 @@ describe("initHmr — WebSocket transport (AC2/AC5)", () => {
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
     expect(iframeFor(grid, CARD_PATH).getAttribute("src")).toMatch(/\?__genie_hmr=\d+$/);
     expect(document.getElementById("hmr-count")!.getAttribute("data-count")).toBe("2");
+  });
+
+  it("calls onCardOrTokensChanged for card.changed and tokens.changed frames, never for manifest.changed (Copilot review, PR #248)", async () => {
+    // Regression: Browse's selected detail preview only refreshed on
+    // `onManifestUpdate` (fetch-manifest path). A live `card.changed`/
+    // `tokens.changed` push carries no manifest at all, so without this
+    // callback Browse silently never learned about it — only the hidden
+    // `#grid`'s iframes did (via `applyHmrMessage`).
+    const { hooks, window, document } = setup();
+    FakeWebSocket.instances = [];
+    const calls: unknown[] = [];
+    const fetchImpl = async () => ({ ok: true, json: async () => twoCardManifest() }) as Response;
+
+    hooks.initHmr(document, {
+      win: window,
+      location: { protocol: "http:", host: "127.0.0.1:5173" },
+      WebSocketImpl: FakeWebSocket,
+      fetchImpl,
+      initialManifest: twoCardManifest(),
+      onCardOrTokensChanged: (command: unknown) => {
+        calls.push(command);
+      },
+    });
+
+    FakeWebSocket.instances[0]!.onmessage!({
+      data: JSON.stringify({ event: "card.changed", path: BUTTON_PATH }),
+    });
+    expect(calls).toEqual([{ kind: "card", path: BUTTON_PATH }]);
+
+    FakeWebSocket.instances[0]!.onmessage!({ data: JSON.stringify({ event: "tokens.changed" }) });
+    expect(calls).toEqual([{ kind: "card", path: BUTTON_PATH }, { kind: "tokens" }]);
+
+    // A manifest.changed frame is a DIFFERENT command kind (goes through
+    // `fetchManifestUpdate`/`onManifestUpdate` instead) and must not also
+    // fire this callback.
+    FakeWebSocket.instances[0]!.onmessage!({
+      data: JSON.stringify({ event: "manifest.changed" }),
+    });
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 0));
+    expect(calls).toEqual([{ kind: "card", path: BUTTON_PATH }, { kind: "tokens" }]);
   });
 
   it("a manifest.changed frame refetches and removes deleted cards from the open grid", async () => {

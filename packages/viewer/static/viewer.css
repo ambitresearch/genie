@@ -462,10 +462,29 @@
     gap: var(--space-sm);
     margin: var(--space-lg);
     border-radius: var(--radius-md);
+    /* Copilot review (PR #248) — the stage is a column flex container, so
+       without an explicit max-width its own width tracks the (possibly
+       fixed-viewport) iframe rather than clamping it. Let the stage itself
+       shrink to the available pane width; the iframe rule below then clamps
+       to THIS box, closing the same gap `.ds-card__frame iframe` already
+       closes for the grid view. */
+    max-width: 100%;
   }
 
   .preview-stage.browse-preview--broken {
     color: var(--color-ink-2);
+  }
+
+  .preview-stage iframe {
+    /* Copilot review (PR #248) — unlike `.ds-card__frame iframe`, the detail
+       iframe kept its manifest-declared `width`/`height` attributes with no
+       CSS `max-width`. A wide (e.g. 480px) component viewport therefore
+       overflowed a narrow stage/pane (e.g. a 320px mobile viewport),
+       violating the no-horizontal-scroll responsive contract. Clamp to the
+       stage's own width; `aspect-ratio` (set inline per component) keeps the
+       proportions intact as it shrinks.
+    */
+    max-width: 100%;
   }
 
   .stage-label {
