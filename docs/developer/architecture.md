@@ -44,6 +44,20 @@ results are normalized and checked before their exact `structuredContent` become
 session-only numbered draft. Standalone and `file://` rendering have no host adapter, so
 Generate remains visibly read-only rather than attempting a browser network fallback.
 
+Browse projects the SAME compiled manifest the M4 grid reads (`projectManifestToTree` in
+`viewer.js`) into a 240px UI-kit tree plus a component-detail stage — no parallel catalog.
+Selection is by stable `{kitId, group, componentName}` identity (never DOM/array index),
+serialized to/from `URLSearchParams` so a deep link survives refresh. HMR re-resolves the
+same selection identity against each fresh manifest (`initBrowseController`'s
+`onManifestUpdate` hook off `initHmr`), so a live edit never resets an unrelated selection
+or filter; a component that disappears renders a controlled "no longer available" state and
+moves focus to the nearest valid tree row instead of leaving focus stranded. Source
+inspection in an MCP-capable host reads through the existing `mcp__genie__read_file` tool
+(the same host bridge Generate uses) — never a new fetch, preserving `connect-src 'none'`
+in the embedded tier. The manifest carries no variant concept today, so variant tabs render
+Default-only; Hover/Focus/Disabled are declared-but-disabled rather than a new, unreviewed
+schema addition (`computeVariantTabs`).
+
 ## Transport and authentication
 
 Stdio relies on the harness-owned child-process boundary. HTTP exposes `POST /mcp` and

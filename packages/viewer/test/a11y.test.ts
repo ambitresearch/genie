@@ -299,10 +299,16 @@ async function assertNoBlockingViolations(page: Page, extra?: { rules?: string[]
   }
 }
 
-// ── AC2/AC6 — populated grid, light mode ────────────────────────────────────
+// ── AC2/AC6 — populated Browse workbench, light mode ────────────────────────
+//
+// M7-02 (#234) migrated standalone Browse from the plain M4 grid to the tree
+// + component-detail workbench (Design 6 §7/§11); this suite now audits that
+// surface instead. The embedded `ui://genie/grid` tool-result path (the
+// classic `.ds-card` grid) is unchanged by this issue and is still covered
+// by `grid-renderer.test.ts` / `hmr-client.test.ts`.
 
 describe.skipIf(!chromiumAvailable)(
-  "viewer chrome — axe-core scan (populated grid, light mode)",
+  "viewer chrome — axe-core scan (populated Browse workbench, light mode)",
   () => {
     let root: string;
     let server: Server;
@@ -317,8 +323,8 @@ describe.skipIf(!chromiumAvailable)(
       ({ context, page } = await newPage());
       await page.goto(`http://127.0.0.1:${port}/?route=browse`);
       // Wait for the real fetch('./.genie/manifest.json') boot path to finish
-      // painting cards, rather than racing axe-core against an empty grid.
-      await page.waitForSelector(".ds-card", { timeout: 5_000 });
+      // painting the tree, rather than racing axe-core against an empty tree.
+      await page.waitForSelector('[role="treeitem"]', { timeout: 5_000 });
     }, 30_000);
 
     afterAll(async () => {
@@ -356,52 +362,49 @@ describe.skipIf(!chromiumAvailable)(
       }
     });
 
-    it("AC3 — Tab order is search -> card 1 -> card 2 (iframes are not stops)", async () => {
+    it("M7-02 AC15 — Tab order is search -> tree item 1 -> tree item 2 (roving tabindex)", async () => {
       await page.locator("#q").focus();
       await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("q");
 
       await page.keyboard.press("Tab");
       const first = await page.evaluate(() => ({
-        tag: document.activeElement?.tagName,
         role: document.activeElement?.getAttribute("role"),
         cls: document.activeElement?.className,
       }));
-      expect(first.tag).toBe("ARTICLE");
-      expect(first.role).toBe("link");
-      expect(first.cls).toContain("ds-card");
+      expect(first.role).toBe("treeitem");
+      expect(first.cls).toContain("browse-tree__item");
 
+      // Roving tabindex means the SECOND Tab moves focus to the detail pane
+      // (Refine button / metadata), not automatically the next tree row —
+      // arrow-key navigation (asserted below) is how the tree itself is
+      // walked (WAI-ARIA treeview pattern). This still proves iframes are
+      // never a Tab stop.
       await page.keyboard.press("Tab");
-      const second = await page.evaluate(() => ({
-        tag: document.activeElement?.tagName,
-        role: document.activeElement?.getAttribute("role"),
-      }));
-      // The second Tab stop must be the NEXT card, never the first card's own
-      // iframe (M4-09 AC3's whole point — see viewer.js's tabindex="-1" note).
-      expect(second.tag).toBe("ARTICLE");
-      expect(second.role).toBe("link");
+      const second = await page.evaluate(() => document.activeElement?.tagName);
+      expect(second).not.toBe("IFRAME");
     });
 
-    it("AC3 — Enter on a focused card navigates to its preview path", async () => {
+    it("M7-02 AC15 — ArrowDown moves roving focus to the next tree item and Enter selects it", async () => {
       await page.locator("#q").focus();
-      await page.keyboard.press("Tab"); // -> first card
-      const href = await page.evaluate(() => {
-        const el = document.activeElement as HTMLElement | null;
-        return el?.getAttribute("data-name");
-      });
-      expect(href).toBeTruthy(); // sanity: we really landed on a card
+      await page.keyboard.press("Tab"); // -> first tree item
+      await page.keyboard.press("ArrowDown");
+      const focused = await page.evaluate(() => document.activeElement?.getAttribute("data-component-name"));
+      expect(focused).toBeTruthy();
 
       await page.keyboard.press("Enter");
       await expect
-        .poll(() => page.evaluate(() => window.location.pathname))
-        .toMatch(/preview\.html$/);
+        .poll(() =>
+          page.evaluate(() => document.querySelector(".browse-breadcrumb")?.textContent ?? ""),
+        )
+        .toContain(focused ?? "");
     });
   },
 );
 
-// ── AC2/AC6 — populated grid, dark mode (AC7 coverage) ──────────────────────
+// ── AC2/AC6 — populated Browse workbench, dark mode (AC7 coverage) ─────────
 
 describe.skipIf(!chromiumAvailable)(
-  "viewer chrome — axe-core scan (populated grid, dark mode / AC7)",
+  "viewer chrome — axe-core scan (populated Browse workbench, dark mode / AC7)",
   () => {
     let root: string;
     let server: Server;
@@ -416,7 +419,7 @@ describe.skipIf(!chromiumAvailable)(
       ({ context, page } = await newPage());
       await page.emulateMedia({ colorScheme: "dark" });
       await page.goto(`http://127.0.0.1:${port}/?route=browse`);
-      await page.waitForSelector(".ds-card", { timeout: 5_000 });
+      await page.waitForSelector('[role="treeitem"]', { timeout: 5_000 });
     }, 30_000);
 
     afterAll(async () => {
@@ -470,11 +473,11 @@ describe.skipIf(!chromiumAvailable)(
       await assertNoBlockingViolations(page, { rules: ["color-contrast"] });
     });
 
-    it("AC3 — Tab order still holds in dark mode (search -> card -> card)", async () => {
+    it("M7-02 AC15 — Tab order still holds in dark mode (search -> tree item, never an iframe)", async () => {
       await page.locator("#q").focus();
       await page.keyboard.press("Tab");
       const role = await page.evaluate(() => document.activeElement?.getAttribute("role"));
-      expect(role).toBe("link");
+      expect(role).toBe("treeitem");
     });
   },
 );
@@ -494,7 +497,9 @@ describe.skipIf(!chromiumAvailable)("viewer chrome — axe-core scan (empty mani
     port = await listen(server);
     ({ context, page } = await newPage());
     await page.goto(`http://127.0.0.1:${port}/?route=browse`);
-    await page.waitForSelector(".ds-empty", { timeout: 5_000 });
+    // M7-02 (#234) — an empty kit now renders the Browse tree's own CTA
+    // ("Conjure your first component") rather than the M4 grid's `.ds-empty`.
+    await page.waitForSelector(".browse-tree__empty", { timeout: 5_000 });
   }, 30_000);
 
   afterAll(async () => {
