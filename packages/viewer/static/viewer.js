@@ -2586,8 +2586,17 @@
       }
     });
 
+    // A bare `searchInput.addEventListener("input", renderAll)` would pass
+    // the DOM Event object as `renderAll`'s `forceDetailRender` argument —
+    // always truthy — silently defeating the Copilot #24 dedup on every
+    // keystroke. Wrap it so a search keystroke only ever requests the
+    // default (non-forced) render.
+    function onSearchInput() {
+      renderAll();
+    }
+
     if (searchInput) {
-      searchInput.addEventListener("input", renderAll);
+      searchInput.addEventListener("input", onSearchInput);
     }
 
     // Deep-link (Decision #7): read an initial selection from the URL.
@@ -2642,7 +2651,7 @@
         renderAll(true);
       },
       teardown: function () {
-        if (searchInput) searchInput.removeEventListener("input", renderAll);
+        if (searchInput) searchInput.removeEventListener("input", onSearchInput);
       },
     };
   }

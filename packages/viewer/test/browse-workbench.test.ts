@@ -1126,3 +1126,109 @@ describe("extractToolResultManifest (Copilot #1 — embedded workbench sync)", (
     expect(hooks.extractToolResultManifest(null)).toBeNull();
   });
 });
+
+describe("initBrowseController — keyboard focus restore on select (Copilot #22)", () => {
+  it("keeps keyboard focus on the newly selected treeitem after renderAll rebuilds the tree DOM", () => {
+    const { hooks, document } = loadShell();
+    const controller = hooks.initBrowseController(document, {
+      hostBridge: null,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+
+    // `renderAll()` (triggered by `select()`) replaces the tree's children
+    // wholesale, detaching the item that was originally clicked/focused.
+    // Without an explicit focus restore, `document.activeElement` falls back
+    // to <body> here — this regression-guards Copilot #22.
+    const active = document.activeElement;
+    expect(active?.getAttribute("role")).toBe("treeitem");
+    expect((active as HTMLElement | null)?.dataset.componentName).toBe("Card");
+
+    controller.teardown();
+  });
+});
+
+describe("initBrowseController — search filtering does not re-fetch source (Copilot #24)", () => {
+  it("does not re-render the detail panel or re-issue a source read on a search keystroke that leaves the selection unchanged", () => {
+    const { hooks, document } = loadShell();
+    const calls: Array<{ path: string }> = [];
+    const hostBridge = {
+      callTool: (_name: string, args: { path: string }) => {
+        calls.push(args);
+        return Promise.resolve({ content: "source text" });
+      },
+      destroy: () => {},
+    };
+    const controller = hooks.initBrowseController(document, {
+      hostBridge,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+    expect(calls).toHaveLength(1);
+
+    const iframeBeforeFilter = document.querySelector(".preview-stage iframe");
+
+    // Typing a filter that still matches the selected component ("Card")
+    // must only refresh the tree list, never re-render the detail panel or
+    // re-issue a `mcp__genie__read_file` call for the unchanged selection.
+    const search = document.getElementById("q") as HTMLInputElement;
+    search.value = "card";
+    search.dispatchEvent(new document.defaultView!.Event("input", { bubbles: true }));
+
+    expect(calls).toHaveLength(1);
+    expect(document.querySelector(".preview-stage iframe")).toBe(iframeBeforeFilter);
+
+    controller.teardown();
+  });
+
+  it("still re-fetches source for an HMR content update to the SAME selected component (force render)", async () => {
+    const { hooks, document } = loadShell();
+    const calls: Array<{ path: string }> = [];
+    const hostBridge = {
+      callTool: (_name: string, args: { path: string }) => {
+        calls.push(args);
+        return Promise.resolve({ content: "source text" });
+      },
+      destroy: () => {},
+    };
+    const controller = hooks.initBrowseController(document, {
+      hostBridge,
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    controller.update(MANIFEST);
+
+    const cardItem = Array.from(document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+      (el) => el.dataset.componentName === "Card",
+    );
+    cardItem!.click();
+    expect(calls).toHaveLength(1);
+
+    // A content-only HMR update to the SAME selected component must still
+    // trigger a fresh detail render/source read — the search-filter dedup
+    // (Copilot #24) must not silently swallow this legitimate refresh.
+    const updated = {
+      ...MANIFEST,
+      components: MANIFEST.components.map((c) =>
+        c.name === "Card" ? { ...c, hash: "sha256-NEW=" } : c,
+      ),
+    };
+    controller.update(updated);
+
+    expect(calls).toHaveLength(2);
+
+    controller.teardown();
+  });
+});
