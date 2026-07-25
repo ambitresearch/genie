@@ -392,6 +392,86 @@ describe("Generate surface DOM states", () => {
     expect((malformedEntry.document.getElementById("kit-select") as HTMLSelectElement).value).toBe(
       "",
     );
+
+    // The canonical list_kits output schema is strict at the reply level
+    // (additionalProperties: false, packages/server/src/tools/
+    // list_kits.test.ts:174-178) — `kits` is the only allowed key. A reply
+    // with an extra top-level key must be rejected outright, not accepted
+    // because `kits` itself happens to be well-formed (Copilot review round
+    // 4 on PR #245).
+    const unexpectedKey = loadShell();
+    unexpectedKey.hooks.initProductShell(unexpectedKey.document, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      callTool: async () => ({ kits: [], unexpected: true }) as any,
+      destroy: () => {},
+    });
+    await settle();
+    expect(unexpectedKey.document.getElementById("generate-error")?.hidden).toBe(false);
+    expect(unexpectedKey.document.getElementById("kit-state")?.textContent).toContain(
+      "could not be loaded",
+    );
+    expect((unexpectedKey.document.getElementById("kit-select") as HTMLSelectElement).value).toBe(
+      "",
+    );
+  });
+
+  it("clears stale trusted kit state before a malformed list_kits refresh can leave it intact (DRO-242)", async () => {
+    const { hooks, document } = loadShell();
+    let listKitsCalls = 0;
+    const bridge = {
+      callTool: (name: string) => {
+        if (name === "mcp__genie__list_kits") {
+          listKitsCalls += 1;
+          // First discovery succeeds with a real, editable kit...
+          if (listKitsCalls === 1) {
+            return Promise.resolve({
+              kits: [
+                {
+                  id: "acme-kit",
+                  name: "Acme",
+                  owner: "team",
+                  updatedAt: "2026-01-01T00:00:00Z",
+                  canEdit: true,
+                },
+              ],
+            });
+          }
+          // ...but a subsequent refresh (e.g. a host reconnect) comes back
+          // malformed.
+          return Promise.resolve({ kits: "not-an-array" });
+        }
+        return Promise.reject(new Error("conjure should not be called in this test"));
+      },
+      destroy: () => {},
+    };
+    const controller = hooks.initProductShell(document, bridge);
+    await settle();
+
+    const kitSelect = document.getElementById("kit-select") as HTMLSelectElement;
+    expect(kitSelect.value).toBe("acme-kit");
+    expect(kitSelect.disabled).toBe(false);
+
+    const prompt = document.getElementById("generate-prompt") as HTMLTextAreaElement;
+    prompt.value = "Build a compact status card";
+    prompt.dispatchEvent(
+      new (document.defaultView as typeof window).Event("input", { bubbles: true }),
+    );
+    expect((document.getElementById("conjure-button") as HTMLButtonElement).disabled).toBe(false);
+
+    // Simulate a host refresh (e.g. reconnect) that re-invokes discovery —
+    // this is the same path Retry takes when no kits are loaded.
+    controller.setBridge(bridge);
+    await settle();
+
+    expect(listKitsCalls).toBe(2);
+    // The malformed refresh must clear the previously trusted kit — the
+    // stale option/value from discovery #1 must not survive.
+    expect(kitSelect.value).toBe("");
+    expect(kitSelect.disabled).toBe(true);
+    expect(document.getElementById("kit-state")?.textContent).toContain("could not be loaded");
+    // With kits cleared, Conjure must be gated off again rather than left
+    // enabled on stale data.
+    expect((document.getElementById("conjure-button") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("submits once, retains the exact draft, routes to Review, and announces success", async () => {

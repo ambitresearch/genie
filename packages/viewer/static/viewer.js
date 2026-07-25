@@ -1196,9 +1196,26 @@
         updateGate();
         return;
       }
+      // DRO-242 (fail closed, Copilot review round 4) — clear the previously
+      // trusted kit state BEFORE validating the replacement reply. If kit
+      // discovery previously succeeded and a subsequent refresh returns a
+      // malformed reply, leaving the old `kits` array/`<select>` intact would
+      // let `updateGate()` keep Conjure enabled with stale data, and Retry
+      // would invoke generation instead of reloading (because
+      // `kits.length !== 0`). Resetting here — before any validation can
+      // throw — guarantees a malformed refresh always lands in the
+      // zero-kits state, regardless of what came before it.
+      kits = [];
       try {
         var reply = await bridge.callTool(LIST_KITS_TOOL, {});
-        if (!isPlainObject(reply) || !Array.isArray(reply.kits)) {
+        // DRO-242 (fail closed, Copilot review round 4) — the canonical
+        // `list_kits` output schema is strict at the reply level
+        // (`additionalProperties: false`,
+        // `packages/server/src/tools/list_kits.test.ts:174-178`): the only
+        // allowed key is `kits`. `hasOnlyKeys` here (in addition to the
+        // existing `Array.isArray(reply.kits)` check) rejects any reply that
+        // supplies extra top-level keys, e.g. `{ kits: [], unexpected: true }`.
+        if (!isPlainObject(reply) || !hasOnlyKeys(reply, ["kits"]) || !Array.isArray(reply.kits)) {
           throw new Error("The host returned malformed UI-kit data.");
         }
         // DRO-242 (fail closed) — every entry must be structurally valid
@@ -1242,6 +1259,13 @@
               : "Choose the UI kit this draft should match.";
         }
       } catch (error) {
+        // `kits` was already reset to `[]` above, before validation ran, so
+        // it can never retain a previously-successful discovery here. Clear
+        // the `<select>` DOM to match — otherwise a stale `<option>` list
+        // (and a stale `kitSelect.value`) would survive a malformed refresh
+        // even though the in-memory `kits` array no longer backs it.
+        kitSelect.replaceChildren();
+        kitSelect.disabled = true;
         kitState.textContent = "UI kits could not be loaded.";
         showError(error);
       }
