@@ -418,3 +418,177 @@ describe("Generate surface DOM states", () => {
     expect(document.getElementById("draft-name")?.textContent).toBe("Status card");
   });
 });
+
+describe("buildKitContext (genie#239 / Copilot review on #246)", () => {
+  function bridgeWith(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handlers: Record<string, (args: any) => Promise<unknown>>,
+  ) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const calls: Array<{ name: string; args: any }> = [];
+    return {
+      calls,
+      bridge: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        callTool: (name: string, args: any) => {
+          calls.push({ name, args });
+          const handler = handlers[name];
+          return handler ? handler(args) : Promise.resolve({});
+        },
+        destroy: () => {},
+      },
+    };
+  }
+
+  function shellWithProductInit() {
+    const { hooks, document } = loadShell();
+    // `buildKitContext` lives inside initProductShell's closure — it's
+    // exposed via the object initProductShell() returns (not directly on
+    // __genieViewerTestHooks), so tests must go through that instance.
+    return hooks.initProductShell(document, {
+      callTool: () => Promise.resolve({}),
+      destroy: () => {},
+    });
+  }
+
+  it("reads populated token files AND the root styles.css, folding both into the context string", async () => {
+    const shell = shellWithProductInit();
+    const { bridge, calls } = bridgeWith({
+      mcp__genie__list_files: () =>
+        Promise.resolve({
+          files: [
+            { path: "tokens/colors.css" },
+            { path: "styles.css" },
+            { path: "README.md" },
+          ],
+        }),
+      mcp__genie__list_components: () => Promise.resolve({ components: [] }),
+      mcp__genie__read_file: (args: { path: string }) => {
+        if (args.path === "tokens/colors.css") {
+          return Promise.resolve({ content: "--color-brand: #123456;", encoding: "utf-8" });
+        }
+        if (args.path === "styles.css") {
+          return Promise.resolve({ content: "@import './tokens/colors.css';", encoding: "utf-8" });
+        }
+        return Promise.reject(new Error("unexpected read"));
+      },
+    });
+
+    const context = await shell.buildKitContext(bridge, "acme-kit", "Acme");
+
+    expect(context).toContain('UI kit "Acme" (id: acme-kit).');
+    expect(context).toContain("tokens/colors.css");
+    expect(context).toContain("--color-brand: #123456;");
+    expect(context).toContain("styles.css");
+    expect(context).toContain("@import './tokens/colors.css';");
+    // README.md is neither tokens/** nor root styles.css — never read.
+    expect(calls.some((c) => c.name === "mcp__genie__read_file" && c.args.path === "README.md")).toBe(
+      false,
+    );
+  });
+
+  it("reads a bounded sample of existing component file contents, not just group/name metadata", async () => {
+    const shell = shellWithProductInit();
+    const { bridge } = bridgeWith({
+      mcp__genie__list_files: () => Promise.resolve({ files: [] }),
+      mcp__genie__list_components: () =>
+        Promise.resolve({
+          components: [
+            { group: "surfaces", name: "Card", path: "components/Card.tsx" },
+            { group: "actions", name: "Button", path: "components/Button.tsx" },
+          ],
+        }),
+      mcp__genie__read_file: (args: { path: string }) => {
+        if (args.path === "components/Card.tsx") {
+          return Promise.resolve({ content: "export function Card() {}", encoding: "utf-8" });
+        }
+        if (args.path === "components/Button.tsx") {
+          return Promise.resolve({ content: "export function Button() {}", encoding: "utf-8" });
+        }
+        return Promise.reject(new Error("unexpected read"));
+      },
+    });
+
+    const context = await shell.buildKitContext(bridge, "acme-kit", "Acme");
+
+    expect(context).toContain("Existing primitives/components: surfaces/Card, actions/Button");
+    expect(context).toContain("component: surfaces/Card");
+    expect(context).toContain("export function Card() {}");
+    expect(context).toContain("component: actions/Button");
+    expect(context).toContain("export function Button() {}");
+  });
+
+  it("falls back gracefully when a token file is unreadable, keeping the rest of the context", async () => {
+    const shell = shellWithProductInit();
+    const { bridge } = bridgeWith({
+      mcp__genie__list_files: () =>
+        Promise.resolve({ files: [{ path: "tokens/broken.css" }, { path: "tokens/ok.css" }] }),
+      mcp__genie__list_components: () => Promise.resolve({ components: [] }),
+      mcp__genie__read_file: (args: { path: string }) => {
+        if (args.path === "tokens/broken.css") return Promise.reject(new Error("host read failed"));
+        return Promise.resolve({ content: "--space-1: 4px;", encoding: "utf-8" });
+      },
+    });
+
+    const context = await shell.buildKitContext(bridge, "acme-kit", "Acme");
+
+    expect(context).toContain("tokens/ok.css");
+    expect(context).toContain("--space-1: 4px;");
+    expect(context).not.toContain("tokens/broken.css");
+  });
+
+  it("caps total context length at KIT_CONTEXT_MAX_CHARS across multiple token files", async () => {
+    const shell = shellWithProductInit();
+    const bigChunk = "x".repeat(15_000);
+    const { bridge } = bridgeWith({
+      mcp__genie__list_files: () =>
+        Promise.resolve({
+          files: [{ path: "tokens/a.css" }, { path: "tokens/b.css" }, { path: "tokens/c.css" }],
+        }),
+      mcp__genie__list_components: () => Promise.resolve({ components: [] }),
+      mcp__genie__read_file: () => Promise.resolve({ content: bigChunk, encoding: "utf-8" }),
+    });
+
+    const context = await shell.buildKitContext(bridge, "acme-kit", "Acme");
+
+    expect(context.length).toBeLessThanOrEqual(20_000 + 200 /* headings/section joins slack */);
+  });
+
+  it("proceeds with partial context once the shared deadline elapses, instead of waiting on every read", async () => {
+    const shell = shellWithProductInit();
+    let readCalls = 0;
+    const { bridge } = bridgeWith({
+      mcp__genie__list_files: () => Promise.resolve({ files: [{ path: "tokens/slow.css" }] }),
+      mcp__genie__list_components: () => Promise.resolve({ components: [] }),
+      mcp__genie__read_file: () => {
+        readCalls += 1;
+        // Never resolves — simulates an unresponsive host tool call. Without
+        // a shared deadline this would hang buildKitContext (and therefore
+        // the whole test) rather than degrading to partial context.
+        return new Promise(() => {});
+      },
+    });
+
+    const start = Date.now();
+    const context = await shell.buildKitContext(bridge, "acme-kit", "Acme");
+    const elapsed = Date.now() - start;
+
+    expect(readCalls).toBe(1);
+    expect(context).toBe('UI kit "Acme" (id: acme-kit).');
+    // Bounded by KIT_CONTEXT_DEADLINE_MS (8s), not the host bridge's 60s
+    // per-call timeout — generous slack for CI jitter.
+    expect(elapsed).toBeLessThan(15_000);
+  }, 20_000);
+
+  it("falls back to the display name alone when both list tools are unavailable", async () => {
+    const shell = shellWithProductInit();
+    const { bridge } = bridgeWith({
+      mcp__genie__list_files: () => Promise.reject(new Error("not implemented")),
+      mcp__genie__list_components: () => Promise.reject(new Error("not implemented")),
+    });
+
+    const context = await shell.buildKitContext(bridge, "acme-kit", "Acme");
+
+    expect(context).toBe('UI kit "Acme" (id: acme-kit).');
+  });
+});

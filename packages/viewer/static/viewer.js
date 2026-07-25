@@ -123,6 +123,17 @@
   var TOKENS_DIR_PREFIX = "tokens/";
 
   /**
+   * Canonical root stylesheet a kit may keep its shared variables/import
+   * closure in, alongside (or instead of) `tokens/**`. The viewer's own
+   * static serving (`packages/viewer/README.md:106`, `packages/viewer/src/
+   * config.ts:234`) and HMR both treat root `styles.css` as token context, so
+   * `buildKitContext` must include it too — otherwise a kit that keeps its
+   * house style here (rather than under `tokens/`) sends no styling context
+   * at all (Copilot review on #246).
+   */
+  var ROOT_STYLES_PATH = "styles.css";
+
+  /**
    * Hard caps on how much kit context genie#239's `buildKitContext` will ever
    * read into the `conjure` call. `read_file` already caps a single file at
    * 256 KiB (`MAX_FILE_BYTES`, read_file.ts) — this bounds the *count* of
@@ -133,6 +144,26 @@
    */
   var KIT_CONTEXT_MAX_TOKEN_FILES = 12;
   var KIT_CONTEXT_MAX_CHARS = 20_000;
+
+  /**
+   * How many existing components' file contents `buildKitContext` will read
+   * for primitive/house-style context, beyond the bare group/name inventory
+   * (Copilot review on #246: metadata alone gives the model no actual
+   * primitive code to match). Small — a handful of representative components
+   * is enough context without ballooning the request.
+   */
+  var KIT_CONTEXT_MAX_COMPONENT_FILES = 5;
+
+  /**
+   * Overall wall-clock budget (ms) for ALL of `buildKitContext`'s tool calls
+   * combined. Each individual `read_file`/`list_*` call still inherits the
+   * host bridge's normal per-call timeout (60s), so serial reads could
+   * otherwise stall `conjure` by many minutes (Copilot review on #246).
+   * Context-gathering is best-effort by design, so once this deadline is hit
+   * we proceed with whatever partial context has resolved so far rather than
+   * waiting on slower calls.
+   */
+  var KIT_CONTEXT_DEADLINE_MS = 8_000;
 
   /**
    * Fallback card height (px) for a named/unparseable viewport (e.g. "desktop").
@@ -978,6 +1009,49 @@
     }
 
     /**
+     * True when a kit-relative path is design-token/house-style source: either
+     * inside `tokens/**` or the canonical root `styles.css` (Copilot review on
+     * #246 — the root file carries a kit's shared variables/import closure
+     * just as much as `tokens/**` does; see `ROOT_STYLES_PATH`'s doc comment).
+     */
+    function isKitStyleContextFile(path) {
+      return path === ROOT_STYLES_PATH || path.indexOf(TOKENS_DIR_PREFIX) === 0;
+    }
+
+    /**
+     * Resolve `promise` but never wait longer than `ms` for it: resolves to
+     * `null` (rather than rejecting) on timeout OR on the wrapped promise's own
+     * rejection, so callers can `Promise.all` a batch of these without any one
+     * slow/failing call sinking the others or the overall deadline (Copilot
+     * review on #246 — `buildKitContext`'s tool calls used to run serially,
+     * each inheriting the host bridge's full 60s per-call timeout).
+     */
+    function withDeadline(promise, ms) {
+      return new Promise(function (resolve) {
+        var settled = false;
+        var timer = win.setTimeout(function () {
+          if (settled) return;
+          settled = true;
+          resolve(null);
+        }, Math.max(0, ms));
+        promise.then(
+          function (value) {
+            if (settled) return;
+            settled = true;
+            win.clearTimeout(timer);
+            resolve(value);
+          },
+          function () {
+            if (settled) return;
+            settled = true;
+            win.clearTimeout(timer);
+            resolve(null);
+          },
+        );
+      });
+    }
+
+    /**
      * genie#239 — resolve the SELECTED kit's real compiled context (tokens +
      * primitives/components) instead of handing `conjure` just its display
      * name. Reuses tools the viewer's host already exposes — `list_files`,
@@ -986,8 +1060,15 @@
      * (#233/M7-01: "reuse the existing conjure contract, this is not a
      * redesign of the generation engine").
      *
-     * Best-effort by design: any tool failure here (a host that doesn't
-     * implement these verbs yet, a slow kit, etc.) falls back to the OLD
+     * All tool calls (the two `list_*` calls, then every `read_file` call) run
+     * CONCURRENTLY and share one overall `KIT_CONTEXT_DEADLINE_MS` wall-clock
+     * budget — not the host bridge's full per-call timeout — so a slow or
+     * unresponsive host can delay `conjure` by at most that budget, not by
+     * minutes (Copilot review on #246).
+     *
+     * Best-effort by design: any tool failure or deadline miss here (a host
+     * that doesn't implement these verbs yet, a slow kit, etc.) degrades to
+     * partial context, and total failure falls back to the OLD
      * display-name-only behavior rather than blocking generation — losing
      * kit-fidelity is strictly better than losing the ability to generate at
      * all.
@@ -1000,48 +1081,83 @@
     async function buildKitContext(hostBridge, kitId, kitName) {
       var sections = ['UI kit "' + kitName + '" (id: ' + kitId + ').'];
       var budget = KIT_CONTEXT_MAX_CHARS - sections[0].length;
-
-      try {
-        var filesReply = await hostBridge.callTool(LIST_FILES_TOOL, { kitId: kitId });
-        var files = Array.isArray(filesReply && filesReply.files) ? filesReply.files : [];
-        var tokenFiles = files
-          .filter(function (entry) {
-            return entry && typeof entry.path === "string" && entry.path.indexOf(TOKENS_DIR_PREFIX) === 0;
-          })
-          .slice(0, KIT_CONTEXT_MAX_TOKEN_FILES);
-
-        for (var i = 0; i < tokenFiles.length && budget > 0; i++) {
-          var path = tokenFiles[i].path;
-          try {
-            var fileReply = await hostBridge.callTool(READ_FILE_TOOL, { kitId: kitId, path: path });
-            if (fileReply && fileReply.encoding === "utf-8" && typeof fileReply.content === "string") {
-              var chunk = "--- " + path + " ---\n" + fileReply.content.slice(0, budget);
-              sections.push(chunk);
-              budget -= chunk.length;
-            }
-          } catch {
-            /* one unreadable token file must not sink the whole context. */
-          }
-        }
-      } catch {
-        /* list_files unavailable/failed — proceed with whatever we have. */
+      var deadline = Date.now() + KIT_CONTEXT_DEADLINE_MS;
+      function remaining() {
+        return deadline - Date.now();
       }
 
-      try {
-        var componentsReply = await hostBridge.callTool(LIST_COMPONENTS_TOOL, { kitId: kitId });
-        var components = Array.isArray(componentsReply && componentsReply.components)
-          ? componentsReply.components
-          : [];
-        if (components.length) {
-          var names = components
-            .map(function (component) {
-              return component.group + "/" + component.name;
-            })
-            .join(", ");
-          sections.push("Existing primitives/components: " + names);
+      var results = await Promise.all([
+        withDeadline(hostBridge.callTool(LIST_FILES_TOOL, { kitId: kitId }), remaining()),
+        withDeadline(hostBridge.callTool(LIST_COMPONENTS_TOOL, { kitId: kitId }), remaining()),
+      ]);
+      var filesReply = results[0];
+      var componentsReply = results[1];
+
+      var files = Array.isArray(filesReply && filesReply.files) ? filesReply.files : [];
+      // Root `styles.css` is prioritized ahead of `tokens/**` entries so it
+      // survives KIT_CONTEXT_MAX_TOKEN_FILES truncation on token-heavy kits.
+      var styleFiles = files
+        .filter(function (entry) {
+          return entry && typeof entry.path === "string" && isKitStyleContextFile(entry.path);
+        })
+        .sort(function (a, b) {
+          return (a.path === ROOT_STYLES_PATH ? 0 : 1) - (b.path === ROOT_STYLES_PATH ? 0 : 1);
+        })
+        .slice(0, KIT_CONTEXT_MAX_TOKEN_FILES);
+
+      var components = Array.isArray(componentsReply && componentsReply.components)
+        ? componentsReply.components
+        : [];
+      var componentSampleTargets = components
+        .filter(function (entry) {
+          return entry && typeof entry.path === "string";
+        })
+        .slice(0, KIT_CONTEXT_MAX_COMPONENT_FILES);
+
+      // Read every style file and the bounded component sample concurrently —
+      // each individually capped by the SAME shared deadline — rather than in
+      // series, so one slow file can't crowd out the rest of the budget.
+      var readTargets = styleFiles
+        .map(function (entry) {
+          return { path: entry.path, label: entry.path };
+        })
+        .concat(
+          componentSampleTargets.map(function (entry) {
+            return { path: entry.path, label: entry.group + "/" + entry.name + " (" + entry.path + ")" };
+          }),
+        );
+
+      var reads = await Promise.all(
+        readTargets.map(function (target) {
+          return withDeadline(
+            hostBridge.callTool(READ_FILE_TOOL, { kitId: kitId, path: target.path }),
+            remaining(),
+          ).then(function (fileReply) {
+            return { label: target.label, fileReply: fileReply };
+          });
+        }),
+      );
+
+      var styleReadCount = styleFiles.length;
+      for (var i = 0; i < reads.length && budget > 0; i++) {
+        var isStyleRead = i < styleReadCount;
+        var fileReply = reads[i].fileReply;
+        if (fileReply && fileReply.encoding === "utf-8" && typeof fileReply.content === "string") {
+          var heading = isStyleRead ? "--- " + reads[i].label + " ---" : "--- component: " + reads[i].label + " ---";
+          var chunk = heading + "\n" + fileReply.content.slice(0, budget);
+          sections.push(chunk);
+          budget -= chunk.length;
         }
-      } catch {
-        /* list_components unavailable/failed — proceed with whatever we have. */
+        /* an unreadable/timed-out file must not sink the whole context. */
+      }
+
+      if (components.length) {
+        var names = components
+          .map(function (component) {
+            return component.group + "/" + component.name;
+          })
+          .join(", ");
+        sections.push("Existing primitives/components: " + names);
       }
 
       return sections.join("\n\n");
@@ -1239,6 +1355,12 @@
       },
       showProgress: function (message) {
         if (inFlight) showProgress(message);
+      },
+      // Exposed for direct unit testing of context-gathering behavior (token
+      // files, root styles.css, component sampling, deadline handling)
+      // without having to drive the full submitGenerate flow end to end.
+      buildKitContext: function (hostBridge, kitId, kitName) {
+        return buildKitContext(hostBridge, kitId, kitName);
       },
     };
   }
