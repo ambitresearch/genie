@@ -28,7 +28,13 @@ import { JSDOM, VirtualConsole } from "jsdom";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import type { Manifest, ManifestCard } from "../manifest/index.js";
-import { MANIFEST_ELEMENT_ID, inlineManifest, inlineViewerAssets } from "./grid-resource.js";
+import {
+  MANIFEST_ELEMENT_ID,
+  buildGridDocument,
+  collectInlineCspHashes,
+  inlineManifest,
+  inlineViewerAssets,
+} from "./grid-resource.js";
 
 // The real shipped viewer static dir — one level under packages/server → ../../viewer/static.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -130,5 +136,94 @@ describe("M4-06 integration — real viewer assets + real assembly", () => {
     expect(rendered.querySelector(".ds-empty")).not.toBeNull();
     expect(rendered.querySelectorAll("iframe").length).toBe(0);
     expect(rendered.querySelector(".ds-error")).toBeNull();
+  });
+
+  // ── Regression: NUL (and other HTML-parser-lossy) bytes in viewer.js ────────
+  //
+  // The embedded `ui://` tier's CSP allow-lists the inline <script>'s exact
+  // SHA-256 hash, computed from `viewer.js`'s bytes BEFORE they are wrapped in
+  // a <script> tag and (re-)parsed as HTML text. Per the HTML spec, an HTML
+  // parser replaces any literal NUL (U+0000) byte in text content with U+FFFD
+  // (the replacement character) — this is a browser-enforced, non-optional
+  // tokenizer rule, not a bug in any one engine. If `viewer.js` (or any other
+  // inlined asset) ever contains a raw NUL byte, the byte the browser actually
+  // executes differs from the byte `cspSha256` hashed, the computed hash no
+  // longer matches what the browser recomputes at parse time, and the CSP
+  // silently blocks the ENTIRE inline script — every card fails to render
+  // with no visible error (only a CSP console warning). This exact defect
+  // shipped once (a NUL byte used as an ad hoc delimiter deep in the Browse
+  // compact-select wiring) and was caught only by the `viewer E2E gate` full
+  // browser run, not by any DOM-level unit test — hence this guard, so a
+  // reviewer/CI catches it at the byte level without needing a real browser.
+  it("the real viewer.js contains no NUL bytes (would desync the CSP hash from what a browser parses)", () => {
+    expect(realViewerJs).not.toContain("\u0000");
+    expect(realIndexHtml).not.toContain("\u0000");
+    expect(realViewerCss).not.toContain("\u0000");
+  });
+
+  it("the inlined <script>/<style> bytes a browser re-parses hash to the SAME CSP allow-list value computed pre-inline", () => {
+    const doc = assemble(manifest([card()]));
+    const { hashes } = inlineViewerAssets(realIndexHtml, realViewerJs, realViewerCss);
+
+    // Re-derive the hashes from what a real HTML parser sees after the fact
+    // (jsdom, same as `bootRealViewer`) rather than from the pre-inline
+    // strings — this is the exact seam a NUL-byte (or similar lossy-parse)
+    // regression breaks: the pre-inline hash and the post-parse hash diverge.
+    const parsedHashes = collectInlineCspHashes(doc);
+    for (const hash of hashes.scriptHashes) {
+      expect(parsedHashes.scriptHashes).toContain(hash);
+    }
+    for (const hash of hashes.styleHashes) {
+      expect(parsedHashes.styleHashes).toContain(hash);
+    }
+  });
+
+  // Copilot review (PR #248) — the two tests above only ever compare
+  // `inlineViewerAssets`'s own hashes (the shipped index.html/viewer.js/
+  // viewer.css inline blocks) against a fresh re-parse of THOSE bytes. They
+  // never exercise the manifest data-island `<script>` that `buildGridDocument`
+  // additionally hashes and allow-lists (see its `scriptHashes.add(cspSha256(
+  // escapeJsonForScript(JSON.stringify(manifest))))` call) — so a regression
+  // that broke JUST the manifest-island hash (e.g. hashing the wrong JSON
+  // encoding, or forgetting to add it to the CSP meta at all) would pass both
+  // existing tests while still shipping a document whose OWN manifest
+  // `<script>` is blocked by its OWN CSP meta tag. Build the actual final
+  // document end-to-end through `buildGridDocument` and assert the manifest
+  // island's real (post-parse) hash is present in the emitted `script-src`.
+  it("buildGridDocument's emitted script-src allow-lists the manifest data-island's own hash", async () => {
+    const m = manifest([card()]);
+    const html = await buildGridDocument(
+      {
+        kitsRoot: "/kits",
+        readAsset: async (name) => {
+          if (name === "index.html") return realIndexHtml;
+          if (name === "viewer.js") return realViewerJs;
+          return realViewerCss;
+        },
+        readPreviewBytes: async () => null,
+        previewsBaseUrl: "https://previews.example.com",
+        compile: async () => m,
+      },
+      { kitId: "acme-abc123" },
+    );
+
+    // Parse the FINAL document (same as a browser would) to get the manifest
+    // island's actual hash, rather than trusting the pre-inline computation.
+    const parsedHashes = collectInlineCspHashes(html);
+    const cspMetaMatch = html.match(/content="([^"]*)"/);
+    expect(cspMetaMatch).not.toBeNull();
+    const cspPolicy = (cspMetaMatch as RegExpMatchArray)[1].replace(/&quot;/g, '"');
+    const scriptSrcMatch = cspPolicy.match(/script-src ([^;]+)/);
+    expect(scriptSrcMatch).not.toBeNull();
+    const scriptSrc = (scriptSrcMatch as RegExpMatchArray)[1];
+
+    // Every inline-script hash the parsed document actually contains
+    // (viewer.js's own inline block AND the manifest data island) must be
+    // allow-listed in script-src — a document that fails to allow-list its
+    // own manifest island's hash would render with the grid silently blank.
+    expect(parsedHashes.scriptHashes.length).toBeGreaterThan(1);
+    for (const hash of parsedHashes.scriptHashes) {
+      expect(scriptSrc).toContain(hash);
+    }
   });
 });

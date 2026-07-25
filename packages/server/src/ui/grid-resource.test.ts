@@ -555,7 +555,42 @@ describe("buildGridDocument", () => {
       { kitId: "acme-abc123", componentName: "Link" },
     );
     expect(html).toContain("Link");
-    expect(html).not.toContain('"name":"Button"');
+    // Copilot review (PR #248) — the PRIMARY `#manifest` island (the grid
+    // view's source of truth) is still filtered down to just "Link"; the
+    // filtered-out "Button" only appears in the separate, unfiltered
+    // `#manifest-full` island Browse reads to navigate the whole kit (see
+    // the next assertion / `MANIFEST_FULL_ELEMENT_ID`'s doc comment).
+    const primaryIslandMatch = html.match(
+      /<script type="application\/json" id="manifest">(.*?)<\/script>/,
+    );
+    expect(primaryIslandMatch).not.toBeNull();
+    expect((primaryIslandMatch as RegExpMatchArray)[1]).not.toContain('"name":"Button"');
+  });
+
+  it("still inlines the full unfiltered manifest into #manifest-full for Browse (Copilot review, PR #248)", async () => {
+    const full = manifest([
+      card({ name: "Button" }),
+      card({ name: "Link", path: "components/actions/Link/preview.html" }),
+    ]);
+    const html = await buildGridDocument(
+      { ...baseDeps, compile: okCompiler(full) },
+      { kitId: "acme-abc123", componentName: "Link" },
+    );
+    const fullIslandMatch = html.match(
+      /<script type="application\/json" id="manifest-full">(.*?)<\/script>/,
+    );
+    expect(fullIslandMatch).not.toBeNull();
+    const fullIslandJson = (fullIslandMatch as RegExpMatchArray)[1];
+    expect(fullIslandJson).toContain('"name":"Button"');
+    expect(fullIslandJson).toContain('"name":"Link"');
+  });
+
+  it("omits the #manifest-full island entirely when the request carries no filter", async () => {
+    const html = await buildGridDocument(
+      { ...baseDeps, compile: okCompiler(manifest()) },
+      { kitId: "acme-abc123" },
+    );
+    expect(html).not.toContain('id="manifest-full"');
   });
 
   it("falls back to a minimal shell when the viewer assets are unreadable", async () => {
@@ -703,8 +738,16 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
     expect(res.contents[0]?.uri).toBe(uri);
     const text = String(res.contents[0]?.text);
     expect(text).toContain("Button");
-    // group=Actions filtered Card out before inlining.
-    expect(text).not.toContain('"name":"Card"');
+    // group=Actions filtered Card out of the PRIMARY `#manifest` island
+    // (Copilot review, PR #248 — Card still appears in the separate
+    // `#manifest-full` island, asserted by the `buildGridDocument` tests
+    // above; this catch-all-route test only re-confirms the primary
+    // island's own filter still applies end-to-end).
+    const primaryIslandMatch = text.match(
+      /<script type="application\/json" id="manifest">(.*?)<\/script>/,
+    );
+    expect(primaryIslandMatch).not.toBeNull();
+    expect((primaryIslandMatch as RegExpMatchArray)[1]).not.toContain('"name":"Card"');
   });
 
   it("reads a kitId-only query URI (componentName/group omitted)", async () => {
