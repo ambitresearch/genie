@@ -991,6 +991,14 @@
    * is structurally invalid and must be rejected here rather than passed
    * through on the strength of the two fields the viewer happens to use.
    */
+  /**
+   * DRO-242 (fail closed, Copilot review round 5) — `files[].content`'s
+   * canonical bounds (`packages/server/src/llm/schema.ts`'s `minLength: 1,
+   * maxLength: 65536`). Previously only the empty string was rejected; an
+   * oversized (>64KiB) `content` string still passed.
+   */
+  var CONTENT_MAX_LENGTH = 65536;
+
   function isConjureFileEntry(value) {
     return Boolean(
       isPlainObject(value) &&
@@ -998,7 +1006,8 @@
       typeof value.path === "string" &&
       FILE_PATH_PATTERN.test(value.path) &&
       typeof value.content === "string" &&
-      value.content &&
+      value.content.length >= 1 &&
+      value.content.length <= CONTENT_MAX_LENGTH &&
       typeof value.mimeType === "string" &&
       MIME_TYPE_PATTERN.test(value.mimeType) &&
       (value.encoding === "utf-8" || value.encoding === "base64"),
@@ -1021,15 +1030,33 @@
 
   /**
    * DRO-242 (fail closed) — validates `manifestEntry` against conjure's
-   * canonical output schema (`packages/server/src/tools/conjure.ts`):
-   * `viewport.width`/`viewport.height` are required numbers, and both
-   * `manifestEntry` and `viewport` are `.strict()` — no keys beyond
-   * `viewport`/`subtitle`/`tags` (resp. `width`/`height`) are allowed.
-   * `subtitle` and `tags` are optional but, when present, must be a
-   * string / array of strings respectively — an object-like-but-empty
-   * `manifestEntry: {}` (missing `viewport` entirely) must be rejected, not
-   * just checked for being a plain object.
+   * canonical output schema (`packages/server/src/tools/conjure.ts` /
+   * `packages/server/src/llm/schema.ts`'s `Viewport` $def): `viewport.width`/
+   * `viewport.height` are required integers in `[1, 4096]` (Copilot review
+   * round 5 — a bare `typeof === "number"` check still accepted fractions,
+   * `0`/negatives, values above 4096, `NaN`, and `Infinity`, none of which
+   * the canonical schema permits), and both `manifestEntry` and `viewport`
+   * are `.strict()` — no keys beyond `viewport`/`subtitle`/`tags` (resp.
+   * `width`/`height`) are allowed. `subtitle` (`maxLength: 256`) and `tags`
+   * (`maxItems: 16`, each a string) are optional but, when present, must
+   * respect those same bounds. An object-like-but-empty `manifestEntry: {}`
+   * (missing `viewport` entirely) must be rejected, not just checked for
+   * being a plain object.
    */
+  var VIEWPORT_DIMENSION_MIN = 1;
+  var VIEWPORT_DIMENSION_MAX = 4096;
+  var SUBTITLE_MAX_LENGTH = 256;
+  var TAGS_MAX_ITEMS = 16;
+
+  function isViewportDimension(value) {
+    return (
+      typeof value === "number" &&
+      Number.isInteger(value) &&
+      value >= VIEWPORT_DIMENSION_MIN &&
+      value <= VIEWPORT_DIMENSION_MAX
+    );
+  }
+
   function isManifestEntry(value) {
     if (!isPlainObject(value) || !hasOnlyKeys(value, ["viewport", "subtitle", "tags"])) {
       return false;
@@ -1037,14 +1064,20 @@
     if (!isPlainObject(value.viewport) || !hasOnlyKeys(value.viewport, ["width", "height"])) {
       return false;
     }
-    if (typeof value.viewport.width !== "number" || typeof value.viewport.height !== "number") {
+    if (!isViewportDimension(value.viewport.width) || !isViewportDimension(value.viewport.height)) {
       return false;
     }
-    if (value.subtitle !== undefined && typeof value.subtitle !== "string") return false;
+    if (
+      value.subtitle !== undefined &&
+      (typeof value.subtitle !== "string" || value.subtitle.length > SUBTITLE_MAX_LENGTH)
+    ) {
+      return false;
+    }
     if (
       value.tags !== undefined &&
       !(
         Array.isArray(value.tags) &&
+        value.tags.length <= TAGS_MAX_ITEMS &&
         value.tags.every(function (tag) {
           return typeof tag === "string";
         })

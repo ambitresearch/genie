@@ -275,6 +275,68 @@ describe("Generate workflow state", () => {
         files: [{ ...valid.files[0], mimeType: "not-a-mime-type" }, valid.files[1]],
       }),
     ).toBe(false);
+    // files[].content over the 65536-char maxLength (Copilot review round 5
+    // on PR #245) — every required field is present and correctly typed,
+    // but the canonical schema bounds content length.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], content: "x".repeat(65537) }, valid.files[1]],
+      }),
+    ).toBe(false);
+    // manifestEntry.viewport dimensions outside the canonical [1, 4096]
+    // integer range — fractions, zero, negatives, over-max, NaN, and
+    // Infinity are all schema violations a bare `typeof === "number"` check
+    // let through (Copilot review round 5 on PR #245).
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { viewport: { width: 480.5, height: 240 } },
+      }),
+    ).toBe(false);
+    expect(
+      hooks.isConjureResult({ ...valid, manifestEntry: { viewport: { width: 0, height: 240 } } }),
+    ).toBe(false);
+    expect(
+      hooks.isConjureResult({ ...valid, manifestEntry: { viewport: { width: -1, height: 240 } } }),
+    ).toBe(false);
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { viewport: { width: 4097, height: 240 } },
+      }),
+    ).toBe(false);
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { viewport: { width: NaN, height: 240 } },
+      }),
+    ).toBe(false);
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { viewport: { width: Infinity, height: 240 } },
+      }),
+    ).toBe(false);
+    // manifestEntry.subtitle over the 256-char maxLength.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { ...valid.manifestEntry, subtitle: "x".repeat(257) },
+      }),
+    ).toBe(false);
+    // manifestEntry.tags over the 16-item maxItems.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: {
+          ...valid.manifestEntry,
+          tags: Array.from({ length: 17 }, function (_, i) {
+            return "tag" + i;
+          }),
+        },
+      }),
+    ).toBe(false);
   });
 
   it("fails closed on malformed list_kits entries (DRO-242)", () => {
