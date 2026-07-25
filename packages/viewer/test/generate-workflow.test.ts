@@ -146,9 +146,7 @@ describe("Generate workflow state", () => {
     expect(
       hooks.isConjureResult({
         ...valid,
-        files: [
-          { path: "components/surfaces/StatusCard/StatusCard.tsx", content: "export {}" },
-        ],
+        files: [{ path: "components/surfaces/StatusCard/StatusCard.tsx", content: "export {}" }],
       }),
     ).toBe(false);
     // A files[] entry with an encoding outside the allowed enum.
@@ -179,11 +177,43 @@ describe("Generate workflow state", () => {
     // counts (Copilot review on PR #245).
     expect(hooks.isConjureResult({ ...valid, usage: {} })).toBe(false);
     // usage has a negative token count.
-    expect(
-      hooks.isConjureResult({ ...valid, usage: { ...valid.usage, promptTokens: -1 } }),
-    ).toBe(false);
+    expect(hooks.isConjureResult({ ...valid, usage: { ...valid.usage, promptTokens: -1 } })).toBe(
+      false,
+    );
     // The whole reply is an array rather than an object.
     expect(hooks.isConjureResult([valid])).toBe(false);
+    // A files[] entry with an extra, unrecognized key — every required field
+    // is present and correctly typed, but conjure's output schema is
+    // `.strict()` (Copilot review round 3 on PR #245).
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], unexpected: true }],
+      }),
+    ).toBe(false);
+    // manifestEntry with an extra top-level key beyond viewport/subtitle/tags.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { ...valid.manifestEntry, unexpected: true },
+      }),
+    ).toBe(false);
+    // manifestEntry.viewport with an extra key beyond width/height.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: {
+          ...valid.manifestEntry,
+          viewport: { ...valid.manifestEntry.viewport, unexpected: true },
+        },
+      }),
+    ).toBe(false);
+    // usage with an extra key beyond promptTokens/completionTokens/totalTokens.
+    expect(hooks.isConjureResult({ ...valid, usage: { ...valid.usage, unexpected: true } })).toBe(
+      false,
+    );
+    // Top-level result with an extra key beyond the canonical five.
+    expect(hooks.isConjureResult({ ...valid, unexpected: true })).toBe(false);
   });
 
   it("fails closed on malformed list_kits entries (DRO-242)", () => {
@@ -210,6 +240,9 @@ describe("Generate workflow state", () => {
     // The entry itself is an array, not a plain object.
     expect(hooks.isKitEntry([valid])).toBe(false);
     expect(hooks.isKitEntry(null)).toBe(false);
+    // An extra, unrecognized key — list_kits' output schema is `.strict()`
+    // (Copilot review round 3 on PR #245).
+    expect(hooks.isKitEntry({ ...valid, unexpected: true })).toBe(false);
   });
 });
 
@@ -389,7 +422,15 @@ describe("Generate surface DOM states", () => {
         calls.push({ name, args });
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", updatedAt: "2026-01-01T00:00:00Z", canEdit: true }],
+            kits: [
+              {
+                id: "acme-kit",
+                name: "Acme",
+                owner: "team",
+                updatedAt: "2026-01-01T00:00:00Z",
+                canEdit: true,
+              },
+            ],
           });
         }
         return conjure;
@@ -439,7 +480,15 @@ describe("Generate surface DOM states", () => {
       callTool: (name: string) => {
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", updatedAt: "2026-01-01T00:00:00Z", canEdit: true }],
+            kits: [
+              {
+                id: "acme-kit",
+                name: "Acme",
+                owner: "team",
+                updatedAt: "2026-01-01T00:00:00Z",
+                canEdit: true,
+              },
+            ],
           });
         }
         attempts += 1;
@@ -479,7 +528,15 @@ describe("Generate surface DOM states", () => {
             return Promise.reject(new Error("The host returned malformed UI-kit data."));
           }
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", updatedAt: "2026-01-01T00:00:00Z", canEdit: true }],
+            kits: [
+              {
+                id: "acme-kit",
+                name: "Acme",
+                owner: "team",
+                updatedAt: "2026-01-01T00:00:00Z",
+                canEdit: true,
+              },
+            ],
           });
         }
         conjureCalls += 1;
@@ -514,7 +571,15 @@ describe("Generate surface DOM states", () => {
       callTool: (name: string) => {
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", updatedAt: "2026-01-01T00:00:00Z", canEdit: true }],
+            kits: [
+              {
+                id: "acme-kit",
+                name: "Acme",
+                owner: "team",
+                updatedAt: "2026-01-01T00:00:00Z",
+                canEdit: true,
+              },
+            ],
           });
         }
         return conjure;

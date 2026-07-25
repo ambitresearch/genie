@@ -740,6 +740,7 @@
   function isKitEntry(kit) {
     return Boolean(
       isPlainObject(kit) &&
+      hasOnlyKeys(kit, ["id", "name", "owner", "updatedAt", "canEdit"]) &&
       typeof kit.id === "string" &&
       kit.id &&
       typeof kit.name === "string" &&
@@ -780,6 +781,25 @@
   }
 
   /**
+   * DRO-242 (fail closed, Copilot review round 3) — the server's canonical
+   * shapes for `files[]` entries, `manifestEntry`, `manifestEntry.viewport`,
+   * `usage`, and the top-level `conjure` result all declare
+   * `.strict()`/`additionalProperties: false` (`packages/server/src/tools/
+   * conjure.ts`'s `conjureOutputShape`, `packages/server/src/llm/schema.ts`'s
+   * `COMPONENT_SCHEMA`). A field-by-field/`isPlainObject` check alone does
+   * not enforce that — `{ ...valid.usage, unexpected: true }` has every
+   * required key with the right type, so it still passed. `hasOnlyKeys`
+   * makes every one of those checks reject any key outside its known set,
+   * closing that gap for good rather than only checking presence of the
+   * expected fields.
+   */
+  function hasOnlyKeys(value, allowedKeys) {
+    return Object.keys(value).every(function (key) {
+      return allowedKeys.indexOf(key) !== -1;
+    });
+  }
+
+  /**
    * DRO-242 (fail closed) — a single `files[]` entry from an untrusted host
    * reply, validated against conjure's canonical output schema
    * (`packages/server/src/tools/conjure.ts`): `path`, `content`, `mimeType`,
@@ -787,13 +807,15 @@
    * `"utf-8"` or `"base64"`. `mimeType`/`encoding` are not read by the
    * viewer today, but they are part of the canonical shape the host is
    * contractually returning — a reply missing them (or supplying an
-   * unrecognized encoding) is structurally invalid and must be rejected
-   * here rather than passed through on the strength of the two fields the
-   * viewer happens to use.
+   * unrecognized encoding), or supplying any extra key beyond this strict
+   * shape, is structurally invalid and must be rejected here rather than
+   * passed through on the strength of the two fields the viewer happens to
+   * use.
    */
   function isConjureFileEntry(value) {
     return Boolean(
       isPlainObject(value) &&
+      hasOnlyKeys(value, ["path", "content", "mimeType", "encoding"]) &&
       typeof value.path === "string" &&
       value.path &&
       typeof value.content === "string" &&
@@ -806,18 +828,22 @@
   /**
    * DRO-242 (fail closed) — validates `manifestEntry` against conjure's
    * canonical output schema (`packages/server/src/tools/conjure.ts`):
-   * `viewport.width`/`viewport.height` are required numbers. `subtitle`
-   * and `tags` are optional but, when present, must be a string / array of
-   * strings respectively — an object-like-but-empty `manifestEntry: {}`
-   * (missing `viewport` entirely) must be rejected, not just checked for
-   * being a plain object.
+   * `viewport.width`/`viewport.height` are required numbers, and both
+   * `manifestEntry` and `viewport` are `.strict()` — no keys beyond
+   * `viewport`/`subtitle`/`tags` (resp. `width`/`height`) are allowed.
+   * `subtitle` and `tags` are optional but, when present, must be a
+   * string / array of strings respectively — an object-like-but-empty
+   * `manifestEntry: {}` (missing `viewport` entirely) must be rejected, not
+   * just checked for being a plain object.
    */
   function isManifestEntry(value) {
-    if (!isPlainObject(value) || !isPlainObject(value.viewport)) return false;
-    if (
-      typeof value.viewport.width !== "number" ||
-      typeof value.viewport.height !== "number"
-    ) {
+    if (!isPlainObject(value) || !hasOnlyKeys(value, ["viewport", "subtitle", "tags"])) {
+      return false;
+    }
+    if (!isPlainObject(value.viewport) || !hasOnlyKeys(value.viewport, ["width", "height"])) {
+      return false;
+    }
+    if (typeof value.viewport.width !== "number" || typeof value.viewport.height !== "number") {
       return false;
     }
     if (value.subtitle !== undefined && typeof value.subtitle !== "string") return false;
@@ -838,12 +864,14 @@
   /**
    * DRO-242 (fail closed) — validates `usage` against conjure's canonical
    * output schema: `promptTokens`, `completionTokens`, and `totalTokens`
-   * must each be non-negative integers. An object-like-but-empty
-   * `usage: {}` must be rejected rather than accepted as "truthy object".
+   * must each be non-negative integers, and no other key is allowed
+   * (`.strict()`). An object-like-but-empty `usage: {}` must be rejected
+   * rather than accepted as "truthy object".
    */
   function isConjureUsage(value) {
     return Boolean(
       isPlainObject(value) &&
+      hasOnlyKeys(value, ["promptTokens", "completionTokens", "totalTokens"]) &&
       isNonNegativeInteger(value.promptTokens) &&
       isNonNegativeInteger(value.completionTokens) &&
       isNonNegativeInteger(value.totalTokens),
@@ -856,20 +884,24 @@
 
   /**
    * DRO-242 (fail closed) — validates an untrusted `conjure` host reply
-   * against the canonical `{ componentName, group, files, manifestEntry }`
-   * shape (COMPONENT_SCHEMA / conjure's ConjureResult) before it is allowed
-   * to reach `drafts.add`/`renderDraft`. Previously this only checked that
-   * `files` was an array and `manifestEntry`/`usage` were truthy objects —
-   * a host could return `files: [{}]`, `files: [null]`, `manifestEntry: {}`,
-   * or `usage: {}` and it would pass straight through to the Review
-   * surface. Every `files[]` entry is now individually validated via
-   * `isConjureFileEntry`, and `manifestEntry`/`usage` are validated against
-   * their full nested schemas via `isManifestEntry`/`isConjureUsage` rather
-   * than any truthy `typeof … === "object"` check.
+   * against the canonical `{ componentName, group, files, manifestEntry,
+   * usage }` shape (COMPONENT_SCHEMA / conjure's ConjureResult /
+   * `conjureOutputShape`) before it is allowed to reach
+   * `drafts.add`/`renderDraft`. Previously this only checked that `files`
+   * was an array and `manifestEntry`/`usage` were truthy objects — a host
+   * could return `files: [{}]`, `files: [null]`, `manifestEntry: {}`, or
+   * `usage: {}` and it would pass straight through to the Review surface.
+   * Every `files[]` entry is now individually validated via
+   * `isConjureFileEntry`, `manifestEntry`/`usage` are validated against
+   * their full nested schemas via `isManifestEntry`/`isConjureUsage`, and
+   * the top level (like every nested shape) rejects any key beyond the
+   * five the schema declares — matching the server's `.strict()` shapes
+   * end to end rather than only checking the fields it happens to read.
    */
   function isConjureResult(value) {
     return Boolean(
       isPlainObject(value) &&
+      hasOnlyKeys(value, ["componentName", "group", "files", "manifestEntry", "usage"]) &&
       typeof value.componentName === "string" &&
       value.componentName.trim() &&
       typeof value.group === "string" &&
