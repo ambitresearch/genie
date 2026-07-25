@@ -384,11 +384,21 @@ export function inlineViewerAssets(
 
   const cssLink = /<link\b[^>]*href=["']\.\/viewer\.css["'][^>]*>/i;
   const jsScript = /<script\b[^>]*src=["']\.\/viewer\.js["'][^>]*><\/script>/i;
+  // `replace(regex, replacementString)` treats `$&`, `$$`, `$1`, etc. in the
+  // replacement string as substitution tokens, not literal text. `scriptTag`
+  // embeds the ENTIRE viewer.js source verbatim — if that source ever
+  // contains a `$`-prefixed sequence matching one of those tokens (e.g. a
+  // regex literal like `/[!#$&^_.+-]/` inside a comment, which contains
+  // `$&`), the replacement corrupts the inlined document by
+  // duplicating/substituting fragments of viewer.js in place of the token,
+  // desyncing the CSP hash from what a browser actually parses. A function
+  // replacer receives the matched text as a plain argument and is never
+  // subject to token interpretation.
   let html = cssLink.test(indexHtml)
-    ? indexHtml.replace(cssLink, styleTag)
+    ? indexHtml.replace(cssLink, () => styleTag)
     : injectBeforeClosingTag(indexHtml, "head", styleTag);
   html = jsScript.test(html)
-    ? html.replace(jsScript, scriptTag)
+    ? html.replace(jsScript, () => scriptTag)
     : injectBeforeClosingTag(html, "body", scriptTag);
 
   return {

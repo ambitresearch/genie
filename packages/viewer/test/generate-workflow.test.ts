@@ -103,15 +103,302 @@ describe("Generate workflow state", () => {
   it("accepts only complete structured Conjure results", () => {
     const { hooks } = loadHooks();
     const valid = {
-      componentName: "Status card",
+      componentName: "StatusCard",
       group: "surfaces",
-      files: [{ path: "x", content: "x", mimeType: "text/plain", encoding: "utf8" }],
-      manifestEntry: {},
-      usage: {},
+      files: [
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "x",
+          mimeType: "text/plain",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 320, height: 240 } },
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
     };
     expect(hooks.isConjureResult(valid)).toBe(true);
     expect(hooks.isConjureResult({ ...valid, files: undefined })).toBe(false);
     expect(hooks.isConjureResult({ ...valid, componentName: "" })).toBe(false);
+  });
+
+  it("fails closed on a conjure draft with malformed files/manifestEntry/usage (DRO-242)", () => {
+    const { hooks } = loadHooks();
+    const valid = {
+      componentName: "StatusCard",
+      group: "surfaces",
+      files: [
+        {
+          path: "components/surfaces/StatusCard/StatusCard.tsx",
+          content: "export {}",
+          mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "<div>@genie</div>",
+          mimeType: "text/html",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 480, height: 240 } },
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    };
+    expect(hooks.isConjureResult(valid)).toBe(true);
+
+    // Empty files array — no draft content at all.
+    expect(hooks.isConjureResult({ ...valid, files: [] })).toBe(false);
+    // A files[] entry missing its content — partial file (the issue's own example).
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ path: "components/surfaces/StatusCard/StatusCard.tsx" }],
+      }),
+    ).toBe(false);
+    // A files[] entry with only path/content — missing mimeType/encoding, which
+    // conjure's output schema requires (Copilot review on PR #245).
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ path: "components/surfaces/StatusCard/StatusCard.tsx", content: "export {}" }],
+      }),
+    ).toBe(false);
+    // A files[] entry with an encoding outside the allowed enum.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], encoding: "utf8" }],
+      }),
+    ).toBe(false);
+    // A files[] entry that is a bare string, not an object.
+    expect(hooks.isConjureResult({ ...valid, files: ["not-an-object"] })).toBe(false);
+    // A null entry inside files[].
+    expect(hooks.isConjureResult({ ...valid, files: [null] })).toBe(false);
+    // manifestEntry missing entirely.
+    expect(hooks.isConjureResult({ ...valid, manifestEntry: undefined })).toBe(false);
+    // manifestEntry is an array, not a plain object.
+    expect(hooks.isConjureResult({ ...valid, manifestEntry: [] })).toBe(false);
+    // manifestEntry is object-like but structurally invalid — missing viewport
+    // entirely (Copilot review on PR #245).
+    expect(hooks.isConjureResult({ ...valid, manifestEntry: {} })).toBe(false);
+    // manifestEntry.viewport is missing width/height.
+    expect(hooks.isConjureResult({ ...valid, manifestEntry: { viewport: {} } })).toBe(false);
+    // usage missing entirely.
+    expect(hooks.isConjureResult({ ...valid, usage: undefined })).toBe(false);
+    // usage is an array, not a plain object.
+    expect(hooks.isConjureResult({ ...valid, usage: [] })).toBe(false);
+    // usage is object-like but structurally invalid — missing all token
+    // counts (Copilot review on PR #245).
+    expect(hooks.isConjureResult({ ...valid, usage: {} })).toBe(false);
+    // usage has a negative token count.
+    expect(hooks.isConjureResult({ ...valid, usage: { ...valid.usage, promptTokens: -1 } })).toBe(
+      false,
+    );
+    // The whole reply is an array rather than an object.
+    expect(hooks.isConjureResult([valid])).toBe(false);
+    // A files[] entry with an extra, unrecognized key — every required field
+    // is present and correctly typed, but conjure's output schema is
+    // `.strict()` (Copilot review round 3 on PR #245).
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], unexpected: true }],
+      }),
+    ).toBe(false);
+    // manifestEntry with an extra top-level key beyond viewport/subtitle/tags.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { ...valid.manifestEntry, unexpected: true },
+      }),
+    ).toBe(false);
+    // manifestEntry.viewport with an extra key beyond width/height.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: {
+          ...valid.manifestEntry,
+          viewport: { ...valid.manifestEntry.viewport, unexpected: true },
+        },
+      }),
+    ).toBe(false);
+    // usage with an extra key beyond promptTokens/completionTokens/totalTokens.
+    expect(hooks.isConjureResult({ ...valid, usage: { ...valid.usage, unexpected: true } })).toBe(
+      false,
+    );
+    // Top-level result with an extra key beyond the canonical five.
+    expect(hooks.isConjureResult({ ...valid, unexpected: true })).toBe(false);
+    // componentName with a space / lowercase leading char — not PascalCase
+    // (Copilot review round 4 on PR #245).
+    expect(hooks.isConjureResult({ ...valid, componentName: "Status card" })).toBe(false);
+    // group uppercase or over the 32-char cap — not kebab-case.
+    expect(hooks.isConjureResult({ ...valid, group: "Surfaces" })).toBe(false);
+    expect(hooks.isConjureResult({ ...valid, group: "s".repeat(33) })).toBe(false);
+    // More than 12 files exceeds COMPONENT_SCHEMA's maxItems.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: Array.from({ length: 13 }, function (_, i) {
+          return {
+            path: "components/surfaces/StatusCard/File" + i + ".tsx",
+            content: "export {}",
+            mimeType: "text/tsx",
+            encoding: "utf-8",
+          };
+        }).concat(valid.files[1]),
+      }),
+    ).toBe(false);
+    // Every file present but none is the required <Name>.html preview
+    // (AC5's `contains` rule).
+    expect(hooks.isConjureResult({ ...valid, files: [valid.files[0]] })).toBe(false);
+    // An .html file exists but its <Name> doesn't match the directory's
+    // <Name> segment — not self-consistent.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [
+          valid.files[0],
+          { ...valid.files[1], path: "components/surfaces/StatusCard/Wrong.html" },
+        ],
+      }),
+    ).toBe(false);
+    // A file path outside the components/<group>/<Name>/ layout.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], path: "StatusCard.tsx" }, valid.files[1]],
+      }),
+    ).toBe(false);
+    // A mimeType that doesn't match the type/subtype pattern.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], mimeType: "not-a-mime-type" }, valid.files[1]],
+      }),
+    ).toBe(false);
+    // files[].content over the 65536-char maxLength (Copilot review round 5
+    // on PR #245) — every required field is present and correctly typed,
+    // but the canonical schema bounds content length.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], content: "x".repeat(65537) }, valid.files[1]],
+      }),
+    ).toBe(false);
+    // Astral-character boundary (Copilot review round 6 on PR #245):
+    // `maxLength` counts Unicode CODE POINTS, not UTF-16 code units. A
+    // string of exactly 65536 astral characters (each a surrogate PAIR,
+    // so `.length` reads 131072) is schema-VALID and must be ACCEPTED; one
+    // MORE astral character (65537 code points) must be rejected. A naive
+    // `.length` check gets both of these backwards.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], content: "\u{1F600}".repeat(65536) }, valid.files[1]],
+      }),
+    ).toBe(true);
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], content: "\u{1F600}".repeat(65537) }, valid.files[1]],
+      }),
+    ).toBe(false);
+    // manifestEntry.viewport dimensions outside the canonical [1, 4096]
+    // integer range — fractions, zero, negatives, over-max, NaN, and
+    // Infinity are all schema violations a bare `typeof === "number"` check
+    // let through (Copilot review round 5 on PR #245).
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { viewport: { width: 480.5, height: 240 } },
+      }),
+    ).toBe(false);
+    expect(
+      hooks.isConjureResult({ ...valid, manifestEntry: { viewport: { width: 0, height: 240 } } }),
+    ).toBe(false);
+    expect(
+      hooks.isConjureResult({ ...valid, manifestEntry: { viewport: { width: -1, height: 240 } } }),
+    ).toBe(false);
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { viewport: { width: 4097, height: 240 } },
+      }),
+    ).toBe(false);
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { viewport: { width: NaN, height: 240 } },
+      }),
+    ).toBe(false);
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { viewport: { width: Infinity, height: 240 } },
+      }),
+    ).toBe(false);
+    // manifestEntry.subtitle over the 256-char maxLength.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { ...valid.manifestEntry, subtitle: "x".repeat(257) },
+      }),
+    ).toBe(false);
+    // Astral-character boundary for subtitle, same reasoning as content
+    // above: exactly 256 astral code points must be accepted even though
+    // `.length` reads 512; 257 must be rejected.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { ...valid.manifestEntry, subtitle: "\u{1F600}".repeat(256) },
+      }),
+    ).toBe(true);
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: { ...valid.manifestEntry, subtitle: "\u{1F600}".repeat(257) },
+      }),
+    ).toBe(false);
+    // manifestEntry.tags over the 16-item maxItems.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        manifestEntry: {
+          ...valid.manifestEntry,
+          tags: Array.from({ length: 17 }, function (_, i) {
+            return "tag" + i;
+          }),
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("fails closed on malformed list_kits entries (DRO-242)", () => {
+    const { hooks } = loadHooks();
+    const valid = { id: "acme-kit", name: "Acme", owner: "team", updatedAt: "now", canEdit: true };
+    expect(hooks.isKitEntry(valid)).toBe(true);
+
+    // Missing id.
+    expect(hooks.isKitEntry({ ...valid, id: undefined })).toBe(false);
+    // Empty-string id.
+    expect(hooks.isKitEntry({ ...valid, id: "" })).toBe(false);
+    // Missing name.
+    expect(hooks.isKitEntry({ ...valid, name: undefined })).toBe(false);
+    // canEdit is not a boolean (e.g. a truthy string).
+    expect(hooks.isKitEntry({ ...valid, canEdit: "true" })).toBe(false);
+    // owner present but not a string.
+    expect(hooks.isKitEntry({ ...valid, owner: { name: "team" } })).toBe(false);
+    // owner and updatedAt are both required strings in the canonical output
+    // schema — omitting or mistyping either must fail closed.
+    expect(hooks.isKitEntry({ id: "acme-kit", name: "Acme", canEdit: true })).toBe(false);
+    expect(hooks.isKitEntry({ ...valid, owner: undefined })).toBe(false);
+    expect(hooks.isKitEntry({ ...valid, updatedAt: undefined })).toBe(false);
+    expect(hooks.isKitEntry({ ...valid, updatedAt: 12345 })).toBe(false);
+    // The entry itself is an array, not a plain object.
+    expect(hooks.isKitEntry([valid])).toBe(false);
+    expect(hooks.isKitEntry(null)).toBe(false);
+    // An extra, unrecognized key — list_kits' output schema is `.strict()`
+    // (Copilot review round 3 on PR #245).
+    expect(hooks.isKitEntry({ ...valid, unexpected: true })).toBe(false);
   });
 });
 
@@ -235,7 +522,9 @@ describe("MCP host bridge", () => {
         calls.push({ name, args, timeoutMs });
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+            kits: [
+              { id: "acme-kit", name: "Acme", owner: "team", updatedAt: "now", canEdit: true },
+            ],
           });
         }
         if (name === "mcp__genie__list_files") {
@@ -269,14 +558,21 @@ describe("MCP host bridge", () => {
     expect(listKitsCall?.timeoutMs).toBeUndefined();
 
     resolveConjure({
-      componentName: "Status card",
+      componentName: "StatusCard",
       group: "surfaces",
-      files: [{ path: "components/StatusCard.tsx", content: "export default null" }],
-      manifestEntry: { name: "Status card" },
-      usage: { inputTokens: 12, outputTokens: 20 },
+      files: [
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "x",
+          mimeType: "text/plain",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 320, height: 240 } },
+      usage: { promptTokens: 12, completionTokens: 20, totalTokens: 32 },
     });
     await settle();
-    expect(document.getElementById("draft-name")?.textContent).toBe("Status card");
+    expect(document.getElementById("draft-name")?.textContent).toBe("StatusCard");
   });
 
   it("createHostBridge schedules no timer at all for NO_CLIENT_DEADLINE, however long the host takes", async () => {
@@ -375,14 +671,202 @@ describe("Generate surface DOM states", () => {
     );
   });
 
+  it("fails closed and shows an error when list_kits returns non-array or malformed entries (DRO-242)", async () => {
+    const nonArray = loadShell();
+    nonArray.hooks.initProductShell(nonArray.document, {
+      callTool: async () => ({ kits: "not-an-array" }),
+      destroy: () => {},
+    });
+    await settle();
+    expect(nonArray.document.getElementById("generate-error")?.hidden).toBe(false);
+    expect(nonArray.document.getElementById("kit-state")?.textContent).toContain(
+      "could not be loaded",
+    );
+    expect((nonArray.document.getElementById("kit-select") as HTMLSelectElement).value).toBe("");
+
+    const malformedEntry = loadShell();
+    malformedEntry.hooks.initProductShell(malformedEntry.document, {
+      // Editable kit missing its id — a structurally invalid entry must
+      // reject the whole reply (fail closed), not just be silently dropped.
+      callTool: async () => ({ kits: [{ name: "Acme", canEdit: true }] }),
+      destroy: () => {},
+    });
+    await settle();
+    expect(malformedEntry.document.getElementById("generate-error")?.hidden).toBe(false);
+    expect((malformedEntry.document.getElementById("kit-select") as HTMLSelectElement).value).toBe(
+      "",
+    );
+
+    // The canonical list_kits output schema is strict at the reply level
+    // (additionalProperties: false, packages/server/src/tools/
+    // list_kits.test.ts:174-178) — `kits` is the only allowed key. A reply
+    // with an extra top-level key must be rejected outright, not accepted
+    // because `kits` itself happens to be well-formed (Copilot review round
+    // 4 on PR #245).
+    const unexpectedKey = loadShell();
+    unexpectedKey.hooks.initProductShell(unexpectedKey.document, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      callTool: async () => ({ kits: [], unexpected: true }) as any,
+      destroy: () => {},
+    });
+    await settle();
+    expect(unexpectedKey.document.getElementById("generate-error")?.hidden).toBe(false);
+    expect(unexpectedKey.document.getElementById("kit-state")?.textContent).toContain(
+      "could not be loaded",
+    );
+    expect((unexpectedKey.document.getElementById("kit-select") as HTMLSelectElement).value).toBe(
+      "",
+    );
+  });
+
+  it("clears stale trusted kit state before a malformed list_kits refresh can leave it intact (DRO-242)", async () => {
+    const { hooks, document } = loadShell();
+    let listKitsCalls = 0;
+    const bridge = {
+      callTool: (name: string) => {
+        if (name === "mcp__genie__list_kits") {
+          listKitsCalls += 1;
+          // First discovery succeeds with a real, editable kit...
+          if (listKitsCalls === 1) {
+            return Promise.resolve({
+              kits: [
+                {
+                  id: "acme-kit",
+                  name: "Acme",
+                  owner: "team",
+                  updatedAt: "2026-01-01T00:00:00Z",
+                  canEdit: true,
+                },
+              ],
+            });
+          }
+          // ...but a subsequent refresh (e.g. a host reconnect) comes back
+          // malformed.
+          return Promise.resolve({ kits: "not-an-array" });
+        }
+        return Promise.reject(new Error("conjure should not be called in this test"));
+      },
+      destroy: () => {},
+    };
+    const controller = hooks.initProductShell(document, bridge);
+    await settle();
+
+    const kitSelect = document.getElementById("kit-select") as HTMLSelectElement;
+    expect(kitSelect.value).toBe("acme-kit");
+    expect(kitSelect.disabled).toBe(false);
+
+    const prompt = document.getElementById("generate-prompt") as HTMLTextAreaElement;
+    prompt.value = "Build a compact status card";
+    prompt.dispatchEvent(
+      new (document.defaultView as typeof window).Event("input", { bubbles: true }),
+    );
+    expect((document.getElementById("conjure-button") as HTMLButtonElement).disabled).toBe(false);
+
+    // Simulate a host refresh (e.g. reconnect) that re-invokes discovery —
+    // this is the same path Retry takes when no kits are loaded.
+    controller.setBridge(bridge);
+    await settle();
+
+    expect(listKitsCalls).toBe(2);
+    // The malformed refresh must clear the previously trusted kit — the
+    // stale option/value from discovery #1 must not survive.
+    expect(kitSelect.value).toBe("");
+    expect(kitSelect.disabled).toBe(true);
+    expect(document.getElementById("kit-state")?.textContent).toContain("could not be loaded");
+    // With kits cleared, Conjure must be gated off again rather than left
+    // enabled on stale data.
+    expect((document.getElementById("conjure-button") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("ignores an older, out-of-order list_kits reply after a newer discovery has already superseded it (DRO-242)", async () => {
+    // Copilot review round 6 on PR #245: `setBridge` calls `loadKits()`
+    // without cancelling or versioning any call already in flight. Network
+    // replies do not have to resolve in call order — an OLDER discovery's
+    // `callTool` promise can settle AFTER a NEWER one's. If the older call's
+    // resolution is allowed to mutate `kits`/the DOM regardless, it can
+    // resurrect a stale (or, as here, malformed-and-rejected) state on top
+    // of whatever the newer call already decided.
+    const { hooks, document } = loadShell();
+    let resolveFirst: (value: unknown) => void = () => {};
+    const first = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    let callCount = 0;
+    const bridge = {
+      callTool: (name: string) => {
+        if (name === "mcp__genie__list_kits") {
+          callCount += 1;
+          // The FIRST call (older) is left pending — it resolves later,
+          // out of order, once we've already observed the second call's
+          // result below.
+          if (callCount === 1) return first;
+          // The SECOND call (newer) resolves immediately with a malformed
+          // reply — this is the call whose fail-closed outcome must win.
+          return Promise.resolve({ kits: "not-an-array" });
+        }
+        return Promise.reject(new Error("conjure should not be called in this test"));
+      },
+      destroy: () => {},
+    };
+    const controller = hooks.initProductShell(document, bridge);
+    // Trigger the second (newer) discovery before the first has settled —
+    // e.g. a rapid host reconnect while the initial discovery was still
+    // in flight.
+    controller.setBridge(bridge);
+    await settle();
+
+    const kitSelect = document.getElementById("kit-select") as HTMLSelectElement;
+    // The newer call's malformed reply must have already failed closed.
+    expect(callCount).toBe(2);
+    expect(kitSelect.value).toBe("");
+    expect(kitSelect.disabled).toBe(true);
+    expect(document.getElementById("kit-state")?.textContent).toContain("could not be loaded");
+
+    // Now the STALE first call finally resolves with a well-formed,
+    // editable kit — arriving strictly after the newer call already
+    // rejected. It must be silently ignored: no re-populating `kits`, no
+    // re-enabling the `<select>`/Conjure gate on data a newer call has
+    // already superseded.
+    resolveFirst({
+      kits: [
+        {
+          id: "stale-kit",
+          name: "Stale",
+          owner: "team",
+          updatedAt: "2026-01-01T00:00:00Z",
+          canEdit: true,
+        },
+      ],
+    });
+    await settle();
+
+    expect(kitSelect.value).toBe("");
+    expect(kitSelect.disabled).toBe(true);
+    expect(document.getElementById("kit-state")?.textContent).toContain("could not be loaded");
+    expect((document.getElementById("conjure-button") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("submits once, retains the exact draft, routes to Review, and announces success", async () => {
     const { hooks, window, document } = loadShell();
     const result = {
-      componentName: "Status card",
+      componentName: "StatusCard",
       group: "surfaces",
-      files: [{ path: "components/StatusCard.tsx", content: "export default null" }],
-      manifestEntry: { name: "Status card" },
-      usage: { inputTokens: 12, outputTokens: 20 },
+      files: [
+        {
+          path: "components/surfaces/StatusCard/StatusCard.tsx",
+          content: "export default null",
+          mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "<div>@genie</div>",
+          mimeType: "text/html",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 320, height: 240 } },
+      usage: { promptTokens: 12, completionTokens: 20, totalTokens: 32 },
     };
     let resolveConjure: (value: unknown) => void = () => {};
     const conjure = new Promise((resolve) => {
@@ -396,7 +880,15 @@ describe("Generate surface DOM states", () => {
         calls.push({ name, args });
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+            kits: [
+              {
+                id: "acme-kit",
+                name: "Acme",
+                owner: "team",
+                updatedAt: "2026-01-01T00:00:00Z",
+                canEdit: true,
+              },
+            ],
           });
         }
         if (name === "mcp__genie__list_files") return Promise.resolve({ files: [] });
@@ -435,9 +927,9 @@ describe("Generate surface DOM states", () => {
     await settle();
     expect(new URL(window.location.href).searchParams.get("route")).toBe("review");
     expect(document.getElementById("draft-label")?.textContent).toBe("draft #1");
-    expect(document.getElementById("draft-name")?.textContent).toBe("Status card");
+    expect(document.getElementById("draft-name")?.textContent).toBe("StatusCard");
     expect(document.getElementById("app-status")?.textContent).toBe(
-      "Generated Status card, draft #1.",
+      "Generated StatusCard, draft #1.",
     );
     expect(document.querySelector("[data-route-view='review']")?.hidden).toBe(false);
   });
@@ -449,7 +941,15 @@ describe("Generate surface DOM states", () => {
       callTool: (name: string) => {
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+            kits: [
+              {
+                id: "acme-kit",
+                name: "Acme",
+                owner: "team",
+                updatedAt: "2026-01-01T00:00:00Z",
+                canEdit: true,
+              },
+            ],
           });
         }
         if (name === "mcp__genie__list_files") return Promise.resolve({ files: [] });
@@ -491,7 +991,15 @@ describe("Generate surface DOM states", () => {
             return Promise.reject(new Error("The host returned malformed UI-kit data."));
           }
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+            kits: [
+              {
+                id: "acme-kit",
+                name: "Acme",
+                owner: "team",
+                updatedAt: "2026-01-01T00:00:00Z",
+                canEdit: true,
+              },
+            ],
           });
         }
         conjureCalls += 1;
@@ -526,7 +1034,15 @@ describe("Generate surface DOM states", () => {
       callTool: (name: string) => {
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+            kits: [
+              {
+                id: "acme-kit",
+                name: "Acme",
+                owner: "team",
+                updatedAt: "2026-01-01T00:00:00Z",
+                canEdit: true,
+              },
+            ],
           });
         }
         if (name === "mcp__genie__list_files") return Promise.resolve({ files: [] });
@@ -544,17 +1060,30 @@ describe("Generate surface DOM states", () => {
     button.focus();
     button.click();
     resolveConjure({
-      componentName: "Status card",
+      componentName: "StatusCard",
       group: "surfaces",
-      files: [{ path: "components/StatusCard.tsx", content: "export default null" }],
-      manifestEntry: { name: "Status card" },
-      usage: { inputTokens: 12, outputTokens: 20 },
+      files: [
+        {
+          path: "components/surfaces/StatusCard/StatusCard.tsx",
+          content: "export default null",
+          mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "<div>@genie</div>",
+          mimeType: "text/html",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 320, height: 240 } },
+      usage: { promptTokens: 12, completionTokens: 20, totalTokens: 32 },
     });
     await settle();
 
     // Focus landed on the rendered draft heading, never left on the now-hidden button.
     expect(document.activeElement?.id).toBe("draft-name");
-    expect(document.getElementById("draft-name")?.textContent).toBe("Status card");
+    expect(document.getElementById("draft-name")?.textContent).toBe("StatusCard");
   });
 });
 

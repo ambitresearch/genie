@@ -877,6 +877,30 @@
     );
   }
 
+  /**
+   * DRO-242 (fail closed) — validates a single `list_kits` reply entry
+   * against its canonical output shape (`{ id, name, owner, updatedAt,
+   * canEdit }`, `packages/server/src/tools/list_kits.ts`). Both `owner` and
+   * `updatedAt` are required strings in that schema (not optional), so a
+   * host reply missing either — or supplying a non-string value — is
+   * rejected here rather than silently coerced or ignored. `owner` is
+   * rendered directly into the kit `<option>` label (`kits[i].owner ||
+   * "local"`), so a non-string owner (e.g. an object) would otherwise reach
+   * `textContent` interpolation as `[object Object]`.
+   */
+  function isKitEntry(kit) {
+    return Boolean(
+      isPlainObject(kit) &&
+      hasOnlyKeys(kit, ["id", "name", "owner", "updatedAt", "canEdit"]) &&
+      typeof kit.id === "string" &&
+      kit.id &&
+      typeof kit.name === "string" &&
+      typeof kit.owner === "string" &&
+      typeof kit.updatedAt === "string" &&
+      typeof kit.canEdit === "boolean",
+    );
+  }
+
   function selectInitialKit(kits, remembered) {
     var editable = Array.isArray(kits)
       ? kits.filter(function (kit) {
@@ -894,18 +918,253 @@
     return editable.length === 1 ? editable[0].id : "";
   }
 
+  /**
+   * DRO-242 — a "plain object" for schema-validation purposes: not `null`,
+   * not an array, and not any other non-object primitive. Both
+   * `isConjureResult` and `loadKits`' reply/entry checks use this so a host
+   * that swaps an expected object for an array (or vice versa) fails closed
+   * instead of accidentally satisfying a loose `typeof x === "object"` check
+   * (which is also `true` for arrays and `null` is falsy but worth being
+   * explicit about).
+   */
+  function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+
+  /**
+   * DRO-242 (fail closed, Copilot review round 3) — the server's canonical
+   * shapes for `files[]` entries, `manifestEntry`, `manifestEntry.viewport`,
+   * `usage`, and the top-level `conjure` result all declare
+   * `.strict()`/`additionalProperties: false` (`packages/server/src/tools/
+   * conjure.ts`'s `conjureOutputShape`, `packages/server/src/llm/schema.ts`'s
+   * `COMPONENT_SCHEMA`). A field-by-field/`isPlainObject` check alone does
+   * not enforce that — `{ ...valid.usage, unexpected: true }` has every
+   * required key with the right type, so it still passed. `hasOnlyKeys`
+   * makes every one of those checks reject any key outside its known set,
+   * closing that gap for good rather than only checking presence of the
+   * expected fields.
+   */
+  function hasOnlyKeys(value, allowedKeys) {
+    return Object.keys(value).every(function (key) {
+      return allowedKeys.indexOf(key) !== -1;
+    });
+  }
+
+  /**
+   * DRO-242 (fail closed, Copilot review round 4) — the `<Name>` segment
+   * pattern `COMPONENT_SCHEMA` (`packages/server/src/llm/schema.ts`) reuses
+   * across `componentName`, `files[].path`'s directory segment, and the
+   * `<Name>.html` `contains` backreference: `[A-Z][A-Za-z0-9]{1,63}`
+   * (PascalCase, 2-64 chars total).
+   */
+  var COMPONENT_NAME_PATTERN = /^[A-Z][A-Za-z0-9]{1,63}$/;
+
+  /** DRO-242 — kebab-case `group`, `[a-z0-9-]{1,32}` (COMPONENT_SCHEMA). */
+  var GROUP_PATTERN = /^[a-z0-9-]{1,32}$/;
+
+  /**
+   * DRO-242 — `files[].path` must land under `components/<group>/<Name>/`
+   * (AC4 in `packages/server/src/llm/schema.ts`): `<group>` is kebab-case,
+   * `<Name>` is PascalCase, and the basename allows the broader
+   * `[A-Za-z0-9._-]+` (covers `<Name>.tsx`, `<Name>.d.ts`,
+   * `<Name>.prompt.md`, `<Name>.html`, `meta.json`).
+   */
+  var FILE_PATH_PATTERN = /^components\/[a-z0-9-]+\/[A-Z][A-Za-z0-9]+\/[A-Za-z0-9._-]+$/;
+
+  /**
+   * DRO-242 — `mimeType` pattern lifted verbatim from `COMPONENT_SCHEMA`'s
+   * `files[].mimeType` (`type/subtype` per RFC 6838's token grammar).
+   */
+  var MIME_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/;
+
+  /**
+   * DRO-242 (fail closed) — a single `files[]` entry from an untrusted host
+   * reply, validated against conjure's canonical output schema
+   * (`packages/server/src/tools/conjure.ts`'s `conjureOutputShape` plus
+   * `COMPONENT_SCHEMA`'s `files[]` item shape in
+   * `packages/server/src/llm/schema.ts`): `path` must match the
+   * `components/<group>/<Name>/<basename>` layout, `content`/`mimeType` are
+   * required non-empty strings (`mimeType` further constrained to the
+   * `type/subtype` pattern), and `encoding` is restricted to `"utf-8"` or
+   * `"base64"`. A reply missing any of these (or supplying an unrecognized
+   * encoding, a malformed path, or any extra key beyond this strict shape)
+   * is structurally invalid and must be rejected here rather than passed
+   * through on the strength of the two fields the viewer happens to use.
+   */
+  /**
+   * DRO-242 (fail closed, Copilot review round 6) — JSON Schema's
+   * `maxLength`/`minLength` count Unicode CODE POINTS, but JS `String.length`
+   * counts UTF-16 CODE UNITS — every character outside the Basic Multilingual
+   * Plane (astral characters: most emoji, some CJK extensions) is one code
+   * point but TWO code units (a surrogate pair). A schema-valid string near
+   * either bound (e.g. exactly `maxLength` emoji) would be wrongly
+   * accepted/rejected by a raw `.length` comparison. Counting via the
+   * string iterator (`for...of` / spread) is code-point-aware — it steps
+   * over full surrogate pairs — and this early-exits once `max` is
+   * exceeded rather than materializing an array for a large string.
+   */
+  function isCodePointLengthWithinBounds(value, min, max) {
+    var count = 0;
+    // Iterated purely for its code-point-aware stepping; the yielded
+    // character itself isn't needed.
+    for (var _ of value) {
+      count += 1;
+      if (count > max) return false;
+    }
+    return count >= min;
+  }
+
+  /**
+   * DRO-242 (fail closed, Copilot review round 5) — `files[].content`'s
+   * canonical bounds (`packages/server/src/llm/schema.ts`'s `minLength: 1,
+   * maxLength: 65536`). Previously only the empty string was rejected; an
+   * oversized (>64KiB) `content` string still passed. Round 6: bounds are
+   * checked in Unicode code points via `isCodePointLengthWithinBounds`, not
+   * UTF-16 code units, so astral characters (e.g. many emoji) are counted
+   * correctly.
+   */
+  var CONTENT_MAX_LENGTH = 65536;
+
+  function isConjureFileEntry(value) {
+    return Boolean(
+      isPlainObject(value) &&
+      hasOnlyKeys(value, ["path", "content", "mimeType", "encoding"]) &&
+      typeof value.path === "string" &&
+      FILE_PATH_PATTERN.test(value.path) &&
+      typeof value.content === "string" &&
+      isCodePointLengthWithinBounds(value.content, 1, CONTENT_MAX_LENGTH) &&
+      typeof value.mimeType === "string" &&
+      MIME_TYPE_PATTERN.test(value.mimeType) &&
+      (value.encoding === "utf-8" || value.encoding === "base64"),
+    );
+  }
+
+  /**
+   * DRO-242 (fail closed, Copilot review round 4) — AC5's `contains` rule:
+   * at least one `files[]` entry must be a `<Name>.html` file whose `<Name>`
+   * matches the containing directory's `<Name>` segment (self-consistent
+   * `Button/Button.html`, not `Button/Wrong.html`) — mirrors
+   * `HTML_FILE_CONTAINS` in `packages/server/src/llm/schema.ts`.
+   */
+  function hasMatchingHtmlPreview(files) {
+    return files.some(function (file) {
+      var match = /^components\/[a-z0-9-]+\/([A-Z][A-Za-z0-9]{1,63})\/([^/]+)$/.exec(file.path);
+      return Boolean(match && match[2] === match[1] + ".html");
+    });
+  }
+
+  /**
+   * DRO-242 (fail closed) — validates `manifestEntry` against conjure's
+   * canonical output schema (`packages/server/src/tools/conjure.ts` /
+   * `packages/server/src/llm/schema.ts`'s `Viewport` $def): `viewport.width`/
+   * `viewport.height` are required integers in `[1, 4096]` (Copilot review
+   * round 5 — a bare `typeof === "number"` check still accepted fractions,
+   * `0`/negatives, values above 4096, `NaN`, and `Infinity`, none of which
+   * the canonical schema permits), and both `manifestEntry` and `viewport`
+   * are `.strict()` — no keys beyond `viewport`/`subtitle`/`tags` (resp.
+   * `width`/`height`) are allowed. `subtitle` (`maxLength: 256`) and `tags`
+   * (`maxItems: 16`, each a string) are optional but, when present, must
+   * respect those same bounds. An object-like-but-empty `manifestEntry: {}`
+   * (missing `viewport` entirely) must be rejected, not just checked for
+   * being a plain object.
+   */
+  var VIEWPORT_DIMENSION_MIN = 1;
+  var VIEWPORT_DIMENSION_MAX = 4096;
+  var SUBTITLE_MAX_LENGTH = 256;
+  var TAGS_MAX_ITEMS = 16;
+
+  function isViewportDimension(value) {
+    return (
+      typeof value === "number" &&
+      Number.isInteger(value) &&
+      value >= VIEWPORT_DIMENSION_MIN &&
+      value <= VIEWPORT_DIMENSION_MAX
+    );
+  }
+
+  function isManifestEntry(value) {
+    if (!isPlainObject(value) || !hasOnlyKeys(value, ["viewport", "subtitle", "tags"])) {
+      return false;
+    }
+    if (!isPlainObject(value.viewport) || !hasOnlyKeys(value.viewport, ["width", "height"])) {
+      return false;
+    }
+    if (!isViewportDimension(value.viewport.width) || !isViewportDimension(value.viewport.height)) {
+      return false;
+    }
+    if (
+      value.subtitle !== undefined &&
+      (typeof value.subtitle !== "string" ||
+        !isCodePointLengthWithinBounds(value.subtitle, 0, SUBTITLE_MAX_LENGTH))
+    ) {
+      return false;
+    }
+    if (
+      value.tags !== undefined &&
+      !(
+        Array.isArray(value.tags) &&
+        value.tags.length <= TAGS_MAX_ITEMS &&
+        value.tags.every(function (tag) {
+          return typeof tag === "string";
+        })
+      )
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * DRO-242 (fail closed) — validates `usage` against conjure's canonical
+   * output schema: `promptTokens`, `completionTokens`, and `totalTokens`
+   * must each be non-negative integers, and no other key is allowed
+   * (`.strict()`). An object-like-but-empty `usage: {}` must be rejected
+   * rather than accepted as "truthy object".
+   */
+  function isConjureUsage(value) {
+    return Boolean(
+      isPlainObject(value) &&
+      hasOnlyKeys(value, ["promptTokens", "completionTokens", "totalTokens"]) &&
+      isNonNegativeInteger(value.promptTokens) &&
+      isNonNegativeInteger(value.completionTokens) &&
+      isNonNegativeInteger(value.totalTokens),
+    );
+  }
+
+  function isNonNegativeInteger(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+  }
+
+  /**
+   * DRO-242 (fail closed, Copilot review round 4) — validates an untrusted
+   * `conjure` host reply against the FULL canonical `COMPONENT_SCHEMA`
+   * (`packages/server/src/llm/schema.ts`) shape, not just field presence:
+   * `componentName` must be PascalCase (`^[A-Z][A-Za-z0-9]{1,63}$`), `group`
+   * kebab-case (`^[a-z0-9-]{1,32}$`), `files` bounded to 1-12 entries with
+   * at least one self-consistent `<Name>/<Name>.html` preview (AC5's
+   * `contains` rule), and every `files[]` entry/`manifestEntry`/`usage`
+   * individually validated against their own strict nested shapes. Earlier
+   * rounds closed the "missing field" and "extra key" gaps; this round
+   * closes the "right shape, wrong content" gap Copilot flagged — a name
+   * like `"Status card"` (lowercase, space) or an oversized/no-`.html` file
+   * set still had every key present with the right JS `typeof`, but is
+   * exactly the malformed-payload case AC3-AC5 exist to reject.
+   */
   function isConjureResult(value) {
     return Boolean(
-      value &&
-      typeof value === "object" &&
+      isPlainObject(value) &&
+      hasOnlyKeys(value, ["componentName", "group", "files", "manifestEntry", "usage"]) &&
       typeof value.componentName === "string" &&
-      value.componentName.trim() &&
+      COMPONENT_NAME_PATTERN.test(value.componentName) &&
       typeof value.group === "string" &&
+      GROUP_PATTERN.test(value.group) &&
       Array.isArray(value.files) &&
-      value.manifestEntry &&
-      typeof value.manifestEntry === "object" &&
-      value.usage &&
-      typeof value.usage === "object",
+      value.files.length >= 1 &&
+      value.files.length <= 12 &&
+      value.files.every(isConjureFileEntry) &&
+      hasMatchingHtmlPreview(value.files) &&
+      isManifestEntry(value.manifestEntry) &&
+      isConjureUsage(value.usage),
     );
   }
 
@@ -1044,6 +1303,18 @@
     var status = doc.getElementById("app-status");
     var drafts = createDraftStore();
     var kits = [];
+    // DRO-242 (fail closed, Copilot review round 5/6) — a monotonic
+    // "discovery generation" counter. `loadKits()` captures the current
+    // value on entry; if a NEWER call has started (bridge swapped via
+    // `setBridge`/`setUnavailable`, or a fresh refresh triggered) by the
+    // time an OLDER call's `await bridge.callTool(...)` resolves — in
+    // either order, since network replies can complete out of order — the
+    // older call's resolution/rejection must not mutate `kits`/the DOM at
+    // all. Without this, a stale in-flight discovery whose reply finally
+    // arrives after a newer (possibly malformed-and-already-failed-closed)
+    // one could resurrect trusted `kits` state and silently re-enable
+    // Conjure/Retry on data a subsequent call had already invalidated.
+    var kitDiscoveryGeneration = 0;
     var inFlight = false;
     var hostAvailable = Boolean(bridge);
     var hostPending = bridge === undefined;
@@ -1394,6 +1665,12 @@
 
     async function loadKits() {
       if (hostPending) return;
+      // DRO-242 (fail closed, Copilot review round 6) — claim this call's
+      // generation BEFORE any `await`, so any call already in flight is
+      // immediately superseded and every check below can tell whether IT is
+      // still the latest.
+      kitDiscoveryGeneration += 1;
+      var myGeneration = kitDiscoveryGeneration;
       if (!bridge) {
         kitState.textContent =
           "Conjure requires an MCP-capable host. Use the genie MCP workflow from your coding host.";
@@ -1405,16 +1682,47 @@
         updateGate();
         return;
       }
+      // DRO-242 (fail closed, Copilot review round 4) — clear the previously
+      // trusted kit state BEFORE validating the replacement reply. If kit
+      // discovery previously succeeded and a subsequent refresh returns a
+      // malformed reply, leaving the old `kits` array/`<select>` intact would
+      // let `updateGate()` keep Conjure enabled with stale data, and Retry
+      // would invoke generation instead of reloading (because
+      // `kits.length !== 0`). Resetting here — before any validation can
+      // throw — guarantees a malformed refresh always lands in the
+      // zero-kits state, regardless of what came before it.
+      kits = [];
       try {
         var reply = await bridge.callTool(LIST_KITS_TOOL, {});
-        if (!Array.isArray(reply.kits)) throw new Error("The host returned malformed UI-kit data.");
+        // DRO-242 (fail closed, Copilot review round 6) — a NEWER discovery
+        // (triggered by `setBridge`/`setUnavailable` racing ahead of this
+        // `await`) has already claimed the generation counter. Replies can
+        // resolve out of order — an older call's `callTool` promise may
+        // settle AFTER a newer one's, in either success or failure — so this
+        // stale call must not mutate `kits` or the DOM at all; whatever the
+        // newer call decided (or is still deciding) must win.
+        if (myGeneration !== kitDiscoveryGeneration) return;
+        // DRO-242 (fail closed, Copilot review round 4) — the canonical
+        // `list_kits` output schema is strict at the reply level
+        // (`additionalProperties: false`,
+        // `packages/server/src/tools/list_kits.test.ts:174-178`): the only
+        // allowed key is `kits`. `hasOnlyKeys` here (in addition to the
+        // existing `Array.isArray(reply.kits)` check) rejects any reply that
+        // supplies extra top-level keys, e.g. `{ kits: [], unexpected: true }`.
+        if (!isPlainObject(reply) || !hasOnlyKeys(reply, ["kits"]) || !Array.isArray(reply.kits)) {
+          throw new Error("The host returned malformed UI-kit data.");
+        }
+        // DRO-242 (fail closed) — every entry must be structurally valid
+        // (list_kits' own `{ id, name, owner, updatedAt, canEdit }` output
+        // schema) before it is trusted at all; a single malformed entry
+        // rejects the whole reply rather than being silently dropped. Only
+        // AFTER that structural check does the existing `canEdit === true`
+        // gating filter down to the editable subset.
+        if (!reply.kits.every(isKitEntry)) {
+          throw new Error("The host returned malformed UI-kit data.");
+        }
         kits = reply.kits.filter(function (kit) {
-          return (
-            kit &&
-            kit.canEdit === true &&
-            typeof kit.id === "string" &&
-            typeof kit.name === "string"
-          );
+          return kit.canEdit === true;
         });
         kitSelect.replaceChildren();
         if (!kits.length) {
@@ -1445,6 +1753,17 @@
               : "Choose the UI kit this draft should match.";
         }
       } catch (error) {
+        // DRO-242 (fail closed, Copilot review round 6) — a stale call's
+        // rejection must not clobber a newer call's (possibly already
+        // successful) state either.
+        if (myGeneration !== kitDiscoveryGeneration) return;
+        // `kits` was already reset to `[]` above, before validation ran, so
+        // it can never retain a previously-successful discovery here. Clear
+        // the `<select>` DOM to match — otherwise a stale `<option>` list
+        // (and a stale `kitSelect.value`) would survive a malformed refresh
+        // even though the in-memory `kits` array no longer backs it.
+        kitSelect.replaceChildren();
+        kitSelect.disabled = true;
         kitState.textContent = "UI kits could not be loaded.";
         showError(error);
       }
@@ -3956,6 +4275,11 @@
     window.__genieViewerTestHooks.canConjure = canConjure;
     window.__genieViewerTestHooks.selectInitialKit = selectInitialKit;
     window.__genieViewerTestHooks.isConjureResult = isConjureResult;
+    window.__genieViewerTestHooks.isConjureFileEntry = isConjureFileEntry;
+    window.__genieViewerTestHooks.isManifestEntry = isManifestEntry;
+    window.__genieViewerTestHooks.isConjureUsage = isConjureUsage;
+    window.__genieViewerTestHooks.isKitEntry = isKitEntry;
+    window.__genieViewerTestHooks.isPlainObject = isPlainObject;
     window.__genieViewerTestHooks.createDraftStore = createDraftStore;
     window.__genieViewerTestHooks.createHostBridge = createHostBridge;
     window.__genieViewerTestHooks.initProductShell = initProductShell;
