@@ -260,7 +260,10 @@ describe("Generate surface DOM states", () => {
             kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
           });
         }
-        return conjure;
+        if (name === "mcp__genie__list_files") return Promise.resolve({ files: [] });
+        if (name === "mcp__genie__list_components") return Promise.resolve({ components: [] });
+        if (name === "mcp__genie__conjure") return conjure;
+        return Promise.resolve({});
       }),
       destroy: () => {},
     };
@@ -281,7 +284,7 @@ describe("Generate surface DOM states", () => {
         name: "mcp__genie__conjure",
         args: {
           kitId: "acme-kit",
-          kit: "Acme",
+          kit: 'UI kit "Acme" (id: acme-kit).',
           prompt: "Build a compact status card",
           model: "design-default",
         },
@@ -310,6 +313,8 @@ describe("Generate surface DOM states", () => {
             kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
           });
         }
+        if (name === "mcp__genie__list_files") return Promise.resolve({ files: [] });
+        if (name === "mcp__genie__list_components") return Promise.resolve({ components: [] });
         attempts += 1;
         return Promise.reject(new Error("Endpoint authentication failed"));
       },
@@ -385,6 +390,8 @@ describe("Generate surface DOM states", () => {
             kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
           });
         }
+        if (name === "mcp__genie__list_files") return Promise.resolve({ files: [] });
+        if (name === "mcp__genie__list_components") return Promise.resolve({ components: [] });
         return conjure;
       },
       destroy: () => {},

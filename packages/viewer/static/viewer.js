@@ -108,6 +108,31 @@
   var mcpAppRequestId = 0;
   var LIST_KITS_TOOL = "mcp__genie__list_kits";
   var CONJURE_TOOL = "mcp__genie__conjure";
+  var LIST_FILES_TOOL = "mcp__genie__list_files";
+  var READ_FILE_TOOL = "mcp__genie__read_file";
+  var LIST_COMPONENTS_TOOL = "mcp__genie__list_components";
+
+  /**
+   * Kit-relative path prefix that marks a file as design-token source (genie#239).
+   * `create_kit`'s starter tree and every fixture/demo kit put token files
+   * under `tokens/` (see `packages/viewer/test/fixtures/kit/tokens/colors.css`),
+   * so this is the same convention `conjure`'s system prompt already asks the
+   * model to look for (tokens, primitives, house style) — just resolved from
+   * real kit files instead of the caller inventing them.
+   */
+  var TOKENS_DIR_PREFIX = "tokens/";
+
+  /**
+   * Hard caps on how much kit context genie#239's `buildKitContext` will ever
+   * read into the `conjure` call. `read_file` already caps a single file at
+   * 256 KiB (`MAX_FILE_BYTES`, read_file.ts) — this bounds the *count* of
+   * token files read (a kit could have dozens) and the *total* character
+   * budget handed to the model, so a token-heavy kit can't balloon the
+   * request or blow past `conjure`'s own 100_000-char `kit` field cap
+   * (conjure.ts `conjureInputShape`).
+   */
+  var KIT_CONTEXT_MAX_TOKEN_FILES = 12;
+  var KIT_CONTEXT_MAX_CHARS = 20_000;
 
   /**
    * Fallback card height (px) for a named/unparseable viewport (e.g. "desktop").
@@ -952,6 +977,76 @@
       progress.hidden = false;
     }
 
+    /**
+     * genie#239 — resolve the SELECTED kit's real compiled context (tokens +
+     * primitives/components) instead of handing `conjure` just its display
+     * name. Reuses tools the viewer's host already exposes — `list_files`,
+     * `read_file`, `list_components` — so this needs no new server contract
+     * and `conjure`'s `kit` field stays the free-form string it already is
+     * (#233/M7-01: "reuse the existing conjure contract, this is not a
+     * redesign of the generation engine").
+     *
+     * Best-effort by design: any tool failure here (a host that doesn't
+     * implement these verbs yet, a slow kit, etc.) falls back to the OLD
+     * display-name-only behavior rather than blocking generation — losing
+     * kit-fidelity is strictly better than losing the ability to generate at
+     * all.
+     *
+     * @param {{callTool(name:string,args:object):Promise<object>}} hostBridge
+     * @param {string} kitId
+     * @param {string} kitName
+     * @returns {Promise<string>}
+     */
+    async function buildKitContext(hostBridge, kitId, kitName) {
+      var sections = ['UI kit "' + kitName + '" (id: ' + kitId + ').'];
+      var budget = KIT_CONTEXT_MAX_CHARS - sections[0].length;
+
+      try {
+        var filesReply = await hostBridge.callTool(LIST_FILES_TOOL, { kitId: kitId });
+        var files = Array.isArray(filesReply && filesReply.files) ? filesReply.files : [];
+        var tokenFiles = files
+          .filter(function (entry) {
+            return entry && typeof entry.path === "string" && entry.path.indexOf(TOKENS_DIR_PREFIX) === 0;
+          })
+          .slice(0, KIT_CONTEXT_MAX_TOKEN_FILES);
+
+        for (var i = 0; i < tokenFiles.length && budget > 0; i++) {
+          var path = tokenFiles[i].path;
+          try {
+            var fileReply = await hostBridge.callTool(READ_FILE_TOOL, { kitId: kitId, path: path });
+            if (fileReply && fileReply.encoding === "utf-8" && typeof fileReply.content === "string") {
+              var chunk = "--- " + path + " ---\n" + fileReply.content.slice(0, budget);
+              sections.push(chunk);
+              budget -= chunk.length;
+            }
+          } catch {
+            /* one unreadable token file must not sink the whole context. */
+          }
+        }
+      } catch {
+        /* list_files unavailable/failed — proceed with whatever we have. */
+      }
+
+      try {
+        var componentsReply = await hostBridge.callTool(LIST_COMPONENTS_TOOL, { kitId: kitId });
+        var components = Array.isArray(componentsReply && componentsReply.components)
+          ? componentsReply.components
+          : [];
+        if (components.length) {
+          var names = components
+            .map(function (component) {
+              return component.group + "/" + component.name;
+            })
+            .join(", ");
+          sections.push("Existing primitives/components: " + names);
+        }
+      } catch {
+        /* list_components unavailable/failed — proceed with whatever we have. */
+      }
+
+      return sections.join("\n\n");
+    }
+
     function renderDraft(draft) {
       doc.getElementById("review-empty").hidden = true;
       doc.getElementById("draft-review").hidden = false;
@@ -999,9 +1094,18 @@
       submit.textContent = "✦ Conjuring…";
       updateGate();
       try {
+        // genie#239 — resolve the real kit context (tokens/primitives), not
+        // just the display name. Best-effort: falls back to `selectedKit.name`
+        // alone if context-gathering throws (see buildKitContext's header).
+        var kitContext = selectedKit.name;
+        try {
+          kitContext = await buildKitContext(bridge, selectedKit.id, selectedKit.name);
+        } catch {
+          /* fall back to the display name — generation must still proceed. */
+        }
         var result = await bridge.callTool(CONJURE_TOOL, {
           kitId: selectedKit.id,
-          kit: selectedKit.name,
+          kit: kitContext,
           prompt: prompt.value.trim(),
           model: modelSelect.value,
         });
