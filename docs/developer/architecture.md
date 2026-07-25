@@ -270,10 +270,40 @@ document errors out client-side once loaded), nor a same-origin response whose b
 blank or broken page while returning 200. A fetch-level check only sees the HTTP status, not the
 rendered result, so those remain indistinguishable from a real successful preview.
 
-### The conjure call takes no client deadline
+### Some calls take no client deadline
 
 Sentinel passed as `callTool`'s `callTimeoutMs` for the conjure call: "do not apply a client-side deadline to this request" (genie#241 / genie#243 Copilot review).
 
 A prior fix here picked a fixed 150s client deadline — 30s past the server's then-`DEFAULT_LLM_REQUEST_TIMEOUT_MS` (120s) — reasoning that 150s must outlast one LLM call. That's wrong on two counts the Copilot review on #243 called out: (1) `GENIE_LLM_REQUEST_TIMEOUT_MS` bounds EACH HTTP attempt, not the call as a whole — `conjure` can run the schema-retry loop (`component-response.ts`, up to two full model calls) and each of THOSE is separately wrapped in `withRetry` (`llm/retry.ts`), which can make up to `1 + GENIE_LLM_RETRY_MAX` (default 4) attempts with exponential backoff between them; and (2) both the per-request timeout and the retry ceiling are operator-configurable env vars, so no fixed client-side number can be derived that's guaranteed to outlast every valid deployment's worst case — a slow-but-legitimate generation can still finish after any such constant has already rejected the call.
 
 Rather than guess another (still-wrong) fixed ceiling, or thread the server's live env config across the postMessage boundary just to recompute one client-side number, the conjure call takes NO client deadline at all: `createHostBridge` skips scheduling a timer when this sentinel is passed, and the call resolves/rejects whenever the host actually answers `tools/call` — nothing here can time out early. Host lifecycle already covers the "genuinely stuck" case without a timer: `destroy()` rejects every pending call the moment the host tears the frame down (`ui/resource-teardown`), and the host's own transport-level request handling is what actually bounds a hung generation. Generic calls (list-kits, etc.) are unaffected — they keep the fixed 60s `DEFAULT_HOST_TOOL_TIMEOUT_MS` above, since those are cheap round trips with no LLM/retry variability behind them.
+
+The same sentinel is reused for `refine` (same LLM/retry variability as `conjure`) and for the two mutating verbs `write_files` and `delete_files`. The mutating case is a different argument: those calls have no LLM behind them, but a client-side timeout there would leave the viewer unable to say whether bytes actually landed on disk — an ambiguity strictly worse than waiting for the host. Every OTHER verb in the apply pipeline keeps the fixed 60s deadline, including `plan` (runs BEFORE any side effect, so an early rejection is safe) and `validate` (advisory, runs AFTER the write inside a `try`/`catch` that degrades to `validation = null`) — genie#250 Copilot round 6.
+
+### Building the kit context
+
+genie#239 — resolve the SELECTED kit's real compiled context (tokens + primitives/components) instead of handing `conjure` just its display name. Reuses tools the viewer's host already exposes — `list_files`, `read_file`, `list_components` — so this needs no new server contract and `conjure`'s `kit` field stays the free-form string it already is (#233/M7-01: "reuse the existing conjure contract, this is not a redesign of the generation engine").
+
+All tool calls (the two `list_*` calls, then every `read_file` call) run CONCURRENTLY and share one overall `KIT_CONTEXT_DEADLINE_MS` wall-clock budget — not the host bridge's full per-call timeout — so a slow or unresponsive host can delay `conjure` by at most that budget, not by minutes (Copilot review on #246).
+
+Best-effort by design: any tool failure or deadline miss here (a host that doesn't implement these verbs yet, a slow kit, etc.) degrades to partial context, and total failure falls back to the OLD display-name-only behavior rather than blocking generation — losing kit-fidelity is strictly better than losing the ability to generate at all.
+
+@param {{callTool(name:string,args:object):Promise<object>}} hostBridge @param {string} kitId @param {string} kitName @param {number} [deadlineMs] Overall wall-clock budget in ms. Defaults to `KIT_CONTEXT_DEADLINE_MS`; overridable so tests can exercise the "deadline elapses" path without waiting on the real production value (Copilot review on #246 — a test previously waited on the real 8s `KIT_CONTEXT_DEADLINE_MS`, adding 8s of real wall-clock time to every run that hit it). @returns {Promise<string>}
+
+### The HMR reload protocol
+
+Wire the live-refresh channels and return a teardown function. Everything the browser touches is injectable so `hmr-client.test.ts` drives the whole thing in jsdom with fakes — no real socket, no real timers, no network:
+
+- `win` — the window to bind `message`/`WebSocket` on (default `window`) - `location` — used to derive the WS URL (default `win.location`) - `WebSocketImpl` — the WebSocket constructor (default `win.WebSocket`) - `fetchImpl` — manifest fetch for the poll fallback (default `win.fetch`) - `setIntervalImpl` / `clearIntervalImpl` — poll timer seam (default `win`'s) - `manifestUrl` — poll target (default `MANIFEST_URL`) - `initialManifest`— baseline so the FIRST poll can already detect a change - `pollIntervalMs` — cadence (default `HMR_POLL_INTERVAL_MS`) - `parentOrigin` — optional trusted embedding-host origin; otherwise derived from `document.referrer` when available
+
+The `postMessage` bridge is ALWAYS active (harmless where unused). The WS + polling only engage when {@link hmrSocketUrl} resolves (a real dev server); on `file://`/`ui://` there is nothing to poll, so we don't spin a timer against a static snapshot.
+
+@param {Document} doc @param {object=} options @returns {() => void} teardown
+
+### Reading the inline manifest
+
+Read the manifest inlined by the embedded `ui://genie/grid` tier (M4-06): a `<script type="application/json" id="manifest">` data island whose text content is the compiled manifest JSON. Returns the parsed object, or `null` when there is no such node (the `file://` / localhost tiers, which fetch instead) OR the node is present but not usable — wrong `type`, empty, or malformed JSON. A `null` return is the caller's signal to fall back to the network path; a malformed INLINE manifest deliberately degrades to that same fallback rather than throwing, so a corrupt payload surfaces as the normal error state, never an uncaught exception on the page.
+
+Reading `type` guards against picking up an unrelated `#manifest` element and, more importantly, means only a genuine data block (never an executable `<script>`) is ever parsed here.
+
+@param {Document} doc @param {string=} elementId defaults to {@link MANIFEST_ELEMENT_ID}; pass {@link MANIFEST_FULL_ELEMENT_ID} to read the full-kit island instead (Copilot review, PR #248 — see that constant's own comment). @returns {object | null}

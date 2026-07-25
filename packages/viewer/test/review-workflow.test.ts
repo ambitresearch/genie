@@ -2869,3 +2869,210 @@ describe("PR #250 fifth review round", () => {
     expect(reads).toBe(1);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* PR #250 sixth review round + CodeQL frame-src taint                 */
+/* ------------------------------------------------------------------ */
+
+describe("PR #250 sixth review round", () => {
+  /**
+   * Finding 20 — `plan` and `validate` were passed NO_CLIENT_DEADLINE. Only `write_files` and
+   * `delete_files` genuinely need an unbounded client wait (timing one out mid-write leaves it
+   * ambiguous whether bytes landed), and only refine/conjure need it for the LLM window. `plan`
+   * runs BEFORE any side effect and `validate` is advisory AFTER one, so a host that never answers
+   * either simply locked `inFlight` forever with no recovery but a reload — which drops the draft.
+   */
+  it("gives plan and validate a bounded client deadline, but never the write tools", async () => {
+    const hooks = await loadHooks();
+    const seen: Array<{ name: string; timeout: unknown }> = [];
+    const bridge = {
+      callTool: async (name: string, _args: unknown, timeout?: unknown) => {
+        seen.push({ name, timeout });
+        if (name === "mcp__genie__plan") return { planId: "plan-1" };
+        if (name === "mcp__genie__write_files") {
+          return { writtenPaths: ["components/actions/Button/Button.html"] };
+        }
+        if (name === "mcp__genie__validate") return { markerMissing: [], orphanedFiles: [] };
+        return {};
+      },
+    };
+    await hooks.runApply({
+      bridge,
+      kitId: "kit-1",
+      approved: true,
+      draft: { id: 1, result: conjureResult() },
+    });
+
+    const timeoutFor = (name: string) =>
+      seen.find((c) => c.name === `mcp__genie__${name}`)?.timeout;
+    // Bounded: a stuck host frees the workspace instead of wedging it.
+    expect(typeof timeoutFor("plan")).toBe("number");
+    expect(typeof timeoutFor("validate")).toBe("number");
+    // Still unbounded: a client-side timeout here cannot tell you whether the write landed.
+    expect(timeoutFor("write_files")).toBe(hooks.NO_CLIENT_DEADLINE);
+  });
+
+  /**
+   * Finding 21 — the confirmation dialog's decoded-byte arithmetic assumed well-formed base64.
+   * The Review payload gate only checked the `encoding` enum, so `content: "="` reached
+   * `entryByteLength` and produced `-1`, the dialog reported "-1 bytes", and Apply then failed at
+   * the server's `isValidBase64Content` (`store/kit-files.ts:84`). Reject the same grammar up
+   * front so the gate — not the confirmation copy — is where malformed base64 stops.
+   */
+  it("never reports a negative byte count for malformed base64", async () => {
+    const hooks = await loadHooks();
+    // `"="` passes /^[A-Za-z0-9+/]*={0,2}$/ but fails the length-%-4 rule the server enforces.
+    expect(hooks.entryByteLength({ content: "=", encoding: "base64" })).toBe(0);
+    expect(hooks.entryByteLength({ content: "QQ==", encoding: "base64" })).toBe(1);
+  });
+
+  it("blocks Apply when a base64 entry is not valid base64", async () => {
+    const hooks = await loadHooks();
+    // Keep the valid HTML preview so marker/preview-file/CSP all still pass: the ONLY thing wrong
+    // with this draft is the base64 grammar of the second entry.
+    const bad = conjureResult({
+      files: [
+        fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Go</button>\n`),
+        {
+          path: "components/actions/Button/Button.png",
+          content: "=",
+          mimeType: "image/png",
+          encoding: "base64" as const,
+        },
+      ],
+    });
+    // Guard: the same draft with well-formed base64 must still pass, or this test proves nothing.
+    const good = conjureResult({
+      files: [
+        fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Go</button>\n`),
+        {
+          path: "components/actions/Button/Button.png",
+          content: "QQ==",
+          mimeType: "image/png",
+          encoding: "base64" as const,
+        },
+      ],
+    });
+    const goodSchema = hooks
+      .computeChecklist({ result: good, renderState: "pass" })
+      .find((row: { id: string }) => row.id === "schema");
+    expect(goodSchema.state).toBe("pass");
+    const checklist = hooks.computeChecklist({ result: bad, renderState: "pass" });
+    const schema = checklist.find((row: { id: string }) => row.id === "schema");
+    expect(schema.state).toBe("fail");
+  });
+
+  /**
+   * Finding 22 — the confirmation copy claimed "This is the first time anything leaves this viewer
+   * session." That is false on the supported stuck-delete retry: `write_files` already succeeded,
+   * so bytes HAVE left. Re-confirming performs an idempotent duplicate write before retrying the
+   * deletion. Copy must not deny a write that already happened.
+   */
+  it("drops the first-write claim once bytes have already been written", async () => {
+    // A draft that both writes and deletes, so the stuck-delete retry path is reachable.
+    const withDelete = refineResult({
+      diff: [
+        "diff --git a/components/actions/Button/Old.html b/components/actions/Button/Old.html",
+        "--- a/components/actions/Button/Old.html",
+        "+++ /dev/null",
+        "@@ -1 +0,0 @@",
+        `-${MARKER}`,
+        "",
+      ].join("\n"),
+    });
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      // The delete strands: neither removed nor already-absent, so the draft stays retryable.
+      mcp__genie__delete_files: { deletedPaths: [], notFoundPaths: [] },
+    });
+    wired.controller.addDraft(withDelete, {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      componentInKit: false,
+      model: "m",
+    });
+    makeGreen(wired.document, wired.controller);
+    (wired.document.getElementById("decision-approve") as HTMLButtonElement).click();
+
+    (wired.document.getElementById("apply-button") as HTMLButtonElement).click();
+    expect(wired.document.getElementById("apply-confirm-detail")!.textContent).toMatch(
+      /first time/i,
+    );
+    (wired.document.getElementById("apply-confirm-accept") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.calls.some((c) => c.name === "mcp__genie__delete_files")).toBe(true);
+      expect(wired.document.getElementById("review-status")!.textContent).toMatch(/retry/i);
+    });
+
+    // The retry: write_files already succeeded, so bytes HAVE left this session.
+    (wired.document.getElementById("apply-button") as HTMLButtonElement).click();
+    const detail = wired.document.getElementById("apply-confirm-detail")!.textContent ?? "";
+    expect(detail).not.toMatch(/first time/i);
+    expect(detail).toMatch(/already written|rewrites/i);
+  });
+});
+
+describe("CodeQL — iframe src taint (alerts 2, 4, 5, 7)", () => {
+  /**
+   * `js/xss-through-dom`, `js/xss` and `js/client-side-unvalidated-url-redirection` all reach the
+   * same sink: `iframe.setAttribute("src", …)`. Sources are a manifest-supplied `card.path`, a
+   * `data-src` re-read from the DOM, and — worst — a `freshSrc` carried on an HMR postMessage,
+   * which any page in the frame tree can send. The sandbox (allow-scripts, NO allow-same-origin)
+   * contains the damage but is defence in depth, not the guard. Normalize the way the WHATWG URL
+   * parser does, then allow only relative paths plus http/https/data.
+   */
+  it("passes relative and http(s)/data URLs through untouched", async () => {
+    const hooks = await loadHooks();
+    expect(hooks.safeFrameSrc("components/actions/Button/Button.html")).toBe(
+      "components/actions/Button/Button.html",
+    );
+    expect(hooks.safeFrameSrc("https://example.test/x.html")).toBe("https://example.test/x.html");
+    expect(hooks.safeFrameSrc("data:text/html,<b>hi</b>")).toBe("data:text/html,<b>hi</b>");
+  });
+
+  it("neutralises javascript: and other script-bearing schemes", async () => {
+    const hooks = await loadHooks();
+    for (const hostile of [
+      "javascript:alert(1)",
+      "JaVaScRiPt:alert(1)",
+      "vbscript:msgbox(1)",
+      "file:///etc/passwd",
+    ]) {
+      expect(hooks.safeFrameSrc(hostile)).toBe("about:blank");
+    }
+  });
+
+  it("closes the WHATWG tab/newline and C0-trim bypasses", async () => {
+    const hooks = await loadHooks();
+    // The URL parser strips ASCII tab/LF/CR ANYWHERE and trims leading/trailing C0-or-space
+    // BEFORE scheme detection, so all of these parse as `javascript:` in a real browser.
+    for (const hostile of [
+      "java\tscript:alert(1)",
+      "java\nscript:alert(1)",
+      "java\rscript:alert(1)",
+      "  javascript:alert(1)",
+      "\u0000javascript:alert(1)",
+    ]) {
+      expect(hooks.safeFrameSrc(hostile)).toBe("about:blank");
+    }
+  });
+
+  it("rejects protocol-relative URLs and non-strings", async () => {
+    const hooks = await loadHooks();
+    expect(hooks.safeFrameSrc("//evil.example/x")).toBe("about:blank");
+    expect(hooks.safeFrameSrc(undefined)).toBe("about:blank");
+    expect(hooks.safeFrameSrc(null)).toBe("about:blank");
+    expect(hooks.safeFrameSrc("")).toBe("about:blank");
+  });
+
+  it("guards every iframe src assignment in the source", () => {
+    const source = VIEWER_JS;
+    // A raw assignment that isn't wrapped is exactly how alerts 2/4/5/7 got in. If you add a new
+    // one, wrap it — don't relax this guard.
+    const assignments = source.match(/setAttribute\("src",\s*([^)]*)\)/g) ?? [];
+    expect(assignments.length).toBeGreaterThan(0);
+    for (const line of assignments) {
+      expect(line).toMatch(/safeFrameSrc\(/);
+    }
+  });
+});
