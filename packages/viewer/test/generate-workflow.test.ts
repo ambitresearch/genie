@@ -103,9 +103,16 @@ describe("Generate workflow state", () => {
   it("accepts only complete structured Conjure results", () => {
     const { hooks } = loadHooks();
     const valid = {
-      componentName: "Status card",
+      componentName: "StatusCard",
       group: "surfaces",
-      files: [{ path: "x", content: "x", mimeType: "text/plain", encoding: "utf-8" }],
+      files: [
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "x",
+          mimeType: "text/plain",
+          encoding: "utf-8",
+        },
+      ],
       manifestEntry: { viewport: { width: 320, height: 240 } },
       usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
     };
@@ -124,6 +131,12 @@ describe("Generate workflow state", () => {
           path: "components/surfaces/StatusCard/StatusCard.tsx",
           content: "export {}",
           mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "<div>@genie</div>",
+          mimeType: "text/html",
           encoding: "utf-8",
         },
       ],
@@ -214,6 +227,54 @@ describe("Generate workflow state", () => {
     );
     // Top-level result with an extra key beyond the canonical five.
     expect(hooks.isConjureResult({ ...valid, unexpected: true })).toBe(false);
+    // componentName with a space / lowercase leading char — not PascalCase
+    // (Copilot review round 4 on PR #245).
+    expect(hooks.isConjureResult({ ...valid, componentName: "Status card" })).toBe(false);
+    // group uppercase or over the 32-char cap — not kebab-case.
+    expect(hooks.isConjureResult({ ...valid, group: "Surfaces" })).toBe(false);
+    expect(hooks.isConjureResult({ ...valid, group: "s".repeat(33) })).toBe(false);
+    // More than 12 files exceeds COMPONENT_SCHEMA's maxItems.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: Array.from({ length: 13 }, function (_, i) {
+          return {
+            path: "components/surfaces/StatusCard/File" + i + ".tsx",
+            content: "export {}",
+            mimeType: "text/tsx",
+            encoding: "utf-8",
+          };
+        }).concat(valid.files[1]),
+      }),
+    ).toBe(false);
+    // Every file present but none is the required <Name>.html preview
+    // (AC5's `contains` rule).
+    expect(hooks.isConjureResult({ ...valid, files: [valid.files[0]] })).toBe(false);
+    // An .html file exists but its <Name> doesn't match the directory's
+    // <Name> segment — not self-consistent.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [
+          valid.files[0],
+          { ...valid.files[1], path: "components/surfaces/StatusCard/Wrong.html" },
+        ],
+      }),
+    ).toBe(false);
+    // A file path outside the components/<group>/<Name>/ layout.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], path: "StatusCard.tsx" }, valid.files[1]],
+      }),
+    ).toBe(false);
+    // A mimeType that doesn't match the type/subtype pattern.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], mimeType: "not-a-mime-type" }, valid.files[1]],
+      }),
+    ).toBe(false);
   });
 
   it("fails closed on malformed list_kits entries (DRO-242)", () => {
@@ -477,13 +538,19 @@ describe("Generate surface DOM states", () => {
   it("submits once, retains the exact draft, routes to Review, and announces success", async () => {
     const { hooks, window, document } = loadShell();
     const result = {
-      componentName: "Status card",
+      componentName: "StatusCard",
       group: "surfaces",
       files: [
         {
-          path: "components/StatusCard.tsx",
+          path: "components/surfaces/StatusCard/StatusCard.tsx",
           content: "export default null",
           mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "<div>@genie</div>",
+          mimeType: "text/html",
           encoding: "utf-8",
         },
       ],
@@ -546,9 +613,9 @@ describe("Generate surface DOM states", () => {
     await settle();
     expect(new URL(window.location.href).searchParams.get("route")).toBe("review");
     expect(document.getElementById("draft-label")?.textContent).toBe("draft #1");
-    expect(document.getElementById("draft-name")?.textContent).toBe("Status card");
+    expect(document.getElementById("draft-name")?.textContent).toBe("StatusCard");
     expect(document.getElementById("app-status")?.textContent).toBe(
-      "Generated Status card, draft #1.",
+      "Generated StatusCard, draft #1.",
     );
     expect(document.querySelector("[data-route-view='review']")?.hidden).toBe(false);
   });
@@ -675,13 +742,19 @@ describe("Generate surface DOM states", () => {
     button.focus();
     button.click();
     resolveConjure({
-      componentName: "Status card",
+      componentName: "StatusCard",
       group: "surfaces",
       files: [
         {
-          path: "components/StatusCard.tsx",
+          path: "components/surfaces/StatusCard/StatusCard.tsx",
           content: "export default null",
           mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "<div>@genie</div>",
+          mimeType: "text/html",
           encoding: "utf-8",
         },
       ],
@@ -692,6 +765,6 @@ describe("Generate surface DOM states", () => {
 
     // Focus landed on the rendered draft heading, never left on the now-hidden button.
     expect(document.activeElement?.id).toBe("draft-name");
-    expect(document.getElementById("draft-name")?.textContent).toBe("Status card");
+    expect(document.getElementById("draft-name")?.textContent).toBe("StatusCard");
   });
 });

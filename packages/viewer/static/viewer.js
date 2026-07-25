@@ -800,29 +800,72 @@
   }
 
   /**
+   * DRO-242 (fail closed, Copilot review round 4) — the `<Name>` segment
+   * pattern `COMPONENT_SCHEMA` (`packages/server/src/llm/schema.ts`) reuses
+   * across `componentName`, `files[].path`'s directory segment, and the
+   * `<Name>.html` `contains` backreference: `[A-Z][A-Za-z0-9]{1,63}`
+   * (PascalCase, 2-64 chars total).
+   */
+  var COMPONENT_NAME_PATTERN = /^[A-Z][A-Za-z0-9]{1,63}$/;
+
+  /** DRO-242 — kebab-case `group`, `[a-z0-9-]{1,32}` (COMPONENT_SCHEMA). */
+  var GROUP_PATTERN = /^[a-z0-9-]{1,32}$/;
+
+  /**
+   * DRO-242 — `files[].path` must land under `components/<group>/<Name>/`
+   * (AC4 in `packages/server/src/llm/schema.ts`): `<group>` is kebab-case,
+   * `<Name>` is PascalCase, and the basename allows the broader
+   * `[A-Za-z0-9._-]+` (covers `<Name>.tsx`, `<Name>.d.ts`,
+   * `<Name>.prompt.md`, `<Name>.html`, `meta.json`).
+   */
+  var FILE_PATH_PATTERN = /^components\/[a-z0-9-]+\/[A-Z][A-Za-z0-9]+\/[A-Za-z0-9._-]+$/;
+
+  /**
+   * DRO-242 — `mimeType` pattern lifted verbatim from `COMPONENT_SCHEMA`'s
+   * `files[].mimeType` (`type/subtype` per RFC 6838's token grammar).
+   */
+  var MIME_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/;
+
+  /**
    * DRO-242 (fail closed) — a single `files[]` entry from an untrusted host
    * reply, validated against conjure's canonical output schema
-   * (`packages/server/src/tools/conjure.ts`): `path`, `content`, `mimeType`,
-   * and `encoding` are all required strings, with `encoding` restricted to
-   * `"utf-8"` or `"base64"`. `mimeType`/`encoding` are not read by the
-   * viewer today, but they are part of the canonical shape the host is
-   * contractually returning — a reply missing them (or supplying an
-   * unrecognized encoding), or supplying any extra key beyond this strict
-   * shape, is structurally invalid and must be rejected here rather than
-   * passed through on the strength of the two fields the viewer happens to
-   * use.
+   * (`packages/server/src/tools/conjure.ts`'s `conjureOutputShape` plus
+   * `COMPONENT_SCHEMA`'s `files[]` item shape in
+   * `packages/server/src/llm/schema.ts`): `path` must match the
+   * `components/<group>/<Name>/<basename>` layout, `content`/`mimeType` are
+   * required non-empty strings (`mimeType` further constrained to the
+   * `type/subtype` pattern), and `encoding` is restricted to `"utf-8"` or
+   * `"base64"`. A reply missing any of these (or supplying an unrecognized
+   * encoding, a malformed path, or any extra key beyond this strict shape)
+   * is structurally invalid and must be rejected here rather than passed
+   * through on the strength of the two fields the viewer happens to use.
    */
   function isConjureFileEntry(value) {
     return Boolean(
       isPlainObject(value) &&
       hasOnlyKeys(value, ["path", "content", "mimeType", "encoding"]) &&
       typeof value.path === "string" &&
-      value.path &&
+      FILE_PATH_PATTERN.test(value.path) &&
       typeof value.content === "string" &&
+      value.content &&
       typeof value.mimeType === "string" &&
-      value.mimeType &&
+      MIME_TYPE_PATTERN.test(value.mimeType) &&
       (value.encoding === "utf-8" || value.encoding === "base64"),
     );
+  }
+
+  /**
+   * DRO-242 (fail closed, Copilot review round 4) — AC5's `contains` rule:
+   * at least one `files[]` entry must be a `<Name>.html` file whose `<Name>`
+   * matches the containing directory's `<Name>` segment (self-consistent
+   * `Button/Button.html`, not `Button/Wrong.html`) — mirrors
+   * `HTML_FILE_CONTAINS` in `packages/server/src/llm/schema.ts`.
+   */
+  function hasMatchingHtmlPreview(files) {
+    return files.some(function (file) {
+      var match = /^components\/[a-z0-9-]+\/([A-Z][A-Za-z0-9]{1,63})\/([^/]+)$/.exec(file.path);
+      return Boolean(match && match[2] === match[1] + ".html");
+    });
   }
 
   /**
@@ -883,32 +926,33 @@
   }
 
   /**
-   * DRO-242 (fail closed) — validates an untrusted `conjure` host reply
-   * against the canonical `{ componentName, group, files, manifestEntry,
-   * usage }` shape (COMPONENT_SCHEMA / conjure's ConjureResult /
-   * `conjureOutputShape`) before it is allowed to reach
-   * `drafts.add`/`renderDraft`. Previously this only checked that `files`
-   * was an array and `manifestEntry`/`usage` were truthy objects — a host
-   * could return `files: [{}]`, `files: [null]`, `manifestEntry: {}`, or
-   * `usage: {}` and it would pass straight through to the Review surface.
-   * Every `files[]` entry is now individually validated via
-   * `isConjureFileEntry`, `manifestEntry`/`usage` are validated against
-   * their full nested schemas via `isManifestEntry`/`isConjureUsage`, and
-   * the top level (like every nested shape) rejects any key beyond the
-   * five the schema declares — matching the server's `.strict()` shapes
-   * end to end rather than only checking the fields it happens to read.
+   * DRO-242 (fail closed, Copilot review round 4) — validates an untrusted
+   * `conjure` host reply against the FULL canonical `COMPONENT_SCHEMA`
+   * (`packages/server/src/llm/schema.ts`) shape, not just field presence:
+   * `componentName` must be PascalCase (`^[A-Z][A-Za-z0-9]{1,63}$`), `group`
+   * kebab-case (`^[a-z0-9-]{1,32}$`), `files` bounded to 1-12 entries with
+   * at least one self-consistent `<Name>/<Name>.html` preview (AC5's
+   * `contains` rule), and every `files[]` entry/`manifestEntry`/`usage`
+   * individually validated against their own strict nested shapes. Earlier
+   * rounds closed the "missing field" and "extra key" gaps; this round
+   * closes the "right shape, wrong content" gap Copilot flagged — a name
+   * like `"Status card"` (lowercase, space) or an oversized/no-`.html` file
+   * set still had every key present with the right JS `typeof`, but is
+   * exactly the malformed-payload case AC3-AC5 exist to reject.
    */
   function isConjureResult(value) {
     return Boolean(
       isPlainObject(value) &&
       hasOnlyKeys(value, ["componentName", "group", "files", "manifestEntry", "usage"]) &&
       typeof value.componentName === "string" &&
-      value.componentName.trim() &&
+      COMPONENT_NAME_PATTERN.test(value.componentName) &&
       typeof value.group === "string" &&
-      value.group &&
+      GROUP_PATTERN.test(value.group) &&
       Array.isArray(value.files) &&
-      value.files.length > 0 &&
+      value.files.length >= 1 &&
+      value.files.length <= 12 &&
       value.files.every(isConjureFileEntry) &&
+      hasMatchingHtmlPreview(value.files) &&
       isManifestEntry(value.manifestEntry) &&
       isConjureUsage(value.usage),
     );
