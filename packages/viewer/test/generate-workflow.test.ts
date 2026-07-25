@@ -105,9 +105,9 @@ describe("Generate workflow state", () => {
     const valid = {
       componentName: "Status card",
       group: "surfaces",
-      files: [{ path: "x", content: "x", mimeType: "text/plain", encoding: "utf8" }],
-      manifestEntry: {},
-      usage: {},
+      files: [{ path: "x", content: "x", mimeType: "text/plain", encoding: "utf-8" }],
+      manifestEntry: { viewport: { width: 320, height: 240 } },
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
     };
     expect(hooks.isConjureResult(valid)).toBe(true);
     expect(hooks.isConjureResult({ ...valid, files: undefined })).toBe(false);
@@ -119,7 +119,14 @@ describe("Generate workflow state", () => {
     const valid = {
       componentName: "StatusCard",
       group: "surfaces",
-      files: [{ path: "components/surfaces/StatusCard/StatusCard.tsx", content: "export {}" }],
+      files: [
+        {
+          path: "components/surfaces/StatusCard/StatusCard.tsx",
+          content: "export {}",
+          mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+      ],
       manifestEntry: { viewport: { width: 480, height: 240 } },
       usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
     };
@@ -134,6 +141,23 @@ describe("Generate workflow state", () => {
         files: [{ path: "components/surfaces/StatusCard/StatusCard.tsx" }],
       }),
     ).toBe(false);
+    // A files[] entry with only path/content — missing mimeType/encoding, which
+    // conjure's output schema requires (Copilot review on PR #245).
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [
+          { path: "components/surfaces/StatusCard/StatusCard.tsx", content: "export {}" },
+        ],
+      }),
+    ).toBe(false);
+    // A files[] entry with an encoding outside the allowed enum.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        files: [{ ...valid.files[0], encoding: "utf8" }],
+      }),
+    ).toBe(false);
     // A files[] entry that is a bare string, not an object.
     expect(hooks.isConjureResult({ ...valid, files: ["not-an-object"] })).toBe(false);
     // A null entry inside files[].
@@ -142,10 +166,22 @@ describe("Generate workflow state", () => {
     expect(hooks.isConjureResult({ ...valid, manifestEntry: undefined })).toBe(false);
     // manifestEntry is an array, not a plain object.
     expect(hooks.isConjureResult({ ...valid, manifestEntry: [] })).toBe(false);
+    // manifestEntry is object-like but structurally invalid — missing viewport
+    // entirely (Copilot review on PR #245).
+    expect(hooks.isConjureResult({ ...valid, manifestEntry: {} })).toBe(false);
+    // manifestEntry.viewport is missing width/height.
+    expect(hooks.isConjureResult({ ...valid, manifestEntry: { viewport: {} } })).toBe(false);
     // usage missing entirely.
     expect(hooks.isConjureResult({ ...valid, usage: undefined })).toBe(false);
     // usage is an array, not a plain object.
     expect(hooks.isConjureResult({ ...valid, usage: [] })).toBe(false);
+    // usage is object-like but structurally invalid — missing all token
+    // counts (Copilot review on PR #245).
+    expect(hooks.isConjureResult({ ...valid, usage: {} })).toBe(false);
+    // usage has a negative token count.
+    expect(
+      hooks.isConjureResult({ ...valid, usage: { ...valid.usage, promptTokens: -1 } }),
+    ).toBe(false);
     // The whole reply is an array rather than an object.
     expect(hooks.isConjureResult([valid])).toBe(false);
   });
@@ -165,8 +201,12 @@ describe("Generate workflow state", () => {
     expect(hooks.isKitEntry({ ...valid, canEdit: "true" })).toBe(false);
     // owner present but not a string.
     expect(hooks.isKitEntry({ ...valid, owner: { name: "team" } })).toBe(false);
-    // owner omitted entirely is fine (list_kits defaults it server-side).
-    expect(hooks.isKitEntry({ id: "acme-kit", name: "Acme", canEdit: true })).toBe(true);
+    // owner and updatedAt are both required strings in the canonical output
+    // schema — omitting or mistyping either must fail closed.
+    expect(hooks.isKitEntry({ id: "acme-kit", name: "Acme", canEdit: true })).toBe(false);
+    expect(hooks.isKitEntry({ ...valid, owner: undefined })).toBe(false);
+    expect(hooks.isKitEntry({ ...valid, updatedAt: undefined })).toBe(false);
+    expect(hooks.isKitEntry({ ...valid, updatedAt: 12345 })).toBe(false);
     // The entry itself is an array, not a plain object.
     expect(hooks.isKitEntry([valid])).toBe(false);
     expect(hooks.isKitEntry(null)).toBe(false);
@@ -326,9 +366,16 @@ describe("Generate surface DOM states", () => {
     const result = {
       componentName: "Status card",
       group: "surfaces",
-      files: [{ path: "components/StatusCard.tsx", content: "export default null" }],
-      manifestEntry: { name: "Status card" },
-      usage: { inputTokens: 12, outputTokens: 20 },
+      files: [
+        {
+          path: "components/StatusCard.tsx",
+          content: "export default null",
+          mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 320, height: 240 } },
+      usage: { promptTokens: 12, completionTokens: 20, totalTokens: 32 },
     };
     let resolveConjure: (value: unknown) => void = () => {};
     const conjure = new Promise((resolve) => {
@@ -342,7 +389,7 @@ describe("Generate surface DOM states", () => {
         calls.push({ name, args });
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+            kits: [{ id: "acme-kit", name: "Acme", owner: "team", updatedAt: "2026-01-01T00:00:00Z", canEdit: true }],
           });
         }
         return conjure;
@@ -392,7 +439,7 @@ describe("Generate surface DOM states", () => {
       callTool: (name: string) => {
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+            kits: [{ id: "acme-kit", name: "Acme", owner: "team", updatedAt: "2026-01-01T00:00:00Z", canEdit: true }],
           });
         }
         attempts += 1;
@@ -432,7 +479,7 @@ describe("Generate surface DOM states", () => {
             return Promise.reject(new Error("The host returned malformed UI-kit data."));
           }
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+            kits: [{ id: "acme-kit", name: "Acme", owner: "team", updatedAt: "2026-01-01T00:00:00Z", canEdit: true }],
           });
         }
         conjureCalls += 1;
@@ -467,7 +514,7 @@ describe("Generate surface DOM states", () => {
       callTool: (name: string) => {
         if (name === "mcp__genie__list_kits") {
           return Promise.resolve({
-            kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
+            kits: [{ id: "acme-kit", name: "Acme", owner: "team", updatedAt: "2026-01-01T00:00:00Z", canEdit: true }],
           });
         }
         return conjure;
@@ -485,9 +532,16 @@ describe("Generate surface DOM states", () => {
     resolveConjure({
       componentName: "Status card",
       group: "surfaces",
-      files: [{ path: "components/StatusCard.tsx", content: "export default null" }],
-      manifestEntry: { name: "Status card" },
-      usage: { inputTokens: 12, outputTokens: 20 },
+      files: [
+        {
+          path: "components/StatusCard.tsx",
+          content: "export default null",
+          mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 320, height: 240 } },
+      usage: { promptTokens: 12, completionTokens: 20, totalTokens: 32 },
     });
     await settle();
 

@@ -729,11 +729,13 @@
   /**
    * DRO-242 (fail closed) — validates a single `list_kits` reply entry
    * against its canonical output shape (`{ id, name, owner, updatedAt,
-   * canEdit }`, `packages/server/src/tools/list_kits.ts`). `owner`, when
-   * present, must be a string too — it is rendered directly into the kit
-   * `<option>` label (`kits[i].owner || "local"`), so a non-string owner
-   * (e.g. an object) would otherwise reach `textContent` interpolation as
-   * `[object Object]` instead of being rejected up front.
+   * canEdit }`, `packages/server/src/tools/list_kits.ts`). Both `owner` and
+   * `updatedAt` are required strings in that schema (not optional), so a
+   * host reply missing either — or supplying a non-string value — is
+   * rejected here rather than silently coerced or ignored. `owner` is
+   * rendered directly into the kit `<option>` label (`kits[i].owner ||
+   * "local"`), so a non-string owner (e.g. an object) would otherwise reach
+   * `textContent` interpolation as `[object Object]`.
    */
   function isKitEntry(kit) {
     return Boolean(
@@ -741,8 +743,9 @@
       typeof kit.id === "string" &&
       kit.id &&
       typeof kit.name === "string" &&
-      typeof kit.canEdit === "boolean" &&
-      (kit.owner === undefined || typeof kit.owner === "string"),
+      typeof kit.owner === "string" &&
+      typeof kit.updatedAt === "string" &&
+      typeof kit.canEdit === "boolean",
     );
   }
 
@@ -777,21 +780,78 @@
   }
 
   /**
-   * DRO-242 — a single `files[]` entry from an untrusted host reply. Only
-   * the two fields the viewer actually reads (`path`, `content`) are
-   * required here; `mimeType`/`encoding` are validated server-side
-   * (COMPONENT_SCHEMA / conjure's output schema) but are not load-bearing
-   * for anything the viewer itself renders, so requiring them here would
-   * make the viewer reject an otherwise-valid reply on a field it never
-   * touches.
+   * DRO-242 (fail closed) — a single `files[]` entry from an untrusted host
+   * reply, validated against conjure's canonical output schema
+   * (`packages/server/src/tools/conjure.ts`): `path`, `content`, `mimeType`,
+   * and `encoding` are all required strings, with `encoding` restricted to
+   * `"utf-8"` or `"base64"`. `mimeType`/`encoding` are not read by the
+   * viewer today, but they are part of the canonical shape the host is
+   * contractually returning — a reply missing them (or supplying an
+   * unrecognized encoding) is structurally invalid and must be rejected
+   * here rather than passed through on the strength of the two fields the
+   * viewer happens to use.
    */
   function isConjureFileEntry(value) {
     return Boolean(
       isPlainObject(value) &&
       typeof value.path === "string" &&
       value.path &&
-      typeof value.content === "string",
+      typeof value.content === "string" &&
+      typeof value.mimeType === "string" &&
+      value.mimeType &&
+      (value.encoding === "utf-8" || value.encoding === "base64"),
     );
+  }
+
+  /**
+   * DRO-242 (fail closed) — validates `manifestEntry` against conjure's
+   * canonical output schema (`packages/server/src/tools/conjure.ts`):
+   * `viewport.width`/`viewport.height` are required numbers. `subtitle`
+   * and `tags` are optional but, when present, must be a string / array of
+   * strings respectively — an object-like-but-empty `manifestEntry: {}`
+   * (missing `viewport` entirely) must be rejected, not just checked for
+   * being a plain object.
+   */
+  function isManifestEntry(value) {
+    if (!isPlainObject(value) || !isPlainObject(value.viewport)) return false;
+    if (
+      typeof value.viewport.width !== "number" ||
+      typeof value.viewport.height !== "number"
+    ) {
+      return false;
+    }
+    if (value.subtitle !== undefined && typeof value.subtitle !== "string") return false;
+    if (
+      value.tags !== undefined &&
+      !(
+        Array.isArray(value.tags) &&
+        value.tags.every(function (tag) {
+          return typeof tag === "string";
+        })
+      )
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * DRO-242 (fail closed) — validates `usage` against conjure's canonical
+   * output schema: `promptTokens`, `completionTokens`, and `totalTokens`
+   * must each be non-negative integers. An object-like-but-empty
+   * `usage: {}` must be rejected rather than accepted as "truthy object".
+   */
+  function isConjureUsage(value) {
+    return Boolean(
+      isPlainObject(value) &&
+      isNonNegativeInteger(value.promptTokens) &&
+      isNonNegativeInteger(value.completionTokens) &&
+      isNonNegativeInteger(value.totalTokens),
+    );
+  }
+
+  function isNonNegativeInteger(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
   }
 
   /**
@@ -800,11 +860,12 @@
    * shape (COMPONENT_SCHEMA / conjure's ConjureResult) before it is allowed
    * to reach `drafts.add`/`renderDraft`. Previously this only checked that
    * `files` was an array and `manifestEntry`/`usage` were truthy objects —
-   * a host could return `files: [{}]` or `files: [null]` and it would pass
-   * straight through to the Review surface. Every `files[]` entry is now
-   * individually validated via `isConjureFileEntry`, and `manifestEntry`/
-   * `usage` must themselves be plain objects (not arrays) rather than any
-   * truthy `typeof … === "object"` value.
+   * a host could return `files: [{}]`, `files: [null]`, `manifestEntry: {}`,
+   * or `usage: {}` and it would pass straight through to the Review
+   * surface. Every `files[]` entry is now individually validated via
+   * `isConjureFileEntry`, and `manifestEntry`/`usage` are validated against
+   * their full nested schemas via `isManifestEntry`/`isConjureUsage` rather
+   * than any truthy `typeof … === "object"` check.
    */
   function isConjureResult(value) {
     return Boolean(
@@ -816,8 +877,8 @@
       Array.isArray(value.files) &&
       value.files.length > 0 &&
       value.files.every(isConjureFileEntry) &&
-      isPlainObject(value.manifestEntry) &&
-      isPlainObject(value.usage),
+      isManifestEntry(value.manifestEntry) &&
+      isConjureUsage(value.usage),
     );
   }
 
@@ -1947,6 +2008,8 @@
     window.__genieViewerTestHooks.selectInitialKit = selectInitialKit;
     window.__genieViewerTestHooks.isConjureResult = isConjureResult;
     window.__genieViewerTestHooks.isConjureFileEntry = isConjureFileEntry;
+    window.__genieViewerTestHooks.isManifestEntry = isManifestEntry;
+    window.__genieViewerTestHooks.isConjureUsage = isConjureUsage;
     window.__genieViewerTestHooks.isKitEntry = isKitEntry;
     window.__genieViewerTestHooks.isPlainObject = isPlainObject;
     window.__genieViewerTestHooks.createDraftStore = createDraftStore;
