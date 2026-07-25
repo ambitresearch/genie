@@ -238,6 +238,12 @@ describe("MCP host bridge", () => {
             kits: [{ id: "acme-kit", name: "Acme", owner: "team", canEdit: true }],
           });
         }
+        if (name === "mcp__genie__list_files") {
+          return Promise.resolve({ files: [] });
+        }
+        if (name === "mcp__genie__list_components") {
+          return Promise.resolve({ components: [] });
+        }
         return conjure;
       }),
       destroy: () => {},
