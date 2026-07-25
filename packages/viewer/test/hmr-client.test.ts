@@ -497,7 +497,11 @@ describe("initMcpApp — standard tool result delivery", () => {
     expect(initialize.params).toHaveProperty("appInfo");
     expect(initialize.params).not.toHaveProperty("clientInfo");
 
-    host.emit({ jsonrpc: "2.0", id: initialize.id, result: { protocolVersion: "2026-01-26" } });
+    host.emit({
+      jsonrpc: "2.0",
+      id: initialize.id,
+      result: { protocolVersion: "2026-01-26", hostCapabilities: { serverTools: {} } },
+    });
     expect(host.parentPostMessage).toHaveBeenCalledWith(
       expect.objectContaining({ method: "ui/notifications/initialized" }),
       "*",
@@ -750,7 +754,11 @@ describe("initMcpApp — standard tool result delivery", () => {
     hooks.initMcpApp(document, { win: host.win });
     const initialize = host.parentPostMessage.mock.calls[0]?.[0] as { id: number };
 
-    host.emit({ jsonrpc: "2.0", id: initialize.id, result: { protocolVersion: "2026-01-26" } });
+    host.emit({
+      jsonrpc: "2.0",
+      id: initialize.id,
+      result: { protocolVersion: "2026-01-26", hostCapabilities: { serverTools: {} } },
+    });
 
     expect(observed).toEqual([document.documentElement, document.body]);
   });
@@ -798,7 +806,11 @@ describe("initMcpApp — standard tool result delivery", () => {
     window.dispatchEvent(
       new window.MessageEvent("message", {
         source: parent as unknown as Window,
-        data: { jsonrpc: "2.0", id: initialize.id, result: { protocolVersion: "2026-01-26" } },
+        data: {
+          jsonrpc: "2.0",
+          id: initialize.id,
+          result: { protocolVersion: "2026-01-26", hostCapabilities: { serverTools: {} } },
+        },
       }),
     );
     window.dispatchEvent(

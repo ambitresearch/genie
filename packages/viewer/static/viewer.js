@@ -663,6 +663,20 @@
           win.clearTimeout(initializeTimer);
           initializeTimer = null;
         }
+        // A host can complete the `ui/initialize` handshake without actually
+        // advertising tool-proxy support. MCP Apps signals that support via
+        // `hostCapabilities.serverTools` in the InitializeResult — gate on it
+        // explicitly instead of treating any successful reply as "ready",
+        // otherwise a handshake-only host still enables Conjure and only
+        // fails later at `tools/call` time.
+        var serverToolsAvailable = Boolean(
+          data.result && data.result.hostCapabilities && data.result.hostCapabilities.serverTools,
+        );
+        if (!serverToolsAvailable) {
+          post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
+          onUnavailable();
+          return;
+        }
         post({ jsonrpc: "2.0", method: "ui/notifications/initialized" });
         hostBridge = createHostBridge(win, host, opts.onProgress);
         onReady(hostBridge, data.result);
