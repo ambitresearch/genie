@@ -41,12 +41,40 @@ baseline
        ├─ Request Changes → current draft, refine input focused, no mutation
        ├─ refine/tweak/selection change → draft #(N+1), approval invalidated
        ├─ Approve + gates green → approved draft
-       │    └─ Confirm Apply → plan → write_files → applied
+       │    └─ Confirm Apply → plan → write_files → [delete_files] → applied
        │       (kit validation advisory; refresh gates only the "live in Browse" claim)
-       └─ discard/navigate → confirmation when unapplied work would be lost
+       └─ navigate away → drafts are discarded silently (no confirmation prompt)
 
 Any failure → remain on the last good draft; never report a false applied state.
 ```
+
+Navigating away — a route link, browser Back, or a reload — **discards unapplied drafts without
+warning**. There is deliberately no `beforeunload` handler and no route guard: a confirmation
+prompt in the embedded tier would fire inside the host's own frame, and no M7-03 acceptance
+criterion calls for one. Apply is the only durability boundary.
+
+### Partial apply is not an apply
+
+`write_files` and `delete_files` are separate server calls, so a refine that removes a file can
+land its writes and still fail to remove the old one (for example `PathOutsidePlanError`). The
+viewer never reports that as a failed apply — the new bytes really are on disk — but it also does
+not stamp the draft as applied. Stamping it would raise the "already applied" blocker, which is the
+one control that could finish the removal. Instead `runApply` returns the stranded paths as
+`stuckDeletes`, the status line names them and says the removal can be retried, and the Apply gate
+stays open. `write_files` is idempotent, so a retry costs a duplicate write of identical bytes.
+
+### The post-apply refresh is awaitable
+
+`confirmApply` awaits its `onApplied` callback before it claims the component is live in Browse.
+`browseController.openComponent()` therefore returns a promise that settles only once the host's
+`read_file` for the applied component resolves, and **rejects** when that read fails or comes back
+unusable. A rejection is surfaced as AC14's "written, but the view is stale" note, never as a
+failed apply. Returning `void` here would make that path unreachable and let a stale panel be
+reported as a live one.
+
+`openComponent`'s optional `kitId` argument is in **Browse's own namespace** — the manifest `name`
+the boot seeded — not the server's kit id, which is a UUID. `Manifest` carries no id field, so the
+two identifiers are not comparable and the post-Apply handoff passes none; see issue #254.
 
 Approval is stored against the current draft identity. Any new draft, deterministic
 change, file-set change, or selected-draft change invalidates it structurally; Apply
@@ -128,6 +156,28 @@ inspection in an MCP-capable host reads through the existing `mcp__genie__read_f
 in the embedded tier. The manifest carries no variant concept today, so variant tabs render
 Default-only; Hover/Focus/Disabled are declared-but-disabled rather than a new, unreviewed
 schema addition (`computeVariantTabs`).
+
+### Per-card HMR refresh
+
+`viewer.js` refreshes a single preview card in place (M4-04 / DRO-266). Two transports feed one
+pure dispatcher, `applyHmrMessage`:
+
+1. **A WebSocket on `/__genie_hmr`** (AC1/AC2) — the primary channel on the Vite dev server
+   (`http(s)://…`). The server plugin (`src/hmr-plugin.ts`) pushes `{event:"card.changed",path}` /
+   `{event:"tokens.changed"}` off Vite's own file watcher.
+2. **`window` `postMessage`** — the bridge for the embedded `ui://` tier, where the grid runs
+   inside a host iframe under strict CSP (`default-src 'none'`, coordinated with DRO-269) that may
+   forbid a direct WebSocket. A host forwards the same refresh signal as a message; the viewer
+   accepts both the WebSocket shape and the research sketch's `{type:"refresh", id|path}` shape.
+
+**Why src-reassignment, not `iframe.contentWindow.location.reload()`** (which AC2 literally names):
+every preview iframe is `sandbox="allow-scripts"` with **no `allow-same-origin`** (M4-03 AC3, a hard
+security rule), so it has an opaque origin and touching `contentWindow.location` throws
+cross-origin. Reassigning `src` with a fresh cache-bust token is the cross-origin-safe equivalent
+with the identical observable outcome: only that one iframe refetches its `preview.html` and
+reloads; the grid never re-renders and no sibling card reflows (AC3 — the sub-100 ms, one-card-only
+guarantee is structural, not a timing hack). `data-path` stays the stable identity the bridge
+matches on; the `?__genie_hmr=N` token rides only on the live `src`.
 
 ### Viewer script constraints
 

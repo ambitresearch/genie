@@ -1500,18 +1500,16 @@ function loadBrowseToReview(
 }
 
 async function refineFromBrowse(shell: ReturnType<typeof loadBrowseToReview>) {
-  const item = Array.from(
-    shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]'),
-  ).find((el) => el.dataset.componentName === "Card");
+  const item = Array.from(shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]')).find(
+    (el) => el.dataset.componentName === "Card",
+  );
   item!.click();
   // The detail panel reads the component's source through the host bridge
   // before it can hand anything to Review; let that read settle first,
   // otherwise every case degrades to the no-source path and the test proves
   // nothing.
   await vi.waitFor(() => {
-    expect(
-      shell.document.querySelector<HTMLElement>("[data-refine-action]"),
-    ).not.toBeNull();
+    expect(shell.document.querySelector<HTMLElement>("[data-refine-action]")).not.toBeNull();
     expect(shell.document.getElementById("browse-detail")!.textContent).not.toMatch(
       /Loading source/i,
     );
@@ -1572,9 +1570,9 @@ describe("Browse → Review handoff (AC2 / S2)", () => {
     expect(frame!.getAttribute("srcdoc")).toContain("Card from the kit");
     // ...and the CONVENTION check still reports the truth about that file
     // rather than being relaxed to make the render work.
-    expect(
-      shell.document.querySelector('[data-check-id="preview-file"]')!.className,
-    ).toContain("check-item--fail");
+    expect(shell.document.querySelector('[data-check-id="preview-file"]')!.className).toContain(
+      "check-item--fail",
+    );
   });
 
   it("uses the kit's bytes as the review baseline so the checklist can run", async () => {
@@ -1583,9 +1581,9 @@ describe("Browse → Review handoff (AC2 / S2)", () => {
     const frame = shell.document.querySelector("#review-preview iframe");
     expect(frame).not.toBeNull();
     expect(frame!.getAttribute("srcdoc")).toContain("Card from the kit");
-    expect(
-      shell.document.querySelector('[data-check-id="marker"]')!.className,
-    ).toContain("check-item--pass");
+    expect(shell.document.querySelector('[data-check-id="marker"]')!.className).toContain(
+      "check-item--pass",
+    );
   });
 
   it("unlocks Refine, because a component opened from Browse IS in the kit", async () => {
@@ -1596,9 +1594,9 @@ describe("Browse → Review handoff (AC2 / S2)", () => {
     input.dispatchEvent(new shell.window.Event("input", { bubbles: true }));
     // `refine` loads its source from the kit, so this is the one case where a
     // brand-new review draft may be refined without applying first.
-    expect(
-      (shell.document.getElementById("refine-submit") as HTMLButtonElement).disabled,
-    ).toBe(false);
+    expect((shell.document.getElementById("refine-submit") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 
   it("falls back to a truthful message — never 'next milestone' — when the source is unavailable", async () => {
@@ -1659,9 +1657,7 @@ describe("post-apply refresh (AC13 / AC14)", () => {
       group: "actions",
       componentName: "Button",
     });
-    expect(shell.appliedCalls[0].writtenPaths).toEqual([
-      "components/actions/Button/Button.html",
-    ]);
+    expect(shell.appliedCalls[0].writtenPaths).toEqual(["components/actions/Button/Button.html"]);
   });
 
   it("refreshes only after the write actually landed", async () => {
@@ -1728,9 +1724,7 @@ describe("in-flight refine is invalidated by switching drafts", () => {
     release!(refineResult());
     for (let i = 0; i < 8; i += 1) await Promise.resolve();
     // The stale reply must not append itself as a successor draft.
-    expect(wired.document.querySelectorAll(".review-draft-switcher__option").length).toBe(
-      before,
-    );
+    expect(wired.document.querySelectorAll(".review-draft-switcher__option").length).toBe(before);
   });
 });
 
@@ -1770,9 +1764,7 @@ describe("segmented pane control is keyboard operable (AC19)", () => {
     const wired = loadWired(HAPPY_REPLIES);
     const tabs = segments(wired.document);
     const key = (el: HTMLElement, k: string) =>
-      el.dispatchEvent(
-        new wired.window.KeyboardEvent("keydown", { key: k, bubbles: true }),
-      );
+      el.dispatchEvent(new wired.window.KeyboardEvent("keydown", { key: k, bubbles: true }));
 
     key(tabs[0], "ArrowLeft");
     expect(tabs[tabs.length - 1].getAttribute("aria-selected")).toBe("true");
@@ -1884,9 +1876,7 @@ describe("PR #250 review findings", () => {
     await vi.waitFor(() => {
       expect(wired.announced.join(" ")).toMatch(/refused|failed/i);
     });
-    expect(wired.document.getElementById("refine-status")!.textContent).toMatch(
-      /refused|failed/i,
-    );
+    expect(wired.document.getElementById("refine-status")!.textContent).toMatch(/refused|failed/i);
   });
 
   // #4 — `refine` returns PROPOSED files; it does not persist them. Carrying
@@ -1978,15 +1968,15 @@ describe("PR #250 review findings", () => {
     });
     // Already present: must NOT be duplicated by a synthetic entry.
     browse.openComponent("surfaces", "Card");
-    const names = Array.from(
-      shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]'),
-    ).map((el) => el.dataset.componentName);
+    const names = Array.from(shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]')).map(
+      (el) => el.dataset.componentName,
+    );
     expect(names.filter((n) => n === "Card")).toHaveLength(1);
     // Brand new (first Apply): must project with a usable name.
     browse.openComponent("actions", "Button");
-    const after = Array.from(
-      shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]'),
-    ).map((el) => el.dataset.componentName);
+    const after = Array.from(shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]')).map(
+      (el) => el.dataset.componentName,
+    );
     expect(after).toContain("Button");
     expect(after).not.toContain("undefined");
   });
@@ -2004,12 +1994,16 @@ describe("PR #250 review findings", () => {
         }),
     });
     for (const note of ["first", "second"]) {
-      wired.controller.addDraft(conjureResult(), {
-        kitId: "my-kit",
-        kitLabel: "My Kit",
-        componentInKit: false,
-        model: "m",
-      }, note);
+      wired.controller.addDraft(
+        conjureResult(),
+        {
+          kitId: "my-kit",
+          kitLabel: "My Kit",
+          componentInKit: false,
+          model: "m",
+        },
+        note,
+      );
     }
     makeGreen(wired.document, wired.controller);
     (wired.document.getElementById("decision-approve") as HTMLButtonElement).click();
@@ -2182,9 +2176,9 @@ describe("PR #250 second review round", () => {
 
     release(refineResult());
     await vi.waitFor(() => {
-      expect(
-        wired.document.querySelector<HTMLButtonElement>("#refine-submit")!.disabled,
-      ).toBe(false);
+      expect(wired.document.querySelector<HTMLButtonElement>("#refine-submit")!.disabled).toBe(
+        false,
+      );
     });
     expect(wired.document.querySelectorAll(".review-draft-switcher__option").length).toBe(before);
     expect(wired.document.querySelector("#draft-name")!.textContent).toContain("Badge");
@@ -2216,9 +2210,9 @@ describe("PR #250 second review round", () => {
 
     release(refineResult());
     await vi.waitFor(() => {
-      expect(
-        wired.document.querySelector<HTMLButtonElement>("#decision-approve")!.disabled,
-      ).toBe(false);
+      expect(wired.document.querySelector<HTMLButtonElement>("#decision-approve")!.disabled).toBe(
+        false,
+      );
     });
   });
 
@@ -2469,5 +2463,126 @@ describe("PR #250 second review round", () => {
     expect(wired.document.querySelector("#review-status")!.textContent).not.toMatch(
       /nothing was written/i,
     );
+  });
+});
+
+// ── PR #250, Copilot review round 3 ───────────────────────────────────────────
+//
+// Two findings, both verified against source before a line was changed:
+//   1. `runApply` downgraded a FAILED delete to a warning and still returned `ok: true`, so
+//      `confirmApply` stamped the draft applied. The "already applied" blocker then removed the
+//      only retry path, stranding the leftover files permanently.
+//   2. The embedded boot's `onApplied` called `browseController.openComponent(...)`, which returns
+//      `void`. `confirmApply` awaits that callback, so it resolved instantly — BEFORE the
+//      post-apply `read_file` ran — and that read swallows failures to `null`. AC14's truthful
+//      "the view is stale" path could therefore never fire in the embedded tier.
+describe("PR #250 third review round", () => {
+  // The boot IIFE is not reachable from jsdom, but it is where `onApplied` is actually wired.
+  // Dropping the promise there defeats the whole awaitable-refresh fix while every behavioural
+  // test still passes, so pin the wiring at the source level.
+  it("returns the Browse refresh from every boot onApplied so confirmApply can await it", () => {
+    const callbacks = VIEWER_JS.match(/onApplied: function \(applied\) \{[\s\S]*?\n\s*\},/g);
+    expect(callbacks).toBeTruthy();
+    // The shell wrapper plus both boot sites. Every one of them has to hand the promise back.
+    expect(callbacks!.length).toBe(3);
+    for (const callback of callbacks!) {
+      expect(callback).toMatch(/\n\s*return /);
+    }
+    const refreshes = callbacks!.filter((body) => /browseController\.openComponent\(/.test(body));
+    expect(refreshes.length).toBe(2);
+    for (const refresh of refreshes) {
+      expect(refresh).toMatch(/return browseController\.openComponent\(/);
+    }
+  });
+});
+
+describe("PR #250 third review round", () => {
+  /** Build a draft whose diff deletes a file, with `delete_files` failing. */
+  function loadStuckDelete() {
+    const diff = [
+      "--- a/components/actions/Button/old.html",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-<div>gone</div>",
+    ].join("\n");
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__delete_files: new Error("PathOutsidePlanError: not authorized"),
+    });
+    wired.controller.addDraft(refineResult({ diff }), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+      source: `${MARKER}\n<button>Old</button>\n`,
+    });
+    makeGreen(wired.document, wired.controller);
+    wired.document.querySelector<HTMLButtonElement>("#decision-approve")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-button")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-confirm-accept")!.click();
+    return wired;
+  }
+
+  // Finding 1 — a partial apply is not an apply. The writes are idempotent, so leaving the gate
+  // open is the only honest state: it is the sole way to finish removing the stranded file.
+  it("leaves a partially applied draft retryable when a delete is stuck", async () => {
+    const wired = loadStuckDelete();
+    await vi.waitFor(() => {
+      expect(wired.document.querySelector("#review-status")!.textContent).toMatch(/stale/i);
+    });
+    expect(wired.document.getElementById("apply-blockers")!.textContent).not.toMatch(
+      /already applied/i,
+    );
+    expect(wired.document.querySelector<HTMLButtonElement>("#apply-button")!.disabled).toBe(false);
+  });
+
+  // …and the status must say so, or a re-enabled button is just a mystery.
+  it("tells the user the stuck delete can be retried", async () => {
+    const wired = loadStuckDelete();
+    await vi.waitFor(() => {
+      expect(wired.document.querySelector("#review-status")!.textContent).toMatch(/stale/i);
+    });
+    expect(wired.document.querySelector("#review-status")!.textContent).toMatch(/again|retry/i);
+  });
+
+  // A fully clean apply must still latch, or finding 1's fix would break the AC13 contract.
+  it("still marks a clean apply as applied", async () => {
+    const wired = loadWired(HAPPY_REPLIES);
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+    });
+    makeGreen(wired.document, wired.controller);
+    wired.document.querySelector<HTMLButtonElement>("#decision-approve")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-button")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-confirm-accept")!.click();
+    await vi.waitFor(() => {
+      expect(wired.document.getElementById("apply-blockers")!.textContent).toMatch(
+        /already applied/i,
+      );
+    });
+  });
+
+  // Finding 2 — `openComponent` must be awaitable and must REJECT when the re-read fails,
+  // otherwise `confirmApply`'s `refreshFailed` branch is unreachable.
+  it("openComponent rejects when the applied bytes cannot be re-read", async () => {
+    const shell = loadBrowseToReview(null);
+    const settled = shell.browse.openComponent("actions", "Button");
+    expect(typeof (settled as Promise<void> | undefined)?.then).toBe("function");
+    await expect(settled).rejects.toThrow(/re-read|stale|refresh/i);
+  });
+
+  it("openComponent resolves once the applied bytes come back", async () => {
+    const shell = loadBrowseToReview(`${MARKER}\n<button>New</button>\n`);
+    await expect(shell.browse.openComponent("actions", "Button")).resolves.toBeUndefined();
+  });
+
+  // The end-to-end consequence: a real Browse refresh failure must surface AC14's stale-view copy
+  // instead of a silent false success.
+  it("surfaces the stale-view note when the post-apply re-read fails", async () => {
+    const shell = loadBrowseToReview(null);
+    await expect(shell.browse.openComponent("actions", "Button")).rejects.toThrow();
   });
 });

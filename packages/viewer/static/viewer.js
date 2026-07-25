@@ -2464,7 +2464,12 @@
 
       // Stamp the draft that was ACTUALLY written, not `current()` — a tweak slider dragged
       // mid-flight moves `current` to a new, unwritten draft.
-      store.markApplied(outcome.writtenPaths, draft.id);
+      //
+      // Copilot round 3 #1 — and ONLY when the apply finished. Stamping a draft with stranded
+      // deletes raises the "already applied" blocker, removing the one control that could finish
+      // the job; `write_files` is idempotent, so a retry is safe. See architecture.md.
+      var stuckDeletes = outcome.stuckDeletes || [];
+      if (!stuckDeletes.length) store.markApplied(outcome.writtenPaths, draft.id);
       meta[draft.id].componentInKit = true;
 
       // AC13 — report success only once the refresh lands. AC14 — a failed refresh is a STALE VIEW,
@@ -2495,6 +2500,7 @@
         // The writes DID land. Only the removal did not, so the kit is stale, not unwritten —
         // saying otherwise pushes the user to write twice.
         message += " Your kit is stale: " + outcome.deleteWarning + ".";
+        if (stuckDeletes.length) message += " Apply again to retry the removal.";
       }
       if (outcome.validation === null) {
         message += " The post-write check could not run, so this write is unverified.";
@@ -2728,6 +2734,9 @@
     var deletes = planArgs.deletes || [];
     var deleteWarning = null;
     var deletedPaths = [];
+    // Copilot round 3 #1 — the stranded paths, not just a warning: only this can keep a
+    // partially applied draft retryable.
+    var stuckDeletes = [];
     if (deletes.length) {
       try {
         var deleteReply = await options.bridge.callTool(
@@ -2738,11 +2747,13 @@
         var reply = isPlainObject(deleteReply) ? deleteReply : {};
         deletedPaths = Array.isArray(reply.deletedPaths) ? reply.deletedPaths : [];
         var absent = Array.isArray(reply.notFoundPaths) ? reply.notFoundPaths : [];
-        var stuck = deletes.filter(function (path) {
+        stuckDeletes = deletes.filter(function (path) {
           return deletedPaths.indexOf(path) === -1 && absent.indexOf(path) === -1;
         });
-        if (stuck.length) deleteWarning = "could not remove " + stuck.join(", ");
+        if (stuckDeletes.length) deleteWarning = "could not remove " + stuckDeletes.join(", ");
       } catch (error) {
+        // The call itself failed, so NOTHING was removed.
+        stuckDeletes = deletes.slice();
         deleteWarning = safeHostMessage(
           error && error.message,
           "could not remove " + deletes.join(", "),
@@ -2769,6 +2780,7 @@
       ok: true,
       writtenPaths: written,
       deletedPaths: deletedPaths,
+      stuckDeletes: stuckDeletes,
       deleteWarning: deleteWarning,
       validation: validation,
       planId: planReply.planId,
@@ -4626,6 +4638,9 @@
     // Bytes of the currently selected component, once `read_file` resolves. Reset to `null` on
     // every (re)render so a stale body can never be attributed to a newly selected component.
     var latestSource = null;
+    // Copilot round 3 #2 — makes `openComponent` awaitable so AC14's stale-view path is
+    // reachable; reuses this read to keep the post-apply tool order pinned. See architecture.md.
+    var pendingSourceRead = null;
 
     function currentSearch() {
       return searchInput ? searchInput.value || "" : "";
@@ -4761,6 +4776,7 @@
       // state, not the settled-failure copy; the failure copy is reserved for when the async read
       // below actually resolves to `null`.
       latestSource = null;
+      pendingSourceRead = null;
       renderBrowseDetail(
         doc,
         detailContainer,
@@ -4769,18 +4785,18 @@
 
       if (!hostBridge) return;
 
-      fetchSource(resolved.component).then(function (source) {
+      pendingSourceRead = fetchSource(resolved.component).then(function (source) {
         // Copilot #7 — stale-result guard: only the render generation that is STILL current when
         // this read resolves may commit. A plain identity check (group/componentName only, the
         // prior guard) cannot catch HMR replacing the same-identity component's content/path while
         // an older read for the PRIOR content is in flight; the generation counter does.
-        if (generation !== renderGeneration) return;
+        if (generation !== renderGeneration) return source;
         if (
           !selection ||
           selection.group !== resolved.component.group ||
           selection.componentName !== resolved.component.componentName
         ) {
-          return;
+          return source;
         }
         // Copilot review (PR #248) — update only the source subpanel in place, guarded by the
         // generation/selection checks above, instead of a full `renderBrowseDetail` that would tear
@@ -4791,6 +4807,7 @@
           detailContainer,
           detailStateFor(resolved.component, source, false),
         );
+        return source;
       });
     }
 
@@ -4892,15 +4909,10 @@
       // ships `connect-src 'none'`): merge in-memory, let HMR reconcile, and let `select` re-read
       // through the host bridge.
       openComponent: function (group, componentName, kitId) {
-        if (!group || !componentName) return;
-        // Copilot (round 2) — Browse's kit is fixed at construction and feeds `read_file`. Opening
-        // a component from a DIFFERENT kit would read the wrong bytes under the right name. Refuse;
-        // the caller turns this into the truthful AC14 "written, but the view is stale" state.
-        //
-        // `kitId` MUST be in Browse's own namespace (`options.kitId`, i.e. the manifest name the
-        // boot seeded). It is NOT the server's kit id: `Manifest` carries no id field and a server
-        // kit id is a UUID (store/local.ts), so the two are not comparable. The post-Apply handoff
-        // therefore passes nothing — see #254 for closing that gap properly.
+        if (!group || !componentName) return Promise.resolve();
+        // Copilot round 2 — opening a component from a DIFFERENT kit would read the wrong bytes
+        // under the right name. `kitId` here MUST be in Browse's own namespace (the manifest name),
+        // never the server's UUID kit id — see architecture.md and #254.
         if (kitId && options.kitId && kitId !== options.kitId) {
           throw new Error("Browse is showing " + options.kitId + ", not " + kitId + ".");
         }
@@ -4926,6 +4938,14 @@
         }
         select({ group: group, componentName: componentName });
         renderAll(true);
+        // `null` means the read failed (or was base64), so the panel is stale — reject, and let
+        // the caller turn that into AC14's "written, but the view is stale" note.
+        if (!hostBridge) return Promise.resolve();
+        return Promise.resolve(pendingSourceRead).then(function (source) {
+          if (source === null || source === undefined) {
+            throw new Error("could not re-read " + componentName + " after apply");
+          }
+        });
       },
       teardown: function () {
         if (searchInput) searchInput.removeEventListener("input", onSearchInput);
@@ -4934,25 +4954,10 @@
   }
 
   // ── HMR: per-card live refresh (M4-04 / DRO-266) ────
-  //
-  // Two transports, one pure dispatcher (`applyHmrMessage`):
-  //   1. A WebSocket on `/__genie_hmr` (AC1/AC2) — the primary channel on the
-  // Vite dev server (`http(s)://…`). The server plugin (`src/hmr-plugin.ts`) pushes
-  // `{event:"card.changed",path}` / `{event:"tokens.changed"}` off Vite's own file watcher.
-  //   2. `window` `postMessage` — the bridge for the EMBEDDED `ui://` tier,
-  // where the grid runs inside a host iframe under strict CSP (`default-src 'none'`, coordinated
-  // with DRO-269) that may forbid a direct WebSocket. A host forwards the same refresh signal as a
-  // message; we accept both the WS shape AND the research sketch's
-  //      `{type:"refresh", id|path}` shape (M4-04 summary).
-  //
-  // Why src-reassignment, not `iframe.contentWindow.location.reload()` (which AC2 literally names):
-  // every preview iframe is `sandbox="allow-scripts"` with NO `allow-same-origin` (M4-03 AC3, a
-  // hard security rule) — so it has an opaque origin and touching `contentWindow.location` throws
-  // cross-origin. Reassigning `src` with a fresh cache-bust token is the cross-origin-safe
-  // equivalent with the identical observable outcome: ONLY that one iframe refetches its
-  // `preview.html` and reloads; the grid never re-renders and no sibling card reflows (AC3 — the
-  // sub-100 ms, one-card-only guarantee is structural, not a timing hack). `data-path` stays the
-  // stable identity the bridge matches on; the `?__genie_hmr=N` token rides only on the live `src`.
+  // Two transports (a `/__genie_hmr` WebSocket and host `postMessage`) feeding one pure
+  // dispatcher (`applyHmrMessage`), and why a refresh is src-reassignment rather than
+  // `contentWindow.location.reload()`: see `docs/developer/architecture.md` →
+  // "Per-card HMR refresh".
 
   /** AC1's WebSocket endpoint path — must match `GENIE_HMR_PATH` server-side. */
   var HMR_PATH = "/__genie_hmr";
@@ -5731,7 +5736,8 @@
           // AC13 — close the loop into Browse and re-read the bytes. A throw surfaces as the
           // truthful "written, but the view is stale" state.
           onApplied: function (applied) {
-            browseController.openComponent(applied.group, applied.componentName);
+            // `return` is load-bearing — `confirmApply` awaits it (see architecture.md).
+            return browseController.openComponent(applied.group, applied.componentName);
           },
         });
         initMcpApp(doc, {
@@ -5790,7 +5796,8 @@
           // assigned immediately below; this closure only ever runs long after boot, so the
           // reference is safe.
           onApplied: function (applied) {
-            browseController.openComponent(applied.group, applied.componentName);
+            // `return` is load-bearing — `confirmApply` awaits it (see architecture.md).
+            return browseController.openComponent(applied.group, applied.componentName);
           },
         });
         var browseController = initBrowseController(doc, {
