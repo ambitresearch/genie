@@ -1622,6 +1622,32 @@
     color: var(--color-ink-2);
   }
 
+  /*
+   * Copilot #8 (PR #250) — the byte scope of each write sits on the same row
+   * as its path, pushed to the trailing edge. Structure only: ink/neutral,
+   * never clay (CLAUDE.md #3 — clay marks generate/refine moments, and a
+   * confirmation dialog is neither).
+   */
+  .review-dialog__files li {
+    display: flex;
+    gap: var(--space-sm);
+    align-items: baseline;
+    justify-content: space-between;
+  }
+
+  .review-dialog__files code {
+    font: inherit;
+    /* Long kit-relative paths wrap rather than forcing the dialog wider. */
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .review-dialog__bytes {
+    flex: none;
+    color: var(--color-ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+
   .review-dialog__actions {
     display: flex;
     gap: var(--space-sm);

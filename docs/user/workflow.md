@@ -100,9 +100,12 @@ never call `plan` or `write_files`.
 If Apply is unavailable, Review names every blocker. If the plan or the write itself fails
 or the plan expires, the last good draft stays open and applicable, the real reason is
 shown, and no success is reported; retry requires a fresh confirmation and a fresh plan.
-Kit validation after a successful write is advisory: it can fail or be unavailable, and
-Review still reports the write as done, adding a note such as "Kit validation did not run"
-rather than treating that as a failed Apply. If the manifest or preview refresh fails,
+Kit validation after a successful write is advisory: it can fail, be unavailable, or flag
+findings, but none of that turns an already-completed write into a failed Apply. When that
+happens, Review still reports the write as done but marks it unverified — for example, "The
+post-write check could not run, so this write is unverified." Re-run validation, or inspect
+the component, for real confirmation; re-applying only risks writing the same files a second
+time. If the manifest or preview refresh fails,
 Review reports the write as done but the view as possibly stale, and asks you to reload —
 never as a failed Apply.
 

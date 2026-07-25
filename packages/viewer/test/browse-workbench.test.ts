@@ -419,16 +419,23 @@ describe("Refine handoff context", () => {
     const { hooks } = loadHooks();
     const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
     const context = hooks.buildRefineContext("kit-a", component, "default");
-    // M7-03 widened this contract: Review needs the component's bytes and its
-    // canonical kit path to seed a real, checkable draft. With no source
-    // supplied both stay null/derived rather than silently absent.
+    // M7-03 widened this contract: Review needs the component's bytes and the
+    // path they were actually read from to seed a real, checkable draft.
+    //
+    // Copilot #2 (PR #250): `path` is the manifest's OWN path, never a
+    // canonical one synthesised from the display name. The fixture is the
+    // proof — `components/actions/Button/preview.html` is what exists on disk,
+    // while the old derivation produced
+    // `components/actions/Primary buttons/Primary buttons.html`, a path with a
+    // space in it that no kit has ever contained. Planning a write against
+    // that path would have created a second, phantom component.
     expect(context).toEqual({
       kitId: "kit-a",
       group: "actions",
       componentName: "Primary buttons",
       variant: "default",
       source: null,
-      path: "components/actions/Primary buttons/Primary buttons.html",
+      path: "components/actions/Button/preview.html",
     });
   });
 
@@ -437,7 +444,33 @@ describe("Refine handoff context", () => {
     const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
     const context = hooks.buildRefineContext("kit-a", component, "default", "<div>hi</div>");
     expect(context.source).toBe("<div>hi</div>");
-    expect(context.path).toBe("components/actions/Primary buttons/Primary buttons.html");
+    expect(context.path).toBe("components/actions/Button/preview.html");
+  });
+
+  it("never fabricates a path the kit does not contain", () => {
+    const { hooks } = loadHooks();
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    // The display name is human prose; the path is a filesystem fact. They are
+    // not interchangeable, and deriving one from the other silently redirects
+    // an apply to a component that does not exist.
+    expect(hooks.buildRefineContext("kit-a", component, "default").path).not.toContain(
+      "Primary buttons",
+    );
+  });
+
+  it("prefers the source path over an iframe transport URL", () => {
+    const { hooks } = loadHooks();
+    // Embedded manifests rewrite `path` to a blob/transport URL for the
+    // preview frame and keep the kit-relative original on `sourcePath`.
+    const component = {
+      ...MANIFEST.components[0],
+      componentName: MANIFEST.components[0].name,
+      sourcePath: "components/actions/Button/preview.html",
+      path: "blob:https://host/9f2c",
+    };
+    expect(hooks.buildRefineContext("kit-a", component, "default").path).toBe(
+      "components/actions/Button/preview.html",
+    );
   });
 
   it("treats an empty source as no source at all, never as reviewable bytes", () => {

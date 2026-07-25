@@ -21,9 +21,11 @@ The plan is a scoped, expiring write authorization. It names the exact write/del
 scope for the selected UI kit, and the plan guard rejects missing or expired plans and any
 requested path outside that scope. The approved payload is then written atomically through
 `write_files`; a returned `writtenPaths` is the authoritative signal that the write
-succeeded. Post-write kit validation is advisory only: it may fail or be unavailable
-without turning a successful write into a reported failure, so a validation problem never
-forces a second write of bytes already on disk. Manifest and preview refresh gate only the
+succeeded. Post-write kit validation is advisory only: it may fail or be unavailable without
+turning a successful write into a reported failure, so a validation problem never forces
+a second write of bytes already on disk — the write is instead reported to the user as
+unverified, never silently folded into a fully confirmed success. Manifest and preview
+refresh gate only the
 claim that Browse shows the new bytes; a refresh failure is reported as written but
 possibly stale, never as a failed Apply.
 

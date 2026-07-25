@@ -49,9 +49,11 @@ Review names each blocker in the panel. Common causes are:
 Keep the Review tab open. The last good draft is retained, and the UI reports the real
 failure reason, such as an expired plan, rejected path, write failure, or disconnected
 host. Retry only after reading the blocker; genie creates a fresh plan after a fresh Apply
-confirmation. A note that kit validation did not run or found issues is advisory, not an
-Apply failure — the write already succeeded. If the manifest or preview refresh failed
-instead, the write also succeeded; reload the view rather than retrying Apply.
+confirmation. A note that the post-write check could not run, or that it flagged findings,
+means this write is unverified — not that Apply failed. The write already succeeded; re-run
+validation, or inspect the component in your UI kit, rather than retrying Apply. If the
+manifest or preview refresh failed instead, the write also succeeded; reload the view rather
+than retrying Apply.
 
 ## Report a security issue
 

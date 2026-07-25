@@ -93,7 +93,8 @@ disconnects during planning or writing keep the last good draft available, displ
 reason after redaction, and require a fresh confirmation before a new plan is made.
 Post-write kit validation failures and refresh failures are different: the write already
 succeeded, so recovery is never a new plan or write — the viewer reports the write as
-complete and adds the advisory validation note or a stale-view warning instead.
+complete but unverified when `validate` throws or returns findings, or as possibly stale
+when the manifest/preview refresh fails instead.
 
 ## Validation and preview
 

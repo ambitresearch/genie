@@ -1555,6 +1555,28 @@ describe("Browse → Review handoff (AC2 / S2)", () => {
     expect(shell.document.getElementById("draft-label")!.textContent).toMatch(/draft #1/i);
   });
 
+  it("renders a kit file whose name is not its folder's name", async () => {
+    // The manifest compiler cards EVERY `.html` under `components/` and derives
+    // `name` from the file's own basename (server `manifest/compiler.ts` —
+    // `walkPreviewFiles` + `deriveName`), so `Button/preview.html` is a
+    // legitimate kit entry point that can never satisfy the canonical
+    // `<Name>/<Name>.html` form.
+    //
+    // Before Copilot #2 the Browse handoff fabricated a canonical path, which
+    // hid this. Now that the real path flows through, a preview pane that only
+    // understood the canonical form would go blank on a perfectly valid kit.
+    const shell = loadBrowseToReview(CARD_SOURCE);
+    await refineFromBrowse(shell);
+    const frame = shell.document.querySelector("#review-preview iframe");
+    expect(frame).not.toBeNull();
+    expect(frame!.getAttribute("srcdoc")).toContain("Card from the kit");
+    // ...and the CONVENTION check still reports the truth about that file
+    // rather than being relaxed to make the render work.
+    expect(
+      shell.document.querySelector('[data-check-id="preview-file"]')!.className,
+    ).toContain("check-item--fail");
+  });
+
   it("uses the kit's bytes as the review baseline so the checklist can run", async () => {
     const shell = loadBrowseToReview(CARD_SOURCE);
     await refineFromBrowse(shell);
@@ -1760,5 +1782,347 @@ describe("segmented pane control is keyboard operable (AC19)", () => {
     expect(tabs[tabs.length - 1].getAttribute("aria-selected")).toBe("true");
     key(tabs[tabs.length - 1], "Home");
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Copilot review of PR #250. Ten findings, all verified against source and
+// against the server's own schemas before being accepted. Each one is pinned
+// here so the fix cannot silently regress.
+// ───────────────────────────────────────────────────────────────────────────
+describe("PR #250 review findings", () => {
+  // #1 — `refine`'s server schema is `model: z.string().min(1).default(...)`
+  // (packages/server/src/tools/refine.ts:137). An empty string is NOT the
+  // same as an omitted field: `""` fails `.min(1)` and the call is rejected
+  // before it reaches a model, whereas omitting it lets the default apply.
+  // A Browse-seeded draft has no model selection, so it must omit the key.
+  it("omits `model` entirely rather than sending an empty string", async () => {
+    const wired = loadWired({ ...HAPPY_REPLIES, mcp__genie__refine: refineResult() });
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      componentInKit: true,
+      model: "",
+    });
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "tighten the padding";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    (wired.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.calls.some((c) => c.name === "mcp__genie__refine")).toBe(true);
+    });
+    const args = wired.calls.find((c) => c.name === "mcp__genie__refine")!.args;
+    expect(Object.prototype.hasOwnProperty.call(args, "model")).toBe(false);
+  });
+
+  it("still forwards a real model when one was selected", async () => {
+    const wired = loadWired({ ...HAPPY_REPLIES, mcp__genie__refine: refineResult() });
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      componentInKit: true,
+      model: "claude-x",
+    });
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "tighten the padding";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    (wired.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.calls.some((c) => c.name === "mcp__genie__refine")).toBe(true);
+    });
+    expect(wired.calls.find((c) => c.name === "mcp__genie__refine")!.args.model).toBe("claude-x");
+  });
+
+  // #2 — Browse reads bytes from `sourcePath || path`. Fabricating a
+  // canonical path means Review can plan a write to a DIFFERENT file than the
+  // one whose bytes it is showing.
+  it("carries the path Browse actually read, not a fabricated canonical one", () => {
+    const { buildRefineContext } = loadHooks();
+    const context = buildRefineContext(
+      "kit-a",
+      { group: "surfaces", componentName: "Card", path: "components/surfaces/Card/preview.html" },
+      "default",
+      "<div>card</div>",
+    );
+    expect(context.path).toBe("components/surfaces/Card/preview.html");
+  });
+
+  it("prefers sourcePath over the iframe transport path", () => {
+    const { buildRefineContext } = loadHooks();
+    const context = buildRefineContext(
+      "kit-a",
+      {
+        group: "surfaces",
+        componentName: "Card",
+        path: "https://cdn.example.test/transport/Card.html",
+        sourcePath: "components/surfaces/Card/Card.html",
+      },
+      "default",
+      "<div>card</div>",
+    );
+    expect(context.path).toBe("components/surfaces/Card/Card.html");
+  });
+
+  // #3 — AC7 requires the failure reason to stay actionable. `render()`
+  // recomputes an ENABLED refine gate (the instruction is preserved by
+  // design) and blanks the status line, erasing the message set just above.
+  it("keeps a refine failure reason visible after the re-render", async () => {
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__refine: new Error("upstream model refused the request"),
+    });
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      componentInKit: true,
+      model: "m",
+    });
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "make it red";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    (wired.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.announced.join(" ")).toMatch(/refused|failed/i);
+    });
+    expect(wired.document.getElementById("refine-status")!.textContent).toMatch(
+      /refused|failed/i,
+    );
+  });
+
+  // #4 — `refine` returns PROPOSED files; it does not persist them. Carrying
+  // `componentInKit: true` onto the refined draft re-opens the Refine gate,
+  // and the next call reloads the OLDER on-disk component — silently dropping
+  // the first refinement.
+  it("marks a refined draft as not yet in the kit", async () => {
+    const wired = loadWired({ ...HAPPY_REPLIES, mcp__genie__refine: refineResult() });
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      componentInKit: true,
+      model: "m",
+    });
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "make it red";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    (wired.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.document.getElementById("draft-label")!.textContent).toMatch(/#2/);
+    });
+    input.value = "again";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    expect((wired.document.getElementById("refine-submit") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(wired.document.getElementById("refine-status")!.textContent).toMatch(
+      /apply this draft first/i,
+    );
+  });
+
+  // #5 — AC8 promises deterministic controls recompute the REAL diff. Copying
+  // the parent's `diff` shows either nothing (tweak on a generated draft) or
+  // stale stats from the previous model edit.
+  it("recomputes the diff for a deterministic tweak", () => {
+    const { applyDeterministicTweak, detectDeterministicControls, parseUnifiedDiff } = loadHooks();
+    // A parent carrying a STALE diff is the dangerous case: silently
+    // inheriting it reports the previous model edit as this draft's change.
+    const base = conjureResult({
+      files: [
+        fileEntry("components/actions/Button/Button.html", MARKER),
+        {
+          ...fileEntry("components/actions/Button/Button.css", ":root{--radius:8px;}"),
+          mimeType: "text/css",
+        },
+      ],
+    });
+    base.diff = "diff --git a/stale.css b/stale.css\n--- a/stale.css\n+++ b/stale.css\n+stale\n";
+    const control = detectDeterministicControls(base.files)[0];
+    expect(control).toBeTruthy();
+    const tweaked = applyDeterministicTweak(base, control.id, 12);
+    expect(typeof tweaked.diff).toBe("string");
+    expect(tweaked.diff).not.toMatch(/stale/);
+    const stats = parseUnifiedDiff(tweaked.diff);
+    expect(stats.additions).toBeGreaterThan(0);
+    expect(stats.deletions).toBeGreaterThan(0);
+    expect(stats.files).toEqual(["components/actions/Button/Button.css"]);
+    expect(tweaked.diff).toMatch(/\+.*--radius:12px/);
+    expect(tweaked.diff).toMatch(/-.*--radius:8px/);
+    // The parent draft is immutable: its own diff must survive untouched.
+    expect(base.diff).toMatch(/stale/);
+  });
+
+  // #6 — Compiled manifest entries key the component as `name`
+  // (packages/server/src/store/manifest.ts:37). Reading `componentName` off a
+  // RAW manifest entry never matches, and synthesising one with the wrong key
+  // projects a tree item with an undefined name.
+  it("matches and synthesises raw manifest entries by `name`", async () => {
+    const shell = loadShell();
+    const browse = shell.hooks.initBrowseController(shell.document, {
+      kitId: "kit-a",
+      kitName: "kit",
+    });
+    browse.update({
+      version: 1,
+      name: "kit",
+      generatedAt: "2026-07-01T00:00:00.000Z",
+      groups: ["surfaces"],
+      components: [
+        {
+          name: "Card",
+          group: "surfaces",
+          path: "components/surfaces/Card/Card.html",
+          viewport: "480x320",
+          hash: "sha256-AAA=",
+          lastModified: "2026-07-01T00:00:00.000Z",
+        },
+      ],
+    });
+    // Already present: must NOT be duplicated by a synthetic entry.
+    browse.openComponent("surfaces", "Card");
+    const names = Array.from(
+      shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]'),
+    ).map((el) => el.dataset.componentName);
+    expect(names.filter((n) => n === "Card")).toHaveLength(1);
+    // Brand new (first Apply): must project with a usable name.
+    browse.openComponent("actions", "Button");
+    const after = Array.from(
+      shell.document.querySelectorAll<HTMLElement>('[role="treeitem"]'),
+    ).map((el) => el.dataset.componentName);
+    expect(after).toContain("Button");
+    expect(after).not.toContain("undefined");
+  });
+
+  // #7 — Apply's side effect cannot be discarded like a stale Refine reply.
+  // A draft-switcher click mid-flight bumps `generation`, and the guarded
+  // clear then leaves the whole workspace disabled forever.
+  it("always clears its own single-flight flag, even if the draft changed mid-apply", async () => {
+    let releasePlan: (v: unknown) => void = () => {};
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__plan: () =>
+        new Promise((resolve) => {
+          releasePlan = resolve;
+        }),
+    });
+    for (const note of ["first", "second"]) {
+      wired.controller.addDraft(conjureResult(), {
+        kitId: "my-kit",
+        kitLabel: "My Kit",
+        componentInKit: false,
+        model: "m",
+      }, note);
+    }
+    makeGreen(wired.document, wired.controller);
+    (wired.document.getElementById("decision-approve") as HTMLButtonElement).click();
+    (wired.document.getElementById("apply-button") as HTMLButtonElement).click();
+    (wired.document.getElementById("apply-confirm-accept") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.calls.some((c) => c.name === "mcp__genie__plan")).toBe(true);
+    });
+    // Switch drafts while the write is still in flight.
+    const options = wired.document.querySelectorAll<HTMLButtonElement>(
+      ".review-draft-switcher__option",
+    );
+    // The switcher is deliberately NOT disabled during an apply, and
+    // selecting a draft bumps `generation` so a late refine reply cannot land
+    // on the wrong draft. That same bump must not swallow the apply's lock.
+    options[0].click();
+    expect(wired.document.getElementById("apply-blockers")!.textContent).toMatch(
+      /already in progress/i,
+    );
+    releasePlan({ planId: PLAN_ID });
+    await vi.waitFor(() => {
+      expect(wired.calls.some((c) => c.name === "mcp__genie__validate")).toBe(true);
+    });
+    await Promise.resolve();
+    wired.controller.refresh();
+    // `inFlight` is this apply's lock, not the draft's: it must be released
+    // however the selection moved, or Apply and Refine are dead for the rest
+    // of the session with no recovery path.
+    expect(wired.document.getElementById("apply-blockers")!.textContent).not.toMatch(
+      /already in progress/i,
+    );
+    expect(
+      wired.hooks.canRefine({
+        hostAvailable: true,
+        componentInKit: true,
+        inFlight: false,
+        instruction: "go",
+      }).enabled,
+    ).toBe(true);
+  });
+
+  // #8 — AC11 requires kit, component, exact paths AND byte scope before any
+  // `plan` call. Generic "your kit" prose does not satisfy informed consent.
+  it("names the kit, the component and the byte scope in the confirmation", () => {
+    const wired = loadWired();
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      componentInKit: false,
+      model: "m",
+    });
+    makeGreen(wired.document, wired.controller);
+    (wired.document.getElementById("decision-approve") as HTMLButtonElement).click();
+    (wired.document.getElementById("apply-button") as HTMLButtonElement).click();
+    const dialog = wired.document.getElementById("apply-confirm")!;
+    expect(dialog.hidden).toBe(false);
+    const text = dialog.textContent || "";
+    expect(text).toMatch(/My Kit/);
+    expect(text).toMatch(/Button/);
+    expect(text).toMatch(/components\/actions\/Button\/Button\.html/);
+    expect(text).toMatch(/\d+\s*bytes?/i);
+  });
+
+  // #9 — The advisory-validation compromise must not also swallow the
+  // distinction AC13/S6 cares about. Bytes ARE written (so never re-write),
+  // but a validation failure must NOT present as a completed, verified apply.
+  it("records the write but withholds the verified-success state when validation fails", async () => {
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__validate: new Error("validate is unreadable to this host"),
+    });
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      componentInKit: false,
+      model: "m",
+    });
+    makeGreen(wired.document, wired.controller);
+    (wired.document.getElementById("decision-approve") as HTMLButtonElement).click();
+    (wired.document.getElementById("apply-button") as HTMLButtonElement).click();
+    (wired.document.getElementById("apply-confirm-accept") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.calls.some((c) => c.name === "mcp__genie__write_files")).toBe(true);
+    });
+    await vi.waitFor(() => {
+      expect(wired.document.getElementById("apply-blockers")!.textContent).toMatch(
+        /already applied/i,
+      );
+    });
+    // Written — so it can never be double-written…
+    expect(wired.calls.filter((c) => c.name === "mcp__genie__write_files")).toHaveLength(1);
+    // …but the user is told verification did not complete, not that all is well.
+    expect(wired.document.getElementById("review-status")!.textContent).toMatch(
+      /could not|unverified|not verified|unable/i,
+    );
+  });
+
+  // #10 — Under `default-src 'none'` an inline `onclick=` handler is blocked
+  // just as surely as a <script> tag. Passing such a draft as "CSP safe" lets
+  // a component whose interaction cannot run be written to the kit.
+  it("fails the CSP check on inline event handlers", () => {
+    const { computeChecklist } = loadHooks();
+    const hostile = conjureResult({
+      files: [
+        fileEntry(
+          "components/actions/Button/Button.html",
+          `${MARKER}\n<button onclick="alert(1)">Go</button>\n`,
+        ),
+      ],
+    });
+    const csp = computeChecklist({ result: hostile, renderState: "pass" }).find(
+      (row: { id: string }) => row.id === "csp",
+    );
+    expect(csp.state).toBe("fail");
   });
 });

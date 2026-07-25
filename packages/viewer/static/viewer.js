@@ -1285,6 +1285,10 @@
   var REMOTE_IMPORT_PATTERN = /@import\s+["']\s*(?:https?:)?\/\//i;
   var SCRIPT_TAG_PATTERN = /<script\b/i;
   var FONT_FACE_PATTERN = /@font-face/i;
+  // Copilot #10 (PR #250) — inline handlers are script; `default-src 'none'`
+  // blocks them like a <script> tag. Anchored on a tag-internal boundary so
+  // prose such as "turn it on click" cannot trip it.
+  var INLINE_HANDLER_PATTERN = /<[a-z][^>]*\son[a-z]+\s*=/i;
 
   function violatesEmbeddedCsp(content) {
     if (typeof content !== "string") return false;
@@ -1293,6 +1297,7 @@
       REMOTE_CSS_URL_PATTERN.test(content) ||
       REMOTE_IMPORT_PATTERN.test(content) ||
       SCRIPT_TAG_PATTERN.test(content) ||
+      INLINE_HANDLER_PATTERN.test(content) ||
       FONT_FACE_PATTERN.test(content)
     );
   }
@@ -1312,6 +1317,39 @@
       if (result.files[i] && result.files[i].path === expected) return result.files[i];
     }
     return null;
+  }
+
+  /**
+   * The file the preview pane and the marker check actually read.
+   *
+   * `findPreviewFile` above is the strict CONVENTION check — it answers "does
+   * this draft name its entry point `<Name>/<Name>.html`?", and the
+   * `preview-file` checklist row exists to report exactly that. It is the
+   * wrong question for *rendering*: the manifest compiler cards every `.html`
+   * under `components/` and derives `name` from the file's own basename
+   * (server `manifest/compiler.ts` — `walkPreviewFiles` + `deriveName`), so a
+   * kit whose entry point is `Button/preview.html` is perfectly legitimate and
+   * can never satisfy the canonical form.
+   *
+   * Before Copilot #2 (PR #250) this never surfaced, because a Browse handoff
+   * FABRICATED a canonical path. Now that the draft carries the path Browse
+   * really read, resolving the render target has to tolerate the real world:
+   * canonical when it exists, otherwise the sole HTML entry. Ambiguity (two or
+   * more HTML files, none canonical) still resolves to nothing rather than
+   * guessing which one the reviewer is looking at.
+   */
+  function resolvePreviewFile(result) {
+    var canonical = findPreviewFile(result);
+    if (canonical) return canonical;
+    if (!result || !Array.isArray(result.files)) return null;
+    var only = null;
+    for (var i = 0; i < result.files.length; i++) {
+      var file = result.files[i];
+      if (!file || typeof file.path !== "string" || !/\.html$/i.test(file.path)) continue;
+      if (only) return null;
+      only = file;
+    }
+    return only;
   }
 
   function isContained(result) {
@@ -1341,7 +1379,7 @@
     var renderState = (input && input.renderState) || "pending";
     var acks = (input && input.manualAcks) || {};
 
-    var preview = findPreviewFile(result);
+    var preview = resolvePreviewFile(result);
     var schemaOk = isConjureResult(result) || isRefineResult(result);
     var cspOk =
       Array.isArray(result.files) &&
@@ -1685,11 +1723,9 @@
         }
         if (!spec) continue;
         controls.push({
-          // Occurrence-unique: a property declared twice in one file (`:root`
-          // plus a theme/media override is routine CSS) would otherwise share
-          // an id, so the slider would show one declaration's value and the
-          // string `.replace` below would rewrite the FIRST textual match —
-          // a different declaration than the one the slider read.
+          // Occurrence-unique: a property declared twice in one file would
+          // share an id, so the slider and `.replace` could target different
+          // declarations.
           id: i + ":" + match.index + ":" + property,
           fileIndex: i,
           offset: match.index,
@@ -1747,7 +1783,80 @@
       if (Object.prototype.hasOwnProperty.call(result, key)) next[key] = result[key];
     }
     next.files = files;
+    // Copilot #5 (PR #250) — AC8 promises a RECOMPUTED diff. Inheriting
+    // `result.diff` shows nothing (parent was a generation) or the previous
+    // edit's stale counts (parent was a refine). Both misreport the write.
+    next.diff = buildUnifiedDiff(result.files, files);
     return next;
+  }
+
+  /**
+   * A real unified diff between two file lists, used for locally-derived
+   * drafts (deterministic tweaks) where no server diff exists. Line-based
+   * with a common prefix/suffix trim, which is exact for the single-
+   * declaration edits `applyDeterministicTweak` performs and never invents
+   * changes it cannot see.
+   */
+  function buildUnifiedDiff(prevFiles, nextFiles) {
+    var previous = Object.create(null);
+    for (var i = 0; i < (prevFiles || []).length; i++) {
+      if (prevFiles[i]) previous[prevFiles[i].path] = prevFiles[i].content;
+    }
+    var out = [];
+    for (var j = 0; j < (nextFiles || []).length; j++) {
+      var file = nextFiles[j];
+      if (!file) continue;
+      var before = previous[file.path];
+      if (typeof before !== "string" || before === file.content) continue;
+      var a = before.split("\n");
+      var b = String(file.content).split("\n");
+      var head = 0;
+      while (head < a.length && head < b.length && a[head] === b[head]) head += 1;
+      var tail = 0;
+      while (
+        tail < a.length - head &&
+        tail < b.length - head &&
+        a[a.length - 1 - tail] === b[b.length - 1 - tail]
+      ) {
+        tail += 1;
+      }
+      var removed = a.slice(head, a.length - tail);
+      var added = b.slice(head, b.length - tail);
+      out.push("diff --git a/" + file.path + " b/" + file.path);
+      out.push("--- a/" + file.path);
+      out.push("+++ b/" + file.path);
+      out.push(
+        "@@ -" + (head + 1) + "," + removed.length + " +" + (head + 1) + "," + added.length + " @@",
+      );
+      for (var r = 0; r < removed.length; r++) out.push("-" + removed[r]);
+      for (var d = 0; d < added.length; d++) out.push("+" + added[d]);
+    }
+    return out.join("\n");
+  }
+
+  /**
+   * UTF-8 byte length, computed without `TextEncoder` so the embedded tier
+   * never depends on a global the host might not expose. Used to state the
+   * exact byte scope of a write before consent is asked for (AC11).
+   */
+  function utf8ByteLength(value) {
+    var text = typeof value === "string" ? value : "";
+    var bytes = 0;
+    for (var i = 0; i < text.length; i++) {
+      var code = text.charCodeAt(i);
+      if (code < 0x80) bytes += 1;
+      else if (code < 0x800) bytes += 2;
+      else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+        var low = text.charCodeAt(i + 1);
+        if (low >= 0xdc00 && low <= 0xdfff) {
+          bytes += 4;
+          i += 1;
+          continue;
+        }
+        bytes += 3;
+      } else bytes += 3;
+    }
+    return bytes;
   }
 
   function isPlanResult(value) {
@@ -1907,6 +2016,7 @@
       dialog: doc.getElementById("apply-confirm"),
       dialogHeading: doc.getElementById("apply-confirm-heading"),
       dialogFiles: doc.getElementById("apply-confirm-files"),
+      dialogDetail: doc.getElementById("apply-confirm-detail"),
       dialogCancel: doc.getElementById("apply-confirm-cancel"),
       dialogAccept: doc.getElementById("apply-confirm-accept"),
       railToggle: doc.getElementById("review-rail-toggle"),
@@ -1957,7 +2067,7 @@
     function renderPreview(draft) {
       if (!el.preview) return;
       el.preview.replaceChildren();
-      var file = findPreviewFile(draft.result);
+      var file = resolvePreviewFile(draft.result);
       if (!file) {
         store.setRenderState("fail");
         el.preview.hidden = true;
@@ -2036,10 +2146,9 @@
       return function () {
         var draft = store.select(number);
         if (!draft) return;
-        // Claim the generation: a Refine already awaiting a response was
-        // issued against the draft we just navigated AWAY from. Without this
-        // its late reply still satisfies `ticket === generation` and lands as
-        // a successor to the wrong draft.
+        // Claim the generation: an in-flight Refine was issued against the
+        // draft we just left, and without this its late reply still satisfies
+        // `ticket === generation` and lands on the wrong draft.
         generation += 1;
         renderPreview(draft);
         render();
@@ -2090,20 +2199,27 @@
         var info = meta[draft.id] || {};
         // id is `fileIndex:offset:--property`.
         var property = controlId.split(":").slice(2).join(":");
-        // A tweaked draft is new bytes that are NOT in the kit, even when its
-        // parent had been applied — inheriting `componentInKit: true` would
-        // re-enable Refine, which reads the kit's older source and would
-        // silently discard the tweak.
-        addDraft(
-          next,
-          {
-            kitId: info.kitId,
-            kitLabel: info.kitLabel,
-            model: info.model,
-            componentInKit: false,
-          },
-          "Adjusted " + property + ".",
-        );
+        // A tweaked draft is new bytes NOT in the kit, even if its parent was
+        // applied. Inheriting `componentInKit` would re-enable Refine, which
+        // reads the kit's older source and silently discards the tweak.
+        addDraft(next, derivedInfo(info), "Adjusted " + property + ".");
+      };
+    }
+
+    /**
+     * Metadata for a draft DERIVED from another (a refine reply or a
+     * deterministic tweak). Both produce PROPOSED bytes that are not on disk,
+     * so `componentInKit` must be cleared however the parent was flagged —
+     * otherwise Refine stays unlocked and its next call reloads the older
+     * on-disk source, silently discarding this draft.
+     */
+    function derivedInfo(info) {
+      var source = info || {};
+      return {
+        kitId: source.kitId,
+        kitLabel: source.kitLabel,
+        model: source.model,
+        componentInKit: false,
       };
     }
 
@@ -2221,9 +2337,8 @@
       });
       if (!gate.enabled) return;
 
-      // Claim the generation BEFORE the await: the tweak sliders, the draft
-      // switcher and route navigation all stay live during flight, so a
-      // superseded reply must never land on a draft the user has moved past.
+      // Claim the generation BEFORE the await: sliders, switcher and nav all
+      // stay live in flight, so a superseded reply must never land.
       generation += 1;
       var ticket = generation;
       inFlight = true;
@@ -2240,38 +2355,70 @@
           model: info.model,
         });
       } finally {
-        // Without `finally`, any throw here strands `inFlight` and permanently
-        // disables both Refine and Apply with no recovery path.
-        if (ticket === generation) inFlight = false;
+        // Copilot #7 (PR #250) — `inFlight` is the LOCK; `ticket` only decides
+        // if the RESULT is wanted. Conflating them strands the lock forever
+        // when the user switches drafts mid-flight. Release; discard below.
+        inFlight = false;
       }
       if (ticket !== generation) return;
       if (!outcome.ok) {
-        if (el.refineStatus) el.refineStatus.textContent = outcome.message || "Refine failed.";
-        announce(outcome.message || "Refine failed.");
+        var failure = outcome.message || "Refine failed.";
+        announce(failure);
+        // Copilot #3 (PR #250) — `render()` blanks `#refine-status`, so the
+        // reason must be written AFTER it or AC7's message never survives.
         render();
+        if (el.refineStatus) el.refineStatus.textContent = failure;
         return;
       }
       if (el.refineStatus) el.refineStatus.textContent = "";
       if (el.refineInput) el.refineInput.value = "";
-      addDraft(outcome.result, info, "Refined: " + instruction);
+      // Copilot #4 (PR #250) — `refine` persists nothing, so a refined draft
+      // is NOT in the kit; marking it so re-opens Refine, whose next call
+      // reloads the older on-disk bytes and loses this work.
+      addDraft(outcome.result, derivedInfo(info), "Refined: " + instruction);
     }
 
     function openApplyConfirm() {
       var draft = store.current();
       if (!draft || !el.dialog) return;
+      // Copilot #8 (PR #250) — AC11 wants informed consent: name the kit, the
+      // component and the byte scope, read off the draft actually being applied.
+      var confirmInfo = meta[draft.id] || {};
+      var totalBytes = 0;
       if (el.dialogFiles) {
         el.dialogFiles.replaceChildren();
         for (var i = 0; i < draft.result.files.length; i++) {
+          var entry = draft.result.files[i];
+          var size = utf8ByteLength(entry.content);
+          totalBytes += size;
           var item = doc.createElement("li");
-          item.textContent = draft.result.files[i].path;
+          var path = doc.createElement("code");
+          path.textContent = entry.path;
+          var scope = doc.createElement("span");
+          scope.className = "review-dialog__bytes";
+          scope.textContent = size + (size === 1 ? " byte" : " bytes");
+          item.append(path, scope);
           el.dialogFiles.append(item);
         }
       }
+      if (el.dialogDetail) {
+        var count = draft.result.files.length;
+        el.dialogDetail.textContent =
+          "Writing " +
+          draft.result.componentName +
+          " into " +
+          (confirmInfo.kitLabel || confirmInfo.kitId || "your UI kit") +
+          " — " +
+          count +
+          (count === 1 ? " file, " : " files, ") +
+          totalBytes +
+          (totalBytes === 1 ? " byte" : " bytes") +
+          " in total. This is the first time anything leaves this viewer session.";
+      }
       dialogReturnFocus = doc.activeElement;
       el.dialog.hidden = false;
-      // `aria-modal="true"` is a promise that focus cannot leave. Honour it:
-      // `inert` removes the background from the tab order *and* the a11y tree
-      // in browsers that support it; the keydown trap below is the fallback.
+      // `aria-modal="true"` promises focus cannot leave. `inert` removes the
+      // background from the tab order AND the a11y tree; keydown is fallback.
       setBackgroundInert(true);
       if (el.dialogHeading) el.dialogHeading.focus();
     }
@@ -2330,8 +2477,10 @@
       closeApplyConfirm();
       if (!draft || !info || !bridge || inFlight) return;
 
+      // Bumping `generation` invalidates any in-flight REFINE — but an apply
+      // keeps no ticket: its side effect reaches the kit, so its outcome must
+      // always be processed or the draft is left unstamped.
       generation += 1;
-      var ticket = generation;
       inFlight = true;
       render();
       if (el.status) el.status.textContent = "Writing files to your kit…";
@@ -2344,7 +2493,10 @@
           approved: store.isApproved(),
         });
       } finally {
-        if (ticket === generation) inFlight = false;
+        // Copilot #7 (PR #250) — see `submitRefine`. This one is stricter
+        // still: an apply's side effect has ALREADY reached the kit, so its
+        // lock can never be treated as discardable.
+        inFlight = false;
       }
 
       if (!outcome.ok) {
@@ -2359,12 +2511,8 @@
       store.markApplied(outcome.writtenPaths, draft.id);
       meta[draft.id].componentInKit = true;
 
-      // AC13 — the write landing is NOT the whole story: success is only
-      // reported once the manifest and preview have been refreshed and Browse
-      // can open the component with the live bytes. AC14 — if that refresh
-      // fails we must not silently claim it worked, but we also must not
-      // report the APPLY as failed: the bytes are genuinely on disk, and
-      // saying otherwise would push the user into a pointless second write.
+      // AC13 — report success only once the refresh lands. AC14 — a failed
+      // refresh is a STALE VIEW, not a failed apply: the bytes are on disk.
       var refreshFailed = false;
       if (typeof opts.onApplied === "function") {
         if (el.status) el.status.textContent = "Refreshing your kit…";
@@ -2385,10 +2533,16 @@
       var written = outcome.writtenPaths.length;
       var message = "Applied " + draft.result.componentName + " — " + written + " file";
       message += written === 1 ? " written." : "s written.";
+      // Copilot #9 (PR #250) — the bytes ARE on disk (never written twice),
+      // but an apply whose post-write scan did not complete, or came back
+      // dirty, is not a VERIFIED success.
       if (outcome.validation === null) {
-        message += " Kit validation did not run.";
+        message += " The post-write check could not run, so this write is unverified.";
       } else if (outcome.validation && outcome.validation.bad > 0) {
-        message += " Kit validation flagged " + outcome.validation.bad + " component(s).";
+        message +=
+          " The post-write check flagged " +
+          outcome.validation.bad +
+          " component(s), so this write is unverified.";
       }
       if (refreshFailed) {
         message += " The kit view could not be refreshed — reload to see it in Browse.";
@@ -2479,11 +2633,8 @@
     }
     for (var s = 0; s < el.segments.length; s++) {
       el.segments[s].addEventListener("click", createPaneHandler(el.segments[s]));
-      // AC19 / Design 6 §14 — `setPane` gives this tablist a roving tabindex,
-      // which makes the whole group ONE Tab stop. Without arrow keys the
-      // inactive tab is then completely unreachable by keyboard: Tab skips it
-      // (tabIndex -1) and nothing else moves selection. Left/Right wrap,
-      // Home/End jump to the ends, per the WAI-ARIA tabs pattern.
+      // AC19 / Design 6 §14 — the roving tabindex makes this tablist ONE Tab
+      // stop, so without arrows the inactive tab is unreachable (WAI-ARIA).
       el.segments[s].addEventListener("keydown", createPaneKeyHandler(s));
     }
     setPane("preview");
@@ -2507,8 +2658,11 @@
       kitId: options.kitId,
       componentName: options.componentName,
       instruction: options.instruction,
-      model: options.model,
     };
+    // Copilot #1 (PR #250) — server declares `model: z.string().min(1)
+    // .default(DEFAULT_MODEL)`. `""` is not "absent": it fails `.min(1)` and
+    // rejects the call, while omitting the key lets the default apply.
+    if (typeof options.model === "string" && options.model) args.model = options.model;
     if (options.region) args.region = options.region;
     var reply;
     try {
@@ -3020,10 +3174,9 @@
         : assembled;
     }
 
-    // M7-03 (#235) — the review workspace owns every draft's presentation now.
-    // `initProductShell` only hands it the draft plus the kit/model context it
-    // was generated under; all gating, checklist and apply behavior lives in
-    // `initReviewController`.
+    // M7-03 (#235) — the review workspace owns draft presentation.
+    // `initProductShell` hands it only the draft plus its kit/model context;
+    // gating, checklist and apply behaviour live in `initReviewController`.
     var review = initReviewController(doc, {
       getBridge: function () {
         return bridge;
@@ -3036,10 +3189,9 @@
       onApplied: function (applied) {
         if (typeof opts.onApplied !== "function") return undefined;
         return Promise.resolve(opts.onApplied(applied)).then(function () {
-          // AC13 — only once Browse actually holds the applied component do
-          // we route the user there. Navigating first would flash an empty or
-          // stale detail panel; navigating on failure would strand them on a
-          // view that cannot show what they just wrote.
+          // AC13 — route only once Browse actually holds the component.
+          // Navigating first flashes a stale panel; navigating on failure
+          // strands the user on a view that cannot show what they wrote.
           navigate("browse", false, true);
         });
       },
@@ -3334,11 +3486,9 @@
       // calls `writeRoute` AND `renderRoute` (moving focus into Review), so
       // Refine actually lands the user in Review instead of a stale Browse.
       setRefineContext: function (context) {
-        // AC2/S2 — a Browse handoff must land a REAL, reviewable draft, not a
-        // read-only metadata card. `buildRefineContext` carries the bytes
-        // Browse already read, so the component's current source becomes the
-        // review baseline: it renders in the preview frame, runs the whole
-        // checklist, and (being genuinely present in the kit) unlocks Refine.
+        // AC2/S2 — a Browse handoff lands a REAL reviewable draft: the bytes
+        // Browse already read become the review baseline, so it renders, runs
+        // the checklist, and (being in the kit) unlocks Refine.
         var seeded = false;
         if (review && context && context.source && context.path && context.componentName) {
           review.addDraft(
@@ -3709,6 +3859,21 @@
    * @param {string} variant
    * @returns {{kitId: string, group: string, componentName: string, variant: string}}
    */
+  /**
+   * The kit-relative file a Browse component's bytes were read from.
+   * `sourcePath` is authoritative because the embedded manifest rewrites
+   * `path` to an absolute/data transport URL for the preview iframe; an
+   * absolute URL is never a kit-relative write target, so it is rejected.
+   */
+  function browseSourcePath(component) {
+    if (!component) return "";
+    var candidate = component.sourcePath || component.path;
+    if (typeof candidate !== "string" || !candidate) return "";
+    return /^[a-z][a-z0-9+.-]*:/i.test(candidate) || candidate.indexOf("//") === 0
+      ? ""
+      : candidate;
+  }
+
   function buildRefineContext(kitId, component, variant, source) {
     var group = (component && component.group) || "";
     var componentName = (component && component.componentName) || "";
@@ -3717,16 +3882,16 @@
       group: group,
       componentName: componentName,
       variant: variant || "default",
-      // AC2/S2 — Review accepts a Browse selection, not just a Conjure draft.
-      // Browse has ALREADY read the component's current bytes off disk (for
-      // its own detail preview); carrying them through here is what lets the
-      // handoff seed a REAL review draft instead of a metadata placeholder.
-      // `null` when the source read failed or the tier is source-less, which
-      // the receiver treats as "context only, no draft".
+      // AC2/S2 — Browse already read these bytes; carrying them seeds a REAL
+      // draft. `null` (read failed / source-less) means "context, no draft".
       source: typeof source === "string" && source ? source : null,
-      path: group && componentName
-        ? "components/" + group + "/" + componentName + "/" + componentName + ".html"
-        : "",
+      // Copilot #2 (PR #250) — Browse reads bytes from `sourcePath || path`;
+      // fabricating `<Name>/<Name>.html` would plan a write to a DIFFERENT
+      // file than the one whose bytes we hold. (Embedded rewrites `path`.)
+      path: browseSourcePath(component) ||
+        (group && componentName
+          ? "components/" + group + "/" + componentName + "/" + componentName + ".html"
+          : ""),
     };
   }
 
@@ -4134,14 +4299,9 @@
       container.appendChild(refineExplain);
     } else if (typeof state.onRefine === "function") {
       refineButton.addEventListener("click", function () {
-        // AC2/S2 — read the source LAZILY, at click time. The controller
-        // paints the detail pane before the async `read_file` resolves and
-        // then patches only the source subpanel (so the live preview iframe
-        // is not torn down), which means this handler's captured `state`
-        // still carries `source: null` long after the bytes have landed.
-        // `resolveSource` reads the controller's latest bytes instead, so a
-        // Refine handoff carries a real review baseline. Direct unit tests
-        // render with a plain `state.source` and fall through to it.
+        // AC2/S2 — resolve LAZILY: the pane paints before `read_file` lands
+        // and only the source subpanel is repainted, so this handler's
+        // captured `state.source` would stay `null` forever.
         var liveSource =
           typeof state.resolveSource === "function" ? state.resolveSource() : state.source;
         state.onRefine(buildRefineContext(state.kitId, component, "default", liveSource));
@@ -4592,11 +4752,9 @@
         component: component,
         source: source,
         sourceLoading: sourceLoading,
-        // AC2/S2 — the Refine button resolves the component's bytes through
-        // this at click time. The render-time `source` above is `null` for
-        // the first paint of a host-backed selection (the read is still in
-        // flight), and only the source subpanel is repainted when it lands,
-        // so a snapshot would hand Review an empty baseline forever.
+        // AC2/S2 — Refine resolves bytes through this at click time. The
+        // render-time `source` is `null` on first paint (read still in
+        // flight), so a snapshot would hand Review an empty baseline forever.
         resolveSource: function () {
           return latestSource;
         },
@@ -4823,29 +4981,30 @@
       refresh: function () {
         renderAll(true);
       },
-      // AC13 — after an Apply, Browse must OPEN the component that was just
-      // written, showing the LIVE bytes.
-      //
-      // This deliberately does NOT re-fetch the manifest: the embedded tier
-      // ships `connect-src 'none'`, so there is no network refresh available
-      // there at all. Instead it merges the just-written entry into the
-      // in-memory manifest when it is new (a first-time Apply), which is
-      // exactly the state a manifest re-read would have produced, and HMR
-      // reconciles the authoritative copy on its next tick. `select` then
-      // re-reads the component's source through the host bridge, so the
-      // detail panel shows what is actually on disk rather than the draft
-      // that was held in the review workspace.
+      // AC13 — open the just-written component with LIVE bytes. No manifest
+      // re-fetch (embedded ships `connect-src 'none'`): merge in-memory, let
+      // HMR reconcile, and let `select` re-read through the host bridge.
       openComponent: function (group, componentName) {
         if (!group || !componentName) return;
         var components = (manifest && manifest.components) || [];
+        // Copilot #6 (PR #250) — the RAW manifest keys entries by `name`;
+        // `componentName` is the TREE's shape and never matches here.
         var known = components.some(function (component) {
-          return component.group === group && component.componentName === componentName;
+          return component && component.group === group && component.name === componentName;
         });
         if (!known) {
+          var groups = (manifest && manifest.groups) || [];
           manifest = {
             name: manifest && manifest.name,
-            components: components.concat([{ group: group, componentName: componentName }]),
-            groups: (manifest && manifest.groups) || [],
+            components: components.concat([
+              {
+                name: componentName,
+                group: group,
+                path:
+                  "components/" + group + "/" + componentName + "/" + componentName + ".html",
+              },
+            ]),
+            groups: groups.indexOf(group) === -1 ? groups.concat([group]) : groups,
           };
         }
         select({ group: group, componentName: componentName });
@@ -5701,11 +5860,8 @@
         // shell in the pending state and let initMcpApp resolve ready/unavailable
         // from the actual host handshake.
         var shellController = initProductShell(doc, undefined, {
-          // AC13 — close the loop after a successful Apply: put the applied
-          // component into Browse and re-read its bytes from disk. A throw
-          // here surfaces as the truthful "written, but the kit view could
-          // not be refreshed" state rather than a false success or a bogus
-          // apply failure.
+          // AC13 — close the loop into Browse and re-read the bytes. A throw
+          // surfaces as the truthful "written, but the view is stale" state.
           onApplied: function (applied) {
             browseController.openComponent(applied.group, applied.componentName);
           },
