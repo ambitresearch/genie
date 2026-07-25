@@ -3458,7 +3458,7 @@
         // space" set the URL parser trims before scheme detection; that is
         // the bypass being closed.
         // eslint-disable-next-line no-control-regex
-        var URL_C0_OR_SPACE_RE = /^[ - ]|[ - ]$/;
+        var URL_C0_OR_SPACE_RE = /^[\x00- ]|[\x00- ]$/;
         if (
           !path ||
           URL_C0_OR_SPACE_RE.test(path) ||

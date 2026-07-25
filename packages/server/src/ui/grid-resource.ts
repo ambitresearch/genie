@@ -689,6 +689,9 @@ export async function buildGridDocument(
       deps.readAsset("viewer.css"),
     ]);
   } catch {
+    // Same M4-07 hash-only script-src requirement applies to the emergency
+    // shell's own inline manifest island (see the primary path below).
+    scriptHashes.add(cspSha256(escapeJsonForScript(JSON.stringify(manifest))));
     const fallback = fallbackShell(
       manifest,
       buildCspMeta(deps.previewsBaseUrl, currentHashes(), deps.exactFrameDomains),
@@ -699,6 +702,13 @@ export async function buildGridDocument(
   const inlinedAssets = inlineViewerAssets(indexHtml, viewerJs, viewerCss);
   for (const hash of inlinedAssets.hashes.scriptHashes) scriptHashes.add(hash);
   for (const hash of inlinedAssets.hashes.styleHashes) styleHashes.add(hash);
+  // The manifest data island is itself an inline `<script>` element (AC2), so
+  // the hardened, hash-only script-src (M4-07) must allow-list it too — a
+  // browser's CSP enforcement covers every inline <script>, not just
+  // executable ones, regardless of its `type` attribute. Hashing here (rather
+  // than re-deriving it from the final HTML) keeps the hash tied to exactly
+  // the JSON text `inlineManifest` embeds.
+  scriptHashes.add(cspSha256(escapeJsonForScript(JSON.stringify(manifest))));
   const cspMeta = buildCspMeta(deps.previewsBaseUrl, currentHashes(), deps.exactFrameDomains);
   const document = inlineManifest(inlinedAssets.html, manifest);
   return injectCspMeta(
