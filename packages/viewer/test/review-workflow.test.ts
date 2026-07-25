@@ -2126,3 +2126,348 @@ describe("PR #250 review findings", () => {
     expect(csp.state).toBe("fail");
   });
 });
+
+/**
+ * PR #250, second review round. Nine findings (six inline, three suppressed as
+ * low-confidence — all nine verified against source before being pinned here).
+ * Each test below fails against the pre-fix tree.
+ */
+describe("PR #250 second review round", () => {
+  function seedTwo(replies: Record<string, unknown | ((args: never) => unknown)>) {
+    const wired = loadWired(replies);
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+      source: `${MARKER}\n<button>Old</button>\n`,
+    });
+    makeGreen(wired.document, wired.controller);
+    return wired;
+  }
+
+  /** Type an instruction and press Refine, returning once the call is in flight. */
+  function startRefine(document: Document) {
+    const input = document.querySelector<HTMLTextAreaElement>("#refine-input")!;
+    input.value = "tighten the spacing";
+    input.dispatchEvent(new document.defaultView!.Event("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>("#refine-submit")!.click();
+  }
+
+  // ── Finding 1 — adding a draft must invalidate an in-flight refine ────────
+  it("discards a refine reply that lands after a newer draft was added", async () => {
+    let release!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    const wired = seedTwo({
+      ...HAPPY_REPLIES,
+      mcp__genie__refine: () => pending,
+    });
+    startRefine(wired.document);
+
+    // A second Generate lands while the refine is still in flight. It selects
+    // the new draft, so the older refine's answer is answering a question the
+    // user has already moved on from.
+    // `componentInKit: true` keeps Refine legal for the NEW draft, so the
+    // button re-enabling is a real signal that the discarded reply was
+    // processed rather than an artefact of an unrelated gate.
+    wired.controller.addDraft(conjureResult({ componentName: "Badge" }), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+    });
+    const before = wired.document.querySelectorAll(".review-draft-switcher__option").length;
+
+    release(refineResult());
+    await vi.waitFor(() => {
+      expect(
+        wired.document.querySelector<HTMLButtonElement>("#refine-submit")!.disabled,
+      ).toBe(false);
+    });
+    expect(wired.document.querySelectorAll(".review-draft-switcher__option").length).toBe(before);
+    expect(wired.document.querySelector("#draft-name")!.textContent).toContain("Badge");
+  });
+
+  // ── Finding 8 — a discarded reply must still repaint ──────────────────────
+  it("re-enables the controls after discarding a stale refine reply", async () => {
+    let release!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    const wired = seedTwo({ ...HAPPY_REPLIES, mcp__genie__refine: () => pending });
+    wired.controller.addDraft(conjureResult({ componentName: "Badge" }), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+      source: `${MARKER}\n<b>x</b>\n`,
+    });
+    startRefine(wired.document);
+
+    // Switch back to draft #1 mid-flight: the repaint that accompanies the
+    // switch happens while `inFlight` is still true, so every control renders
+    // disabled. Releasing the stale reply must repaint, not just unlock.
+    const options = wired.document.querySelectorAll<HTMLButtonElement>(
+      ".review-draft-switcher__option",
+    );
+    options[0]!.click();
+
+    release(refineResult());
+    await vi.waitFor(() => {
+      expect(
+        wired.document.querySelector<HTMLButtonElement>("#decision-approve")!.disabled,
+      ).toBe(false);
+    });
+  });
+
+  // ── Finding 2 — the "nothing written" note must stop lying after Apply ────
+  it("stops claiming nothing was written once the draft is applied", async () => {
+    const wired = seedTwo(HAPPY_REPLIES);
+    const note = () => wired.document.querySelector("#draft-persistence-note")!.textContent ?? "";
+    expect(note()).toMatch(/nothing has been written/i);
+
+    wired.document.querySelector<HTMLButtonElement>("#decision-approve")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-button")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-confirm-accept")!.click();
+
+    await vi.waitFor(() => {
+      expect(wired.document.querySelector("#review-status")!.textContent).toMatch(/applied/i);
+    });
+    expect(note()).not.toMatch(/nothing has been written/i);
+    expect(note()).toMatch(/written to/i);
+  });
+
+  // ── Finding 6 — Review must re-evaluate when the host bridge changes ──────
+  it("re-renders Review when the host bridge becomes available", () => {
+    // Drives the REAL shell, not the review controller in isolation: `setBridge`
+    // is the shell's method, and the whole finding is that it used to repaint
+    // Browse but not Review. Seeding through `setRefineContext` is how Browse
+    // itself hands a draft to the shell's own Review controller.
+    const shell = loadShell();
+    const bridge = {
+      callTool(name: string) {
+        return Promise.resolve(name === "mcp__genie__list_kits" ? { kits: [] } : {});
+      },
+    };
+    // `undefined` = host handshake still pending, which is exactly the state the
+    // embedded tier boots in before `setBridge` lands.
+    const shellController = shell.hooks.initProductShell(shell.document, undefined, {});
+    shellController.setRefineContext({
+      kitId: "my-kit",
+      group: "actions",
+      componentName: "Button",
+      displayName: "Button",
+      variant: "default",
+      source: `${MARKER}\n<button>Old</button>\n`,
+      path: "components/actions/Button/Button.html",
+    });
+
+    const submit = () => shell.document.querySelector<HTMLButtonElement>("#refine-submit")!;
+    const input = shell.document.querySelector<HTMLTextAreaElement>("#refine-input")!;
+    input.value = "tighten the spacing";
+    input.dispatchEvent(new shell.window.Event("input", { bubbles: true }));
+    // No host yet, so Refine is correctly dead.
+    expect(submit().disabled).toBe(true);
+
+    shellController.setBridge(bridge);
+    // Synchronous assertion on purpose: the repaint must come from `setBridge`
+    // itself, not as a side effect of the async `list_kits` it also fires.
+    expect(submit().disabled).toBe(false);
+
+    shellController.setUnavailable();
+    expect(submit().disabled).toBe(true);
+  });
+
+  // ── Finding 3 — Browse must refuse a component from a different kit ────────
+  it("refuses to open a component belonging to a different kit", () => {
+    const shell = loadShell();
+    const browse = shell.hooks.initBrowseController(shell.document, {
+      kitId: "my-kit",
+      manifest: BROWSE_MANIFEST,
+    });
+    // Same kit is fine.
+    expect(() => browse.openComponent("actions", "Button", "my-kit")).not.toThrow();
+    // A different kit would read the WRONG bytes under the right name, so it
+    // must throw rather than silently show a lie.
+    expect(() => browse.openComponent("actions", "Button", "other-kit")).toThrow(/my-kit/);
+    // An unspecified kit stays permissive (deep links carry no kit).
+    expect(() => browse.openComponent("actions", "Button")).not.toThrow();
+    browse.teardown();
+  });
+
+  // ── Finding 7 — the refine target is the DIRECTORY, not the display name ───
+  it("derives the refine target from the path directory, not the manifest name", () => {
+    const { componentDirFromPath } = loadHooks();
+    // The server's `parseComponentPath` resolves a refine target by path
+    // segment 3. The manifest `name` is only the basename, so a component
+    // whose file is not `<Name>/<Name>.html` would 404 on refine.
+    expect(componentDirFromPath("components/actions/Button/preview.html")).toBe("Button");
+    expect(componentDirFromPath("components/actions/Button/Button.html")).toBe("Button");
+    expect(componentDirFromPath("components/actions/preview.html")).toBe("");
+    expect(componentDirFromPath("")).toBe("");
+  });
+
+  // ── Finding 5 + 9 — relative subresources are blocked, and `load` can't see it ──
+  it("rejects relative subresources the embedded CSP will block", () => {
+    const { violatesEmbeddedCsp } = loadHooks();
+    // `default-src 'none'` with no `style-src` for cards blocks a relative
+    // stylesheet outright; `font-src 'none'` blocks a relative font. The
+    // preview iframe fires `load` for all of these, so the static gate is the
+    // only thing that can catch them.
+    expect(violatesEmbeddedCsp('<link rel="stylesheet" href="styles.css">')).toBe(true);
+    expect(violatesEmbeddedCsp('<img src="./icon.png">')).toBe(true);
+    expect(violatesEmbeddedCsp("<style>a{background:url(./bg.png)}</style>")).toBe(true);
+    expect(violatesEmbeddedCsp('<div style="background:url(../x/y.png)"></div>')).toBe(true);
+  });
+
+  it("still accepts inline-only markup and data: URIs", () => {
+    const { violatesEmbeddedCsp } = loadHooks();
+    expect(violatesEmbeddedCsp("<style>a{color:red}</style><button>Go</button>")).toBe(false);
+    expect(violatesEmbeddedCsp('<img src="data:image/png;base64,iVBORw0KGgo=">')).toBe(false);
+    expect(violatesEmbeddedCsp('<a href="#main">skip</a>')).toBe(false);
+    expect(violatesEmbeddedCsp('<use href="#icon-star"/>')).toBe(false);
+  });
+
+  it("does not claim the preview proved more than a load event can", () => {
+    const { computeChecklist } = loadHooks();
+    const rows = computeChecklist({ result: conjureResult(), renderState: "pass" });
+    const render = rows.find((row: { id: string }) => row.id === "render");
+    expect(render.state).toBe("pass");
+    // A `load` on a sandboxed srcdoc frame proves the document parsed. It does
+    // NOT prove subresources resolved or that anything was painted.
+    expect(`${render.label} ${render.detail}`).toMatch(/load|parsed|document/i);
+    expect(`${render.label} ${render.detail}`).not.toMatch(/without errors/i);
+  });
+
+  // ── Finding 4 — deletions encoded in the diff must be planned and executed ──
+  it("plans and executes deletions the refine diff encodes", async () => {
+    const { deletedPathsFromDiff, buildPlanArgs } = loadHooks();
+    const diff = [
+      "diff --git a/components/actions/Button/old.html b/components/actions/Button/old.html",
+      "--- a/components/actions/Button/old.html",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-<div>gone</div>",
+      "diff --git a/components/actions/Button/Button.html b/components/actions/Button/Button.html",
+      "--- a/components/actions/Button/Button.html",
+      "+++ b/components/actions/Button/Button.html",
+      "@@ -1 +1 @@",
+      "-<button>Old</button>",
+      "+<button>Go</button>",
+    ].join("\n");
+    expect(deletedPathsFromDiff(diff)).toEqual(["components/actions/Button/old.html"]);
+
+    const draft = { result: refineResult({ diff }) };
+    const planArgs = buildPlanArgs(draft, "my-kit");
+    expect(planArgs.deletes).toEqual(["components/actions/Button/old.html"]);
+    expect(planArgs.writes).toEqual(["components/actions/Button/Button.html"]);
+  });
+
+  it("names the deletions in the Apply confirmation and calls delete_files", async () => {
+    const diff = [
+      "diff --git a/components/actions/Button/old.html b/components/actions/Button/old.html",
+      "--- a/components/actions/Button/old.html",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-<div>gone</div>",
+    ].join("\n");
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__delete_files: {
+        deletedPaths: ["components/actions/Button/old.html"],
+        notFoundPaths: [],
+      },
+    });
+    wired.controller.addDraft(refineResult({ diff }), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+      source: `${MARKER}\n<button>Old</button>\n`,
+    });
+    makeGreen(wired.document, wired.controller);
+    wired.document.querySelector<HTMLButtonElement>("#decision-approve")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-button")!.click();
+
+    // AC11 — the confirmation must name delete paths before any tool call.
+    const dialog = wired.document.querySelector("#apply-confirm")!.textContent ?? "";
+    expect(dialog).toContain("components/actions/Button/old.html");
+    expect(dialog).toMatch(/delete/i);
+
+    wired.document.querySelector<HTMLButtonElement>("#apply-confirm-accept")!.click();
+    await vi.waitFor(() => {
+      expect(wired.document.querySelector("#review-status")!.textContent).toMatch(/applied/i);
+    });
+
+    const names = wired.calls.map((call) => call.name);
+    expect(names).toEqual([
+      "mcp__genie__plan",
+      "mcp__genie__write_files",
+      "mcp__genie__delete_files",
+      "mcp__genie__validate",
+    ]);
+    const planCall = wired.calls.find((call) => call.name === "mcp__genie__plan")!;
+    expect(planCall.args.deletes).toEqual(["components/actions/Button/old.html"]);
+    const deleteCall = wired.calls.find((call) => call.name === "mcp__genie__delete_files")!;
+    expect(deleteCall.args).toEqual({
+      planId: PLAN_ID,
+      paths: ["components/actions/Button/old.html"],
+    });
+  });
+
+  it("never calls delete_files when the draft deletes nothing", async () => {
+    const wired = loadWired(HAPPY_REPLIES);
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+    });
+    makeGreen(wired.document, wired.controller);
+    wired.document.querySelector<HTMLButtonElement>("#decision-approve")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-button")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-confirm-accept")!.click();
+    await vi.waitFor(() => {
+      expect(wired.document.querySelector("#review-status")!.textContent).toMatch(/applied/i);
+    });
+    expect(wired.calls.map((call) => call.name)).not.toContain("mcp__genie__delete_files");
+    const planCall = wired.calls.find((call) => call.name === "mcp__genie__plan")!;
+    expect(planCall.args.deletes).toBeUndefined();
+  });
+
+  it("reports a failed delete truthfully without claiming a clean apply", async () => {
+    const diff = [
+      "--- a/components/actions/Button/old.html",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-<div>gone</div>",
+    ].join("\n");
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__delete_files: new Error("PathOutsidePlanError: not authorized"),
+    });
+    wired.controller.addDraft(refineResult({ diff }), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+      source: `${MARKER}\n<button>Old</button>\n`,
+    });
+    makeGreen(wired.document, wired.controller);
+    wired.document.querySelector<HTMLButtonElement>("#decision-approve")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-button")!.click();
+    wired.document.querySelector<HTMLButtonElement>("#apply-confirm-accept")!.click();
+
+    await vi.waitFor(() => {
+      expect(wired.document.querySelector("#review-status")!.textContent).toMatch(
+        /stale|could not|remove/i,
+      );
+    });
+    // The writes DID land, so this is never reported as "nothing was written".
+    expect(wired.document.querySelector("#review-status")!.textContent).not.toMatch(
+      /nothing was written/i,
+    );
+  });
+});

@@ -1,117 +1,56 @@
 /**
- * M4-03 (DRO-265) — genie preview viewer grid renderer.
+ * genie preview viewer — grid renderer and product shell.
  *
- * This is the browser-native script the Vite viewer (M4-02) and the
- * `ui://genie/grid` MCP-Apps resource (M4-06) both boot into. It fetches the
- * kit's compiled manifest, groups the cards by their `@genie` group, and
- * renders each as a sandboxed, lazy-loaded `<iframe>` pointing at the
- * component's `preview.html`.
+ * The browser-native script both the standalone Vite viewer and the embedded `ui://genie/grid`
+ * MCP-Apps resource boot into. It reads the kit's compiled manifest, groups cards by their
+ * `@genie` group, and renders each as a sandboxed, lazy-loaded `<iframe>`; on top of that it
+ * hosts Generate, Browse, and Review.
  *
- * ── Classic script, NOT an ES module (DRO-749 fix) ─────────────────────────
- * `index.html` loads this via `<script src="./viewer.js">` — no
- * `type="module"`. It was briefly shipped as `type="module"` (the original
- * M4-03/#164 merge); that broke the `file://` vehicle outright: verified
- * empirically (headless Chromium, real `file://` navigation) that a module
- * script's relative-path fetch is rejected — every `file://` document gets an
- * opaque, distinct origin, so the ES module loader's same-origin check fails
- * against it and the script never executes (console: "has been blocked by
- * CORS policy"). Dynamic `import()` fails the same way. A classic script has
- * no such restriction and runs identically under `file://`, the Vite dev
- * server, and inside a sandboxed iframe — the only choice that actually
- * satisfies RFC G-5 ("byte-identical across file:// / localhost / ui://",
- * AGENTS.md hard rule 5). Modern syntax (`const`/`let`, arrow functions,
- * template literals, optional chaining, async/await) is all still available
- * outside a module — only `import`/`export` are off the table, and this file
- * is the only script in the kit tree, so it needs neither.
+ * Four constraints shape almost every decision in this file. They are explained in full, with
+ * the empirical evidence behind each, in `docs/developer/architecture.md` ("Viewer script
+ * constraints"). In short:
  *
- * ── Manifest contract ───────────────────────────────────────────────────────
- * The original DRO-265 issue body sketches `manifest.cards[]` with a
- * structured `viewport:{width,height}`. That was the research-report sketch;
- * the SHIPPED M3-03 compiler (`packages/server/src/manifest/compiler.ts`)
- * instead emits:
- *
- *     { version, name, generatedAt, groups: string[],
- *       components: [{ name, group, path, viewport, hash, lastModified }] }
- *
- * where `viewport` is the RAW marker string — either `"WxH"` (e.g. `"480x240"`)
- * or a named token like `"desktop"` (kept opaque). `list_components`, a live P0
- * tool, parses `components` and would throw on a `cards` key — so this viewer
- * reads `components[]` and parses the string viewport itself. See the fixture
- * at `packages/viewer/test/fixtures/kit/.genie/manifest.json`.
- *
- * ── Group order (DRO-749 fix) ────────────────────────────────────────────────
- * `renderGrid` prefers the manifest's own `groups: string[]` for section
- * order — the compiler already resolved `_groups.json` pinning server-side
- * (`orderGroups` in compiler.ts). Previously this file derived order purely
- * from first-seen-among-components, silently ignoring a pinned `groups[]`
- * order (flagged in PR #164 review). `computeGroupOrder` ALWAYS appends any
- * group actually present in the components that the declared list omitted
- * (mirroring the server's own `orderGroups` remainder logic), so a partial
- * or absent `groups[]` never silently drops a group's cards from the grid.
- *
- * ── Design: pure functions + guarded auto-boot ─────────────────────────────
- * Every function takes its `document` (and `fetch`) as an argument and
- * returns DOM rather than reaching for ambient globals, so `grid-renderer.
- * test.ts` can drive the whole script inside a programmatic jsdom window (the
- * same pattern as the server's `*-preview-host.test.ts`). Since a classic
- * script cannot be `import`ed for its bindings, the pure helpers are exposed
- * on `window.__genieViewerTestHooks` — but ONLY when that object already
- * exists before this script runs (set up by the test harness via
- * `window.eval`). Production pages never define it, so nothing is exposed
- * and there is zero footprint on the shipped page.
- *
- * ── Security (defence in depth; hardened further in M4-07/DRO-269) ──────────
- * Each preview iframe is `sandbox="allow-scripts"` with NO `allow-same-origin`:
- * a compromised preview cannot reach the viewer's origin, cookies, or storage.
- * `card.name` is written via `textContent` (never `innerHTML`), so a hostile
- * component name cannot inject markup into the grid chrome.
- *
- * ── Accessibility (M4-09/DRO-271) ───────────────────────────────────────────
- * Each card is a keyboard-operable `role="link"` (M4-09 AC3): `tabindex="0"`
- * puts it in Tab order, an explicit `aria-label` gives it a clean accessible
- * name (without one, a screen reader would concatenate the heading + group
- * pill + viewport text with no separators — "Primary buttonsactions480x240"),
- * and a `keydown`/`click` handler activates it (mirrors native `<a>`/`<button>`
- * behaviour, which `role="link"` does NOT get for free — ARIA supplies
- * semantics, never key handling). The card's own iframe is pulled OUT of Tab
- * order (`tabindex="-1"`): a sandboxed iframe with no `allow-same-origin` is
- * STILL natively focusable, so without this, Tab order would be
- * search → card → iframe → card → iframe (M4-09 AC3 asks for
- * search → card → card). Verified empirically against a real Chromium +
- * axe-core run (`test/a11y.test.ts`) that this combination introduces no new
- * violations and that `frame-title` (M4-09 AC5) still evaluates the iframe
- * element correctly.
+ * 1. Classic script, NOT an ES module — a module's relative fetch is CORS-rejected under
+ *    `file://`, which would break RFC G-5 byte-identity. `import`/`export` are unavailable;
+ *    all other modern syntax is fine.
+ * 2. The manifest is `{version, name, generatedAt, groups[], components[{name, group, path,
+ *    viewport, hash, lastModified}]}` at `.genie/manifest.json`, with `viewport` kept as the
+ *    RAW marker string. There is no `cards[]` key.
+ * 3. Pure functions take their `document`/`fetch` as arguments and are exposed on
+ *    `window.__genieViewerTestHooks` ONLY when a harness pre-creates that object, so shipped
+ *    pages have zero footprint.
+ * 4. Preview iframes are `sandbox="allow-scripts"` with NO `allow-same-origin`, card text is
+ *    written via `textContent`, cards are keyboard-operable `role="link"` elements, and the
+ *    iframe itself is pulled out of Tab order.
  */
+
 (function () {
   "use strict";
 
   /**
-   * The kit-relative manifest URL. The AC sketch says `./manifest.json`, but
-   * the shipped compiler + M4-08 CLI (`MANIFEST_RELATIVE_PATH`) put it at
-   * `.genie/manifest.json`; the viewer fetches the real location.
+   * The kit-relative manifest URL. The AC sketch says `./manifest.json`, but the shipped compiler +
+   * M4-08 CLI (`MANIFEST_RELATIVE_PATH`) put it at `.genie/manifest.json`; the viewer fetches the
+   * real location.
    */
   var MANIFEST_URL = ".genie/manifest.json";
 
   /**
-   * DOM id of the inlined-manifest script the embedded `ui://genie/grid` tier
-   * (M4-06 / DRO-268) injects: a `<script type="application/json" id="manifest">`
-   * data island holding the compiled manifest. That tier's CSP is
-   * `default-src 'none'; … connect-src 'none'` — `fetch()` is blocked outright —
-   * so the manifest MUST travel inside the document and `boot` reads it from
-   * here instead of the network. The `file://` and localhost tiers carry NO such
-   * node, so they transparently keep the `fetch(MANIFEST_URL)` path — the one
-   * `viewer.js` stays byte-identical across all three vehicles (RFC G-5).
+   * DOM id of the inlined-manifest script the embedded `ui://genie/grid` tier (M4-06 / DRO-268)
+   * injects: a `<script type="application/json" id="manifest">` data island holding the compiled
+   * manifest. That tier's CSP is `default-src 'none'; … connect-src 'none'` — `fetch()` is blocked
+   * outright — so the manifest MUST travel inside the document and `boot` reads it from here
+   * instead of the network. The `file://` and localhost tiers carry NO such node, so they
+   * transparently keep the `fetch(MANIFEST_URL)` path — the one `viewer.js` stays byte-identical
+   * across all three vehicles (RFC G-5).
    */
   var MANIFEST_ELEMENT_ID = "manifest";
-  // Copilot review (PR #248) — `buildGridDocument` (packages/server/src/ui/
-  // grid-resource.ts) inlines a SECOND data island under this id, carrying
-  // the full, UNFILTERED kit manifest, whenever the embedded `ui://genie/
-  // grid?...` resource's `#manifest` island was scoped down by a
-  // `componentName`/`group` query param. Browse must seed itself from THIS
-  // island (falling back to `#manifest` when it's absent — the common,
-  // already-full-kit case) so a deep link into one component can still
-  // navigate the rest of the kit, instead of being stuck with a one-
-  // component tree.
+  // Copilot review (PR #248) — `buildGridDocument` (packages/server/src/ui/ grid-resource.ts)
+  // inlines a SECOND data island under this id, carrying the full, UNFILTERED kit manifest,
+  // whenever the embedded `ui://genie/ grid?...` resource's `#manifest` island was scoped down by a
+  // `componentName`/`group` query param. Browse must seed itself from THIS island (falling back to
+  // `#manifest` when it's absent — the common, already-full-kit case) so a deep link into one
+  // component can still navigate the rest of the kit, instead of being stuck with a one- component
+  // tree.
   var MANIFEST_FULL_ELEMENT_ID = "manifest-full";
   var TOOL_RESULT_EMBEDDED_MANIFEST_META_KEY = "genie/embeddedManifest";
   var MCP_APP_PROTOCOL_VERSION = "2026-01-26";
@@ -125,116 +64,103 @@
   var PLAN_TOOL = "mcp__genie__plan";
   var WRITE_FILES_TOOL = "mcp__genie__write_files";
   var VALIDATE_TOOL = "mcp__genie__validate";
+  var DELETE_FILES_TOOL = "mcp__genie__delete_files";
 
   /**
-   * Kit-relative path prefix that marks a file as design-token source (genie#239).
-   * `create_kit`'s starter tree and every fixture/demo kit put token files
-   * under `tokens/` (see `packages/viewer/test/fixtures/kit/tokens/colors.css`),
-   * so this is the same convention `conjure`'s system prompt already asks the
-   * model to look for (tokens, primitives, house style) — just resolved from
-   * real kit files instead of the caller inventing them.
+   * Kit-relative path prefix that marks a file as design-token source (genie#239). `create_kit`'s
+   * starter tree and every fixture/demo kit put token files under `tokens/` (see
+   * `packages/viewer/test/fixtures/kit/tokens/colors.css`), so this is the same convention
+   * `conjure`'s system prompt already asks the model to look for (tokens, primitives, house style)
+   * — just resolved from real kit files instead of the caller inventing them.
    */
   var TOKENS_DIR_PREFIX = "tokens/";
 
   /**
-   * Canonical root stylesheet a kit may keep its shared variables/import
-   * closure in, alongside (or instead of) `tokens/**`. The viewer's own
-   * static serving (`packages/viewer/README.md:106`, `packages/viewer/src/
-   * config.ts:234`) and HMR both treat root `styles.css` as token context, so
-   * `buildKitContext` must include it too — otherwise a kit that keeps its
-   * house style here (rather than under `tokens/`) sends no styling context
-   * at all (Copilot review on #246).
+   * Canonical root stylesheet a kit may keep its shared variables/import closure in, alongside (or
+   * instead of) `tokens/**`. The viewer's own static serving (`packages/viewer/README.md:106`,
+   * `packages/viewer/src/ config.ts:234`) and HMR both treat root `styles.css` as token context, so
+   * `buildKitContext` must include it too — otherwise a kit that keeps its house style here (rather
+   * than under `tokens/`) sends no styling context at all (Copilot review on #246).
    */
   var ROOT_STYLES_PATH = "styles.css";
 
   /**
-   * Hard caps on how much kit context genie#239's `buildKitContext` will ever
-   * read into the `conjure` call. `read_file` already caps a single file at
-   * 256 KiB (`MAX_FILE_BYTES`, read_file.ts) — this bounds the *count* of
-   * token files read (a kit could have dozens) and the *total* character
-   * budget handed to the model, so a token-heavy kit can't balloon the
-   * request or blow past `conjure`'s own 100_000-char `kit` field cap
-   * (conjure.ts `conjureInputShape`).
+   * Hard caps on how much kit context genie#239's `buildKitContext` will ever read into the
+   * `conjure` call. `read_file` already caps a single file at 256 KiB (`MAX_FILE_BYTES`,
+   * read_file.ts) — this bounds the *count* of token files read (a kit could have dozens) and the
+   * *total* character budget handed to the model, so a token-heavy kit can't balloon the request or
+   * blow past `conjure`'s own 100_000-char `kit` field cap (conjure.ts `conjureInputShape`).
    */
   var KIT_CONTEXT_MAX_TOKEN_FILES = 12;
   var KIT_CONTEXT_MAX_CHARS = 20_000;
 
   /**
-   * How many existing components' file contents `buildKitContext` will read
-   * for primitive/house-style context, beyond the bare group/name inventory
-   * (Copilot review on #246: metadata alone gives the model no actual
-   * primitive code to match). Small — a handful of representative components
-   * is enough context without ballooning the request.
+   * How many existing components' file contents `buildKitContext` will read for
+   * primitive/house-style context, beyond the bare group/name inventory (Copilot review on #246:
+   * metadata alone gives the model no actual primitive code to match). Small — a handful of
+   * representative components is enough context without ballooning the request.
    */
   var KIT_CONTEXT_MAX_COMPONENT_FILES = 5;
 
   /**
-   * Overall wall-clock budget (ms) for ALL of `buildKitContext`'s tool calls
-   * combined. Each individual `read_file`/`list_*` call still inherits the
-   * host bridge's normal per-call timeout (60s), so serial reads could
-   * otherwise stall `conjure` by many minutes (Copilot review on #246).
-   * Context-gathering is best-effort by design, so once this deadline is hit
-   * we proceed with whatever partial context has resolved so far rather than
-   * waiting on slower calls.
+   * Overall wall-clock budget (ms) for ALL of `buildKitContext`'s tool calls combined. Each
+   * individual `read_file`/`list_*` call still inherits the host bridge's normal per-call timeout
+   * (60s), so serial reads could otherwise stall `conjure` by many minutes (Copilot review on
+   * #246). Context-gathering is best-effort by design, so once this deadline is hit we proceed with
+   * whatever partial context has resolved so far rather than waiting on slower calls.
    */
   var KIT_CONTEXT_DEADLINE_MS = 8_000;
 
   /**
-   * Default deadline (ms) for a generic host tool call (e.g. list-kits,
-   * ping-style round trips). Cheap calls that hang past this are almost
-   * certainly stuck, so a short timeout surfaces real failures quickly.
+   * Default deadline (ms) for a generic host tool call (e.g. list-kits, ping-style round trips).
+   * Cheap calls that hang past this are almost certainly stuck, so a short timeout surfaces real
+   * failures quickly.
    */
   var DEFAULT_HOST_TOOL_TIMEOUT_MS = 60_000;
 
   /**
-   * Sentinel passed as `callTool`'s `callTimeoutMs` for the conjure call:
-   * "do not apply a client-side deadline to this request" (genie#241 /
-   * genie#243 Copilot review).
+   * Sentinel passed as `callTool`'s `callTimeoutMs` for the conjure call: "do not apply a
+   * client-side deadline to this request" (genie#241 / genie#243 Copilot review).
    *
-   * A prior fix here picked a fixed 150s client deadline — 30s past the
-   * server's then-`DEFAULT_LLM_REQUEST_TIMEOUT_MS` (120s) — reasoning that
-   * 150s must outlast one LLM call. That's wrong on two counts the Copilot
-   * review on #243 called out: (1) `GENIE_LLM_REQUEST_TIMEOUT_MS` bounds
-   * EACH HTTP attempt, not the call as a whole — `conjure` can run the
-   * schema-retry loop (`component-response.ts`, up to two full model calls)
-   * and each of THOSE is separately wrapped in `withRetry` (`llm/retry.ts`),
-   * which can make up to `1 + GENIE_LLM_RETRY_MAX` (default 4) attempts with
-   * exponential backoff between them; and (2) both the per-request timeout
-   * and the retry ceiling are operator-configurable env vars, so no fixed
-   * client-side number can be derived that's guaranteed to outlast every
-   * valid deployment's worst case — a slow-but-legitimate generation can
-   * still finish after any such constant has already rejected the call.
+   * A prior fix here picked a fixed 150s client deadline — 30s past the server's
+   * then-`DEFAULT_LLM_REQUEST_TIMEOUT_MS` (120s) — reasoning that 150s must outlast one LLM call.
+   * That's wrong on two counts the Copilot review on #243 called out: (1)
+   * `GENIE_LLM_REQUEST_TIMEOUT_MS` bounds EACH HTTP attempt, not the call as a whole — `conjure`
+   * can run the schema-retry loop (`component-response.ts`, up to two full model calls) and each of
+   * THOSE is separately wrapped in `withRetry` (`llm/retry.ts`), which can make up to `1 +
+   * GENIE_LLM_RETRY_MAX` (default 4) attempts with exponential backoff between them; and (2) both
+   * the per-request timeout and the retry ceiling are operator-configurable env vars, so no fixed
+   * client-side number can be derived that's guaranteed to outlast every valid deployment's worst
+   * case — a slow-but-legitimate generation can still finish after any such constant has already
+   * rejected the call.
    *
-   * Rather than guess another (still-wrong) fixed ceiling, or thread the
-   * server's live env config across the postMessage boundary just to
-   * recompute one client-side number, the conjure call takes NO client
-   * deadline at all: `createHostBridge` skips scheduling a timer when this
-   * sentinel is passed, and the call resolves/rejects whenever the host
-   * actually answers `tools/call` — nothing here can time out early. Host
-   * lifecycle already covers the "genuinely stuck" case without a timer:
-   * `destroy()` rejects every pending call the moment the host tears the
-   * frame down (`ui/resource-teardown`), and the host's own transport-level
-   * request handling is what actually bounds a hung generation. Generic
-   * calls (list-kits, etc.) are unaffected — they keep the fixed 60s
-   * `DEFAULT_HOST_TOOL_TIMEOUT_MS` above, since those are cheap round trips
-   * with no LLM/retry variability behind them.
+   * Rather than guess another (still-wrong) fixed ceiling, or thread the server's live env config
+   * across the postMessage boundary just to recompute one client-side number, the conjure call
+   * takes NO client deadline at all: `createHostBridge` skips scheduling a timer when this sentinel
+   * is passed, and the call resolves/rejects whenever the host actually answers `tools/call` —
+   * nothing here can time out early. Host lifecycle already covers the "genuinely stuck" case
+   * without a timer: `destroy()` rejects every pending call the moment the host tears the frame
+   * down (`ui/resource-teardown`), and the host's own transport-level request handling is what
+   * actually bounds a hung generation. Generic calls (list-kits, etc.) are unaffected — they keep
+   * the fixed 60s `DEFAULT_HOST_TOOL_TIMEOUT_MS` above, since those are cheap round trips with no
+   * LLM/retry variability behind them.
    */
   var NO_CLIENT_DEADLINE = null;
 
   /**
-   * Fallback card height (px) for a named/unparseable viewport (e.g. "desktop").
-   * A comfortable 16:10-ish default so a card without an explicit WxH still
-   * reserves a sensible preview area instead of collapsing to nothing.
+   * Fallback card height (px) for a named/unparseable viewport (e.g. "desktop"). A comfortable
+   * 16:10-ish default so a card without an explicit WxH still reserves a sensible preview area
+   * instead of collapsing to nothing.
    */
   var DEFAULT_CARD_HEIGHT = 320;
 
   var VIEWPORT_TOKEN_RE = /^(\d+)x(\d+)$/;
 
   /**
-   * Parse a manifest `viewport` token into `{ width, height }`, or `null`
-   * when it is a named token ("desktop"), empty, absent, or otherwise not the
-   * strict `<digits>x<digits>` shape. Mirrors the server's `extractViewport`
-   * so the viewer and compiler agree on exactly which tokens are dimensional.
+   * Parse a manifest `viewport` token into `{ width, height }`, or `null` when it is a named token
+   * ("desktop"), empty, absent, or otherwise not the strict `<digits>x<digits>` shape. Mirrors the
+   * server's `extractViewport` so the viewer and compiler agree on exactly which tokens are
+   * dimensional.
    *
    * @param {string=} token
    * @returns {{ width: number, height: number } | null}
@@ -245,17 +171,15 @@
     if (!match) return null;
     var width = Number(match[1]);
     var height = Number(match[2]);
-    // A zero (or non-positive) dimension is degenerate — treat it like a
-    // named token and fall back to the default height rather than render a
-    // 0-size, invisible iframe.
+    // A zero (or non-positive) dimension is degenerate — treat it like a named token and fall back
+    // to the default height rather than render a 0-size, invisible iframe.
     if (width <= 0 || height <= 0) return null;
     return { width: width, height: height };
   }
 
   /**
-   * Bucket components by `group`, preserving first-seen group order (used as
-   * the fallback order when the manifest has no usable `groups[]` — see
-   * {@link computeGroupOrder}).
+   * Bucket components by `group`, preserving first-seen group order (used as the fallback order
+   * when the manifest has no usable `groups[]` — see {@link computeGroupOrder}).
    *
    * @param {ReadonlyArray<object>} components
    * @returns {Map<string, object[]>}
@@ -272,20 +196,17 @@
   }
 
   /**
-   * Section display order (DRO-749 fix): prefer the manifest's own `groups`
-   * array — the compiler already resolved alphabetical-vs-`_groups.json`-
-   * pinned order server-side, so there is no reason to re-derive a
-   * (possibly different) order client-side — but ALWAYS append any group
-   * actually present in `grouped` that `declaredGroups` omitted, in
-   * first-seen order. Mirrors the server's own `orderGroups` "remainder"
-   * logic (`packages/server/src/manifest/compiler.ts`): "an incomplete pin
-   * list never silently drops a group." Without this, a valid-but-partial
-   * `groups[]` (e.g. a hand-edited or stale manifest listing only some of
-   * the groups `components[]` actually uses) would cause `renderGrid` to
-   * silently drop every component in an undeclared group — worse than the
-   * plain first-seen order this replaces. When `declaredGroups` is absent,
-   * empty, or entirely malformed, this degrades to pure first-seen order
-   * among `grouped`'s own keys (every group is then "remainder").
+   * Section display order (DRO-749 fix): prefer the manifest's own `groups` array — the compiler
+   * already resolved alphabetical-vs-`_groups.json`- pinned order server-side, so there is no
+   * reason to re-derive a (possibly different) order client-side — but ALWAYS append any group
+   * actually present in `grouped` that `declaredGroups` omitted, in first-seen order. Mirrors the
+   * server's own `orderGroups` "remainder" logic (`packages/server/src/manifest/compiler.ts`): "an
+   * incomplete pin list never silently drops a group." Without this, a valid-but-partial `groups[]`
+   * (e.g. a hand-edited or stale manifest listing only some of the groups `components[]` actually
+   * uses) would cause `renderGrid` to silently drop every component in an undeclared group — worse
+   * than the plain first-seen order this replaces. When `declaredGroups` is absent, empty, or
+   * entirely malformed, this degrades to pure first-seen order among `grouped`'s own keys (every
+   * group is then "remainder").
    *
    * @param {unknown} declaredGroups — `manifest.groups`, untrusted shape.
    * @param {Map<string, object[]>} grouped
@@ -303,9 +224,8 @@
         }
       }
     }
-    // Remainder: any group actually present in `grouped` that the declared
-    // list didn't name (or the whole list was absent/empty/malformed) —
-    // appended in first-seen order, never dropped.
+    // Remainder: any group actually present in `grouped` that the declared list didn't name (or the
+    // whole list was absent/empty/malformed) — appended in first-seen order, never dropped.
     for (var key of grouped.keys()) {
       if (!seen.has(key)) {
         seen.add(key);
@@ -316,17 +236,14 @@
   }
 
   /**
-   * Returns `value` trimmed, or `fallback` when it is missing, empty, or
-   * whitespace-only. Used for the two places M4-09 needs a GUARANTEED
-   * non-empty accessible name: the card's `aria-label` (axe-core's
-   * `link-name` rule flags a `role="link"` with no accessible name as a
-   * CRITICAL violation — and an empty string `aria-label=""` counts as "no
-   * name", it does NOT fall back to the element's text content) and the
-   * iframe's `title` (axe-core's `frame-title` rule, same "empty is not
-   * acceptable" contract). A card whose upstream manifest carries `name: ""`
-   * (schema-legal — `store/manifest.ts` only requires `z.string()`, not a
-   * non-empty one) must still render an accessible, non-violating card
-   * rather than silently produce an unnamed link/frame.
+   * Returns `value` trimmed, or `fallback` when it is missing, empty, or whitespace-only. Used for
+   * the two places M4-09 needs a GUARANTEED non-empty accessible name: the card's `aria-label`
+   * (axe-core's `link-name` rule flags a `role="link"` with no accessible name as a CRITICAL
+   * violation — and an empty string `aria-label=""` counts as "no name", it does NOT fall back to
+   * the element's text content) and the iframe's `title` (axe-core's `frame-title` rule, same
+   * "empty is not acceptable" contract). A card whose upstream manifest carries `name: ""`
+   * (schema-legal — `store/manifest.ts` only requires `z.string()`, not a non-empty one) must still
+   * render an accessible, non-violating card rather than silently produce an unnamed link/frame.
    *
    * @param {string=} value
    * @param {string} fallback
@@ -338,8 +255,8 @@
   }
 
   /**
-   * Build one card element for a component: a header (name + group pill +
-   * viewport meta) and a sandboxed, lazy `<iframe>` preview.
+   * Build one card element for a component: a header (name + group pill + viewport meta) and a
+   * sandboxed, lazy `<iframe>` preview.
    *
    * @param {Document} doc
    * @param {object} card
@@ -348,27 +265,23 @@
   function createCard(doc, card) {
     var article = doc.createElement("article");
     article.className = "ds-card";
-    // Lowercased once here so the search filter (AC5) is a plain substring
-    // test and never re-lowercases per keystroke.
+    // Lowercased once here so the search filter (AC5) is a plain substring test and never
+    // re-lowercases per keystroke.
     article.setAttribute("data-name", (card.name || "").toLowerCase());
 
-    // M4-09 AC3 — keyboard-operable card: `tabindex="0"` puts it in Tab
-    // order, `role="link"` + an explicit `aria-label` give it a clean
-    // accessible name (see the module doc's "Accessibility" section —
-    // without the label, a screen reader concatenates the heading + group
-    // pill + viewport text with no separators), and Enter/click activate it
-    // (`role="link"` supplies semantics only, never key handling — unlike a
-    // real `<a>`, so the listener below is required, not decorative). There
-    // is no dedicated card-detail route yet (M4-05 leaves "per-card detail
-    // view" out of scope for v1), so the placeholder destination is the
-    // component's own preview: the one real, already-working URL a card
-    // carries.
+    // M4-09 AC3 — keyboard-operable card: `tabindex="0"` puts it in Tab order, `role="link"` + an
+    // explicit `aria-label` give it a clean accessible name (see the module doc's "Accessibility"
+    // section — without the label, a screen reader concatenates the heading + group pill + viewport
+    // text with no separators), and Enter/click activate it (`role="link"` supplies semantics only,
+    // never key handling — unlike a real `<a>`, so the listener below is required, not decorative).
+    // There is no dedicated card-detail route yet (M4-05 leaves "per-card detail view" out of scope
+    // for v1), so the placeholder destination is the component's own preview: the one real,
+    // already-working URL a card carries.
     article.setAttribute("tabindex", "0");
     article.setAttribute("role", "link");
-    // `accessibleName` guards against axe-core's `link-name` (critical): an
-    // empty-string aria-label is worse than none (it suppresses the normal
-    // fall-back-to-content accessible-name computation), so an unnamed
-    // component still gets a real label rather than an empty one.
+    // `accessibleName` guards against axe-core's `link-name` (critical): an empty-string aria-label
+    // is worse than none (it suppresses the normal fall-back-to-content accessible-name
+    // computation), so an unnamed component still gets a real label rather than an empty one.
     article.setAttribute("aria-label", accessibleName(card.name, "Untitled component"));
     var openDetail = function () {
       var view = doc.defaultView;
@@ -377,9 +290,8 @@
     article.addEventListener("click", openDetail);
     article.addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
-        // Prevent a default action (e.g. a native scroll-on-Enter in some
-        // ATs) before navigating — mirrors how a real `<a>` suppresses it
-        // too.
+        // Prevent a default action (e.g. a native scroll-on-Enter in some ATs) before navigating —
+        // mirrors how a real `<a>` suppresses it too.
         event.preventDefault();
         openDetail();
       }
@@ -390,8 +302,8 @@
 
     var title = doc.createElement("h3");
     title.className = "ds-card__name";
-    // textContent, never innerHTML — a hostile component name must not
-    // inject markup into the viewer chrome.
+    // textContent, never innerHTML — a hostile component name must not inject markup into the
+    // viewer chrome.
     title.textContent = card.name || "";
     header.appendChild(title);
 
@@ -417,42 +329,34 @@
     frame.className = "ds-card__frame";
 
     var iframe = doc.createElement("iframe");
-    // AC3 — allow-scripts ONLY. No allow-same-origin: a compromised preview
-    // stays walled off from the viewer's origin (defence in depth; M4-07
-    // adds the full CSP layer).
+    // AC3 — allow-scripts ONLY. No allow-same-origin: a compromised preview stays walled off from
+    // the viewer's origin (defence in depth; M4-07 adds the full CSP layer).
     iframe.setAttribute("sandbox", "allow-scripts");
     // AC4 — never eagerly load offscreen previews.
     iframe.setAttribute("loading", "lazy");
     var cardSrc = card.path || "";
     var cardIdentity = card.sourcePath || cardSrc;
     iframe.setAttribute("src", cardSrc);
-    // M4-09 AC5 — the accessible name axe-core's `frame-title` rule checks
-    // for. `accessibleName` guards the same empty-string trap as the card's
-    // own aria-label above: `title=""` is indistinguishable from a missing
-    // title to `frame-title`, so a nameless component still gets a real
-    // fallback string.
+    // M4-09 AC5 — the accessible name axe-core's `frame-title` rule checks for. `accessibleName`
+    // guards the same empty-string trap as the card's own aria-label above: `title=""` is
+    // indistinguishable from a missing title to `frame-title`, so a nameless component still gets a
+    // real fallback string.
     iframe.setAttribute("title", accessibleName(card.name, "preview"));
-    // M4-09 AC3 — pull the iframe itself OUT of Tab order. A sandboxed
-    // iframe with no `allow-same-origin` is STILL natively focusable (the
-    // sandbox only restricts what the framed document can DO, not whether
-    // the frame element itself takes focus) — see the module doc's
-    // "Accessibility" section. Without this, Tab order would be
-    // search → card → iframe → card → iframe instead of the required
-    // search → card → card.
+    // M4-09 AC3 — a sandboxed iframe is still natively focusable, so pull it out of Tab order
+    // or it interleaves: search → card → iframe → card. See architecture.md.
     iframe.setAttribute("tabindex", "-1");
-    // M4-04 (DRO-266) — the canonical, kit-root-relative preview path, kept
-    // verbatim (never cache-busted) so the HMR bridge can match a
-    // `card.changed` message's `path` against exactly this attribute. The
-    // live `src` may later carry an `?__genie_hmr=N` cache-bust (see
+    // M4-04 (DRO-266) — the canonical, kit-root-relative preview path, kept verbatim (never
+    // cache-busted) so the HMR bridge can match a `card.changed` message's `path` against exactly
+    // this attribute. The live `src` may later carry an `?__genie_hmr=N` cache-bust (see
     // reloadIframeEl); `data-path` stays the stable identity.
     iframe.setAttribute("data-path", cardIdentity);
-    // Embedded manifests replace `path` with an absolute/data transport URL.
-    // Keep that source separate from the kit-relative identity above so a host
-    // can target the card by sourcePath and replace its bytes safely.
+    // Embedded manifests replace `path` with an absolute/data transport URL. Keep that source
+    // separate from the kit-relative identity above so a host can target the card by sourcePath and
+    // replace its bytes safely.
     iframe.setAttribute("data-src", cardSrc);
 
-    // AC2 — size from the viewport when it is a real WxH; otherwise reserve
-    // a sane default height and let CSS own the width (responsive column).
+    // AC2 — size from the viewport when it is a real WxH; otherwise reserve a sane default height
+    // and let CSS own the width (responsive column).
     var size = parseViewport(card.viewport);
     if (size) {
       iframe.setAttribute("width", String(size.width));
@@ -470,12 +374,10 @@
   }
 
   /**
-   * Render the whole manifest into `grid`: one `<section>` per group
-   * (labelled, with a heading), each holding its cards, in the order
-   * {@link computeGroupOrder} resolves. An empty manifest renders a single
-   * visible empty state and zero iframes (AC6). Idempotent: clears any prior
-   * render first, so a re-render (e.g. future HMR, M4-04) never doubles
-   * cards.
+   * Render the whole manifest into `grid`: one `<section>` per group (labelled, with a heading),
+   * each holding its cards, in the order {@link computeGroupOrder} resolves. An empty manifest
+   * renders a single visible empty state and zero iframes (AC6). Idempotent: clears any prior
+   * render first, so a re-render (e.g. future HMR, M4-04) never doubles cards.
    *
    * @param {Document} doc
    * @param {HTMLElement} grid
@@ -499,8 +401,8 @@
     for (var i = 0; i < order.length; i++) {
       var groupName = order[i];
       var cards = grouped.get(groupName);
-      // A declared-but-now-empty group (stale `groups[]` entry) is skipped —
-      // an empty section would render a heading over nothing.
+      // A declared-but-now-empty group (stale `groups[]` entry) is skipped — an empty section would
+      // render a heading over nothing.
       if (!cards || cards.length === 0) continue;
 
       var section = doc.createElement("section");
@@ -580,17 +482,16 @@
     box.className = "ds-error";
     box.textContent = detail;
     grid.appendChild(box);
-    // Copilot review (PR #248) — `grid` is hidden once Browse is the visible
-    // surface; mirror this into the workbench so the error is actually seen.
+    // Copilot review (PR #248) — `grid` is hidden once Browse is the visible surface; mirror this
+    // into the workbench so the error is actually seen.
     renderBrowseWorkbenchError(doc, detail);
   }
 
   /**
-   * Copilot #1 — extract the embedded manifest a `ui/notifications/tool-
-   * result` payload carries, using the SAME resolution order
-   * `renderToolResult` itself uses (`_meta` key first, then
-   * `structuredContent.embeddedManifest`), so the Browse workbench and the
-   * hidden `#grid` are always kept in sync from one source of truth.
+   * Copilot #1 — extract the embedded manifest a `ui/notifications/tool- result` payload carries,
+   * using the SAME resolution order `renderToolResult` itself uses (`_meta` key first, then
+   * `structuredContent.embeddedManifest`), so the Browse workbench and the hidden `#grid` are
+   * always kept in sync from one source of truth.
    *
    * @param {object} result
    * @returns {object|null}
@@ -719,11 +620,10 @@
       typeof win.addEventListener !== "function" ||
       typeof win.parent.postMessage !== "function"
     ) {
-      // No host frame to hand-shake with. Resolve the shell out of its pending
-      // state so a caller that started it as `undefined` (the inline tier) can't
-      // get stranded showing a spinner forever — mirrors the old non-host path
-      // that went straight to `initProductShell(doc, null)` (immediate
-      // unavailable). Embedded frames never reach here (parent !== win).
+      // No host frame to hand-shake with. Resolve the shell out of its pending state so a caller
+      // that started it as `undefined` (the inline tier) can't get stranded showing a spinner
+      // forever — mirrors the old non-host path that went straight to `initProductShell(doc, null)`
+      // (immediate unavailable). Embedded frames never reach here (parent !== win).
       onUnavailable();
       return function () {};
     }
@@ -800,12 +700,11 @@
           win.clearTimeout(initializeTimer);
           initializeTimer = null;
         }
-        // A host can complete the `ui/initialize` handshake without actually
-        // advertising tool-proxy support. MCP Apps signals that support via
-        // `hostCapabilities.serverTools` in the InitializeResult — gate on it
-        // explicitly instead of treating any successful reply as "ready",
-        // otherwise a handshake-only host still enables Conjure and only
-        // fails later at `tools/call` time.
+        // A host can complete the `ui/initialize` handshake without actually advertising tool-proxy
+        // support. MCP Apps signals that support via `hostCapabilities.serverTools` in the
+        // InitializeResult — gate on it explicitly instead of treating any successful reply as
+        // "ready", otherwise a handshake-only host still enables Conjure and only fails later at
+        // `tools/call` time.
         var serverToolsAvailable = Boolean(
           data.result && data.result.hostCapabilities && data.result.hostCapabilities.serverTools,
         );
@@ -826,9 +725,9 @@
         if (grid) {
           renderToolResult(doc, grid, data.params);
           notifySize();
-          // Copilot #1 — keep the Browse workbench (not just the hidden
-          // `#grid`) in sync with every live tool-result update, the same
-          // manifest source `renderToolResult` just wrote into `#grid`.
+          // Copilot #1 — keep the Browse workbench (not just the hidden `#grid`) in sync with every
+          // live tool-result update, the same manifest source `renderToolResult` just wrote into
+          // `#grid`.
           if (typeof opts.onToolResult === "function") opts.onToolResult(data.params);
         }
       }
@@ -882,15 +781,14 @@
   }
 
   /**
-   * DRO-242 (fail closed) — validates a single `list_kits` reply entry
-   * against its canonical output shape (`{ id, name, owner, updatedAt,
-   * canEdit }`, `packages/server/src/tools/list_kits.ts`). Both `owner` and
-   * `updatedAt` are required strings in that schema (not optional), so a
-   * host reply missing either — or supplying a non-string value — is
-   * rejected here rather than silently coerced or ignored. `owner` is
+   * DRO-242 (fail closed) — validates a single `list_kits` reply entry against its canonical output
+   * shape (`{ id, name, owner, updatedAt, canEdit }`, `packages/server/src/tools/list_kits.ts`).
+   * Both `owner` and `updatedAt` are required strings in that schema (not optional), so a host
+   * reply missing either — or supplying a non-string value — is rejected here rather than silently
+   * coerced or ignored. `owner` is
    * rendered directly into the kit `<option>` label (`kits[i].owner ||
-   * "local"`), so a non-string owner (e.g. an object) would otherwise reach
-   * `textContent` interpolation as `[object Object]`.
+   * "local"`), so a non-string owner (e.g. an object) would otherwise reach `textContent`
+   * interpolation as `[object Object]`.
    */
   function isKitEntry(kit) {
     return Boolean(
@@ -923,30 +821,25 @@
   }
 
   /**
-   * DRO-242 — a "plain object" for schema-validation purposes: not `null`,
-   * not an array, and not any other non-object primitive. Both
-   * `isConjureResult` and `loadKits`' reply/entry checks use this so a host
-   * that swaps an expected object for an array (or vice versa) fails closed
-   * instead of accidentally satisfying a loose `typeof x === "object"` check
-   * (which is also `true` for arrays and `null` is falsy but worth being
-   * explicit about).
+   * DRO-242 — a "plain object" for schema-validation purposes: not `null`, not an array, and not
+   * any other non-object primitive. Both `isConjureResult` and `loadKits`' reply/entry checks use
+   * this so a host that swaps an expected object for an array (or vice versa) fails closed instead
+   * of accidentally satisfying a loose `typeof x === "object"` check (which is also `true` for
+   * arrays and `null` is falsy but worth being explicit about).
    */
   function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
   }
 
   /**
-   * DRO-242 (fail closed, Copilot review round 3) — the server's canonical
-   * shapes for `files[]` entries, `manifestEntry`, `manifestEntry.viewport`,
-   * `usage`, and the top-level `conjure` result all declare
-   * `.strict()`/`additionalProperties: false` (`packages/server/src/tools/
-   * conjure.ts`'s `conjureOutputShape`, `packages/server/src/llm/schema.ts`'s
-   * `COMPONENT_SCHEMA`). A field-by-field/`isPlainObject` check alone does
-   * not enforce that — `{ ...valid.usage, unexpected: true }` has every
-   * required key with the right type, so it still passed. `hasOnlyKeys`
-   * makes every one of those checks reject any key outside its known set,
-   * closing that gap for good rather than only checking presence of the
-   * expected fields.
+   * DRO-242 (fail closed, Copilot review round 3) — the server's canonical shapes for `files[]`
+   * entries, `manifestEntry`, `manifestEntry.viewport`, `usage`, and the top-level `conjure` result
+   * all declare `.strict()`/`additionalProperties: false` (`packages/server/src/tools/
+   * conjure.ts`'s `conjureOutputShape`, `packages/server/src/llm/schema.ts`'s `COMPONENT_SCHEMA`).
+   * A field-by-field/`isPlainObject` check alone does not enforce that — `{ ...valid.usage,
+   * unexpected: true }` has every required key with the right type, so it still passed.
+   * `hasOnlyKeys` makes every one of those checks reject any key outside its known set, closing
+   * that gap for good rather than only checking presence of the expected fields.
    */
   function hasOnlyKeys(value, allowedKeys) {
     return Object.keys(value).every(function (key) {
@@ -955,11 +848,10 @@
   }
 
   /**
-   * DRO-242 (fail closed, Copilot review round 4) — the `<Name>` segment
-   * pattern `COMPONENT_SCHEMA` (`packages/server/src/llm/schema.ts`) reuses
-   * across `componentName`, `files[].path`'s directory segment, and the
-   * `<Name>.html` `contains` backreference: `[A-Z][A-Za-z0-9]{1,63}`
-   * (PascalCase, 2-64 chars total).
+   * DRO-242 (fail closed, Copilot review round 4) — the `<Name>` segment pattern `COMPONENT_SCHEMA`
+   * (`packages/server/src/llm/schema.ts`) reuses across `componentName`, `files[].path`'s directory
+   * segment, and the `<Name>.html` `contains` backreference: `[A-Z][A-Za-z0-9]{1,63}` (PascalCase,
+   * 2-64 chars total).
    */
   var COMPONENT_NAME_PATTERN = /^[A-Z][A-Za-z0-9]{1,63}$/;
 
@@ -967,50 +859,44 @@
   var GROUP_PATTERN = /^[a-z0-9-]{1,32}$/;
 
   /**
-   * DRO-242 — `files[].path` must land under `components/<group>/<Name>/`
-   * (AC4 in `packages/server/src/llm/schema.ts`): `<group>` is kebab-case,
-   * `<Name>` is PascalCase, and the basename allows the broader
-   * `[A-Za-z0-9._-]+` (covers `<Name>.tsx`, `<Name>.d.ts`,
+   * DRO-242 — `files[].path` must land under `components/<group>/<Name>/` (AC4 in
+   * `packages/server/src/llm/schema.ts`): `<group>` is kebab-case, `<Name>` is PascalCase, and the
+   * basename allows the broader `[A-Za-z0-9._-]+` (covers `<Name>.tsx`, `<Name>.d.ts`,
    * `<Name>.prompt.md`, `<Name>.html`, `meta.json`).
    */
   var FILE_PATH_PATTERN = /^components\/[a-z0-9-]+\/[A-Z][A-Za-z0-9]+\/[A-Za-z0-9._-]+$/;
 
   /**
-   * DRO-242 — `mimeType` pattern lifted verbatim from `COMPONENT_SCHEMA`'s
-   * `files[].mimeType` (`type/subtype` per RFC 6838's token grammar).
+   * DRO-242 — `mimeType` pattern lifted verbatim from `COMPONENT_SCHEMA`'s `files[].mimeType`
+   * (`type/subtype` per RFC 6838's token grammar).
    */
   var MIME_TYPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/;
 
   /**
-   * DRO-242 (fail closed) — a single `files[]` entry from an untrusted host
-   * reply, validated against conjure's canonical output schema
-   * (`packages/server/src/tools/conjure.ts`'s `conjureOutputShape` plus
-   * `COMPONENT_SCHEMA`'s `files[]` item shape in
+   * DRO-242 (fail closed) — a single `files[]` entry from an untrusted host reply, validated
+   * against conjure's canonical output schema (`packages/server/src/tools/conjure.ts`'s
+   * `conjureOutputShape` plus `COMPONENT_SCHEMA`'s `files[]` item shape in
    * `packages/server/src/llm/schema.ts`): `path` must match the
-   * `components/<group>/<Name>/<basename>` layout, `content`/`mimeType` are
-   * required non-empty strings (`mimeType` further constrained to the
-   * `type/subtype` pattern), and `encoding` is restricted to `"utf-8"` or
-   * `"base64"`. A reply missing any of these (or supplying an unrecognized
-   * encoding, a malformed path, or any extra key beyond this strict shape)
-   * is structurally invalid and must be rejected here rather than passed
-   * through on the strength of the two fields the viewer happens to use.
+   * `components/<group>/<Name>/<basename>` layout, `content`/`mimeType` are required non-empty
+   * strings (`mimeType` further constrained to the `type/subtype` pattern), and `encoding` is
+   * restricted to `"utf-8"` or `"base64"`. A reply missing any of these (or supplying an
+   * unrecognized encoding, a malformed path, or any extra key beyond this strict shape) is
+   * structurally invalid and must be rejected here rather than passed through on the strength of
+   * the two fields the viewer happens to use.
    */
   /**
-   * DRO-242 (fail closed, Copilot review round 6) — JSON Schema's
-   * `maxLength`/`minLength` count Unicode CODE POINTS, but JS `String.length`
-   * counts UTF-16 CODE UNITS — every character outside the Basic Multilingual
-   * Plane (astral characters: most emoji, some CJK extensions) is one code
-   * point but TWO code units (a surrogate pair). A schema-valid string near
-   * either bound (e.g. exactly `maxLength` emoji) would be wrongly
-   * accepted/rejected by a raw `.length` comparison. Counting via the
-   * string iterator (`for...of` / spread) is code-point-aware — it steps
-   * over full surrogate pairs — and this early-exits once `max` is
-   * exceeded rather than materializing an array for a large string.
+   * DRO-242 (fail closed, Copilot review round 6) — JSON Schema's `maxLength`/`minLength` count
+   * Unicode CODE POINTS, but JS `String.length` counts UTF-16 CODE UNITS — every character outside
+   * the Basic Multilingual Plane (astral characters: most emoji, some CJK extensions) is one code
+   * point but TWO code units (a surrogate pair). A schema-valid string near either bound (e.g.
+   * exactly `maxLength` emoji) would be wrongly accepted/rejected by a raw `.length` comparison.
+   * Counting via the string iterator (`for...of` / spread) is code-point-aware — it steps over full
+   * surrogate pairs — and this early-exits once `max` is exceeded rather than materializing an
+   * array for a large string.
    */
   function isCodePointLengthWithinBounds(value, min, max) {
     var count = 0;
-    // Iterated purely for its code-point-aware stepping; the yielded
-    // character itself isn't needed.
+    // Iterated purely for its code-point-aware stepping; the yielded character itself isn't needed.
     for (var _ of value) {
       count += 1;
       if (count > max) return false;
@@ -1019,13 +905,11 @@
   }
 
   /**
-   * DRO-242 (fail closed, Copilot review round 5) — `files[].content`'s
-   * canonical bounds (`packages/server/src/llm/schema.ts`'s `minLength: 1,
-   * maxLength: 65536`). Previously only the empty string was rejected; an
-   * oversized (>64KiB) `content` string still passed. Round 6: bounds are
-   * checked in Unicode code points via `isCodePointLengthWithinBounds`, not
-   * UTF-16 code units, so astral characters (e.g. many emoji) are counted
-   * correctly.
+   * DRO-242 (fail closed, Copilot review round 5) — `files[].content`'s canonical bounds
+   * (`packages/server/src/llm/schema.ts`'s `minLength: 1, maxLength: 65536`). Previously only the
+   * empty string was rejected; an oversized (>64KiB) `content` string still passed. Round 6: bounds
+   * are checked in Unicode code points via `isCodePointLengthWithinBounds`, not UTF-16 code units,
+   * so astral characters (e.g. many emoji) are counted correctly.
    */
   var CONTENT_MAX_LENGTH = 65536;
 
@@ -1044,10 +928,9 @@
   }
 
   /**
-   * DRO-242 (fail closed, Copilot review round 4) — AC5's `contains` rule:
-   * at least one `files[]` entry must be a `<Name>.html` file whose `<Name>`
-   * matches the containing directory's `<Name>` segment (self-consistent
-   * `Button/Button.html`, not `Button/Wrong.html`) — mirrors
+   * DRO-242 (fail closed, Copilot review round 4) — AC5's `contains` rule: at least one `files[]`
+   * entry must be a `<Name>.html` file whose `<Name>` matches the containing directory's `<Name>`
+   * segment (self-consistent `Button/Button.html`, not `Button/Wrong.html`) — mirrors
    * `HTML_FILE_CONTAINS` in `packages/server/src/llm/schema.ts`.
    */
   function hasMatchingHtmlPreview(files) {
@@ -1058,19 +941,16 @@
   }
 
   /**
-   * DRO-242 (fail closed) — validates `manifestEntry` against conjure's
-   * canonical output schema (`packages/server/src/tools/conjure.ts` /
-   * `packages/server/src/llm/schema.ts`'s `Viewport` $def): `viewport.width`/
-   * `viewport.height` are required integers in `[1, 4096]` (Copilot review
-   * round 5 — a bare `typeof === "number"` check still accepted fractions,
-   * `0`/negatives, values above 4096, `NaN`, and `Infinity`, none of which
-   * the canonical schema permits), and both `manifestEntry` and `viewport`
-   * are `.strict()` — no keys beyond `viewport`/`subtitle`/`tags` (resp.
-   * `width`/`height`) are allowed. `subtitle` (`maxLength: 256`) and `tags`
-   * (`maxItems: 16`, each a string) are optional but, when present, must
-   * respect those same bounds. An object-like-but-empty `manifestEntry: {}`
-   * (missing `viewport` entirely) must be rejected, not just checked for
-   * being a plain object.
+   * DRO-242 (fail closed) — validates `manifestEntry` against conjure's canonical output schema
+   * (`packages/server/src/tools/conjure.ts` / `packages/server/src/llm/schema.ts`'s `Viewport`
+   * $def): `viewport.width`/ `viewport.height` are required integers in `[1, 4096]` (Copilot review
+   * round 5 — a bare `typeof === "number"` check still accepted fractions, `0`/negatives, values
+   * above 4096, `NaN`, and `Infinity`, none of which the canonical schema permits), and both
+   * `manifestEntry` and `viewport` are `.strict()` — no keys beyond `viewport`/`subtitle`/`tags`
+   * (resp. `width`/`height`) are allowed. `subtitle` (`maxLength: 256`) and `tags` (`maxItems: 16`,
+   * each a string) are optional but, when present, must respect those same bounds. An
+   * object-like-but-empty `manifestEntry: {}` (missing `viewport` entirely) must be rejected, not
+   * just checked for being a plain object.
    */
   var VIEWPORT_DIMENSION_MIN = 1;
   var VIEWPORT_DIMENSION_MAX = 4096;
@@ -1119,10 +999,9 @@
   }
 
   /**
-   * DRO-242 (fail closed) — validates `usage` against conjure's canonical
-   * output schema: `promptTokens`, `completionTokens`, and `totalTokens`
-   * must each be non-negative integers, and no other key is allowed
-   * (`.strict()`). An object-like-but-empty `usage: {}` must be rejected
+   * DRO-242 (fail closed) — validates `usage` against conjure's canonical output schema:
+   * `promptTokens`, `completionTokens`, and `totalTokens` must each be non-negative integers, and
+   * no other key is allowed (`.strict()`). An object-like-but-empty `usage: {}` must be rejected
    * rather than accepted as "truthy object".
    */
   function isConjureUsage(value) {
@@ -1140,18 +1019,15 @@
   }
 
   /**
-   * DRO-242 (fail closed, Copilot review round 4) — validates an untrusted
-   * `conjure` host reply against the FULL canonical `COMPONENT_SCHEMA`
-   * (`packages/server/src/llm/schema.ts`) shape, not just field presence:
-   * `componentName` must be PascalCase (`^[A-Z][A-Za-z0-9]{1,63}$`), `group`
-   * kebab-case (`^[a-z0-9-]{1,32}$`), `files` bounded to 1-12 entries with
-   * at least one self-consistent `<Name>/<Name>.html` preview (AC5's
-   * `contains` rule), and every `files[]` entry/`manifestEntry`/`usage`
-   * individually validated against their own strict nested shapes. Earlier
-   * rounds closed the "missing field" and "extra key" gaps; this round
-   * closes the "right shape, wrong content" gap Copilot flagged — a name
-   * like `"Status card"` (lowercase, space) or an oversized/no-`.html` file
-   * set still had every key present with the right JS `typeof`, but is
+   * DRO-242 (fail closed, Copilot review round 4) — validates an untrusted `conjure` host reply
+   * against the FULL canonical `COMPONENT_SCHEMA` (`packages/server/src/llm/schema.ts`) shape, not
+   * just field presence: `componentName` must be PascalCase (`^[A-Z][A-Za-z0-9]{1,63}$`), `group`
+   * kebab-case (`^[a-z0-9-]{1,32}$`), `files` bounded to 1-12 entries with at least one
+   * self-consistent `<Name>/<Name>.html` preview (AC5's `contains` rule), and every `files[]`
+   * entry/`manifestEntry`/`usage` individually validated against their own strict nested shapes.
+   * Earlier rounds closed the "missing field" and "extra key" gaps; this round closes the "right
+   * shape, wrong content" gap Copilot flagged — a name like `"Status card"` (lowercase, space) or
+   * an oversized/no-`.html` file set still had every key present with the right JS `typeof`, but is
    * exactly the malformed-payload case AC3-AC5 exist to reject.
    */
   function isConjureResult(value) {
@@ -1198,9 +1074,9 @@
    * ------------------------------------------------------------------ */
 
   /**
-   * Mirror of `packages/server/src/validate/marker.ts`. Kept byte-compatible
-   * on purpose: the viewer's marker check must agree with the server's, or a
-   * draft could look green here and be rejected on write.
+   * Mirror of `packages/server/src/validate/marker.ts`. Kept byte-compatible on purpose: the
+   * viewer's marker check must agree with the server's, or a draft could look green here and be
+   * rejected on write.
    */
   var MARKER_REGEX = /^<!--\s*@genie\s+group="[^"]*"[^>]*-->/;
 
@@ -1208,9 +1084,8 @@
   var DIFF_MAX_LENGTH = 262144;
 
   /**
-   * Refine returns the conjure payload plus a unified diff. Validating it
-   * through `isConjureResult` (rather than a parallel implementation) keeps
-   * the two paths from drifting apart.
+   * Refine returns the conjure payload plus a unified diff. Validating it through `isConjureResult`
+   * (rather than a parallel implementation) keeps the two paths from drifting apart.
    */
   function isRefineResult(value) {
     if (!isPlainObject(value)) return false;
@@ -1232,9 +1107,9 @@
   }
 
   /**
-   * Count the real changed lines in a unified diff. AC5 forbids cosmetic
-   * statistics, so `+++`/`---` file headers are excluded and the file list is
-   * taken from the diff itself rather than from the draft's file array.
+   * Count the real changed lines in a unified diff. AC5 forbids cosmetic statistics, so `+++`/`---`
+   * file headers are excluded and the file list is taken from the diff itself rather than from the
+   * draft's file array.
    */
   function parseUnifiedDiff(diff) {
     var stats = { additions: 0, deletions: 0, files: [] };
@@ -1254,8 +1129,8 @@
         noteFile(stripDiffPathPrefix(parts[parts.length - 1]));
         continue;
       }
-      // Header checks must run before the +/- counters, and must be exact:
-      // an ADDED line whose content starts `++ ` is not a `+++ ` header.
+      // Header checks must run before the +/- counters, and must be exact: an ADDED line whose
+      // content starts `++ ` is not a `+++ ` header.
       if (line.indexOf("+++ ") === 0 && line.indexOf("++++") !== 0) {
         noteFile(stripDiffPathPrefix(line.slice(4).split("\t")[0]));
         continue;
@@ -1280,21 +1155,39 @@
    * never be written. These patterns are intentionally broad — a false
    * positive costs the user one refine; a false negative ships a broken card.
    */
-  var REMOTE_ATTR_URL_PATTERN = /\b(?:src|href|srcset|data)\s*=\s*["']?\s*(?:https?:)?\/\//i;
-  var REMOTE_CSS_URL_PATTERN = /url\(\s*["']?\s*(?:https?:)?\/\//i;
-  var REMOTE_IMPORT_PATTERN = /@import\s+["']\s*(?:https?:)?\/\//i;
+  // Copilot (round 2) — matching only `//` let RELATIVE subresources through, and those break just
+  // as hard: the card CSP has no `style-src`, so a `<link rel=stylesheet href="x.css">` falls to
+  // `default-src 'none'`; `font-src 'none'` kills `url(./f.woff2)`; and the review preview's
+  // sandbox has no `allow-same-origin`, so `img-src 'self'` matches nothing. A path that is not in
+  // the draft's own `files` is dangling by construction. Only inline forms (`data:`, `#`) can ever
+  // resolve.
+  var LOCAL_REF = "(?!\\s*(?:data:|#))";
+  var EXTERNAL_ATTR_URL_PATTERN = new RegExp(
+    '\\b(?:src|href|srcset|data)\\s*=\\s*(?:"' +
+      LOCAL_REF +
+      '[^"]+"' +
+      "|'" +
+      LOCAL_REF +
+      "[^']+'" +
+      "|(?![\"'])" +
+      LOCAL_REF +
+      "[^\\s>]+)",
+    "i",
+  );
+  var EXTERNAL_CSS_URL_PATTERN = new RegExp("url\\(\\s*[\"']?" + LOCAL_REF + "[^)]+\\)", "i");
+  var REMOTE_IMPORT_PATTERN = /@import\s/i;
   var SCRIPT_TAG_PATTERN = /<script\b/i;
   var FONT_FACE_PATTERN = /@font-face/i;
-  // Copilot #10 (PR #250) — inline handlers are script; `default-src 'none'`
-  // blocks them like a <script> tag. Anchored on a tag-internal boundary so
-  // prose such as "turn it on click" cannot trip it.
+  // Copilot #10 (PR #250) — inline handlers are script; `default-src 'none'` blocks them like a
+  // <script> tag. Anchored on a tag-internal boundary so prose such as "turn it on click" cannot
+  // trip it.
   var INLINE_HANDLER_PATTERN = /<[a-z][^>]*\son[a-z]+\s*=/i;
 
   function violatesEmbeddedCsp(content) {
     if (typeof content !== "string") return false;
     return (
-      REMOTE_ATTR_URL_PATTERN.test(content) ||
-      REMOTE_CSS_URL_PATTERN.test(content) ||
+      EXTERNAL_ATTR_URL_PATTERN.test(content) ||
+      EXTERNAL_CSS_URL_PATTERN.test(content) ||
       REMOTE_IMPORT_PATTERN.test(content) ||
       SCRIPT_TAG_PATTERN.test(content) ||
       INLINE_HANDLER_PATTERN.test(content) ||
@@ -1322,20 +1215,17 @@
   /**
    * The file the preview pane and the marker check actually read.
    *
-   * `findPreviewFile` above is the strict CONVENTION check — it answers "does
-   * this draft name its entry point `<Name>/<Name>.html`?", and the
-   * `preview-file` checklist row exists to report exactly that. It is the
-   * wrong question for *rendering*: the manifest compiler cards every `.html`
-   * under `components/` and derives `name` from the file's own basename
-   * (server `manifest/compiler.ts` — `walkPreviewFiles` + `deriveName`), so a
-   * kit whose entry point is `Button/preview.html` is perfectly legitimate and
-   * can never satisfy the canonical form.
+   * `findPreviewFile` above is the strict CONVENTION check — it answers "does this draft name its
+   * entry point `<Name>/<Name>.html`?", and the `preview-file` checklist row exists to report
+   * exactly that. It is the wrong question for *rendering*: the manifest compiler cards every
+   * `.html` under `components/` and derives `name` from the file's own basename (server
+   * `manifest/compiler.ts` — `walkPreviewFiles` + `deriveName`), so a kit whose entry point is
+   * `Button/preview.html` is perfectly legitimate and can never satisfy the canonical form.
    *
-   * Before Copilot #2 (PR #250) this never surfaced, because a Browse handoff
-   * FABRICATED a canonical path. Now that the draft carries the path Browse
-   * really read, resolving the render target has to tolerate the real world:
-   * canonical when it exists, otherwise the sole HTML entry. Ambiguity (two or
-   * more HTML files, none canonical) still resolves to nothing rather than
+   * Before Copilot #2 (PR #250) this never surfaced, because a Browse handoff FABRICATED a
+   * canonical path. Now that the draft carries the path Browse really read, resolving the render
+   * target has to tolerate the real world: canonical when it exists, otherwise the sole HTML entry.
+   * Ambiguity (two or more HTML files, none canonical) still resolves to nothing rather than
    * guessing which one the reviewer is looking at.
    */
   function resolvePreviewFile(result) {
@@ -1367,11 +1257,10 @@
   }
 
   /**
-   * The review checklist. Every entry is backed by a real result — nothing is
-   * decorative. `kind` drives the gate: `auto` must pass, `manual` needs an
-   * explicit acknowledgement, and `deferred` can never be green before the
-   * write because its source (`validate`'s full scan) is kit-wide and only
-   * meaningful once the bytes are on disk.
+   * The review checklist. Every entry is backed by a real result — nothing is decorative. `kind`
+   * drives the gate: `auto` must pass, `manual` needs an explicit acknowledgement, and `deferred`
+   * can never be green before the write because its source (`validate`'s full scan) is kit-wide and
+   * only meaningful once the bytes are on disk.
    */
   function computeChecklist(input) {
     var result = input && input.result;
@@ -1417,10 +1306,13 @@
       auto("csp", "Embedded CSP safe — no remote assets, fonts or script", cspOk),
       {
         id: "render",
-        label: "Preview renders without errors",
+        label: "Preview rendered a document",
         kind: "auto",
         state: renderState === "pass" ? "pass" : renderState === "fail" ? "fail" : "pending",
-        detail: null,
+        // Copilot (round 2) — `load` fires for a blank or subresource-starved frame too, so this
+        // proves the document PARSED and nothing more. Whether its assets can resolve is the CSP
+        // row's job, above.
+        detail: "The sandboxed frame parsed this document.",
       },
       {
         id: "kit-validate",
@@ -1435,9 +1327,9 @@
   }
 
   /**
-   * The review reducer. Drafts are append-only and immutable; approval is
-   * bound to a specific draft's identity, so AC9's rule ("any change drops
-   * approval") is structural rather than a thing we must remember to do.
+   * The review reducer. Drafts are append-only and immutable; approval is bound to a specific
+   * draft's identity, so AC9's rule ("any change drops approval") is structural rather than a thing
+   * we must remember to do.
    */
   function createReviewStore() {
     var drafts = [];
@@ -1482,9 +1374,8 @@
         };
         drafts.push(draft);
         currentNumber = number;
-        // A new draft is a new thing to look at: acknowledgements, render
-        // state and any prior decision all belong to the draft they were
-        // made against, never to its successor.
+        // A new draft is a new thing to look at: acknowledgements, render state and any prior
+        // decision all belong to the draft they were made against, never to its successor.
         manualAcks = {};
         renderState = "pending";
         decision = "none";
@@ -1527,12 +1418,11 @@
         renderState = state;
       },
       /**
-       * Stamp the applied marker onto a SPECIFIC draft (`draftId`), never
-       * "whatever is current when the write resolves". Apply is async and the
-       * deterministic-tweak sliders stay live during flight, so `current()` can
-       * have moved on to a brand-new, unwritten draft by the time this runs —
-       * which would both block that draft forever and leave the draft that was
-       * actually written still applyable (duplicate write).
+       * Stamp the applied marker onto a SPECIFIC draft (`draftId`), never "whatever is current when
+       * the write resolves". Apply is async and the deterministic-tweak sliders stay live during
+       * flight, so `current()` can have moved on to a brand-new, unwritten draft by the time this
+       * runs — which would both block that draft forever and leave the draft that was actually
+       * written still applyable (duplicate write).
        */
       markApplied: function (paths, draftId) {
         var target = draftId ? findById(draftId) : findCurrent();
@@ -1574,9 +1464,8 @@
   }
 
   /**
-   * Enumerate every reason Apply is unavailable. Returning the list (rather
-   * than just a boolean) is the point: AC10 requires the UI to say what is
-   * missing instead of showing a dead button.
+   * Enumerate every reason Apply is unavailable. Returning the list (rather than just a boolean) is
+   * the point: AC10 requires the UI to say what is missing instead of showing a dead button.
    */
   function computeApplyGate(input) {
     var state = (input && input.state) || {};
@@ -1624,10 +1513,9 @@
   }
 
   /**
-   * Refine reads a component's *current source from the kit*, so it cannot
-   * touch a draft that has never been written (the server answers
-   * `ERR_COMPONENT_NOT_FOUND`). Rather than simulate a refine client-side, we
-   * disable it and say why.
+   * Refine reads a component's *current source from the kit*, so it cannot touch a draft that has
+   * never been written (the server answers `ERR_COMPONENT_NOT_FOUND`). Rather than simulate a
+   * refine client-side, we disable it and say why.
    */
   function canRefine(input) {
     var options = input || {};
@@ -1653,20 +1541,51 @@
   }
 
   /** Scope the write plan to exactly this draft's paths — nothing wider. */
+  /**
+   * Paths the diff marks as removed (`+++ /dev/null`). `refine` drops them from `files`, so without
+   * this an Apply reports success while the stale file survives on disk.
+   */
+  function deletedPathsFromDiff(diff) {
+    if (typeof diff !== "string") return [];
+    var lines = diff.split("\n");
+    var out = [];
+    var from = null;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (line.slice(0, 4) === "--- ") {
+        from = line.slice(4).trim();
+        if (from.slice(0, 2) === "a/") from = from.slice(2);
+      } else if (line.slice(0, 4) === "+++ ") {
+        var to = line.slice(4).trim();
+        if (to === "/dev/null" && from && from !== "/dev/null" && out.indexOf(from) === -1) {
+          out.push(from);
+        }
+        from = null;
+      }
+    }
+    return out;
+  }
+
   function buildPlanArgs(draft, kitId) {
-    var files = (draft && draft.result && draft.result.files) || [];
-    return {
-      kitId: kitId,
-      writes: files.map(function (file) {
-        return file.path;
-      }),
-    };
+    var result = (draft && draft.result) || {};
+    var files = result.files || [];
+    var writes = files.map(function (file) {
+      return file.path;
+    });
+    var args = { kitId: kitId, writes: writes };
+    // Copilot (round 2) — AC7/AC11 require the DELETE paths too. A path the draft also rewrites is
+    // not a deletion, so it never enters `deletes`.
+    var deletes = deletedPathsFromDiff(result.diff).filter(function (path) {
+      return writes.indexOf(path) === -1;
+    });
+    if (deletes.length) args.deletes = deletes;
+    return args;
   }
 
   /**
-   * Map conjure/refine file entries onto `write_files`' input. The server
-   * accepts exactly one of `data` or `localPath`; the viewer only ever holds
-   * in-memory content, so `localPath` is never emitted.
+   * Map conjure/refine file entries onto `write_files`' input. The server accepts exactly one of
+   * `data` or `localPath`; the viewer only ever holds in-memory content, so `localPath` is never
+   * emitted.
    */
   function buildWriteFilesArgs(planId, draft) {
     var files = (draft && draft.result && draft.result.files) || [];
@@ -1723,9 +1642,8 @@
         }
         if (!spec) continue;
         controls.push({
-          // Occurrence-unique: a property declared twice in one file would
-          // share an id, so the slider and `.replace` could target different
-          // declarations.
+          // Occurrence-unique: a property declared twice in one file would share an id, so the
+          // slider and `.replace` could target different declarations.
           id: i + ":" + match.index + ":" + property,
           fileIndex: i,
           offset: match.index,
@@ -1744,9 +1662,9 @@
   }
 
   /**
-   * Apply a tweak by rewriting only the declared value, returning a fresh
-   * result. Drafts are immutable, so the caller records the outcome as a new
-   * draft — which, per AC9, drops any approval.
+   * Apply a tweak by rewriting only the declared value, returning a fresh result. Drafts are
+   * immutable, so the caller records the outcome as a new draft — which, per AC9, drops any
+   * approval.
    */
   function applyDeterministicTweak(result, controlId, value) {
     if (!result || !Array.isArray(result.files)) return null;
@@ -1767,9 +1685,9 @@
       if (index !== control.fileIndex) return file;
       return {
         path: file.path,
-        // Slice-replace at the recorded offset, never a string `.replace` —
-        // that rewrites the first textual match, which is a different
-        // declaration whenever the property appears more than once.
+        // Slice-replace at the recorded offset, never a string `.replace` — that rewrites the first
+        // textual match, which is a different declaration whenever the property appears more than
+        // once.
         content:
           file.content.slice(0, control.offset) +
           replacement +
@@ -1783,18 +1701,17 @@
       if (Object.prototype.hasOwnProperty.call(result, key)) next[key] = result[key];
     }
     next.files = files;
-    // Copilot #5 (PR #250) — AC8 promises a RECOMPUTED diff. Inheriting
-    // `result.diff` shows nothing (parent was a generation) or the previous
-    // edit's stale counts (parent was a refine). Both misreport the write.
+    // Copilot #5 (PR #250) — AC8 promises a RECOMPUTED diff. Inheriting `result.diff` shows nothing
+    // (parent was a generation) or the previous edit's stale counts (parent was a refine). Both
+    // misreport the write.
     next.diff = buildUnifiedDiff(result.files, files);
     return next;
   }
 
   /**
-   * A real unified diff between two file lists, used for locally-derived
-   * drafts (deterministic tweaks) where no server diff exists. Line-based
-   * with a common prefix/suffix trim, which is exact for the single-
-   * declaration edits `applyDeterministicTweak` performs and never invents
+   * A real unified diff between two file lists, used for locally-derived drafts (deterministic
+   * tweaks) where no server diff exists. Line-based with a common prefix/suffix trim, which is
+   * exact for the single- declaration edits `applyDeterministicTweak` performs and never invents
    * changes it cannot see.
    */
   function buildUnifiedDiff(prevFiles, nextFiles) {
@@ -1835,9 +1752,9 @@
   }
 
   /**
-   * UTF-8 byte length, computed without `TextEncoder` so the embedded tier
-   * never depends on a global the host might not expose. Used to state the
-   * exact byte scope of a write before consent is asked for (AC11).
+   * UTF-8 byte length, computed without `TextEncoder` so the embedded tier never depends on a
+   * global the host might not expose. Used to state the exact byte scope of a write before consent
+   * is asked for (AC11).
    */
   function utf8ByteLength(value) {
     var text = typeof value === "string" ? value : "";
@@ -1874,8 +1791,8 @@
   }
 
   /**
-   * Render diff statistics. Every value comes from `parseUnifiedDiff`, and
-   * every path is written as text — a diff is host-supplied, untrusted data.
+   * Render diff statistics. Every value comes from `parseUnifiedDiff`, and every path is written as
+   * text — a diff is host-supplied, untrusted data.
    */
   function renderDiffFiles(doc, target, stats) {
     if (!target) return;
@@ -1973,17 +1890,15 @@
   }
 
   /**
-   * M7-03 (#235) — the review workspace controller. Owns every DOM mutation in
-   * `#review-view` and delegates every decision to the pure helpers above, so
-   * the gating rules stay testable without a DOM. Nothing here writes to the
-   * kit: `runApply` is the only path to disk, and it is reachable only through
-   * an explicit confirmation dialog behind a fully-satisfied gate.
+   * M7-03 (#235) — the review workspace controller. Owns every DOM mutation in `#review-view` and
+   * delegates every decision to the pure helpers above, so the gating rules stay testable without a
+   * DOM. Nothing here writes to the kit: `runApply` is the only path to disk, and it is reachable
+   * only through an explicit confirmation dialog behind a fully-satisfied gate.
    *
    * @param {Document} doc
    * @param {{
    *   getBridge: () => object|null|undefined,
-   *   announce?: (message: string) => void,
-   * }} opts
+   * announce?: (message: string) => void, }} opts
    */
   function initReviewController(doc, opts) {
     var el = {
@@ -1996,6 +1911,7 @@
       preview: doc.getElementById("review-preview"),
       draft: doc.getElementById("draft-review"),
       draftLabel: doc.getElementById("draft-label"),
+      persistenceNote: doc.getElementById("draft-persistence-note"),
       draftName: doc.getElementById("draft-name"),
       summary: doc.getElementById("draft-summary"),
       switcher: doc.getElementById("review-draft-switcher"),
@@ -2027,13 +1943,12 @@
     if (!el.view || !el.checklist || !el.apply) return null;
 
     var store = createReviewStore();
-    // Per-draft presentation state, keyed by draft id: the kit each draft
-    // belongs to, whether refine can target it (it must exist in the kit) and
-    // its rendered preview outcome.
+    // Per-draft presentation state, keyed by draft id: the kit each draft belongs to, whether
+    // refine can target it (it must exist in the kit) and its rendered preview outcome.
     var meta = Object.create(null);
     var inFlight = false;
-    // Monotonic ticket claimed before every await so a superseded async reply
-    // can be discarded instead of landing on a draft the user has moved past.
+    // Monotonic ticket claimed before every await so a superseded async reply can be discarded
+    // instead of landing on a draft the user has moved past.
     var generation = 0;
     var dialogReturnFocus = null;
 
@@ -2074,13 +1989,13 @@
         return;
       }
       store.setRenderState("pending");
-      // A `load`/`error` from a REPLACED frame must not stamp render state onto
-      // whatever draft is current by the time it fires.
+      // A `load`/`error` from a REPLACED frame must not stamp render state onto whatever draft is
+      // current by the time it fires.
       var owner = draft.id;
       var frame = doc.createElement("iframe");
       frame.className = "review-preview__frame";
-      // No `allow-same-origin`: an untrusted draft can never reach the
-      // viewer's origin, storage or the host bridge.
+      // No `allow-same-origin`: an untrusted draft can never reach the viewer's origin, storage or
+      // the host bridge.
       frame.setAttribute("sandbox", "allow-scripts");
       frame.setAttribute("title", draft.result.componentName + " preview");
       frame.setAttribute("loading", "eager");
@@ -2146,9 +2061,9 @@
       return function () {
         var draft = store.select(number);
         if (!draft) return;
-        // Claim the generation: an in-flight Refine was issued against the
-        // draft we just left, and without this its late reply still satisfies
-        // `ticket === generation` and lands on the wrong draft.
+        // Claim the generation: an in-flight Refine was issued against the draft we just left, and
+        // without this its late reply still satisfies `ticket === generation` and lands on the
+        // wrong draft.
         generation += 1;
         renderPreview(draft);
         render();
@@ -2181,8 +2096,8 @@
         input.max = String(control.max);
         input.step = String(control.step);
         input.value = String(control.value);
-        // Frozen during flight: a slider dragged mid-apply spawns a new draft
-        // and moves `current` off the draft actually being written.
+        // Frozen during flight: a slider dragged mid-apply spawns a new draft and moves `current`
+        // off the draft actually being written.
         input.disabled = inFlight;
         input.addEventListener("change", createControlHandler(control.id, input));
         row.append(label, input);
@@ -2199,18 +2114,17 @@
         var info = meta[draft.id] || {};
         // id is `fileIndex:offset:--property`.
         var property = controlId.split(":").slice(2).join(":");
-        // A tweaked draft is new bytes NOT in the kit, even if its parent was
-        // applied. Inheriting `componentInKit` would re-enable Refine, which
-        // reads the kit's older source and silently discards the tweak.
+        // A tweaked draft is new bytes NOT in the kit, even if its parent was applied. Inheriting
+        // `componentInKit` would re-enable Refine, which reads the kit's older source and silently
+        // discards the tweak.
         addDraft(next, derivedInfo(info), "Adjusted " + property + ".");
       };
     }
 
     /**
-     * Metadata for a draft DERIVED from another (a refine reply or a
-     * deterministic tweak). Both produce PROPOSED bytes that are not on disk,
-     * so `componentInKit` must be cleared however the parent was flagged —
-     * otherwise Refine stays unlocked and its next call reloads the older
+     * Metadata for a draft DERIVED from another (a refine reply or a deterministic tweak). Both
+     * produce PROPOSED bytes that are not on disk, so `componentInKit` must be cleared however the
+     * parent was flagged — otherwise Refine stays unlocked and its next call reloads the older
      * on-disk source, silently discarding this draft.
      */
     function derivedInfo(info) {
@@ -2256,6 +2170,14 @@
         el.stageLabel.textContent = draft.result.componentName + " — " + draft.label;
       }
       if (el.draftLabel) el.draftLabel.textContent = draft.label;
+      if (el.persistenceNote) {
+        // Copilot (round 2) — a static "nothing has been written" survived `markApplied`, so the
+        // panel claimed both at once.
+        el.persistenceNote.textContent =
+          state.appliedDraftId === draft.id
+            ? "Written to your kit. Later drafts stay in this session until you apply them."
+            : "This draft is held only in this viewer session. Nothing has been written to your kit.";
+      }
       if (el.draftName) el.draftName.textContent = draft.result.componentName;
       renderSummary(draft);
       renderSwitcher();
@@ -2305,10 +2227,14 @@
     }
 
     /**
-     * Record a draft (from Generate, from Refine, or from a deterministic
-     * tweak) and make it the one under review.
+     * Record a draft (from Generate, from Refine, or from a deterministic tweak) and make it the
+     * one under review.
      */
     function addDraft(result, info, note) {
+      // Copilot (round 2) — a new draft moves the question on. Without this bump an older refine's
+      // reply still satisfies `ticket === generation` and lands on top of the draft the user is now
+      // looking at.
+      generation += 1;
       var draft = store.addDraft(result, info.source);
       meta[draft.id] = {
         kitId: info.kitId || "",
@@ -2337,8 +2263,8 @@
       });
       if (!gate.enabled) return;
 
-      // Claim the generation BEFORE the await: sliders, switcher and nav all
-      // stay live in flight, so a superseded reply must never land.
+      // Claim the generation BEFORE the await: sliders, switcher and nav all stay live in flight,
+      // so a superseded reply must never land.
       generation += 1;
       var ticket = generation;
       inFlight = true;
@@ -2355,34 +2281,40 @@
           model: info.model,
         });
       } finally {
-        // Copilot #7 (PR #250) — `inFlight` is the LOCK; `ticket` only decides
-        // if the RESULT is wanted. Conflating them strands the lock forever
-        // when the user switches drafts mid-flight. Release; discard below.
+        // Copilot #7 (PR #250) — `inFlight` is the LOCK; `ticket` only decides if the RESULT is
+        // wanted. Conflating them strands the lock forever when the user switches drafts
+        // mid-flight. Release; discard below.
         inFlight = false;
       }
-      if (ticket !== generation) return;
+      // Copilot (round 2) — the draft switch that invalidated this reply repainted while `inFlight`
+      // was still true, so every control rendered disabled. Returning without a repaint strands
+      // them there.
+      if (ticket !== generation) {
+        render();
+        return;
+      }
       if (!outcome.ok) {
         var failure = outcome.message || "Refine failed.";
         announce(failure);
-        // Copilot #3 (PR #250) — `render()` blanks `#refine-status`, so the
-        // reason must be written AFTER it or AC7's message never survives.
+        // Copilot #3 (PR #250) — `render()` blanks `#refine-status`, so the reason must be written
+        // AFTER it or AC7's message never survives.
         render();
         if (el.refineStatus) el.refineStatus.textContent = failure;
         return;
       }
       if (el.refineStatus) el.refineStatus.textContent = "";
       if (el.refineInput) el.refineInput.value = "";
-      // Copilot #4 (PR #250) — `refine` persists nothing, so a refined draft
-      // is NOT in the kit; marking it so re-opens Refine, whose next call
-      // reloads the older on-disk bytes and loses this work.
+      // Copilot #4 (PR #250) — `refine` persists nothing, so a refined draft is NOT in the kit;
+      // marking it so re-opens Refine, whose next call reloads the older on-disk bytes and loses
+      // this work.
       addDraft(outcome.result, derivedInfo(info), "Refined: " + instruction);
     }
 
     function openApplyConfirm() {
       var draft = store.current();
       if (!draft || !el.dialog) return;
-      // Copilot #8 (PR #250) — AC11 wants informed consent: name the kit, the
-      // component and the byte scope, read off the draft actually being applied.
+      // Copilot #8 (PR #250) — AC11 wants informed consent: name the kit, the component and the
+      // byte scope, read off the draft actually being applied.
       var confirmInfo = meta[draft.id] || {};
       var totalBytes = 0;
       if (el.dialogFiles) {
@@ -2401,6 +2333,23 @@
           el.dialogFiles.append(item);
         }
       }
+      var pendingDeletes = deletedPathsFromDiff(draft.result.diff).filter(function (path) {
+        return !draft.result.files.some(function (file) {
+          return file.path === path;
+        });
+      });
+      if (el.dialogFiles) {
+        for (var d = 0; d < pendingDeletes.length; d++) {
+          var del = doc.createElement("li");
+          var delPath = doc.createElement("code");
+          delPath.textContent = pendingDeletes[d];
+          var delTag = doc.createElement("span");
+          delTag.className = "review-dialog__bytes";
+          delTag.textContent = "delete";
+          del.append(delPath, delTag);
+          el.dialogFiles.append(del);
+        }
+      }
       if (el.dialogDetail) {
         var count = draft.result.files.length;
         el.dialogDetail.textContent =
@@ -2413,12 +2362,20 @@
           (count === 1 ? " file, " : " files, ") +
           totalBytes +
           (totalBytes === 1 ? " byte" : " bytes") +
-          " in total. This is the first time anything leaves this viewer session.";
+          " in total." +
+          (pendingDeletes.length
+            ? " " +
+              pendingDeletes.length +
+              (pendingDeletes.length === 1 ? " file is deleted: " : " files are deleted: ") +
+              pendingDeletes.join(", ") +
+              "."
+            : "") +
+          " This is the first time anything leaves this viewer session.";
       }
       dialogReturnFocus = doc.activeElement;
       el.dialog.hidden = false;
-      // `aria-modal="true"` promises focus cannot leave. `inert` removes the
-      // background from the tab order AND the a11y tree; keydown is fallback.
+      // `aria-modal="true"` promises focus cannot leave. `inert` removes the background from the
+      // tab order AND the a11y tree; keydown is fallback.
       setBackgroundInert(true);
       if (el.dialogHeading) el.dialogHeading.focus();
     }
@@ -2477,9 +2434,9 @@
       closeApplyConfirm();
       if (!draft || !info || !bridge || inFlight) return;
 
-      // Bumping `generation` invalidates any in-flight REFINE — but an apply
-      // keeps no ticket: its side effect reaches the kit, so its outcome must
-      // always be processed or the draft is left unstamped.
+      // Bumping `generation` invalidates any in-flight REFINE — but an apply keeps no ticket: its
+      // side effect reaches the kit, so its outcome must always be processed or the draft is left
+      // unstamped.
       generation += 1;
       inFlight = true;
       render();
@@ -2493,9 +2450,8 @@
           approved: store.isApproved(),
         });
       } finally {
-        // Copilot #7 (PR #250) — see `submitRefine`. This one is stricter
-        // still: an apply's side effect has ALREADY reached the kit, so its
-        // lock can never be treated as discardable.
+        // Copilot #7 (PR #250) — see `submitRefine`. This one is stricter still: an apply's side
+        // effect has ALREADY reached the kit, so its lock can never be treated as discardable.
         inFlight = false;
       }
 
@@ -2506,13 +2462,13 @@
         return;
       }
 
-      // Stamp the draft that was ACTUALLY written, not `current()` — a tweak
-      // slider dragged mid-flight moves `current` to a new, unwritten draft.
+      // Stamp the draft that was ACTUALLY written, not `current()` — a tweak slider dragged
+      // mid-flight moves `current` to a new, unwritten draft.
       store.markApplied(outcome.writtenPaths, draft.id);
       meta[draft.id].componentInKit = true;
 
-      // AC13 — report success only once the refresh lands. AC14 — a failed
-      // refresh is a STALE VIEW, not a failed apply: the bytes are on disk.
+      // AC13 — report success only once the refresh lands. AC14 — a failed refresh is a STALE VIEW,
+      // not a failed apply: the bytes are on disk.
       var refreshFailed = false;
       if (typeof opts.onApplied === "function") {
         if (el.status) el.status.textContent = "Refreshing your kit…";
@@ -2524,8 +2480,8 @@
             writtenPaths: outcome.writtenPaths,
           });
         } catch {
-          // The bytes are already on disk; only the view is stale. The reason
-          // is surfaced as a stale-view note, not as a failed Apply.
+          // The bytes are already on disk; only the view is stale. The reason is surfaced as a
+          // stale-view note, not as a failed Apply.
           refreshFailed = true;
         }
       }
@@ -2533,9 +2489,13 @@
       var written = outcome.writtenPaths.length;
       var message = "Applied " + draft.result.componentName + " — " + written + " file";
       message += written === 1 ? " written." : "s written.";
-      // Copilot #9 (PR #250) — the bytes ARE on disk (never written twice),
-      // but an apply whose post-write scan did not complete, or came back
-      // dirty, is not a VERIFIED success.
+      // Copilot #9 (PR #250) — the bytes ARE on disk (never written twice), but an apply whose
+      // post-write scan did not complete, or came back dirty, is not a VERIFIED success.
+      if (outcome.deleteWarning) {
+        // The writes DID land. Only the removal did not, so the kit is stale, not unwritten —
+        // saying otherwise pushes the user to write twice.
+        message += " Your kit is stale: " + outcome.deleteWarning + ".";
+      }
       if (outcome.validation === null) {
         message += " The post-write check could not run, so this write is unverified.";
       } else if (outcome.validation && outcome.validation.bad > 0) {
@@ -2576,8 +2536,8 @@
       var next = ((index % count) + count) % count;
       var button = el.segments[next];
       setPane(button.getAttribute("data-review-pane"));
-      // Selection follows focus, so the newly-active tab is the one Tab stop
-      // and must actually receive focus for the change to be perceivable.
+      // Selection follows focus, so the newly-active tab is the one Tab stop and must actually
+      // receive focus for the change to be perceivable.
       button.focus();
     }
 
@@ -2633,8 +2593,8 @@
     }
     for (var s = 0; s < el.segments.length; s++) {
       el.segments[s].addEventListener("click", createPaneHandler(el.segments[s]));
-      // AC19 / Design 6 §14 — the roving tabindex makes this tablist ONE Tab
-      // stop, so without arrows the inactive tab is unreachable (WAI-ARIA).
+      // AC19 / Design 6 §14 — the roving tabindex makes this tablist ONE Tab stop, so without
+      // arrows the inactive tab is unreachable (WAI-ARIA).
       el.segments[s].addEventListener("keydown", createPaneKeyHandler(s));
     }
     setPane("preview");
@@ -2659,9 +2619,9 @@
       componentName: options.componentName,
       instruction: options.instruction,
     };
-    // Copilot #1 (PR #250) — server declares `model: z.string().min(1)
-    // .default(DEFAULT_MODEL)`. `""` is not "absent": it fails `.min(1)` and
-    // rejects the call, while omitting the key lets the default apply.
+    // Copilot #1 (PR #250) — server declares `model: z.string().min(1) .default(DEFAULT_MODEL)`.
+    // `""` is not "absent": it fails `.min(1)` and rejects the call, while omitting the key lets
+    // the default apply.
     if (typeof options.model === "string" && options.model) args.model = options.model;
     if (options.region) args.region = options.region;
     var reply;
@@ -2683,10 +2643,9 @@
   }
 
   /**
-   * The one and only path in the viewer that may write. Order is a contract:
-   * `plan` (scoped to this draft's paths) → `write_files` (with that plan) →
-   * `validate` (advisory, post-write). A failure before the write leaves the
-   * kit untouched; a failure after it is reported honestly rather than
+   * The one and only path in the viewer that may write. Order is a contract: `plan` (scoped to this
+   * draft's paths) → `write_files` (with that plan) → `validate` (advisory, post-write). A failure
+   * before the write leaves the kit untouched; a failure after it is reported honestly rather than
    * retroactively "un-applied".
    */
   async function runApply(options) {
@@ -2694,8 +2653,8 @@
     if (!draft || !draft.result) {
       return { ok: false, message: "There is no draft to apply.", writtenPaths: [] };
     }
-    // Fail closed: only an explicit `true` may reach `plan`/`write_files`. A
-    // missing or undefined `approved` is an omission, never consent.
+    // Fail closed: only an explicit `true` may reach `plan`/`write_files`. A missing or undefined
+    // `approved` is an omission, never consent.
     if (options.approved !== true) {
       return { ok: false, message: "Approve this draft before applying.", writtenPaths: [] };
     }
@@ -2763,9 +2722,37 @@
       };
     }
 
-    // Post-write scan is advisory. The bytes are already on disk, so a scan
-    // failure must not be reported as a failed apply — that would be a lie
-    // that pushes the user toward a redundant second write.
+    // Deletes run AFTER the writes, against the same plan, so a rejected delete can never strand
+    // the component without its new bytes. A path the server reports in `notFoundPaths` was already
+    // gone — not a failure.
+    var deletes = planArgs.deletes || [];
+    var deleteWarning = null;
+    var deletedPaths = [];
+    if (deletes.length) {
+      try {
+        var deleteReply = await options.bridge.callTool(
+          DELETE_FILES_TOOL,
+          { planId: planReply.planId, paths: deletes },
+          NO_CLIENT_DEADLINE,
+        );
+        var reply = isPlainObject(deleteReply) ? deleteReply : {};
+        deletedPaths = Array.isArray(reply.deletedPaths) ? reply.deletedPaths : [];
+        var absent = Array.isArray(reply.notFoundPaths) ? reply.notFoundPaths : [];
+        var stuck = deletes.filter(function (path) {
+          return deletedPaths.indexOf(path) === -1 && absent.indexOf(path) === -1;
+        });
+        if (stuck.length) deleteWarning = "could not remove " + stuck.join(", ");
+      } catch (error) {
+        deleteWarning = safeHostMessage(
+          error && error.message,
+          "could not remove " + deletes.join(", "),
+        );
+      }
+    }
+
+    // Post-write scan is advisory. The bytes are already on disk, so a scan failure must not be
+    // reported as a failed apply — that would be a lie that pushes the user toward a redundant
+    // second write.
     var validation = null;
     try {
       var validateReply = await options.bridge.callTool(
@@ -2778,7 +2765,14 @@
       validation = null;
     }
 
-    return { ok: true, writtenPaths: written, validation: validation, planId: planReply.planId };
+    return {
+      ok: true,
+      writtenPaths: written,
+      deletedPaths: deletedPaths,
+      deleteWarning: deleteWarning,
+      validation: validation,
+      planId: planReply.planId,
+    };
   }
 
   function safeHostMessage(value, fallback) {
@@ -2847,11 +2841,10 @@
     return {
       callTool: function (name, args, callTimeoutMs) {
         var id = ++mcpAppRequestId;
-        // `callTimeoutMs === NO_CLIENT_DEADLINE` (null) means "never time
-        // out client-side for this call" — used by the conjure call site,
-        // since no fixed constant can outlast every operator-configured
-        // timeout/retry combination on the server (genie#241 / #243
-        // Copilot review; see NO_CLIENT_DEADLINE's doc comment above).
+        // `callTimeoutMs === NO_CLIENT_DEADLINE` (null) means "never time out client-side for this
+        // call" — used by the conjure call site, since no fixed constant can outlast every
+        // operator-configured timeout/retry combination on the server (genie#241 / #243 Copilot
+        // review; see NO_CLIENT_DEADLINE's doc comment above).
         var hasClientDeadline = callTimeoutMs !== NO_CLIENT_DEADLINE;
         var effectiveTimeout = typeof callTimeoutMs === "number" ? callTimeoutMs : timeout;
         return new Promise(function (resolve, reject) {
@@ -2902,17 +2895,14 @@
     var status = doc.getElementById("app-status");
     var drafts = createDraftStore();
     var kits = [];
-    // DRO-242 (fail closed, Copilot review round 5/6) — a monotonic
-    // "discovery generation" counter. `loadKits()` captures the current
-    // value on entry; if a NEWER call has started (bridge swapped via
-    // `setBridge`/`setUnavailable`, or a fresh refresh triggered) by the
-    // time an OLDER call's `await bridge.callTool(...)` resolves — in
-    // either order, since network replies can complete out of order — the
-    // older call's resolution/rejection must not mutate `kits`/the DOM at
-    // all. Without this, a stale in-flight discovery whose reply finally
-    // arrives after a newer (possibly malformed-and-already-failed-closed)
-    // one could resurrect trusted `kits` state and silently re-enable
-    // Conjure/Retry on data a subsequent call had already invalidated.
+    // DRO-242 (fail closed, Copilot review round 5/6) — a monotonic "discovery generation" counter.
+    // `loadKits()` captures the current value on entry; if a NEWER call has started (bridge swapped
+    // via `setBridge`/`setUnavailable`, or a fresh refresh triggered) by the time an OLDER call's
+    // `await bridge.callTool(...)` resolves — in either order, since network replies can complete
+    // out of order — the older call's resolution/rejection must not mutate `kits`/the DOM at all.
+    // Without this, a stale in-flight discovery whose reply finally arrives after a newer (possibly
+    // malformed-and-already-failed-closed) one could resurrect trusted `kits` state and silently
+    // re-enable Conjure/Retry on data a subsequent call had already invalidated.
     var kitDiscoveryGeneration = 0;
     var inFlight = false;
     var hostAvailable = Boolean(bridge);
@@ -2932,11 +2922,10 @@
           links[j].removeAttribute("aria-current");
         }
       }
-      // On an explicit route change, move keyboard focus into the newly shown
-      // view so the next action starts predictably there — and, critically, so
-      // focus is never left inside a now-hidden subtree (e.g. the Conjure button
-      // after routing to Review on success). Skipped on initial load/popstate so
-      // we don't steal focus the user didn't ask to move.
+      // On an explicit route change, move keyboard focus into the newly shown view so the next
+      // action starts predictably there — and, critically, so focus is never left inside a
+      // now-hidden subtree (e.g. the Conjure button after routing to Review on success). Skipped on
+      // initial load/popstate so we don't steal focus the user didn't ask to move.
       if (focusView) {
         if (selected === "generate") {
           prompt.focus();
@@ -2983,22 +2972,21 @@
     }
 
     /**
-     * True when a kit-relative path is design-token/house-style source: either
-     * inside `tokens/**` or the canonical root `styles.css` (Copilot review on
-     * #246 — the root file carries a kit's shared variables/import closure
-     * just as much as `tokens/**` does; see `ROOT_STYLES_PATH`'s doc comment).
+     * True when a kit-relative path is design-token/house-style source: either inside `tokens/**`
+     * or the canonical root `styles.css` (Copilot review on #246 — the root file carries a kit's
+     * shared variables/import closure just as much as `tokens/**` does; see `ROOT_STYLES_PATH`'s
+     * doc comment).
      */
     function isKitStyleContextFile(path) {
       return path === ROOT_STYLES_PATH || path.indexOf(TOKENS_DIR_PREFIX) === 0;
     }
 
     /**
-     * Resolve `promise` but never wait longer than `ms` for it: resolves to
-     * `null` (rather than rejecting) on timeout OR on the wrapped promise's own
-     * rejection, so callers can `Promise.all` a batch of these without any one
-     * slow/failing call sinking the others or the overall deadline (Copilot
-     * review on #246 — `buildKitContext`'s tool calls used to run serially,
-     * each inheriting the host bridge's full 60s per-call timeout).
+     * Resolve `promise` but never wait longer than `ms` for it: resolves to `null` (rather than
+     * rejecting) on timeout OR on the wrapped promise's own rejection, so callers can `Promise.all`
+     * a batch of these without any one slow/failing call sinking the others or the overall deadline
+     * (Copilot review on #246 — `buildKitContext`'s tool calls used to run serially, each
+     * inheriting the host bridge's full 60s per-call timeout).
      */
     function withDeadline(promise, ms) {
       return new Promise(function (resolve) {
@@ -3029,36 +3017,30 @@
     }
 
     /**
-     * genie#239 — resolve the SELECTED kit's real compiled context (tokens +
-     * primitives/components) instead of handing `conjure` just its display
-     * name. Reuses tools the viewer's host already exposes — `list_files`,
-     * `read_file`, `list_components` — so this needs no new server contract
-     * and `conjure`'s `kit` field stays the free-form string it already is
-     * (#233/M7-01: "reuse the existing conjure contract, this is not a
-     * redesign of the generation engine").
+     * genie#239 — resolve the SELECTED kit's real compiled context (tokens + primitives/components)
+     * instead of handing `conjure` just its display name. Reuses tools the viewer's host already
+     * exposes — `list_files`, `read_file`, `list_components` — so this needs no new server contract
+     * and `conjure`'s `kit` field stays the free-form string it already is (#233/M7-01: "reuse the
+     * existing conjure contract, this is not a redesign of the generation engine").
      *
-     * All tool calls (the two `list_*` calls, then every `read_file` call) run
-     * CONCURRENTLY and share one overall `KIT_CONTEXT_DEADLINE_MS` wall-clock
-     * budget — not the host bridge's full per-call timeout — so a slow or
-     * unresponsive host can delay `conjure` by at most that budget, not by
-     * minutes (Copilot review on #246).
+     * All tool calls (the two `list_*` calls, then every `read_file` call) run CONCURRENTLY and
+     * share one overall `KIT_CONTEXT_DEADLINE_MS` wall-clock budget — not the host bridge's full
+     * per-call timeout — so a slow or unresponsive host can delay `conjure` by at most that budget,
+     * not by minutes (Copilot review on #246).
      *
-     * Best-effort by design: any tool failure or deadline miss here (a host
-     * that doesn't implement these verbs yet, a slow kit, etc.) degrades to
-     * partial context, and total failure falls back to the OLD
-     * display-name-only behavior rather than blocking generation — losing
-     * kit-fidelity is strictly better than losing the ability to generate at
-     * all.
+     * Best-effort by design: any tool failure or deadline miss here (a host that doesn't implement
+     * these verbs yet, a slow kit, etc.) degrades to partial context, and total failure falls back
+     * to the OLD display-name-only behavior rather than blocking generation — losing kit-fidelity
+     * is strictly better than losing the ability to generate at all.
      *
      * @param {{callTool(name:string,args:object):Promise<object>}} hostBridge
      * @param {string} kitId
      * @param {string} kitName
      * @param {number} [deadlineMs] Overall wall-clock budget in ms. Defaults
-     *   to `KIT_CONTEXT_DEADLINE_MS`; overridable so tests can exercise the
-     *   "deadline elapses" path without waiting on the real production
-     *   value (Copilot review on #246 — a test previously waited on the
-     *   real 8s `KIT_CONTEXT_DEADLINE_MS`, adding 8s of real wall-clock time
-     *   to every run that hit it).
+     * to `KIT_CONTEXT_DEADLINE_MS`; overridable so tests can exercise the "deadline elapses" path
+     * without waiting on the real production value (Copilot review on #246 — a test previously
+     * waited on the real 8s `KIT_CONTEXT_DEADLINE_MS`, adding 8s of real wall-clock time to every
+     * run that hit it).
      * @returns {Promise<string>}
      */
     async function buildKitContext(hostBridge, kitId, kitName, deadlineMs) {
@@ -3078,8 +3060,8 @@
       var componentsReply = results[1];
 
       var files = Array.isArray(filesReply && filesReply.files) ? filesReply.files : [];
-      // Root `styles.css` is prioritized ahead of `tokens/**` entries so it
-      // survives KIT_CONTEXT_MAX_TOKEN_FILES truncation on token-heavy kits.
+      // Root `styles.css` is prioritized ahead of `tokens/**` entries so it survives
+      // KIT_CONTEXT_MAX_TOKEN_FILES truncation on token-heavy kits.
       var styleFiles = files
         .filter(function (entry) {
           return entry && typeof entry.path === "string" && isKitStyleContextFile(entry.path);
@@ -3098,9 +3080,9 @@
         })
         .slice(0, KIT_CONTEXT_MAX_COMPONENT_FILES);
 
-      // Read every style file and the bounded component sample concurrently —
-      // each individually capped by the SAME shared deadline — rather than in
-      // series, so one slow file can't crowd out the rest of the budget.
+      // Read every style file and the bounded component sample concurrently — each individually
+      // capped by the SAME shared deadline — rather than in series, so one slow file can't crowd
+      // out the rest of the budget.
       var readTargets = styleFiles
         .map(function (entry) {
           return { path: entry.path, label: entry.path };
@@ -3133,10 +3115,9 @@
           var heading = isStyleRead
             ? "--- " + reads[i].label + " ---"
             : "--- component: " + reads[i].label + " ---";
-          // The heading itself counts against `budget` too — slicing only the
-          // file content and then prepending the heading on top of that
-          // slice let the assembled chunk exceed `budget` (Copilot review on
-          // #246).
+          // The heading itself counts against `budget` too — slicing only the file content and then
+          // prepending the heading on top of that slice let the assembled chunk exceed `budget`
+          // (Copilot review on #246).
           var contentBudget = budget - heading.length - 1; /* -1 for the "\n" join */
           if (contentBudget <= 0) continue;
           var chunk = heading + "\n" + fileReply.content.slice(0, contentBudget);
@@ -3153,30 +3134,29 @@
             return component.group + "/" + component.name;
           })
           .join(", ");
-        // Same accounting bug as above: this line was appended unconditionally
-        // AFTER the budget-tracked loop, so it could push the assembled
-        // context past KIT_CONTEXT_MAX_CHARS (and conjure's own kit-schema
-        // cap) regardless of how much budget remained. Truncate to what's left.
+        // Same accounting bug as above: this line was appended unconditionally AFTER the
+        // budget-tracked loop, so it could push the assembled context past KIT_CONTEXT_MAX_CHARS
+        // (and conjure's own kit-schema cap) regardless of how much budget remained. Truncate to
+        // what's left.
         var namesBudget = budget - namesPrefix.length;
         if (namesBudget > 0) {
           sections.push(namesPrefix + names.slice(0, namesBudget));
         }
       }
 
-      // Belt-and-suspenders: the per-chunk budget accounting above should
-      // already keep the assembled string within KIT_CONTEXT_MAX_CHARS, but
-      // the "\n\n" join separators between sections aren't accounted for in
-      // `budget`, so hard-cap the final string as a last line of defense
-      // (Copilot review on #246).
+      // Belt-and-suspenders: the per-chunk budget accounting above should already keep the
+      // assembled string within KIT_CONTEXT_MAX_CHARS, but the "\n\n" join separators between
+      // sections aren't accounted for in `budget`, so hard-cap the final string as a last line of
+      // defense (Copilot review on #246).
       var assembled = sections.join("\n\n");
       return assembled.length > KIT_CONTEXT_MAX_CHARS
         ? assembled.slice(0, KIT_CONTEXT_MAX_CHARS)
         : assembled;
     }
 
-    // M7-03 (#235) — the review workspace owns draft presentation.
-    // `initProductShell` hands it only the draft plus its kit/model context;
-    // gating, checklist and apply behaviour live in `initReviewController`.
+    // M7-03 (#235) — the review workspace owns draft presentation. `initProductShell` hands it only
+    // the draft plus its kit/model context; gating, checklist and apply behaviour live in
+    // `initReviewController`.
     var review = initReviewController(doc, {
       getBridge: function () {
         return bridge;
@@ -3184,14 +3164,14 @@
       announce: function (message) {
         status.textContent = message;
       },
-      // Supplied by the boot path, which owns the Browse controller and the
-      // manifest. Absent in unit tests that drive the review controller alone.
+      // Supplied by the boot path, which owns the Browse controller and the manifest. Absent in
+      // unit tests that drive the review controller alone.
       onApplied: function (applied) {
         if (typeof opts.onApplied !== "function") return undefined;
         return Promise.resolve(opts.onApplied(applied)).then(function () {
-          // AC13 — route only once Browse actually holds the component.
-          // Navigating first flashes a stale panel; navigating on failure
-          // strands the user on a view that cannot show what they wrote.
+          // AC13 — route only once Browse actually holds the component. Navigating first flashes a
+          // stale panel; navigating on failure strands the user on a view that cannot show what
+          // they wrote.
           navigate("browse", false, true);
         });
       },
@@ -3204,9 +3184,8 @@
         kitId: kitSelect.value,
         kitLabel: option ? option.textContent : kitSelect.value,
         model: modelSelect.value,
-        // A fresh Conjure draft is not in the kit yet, so Refine (which reads
-        // the component's current source from the kit) cannot target it until
-        // it has been applied.
+        // A fresh Conjure draft is not in the kit yet, so Refine (which reads the component's
+        // current source from the kit) cannot target it until it has been applied.
         componentInKit: false,
       });
     }
@@ -3236,9 +3215,9 @@
       submit.textContent = "✦ Conjuring…";
       updateGate();
       try {
-        // genie#239 — resolve the real kit context (tokens/primitives), not
-        // just the display name. Best-effort: falls back to `selectedKit.name`
-        // alone if context-gathering throws (see buildKitContext's header).
+        // genie#239 — resolve the real kit context (tokens/primitives), not just the display name.
+        // Best-effort: falls back to `selectedKit.name` alone if context-gathering throws (see
+        // buildKitContext's header).
         var kitContext = selectedKit.name;
         try {
           kitContext = await buildKitContext(bridge, selectedKit.id, selectedKit.name);
@@ -3279,10 +3258,9 @@
 
     async function loadKits() {
       if (hostPending) return;
-      // DRO-242 (fail closed, Copilot review round 6) — claim this call's
-      // generation BEFORE any `await`, so any call already in flight is
-      // immediately superseded and every check below can tell whether IT is
-      // still the latest.
+      // DRO-242 (fail closed, Copilot review round 6) — claim this call's generation BEFORE any
+      // `await`, so any call already in flight is immediately superseded and every check below can
+      // tell whether IT is still the latest.
       kitDiscoveryGeneration += 1;
       var myGeneration = kitDiscoveryGeneration;
       if (!bridge) {
@@ -3296,42 +3274,37 @@
         updateGate();
         return;
       }
-      // DRO-242 (fail closed, Copilot review round 4) — clear the previously
-      // trusted kit state BEFORE validating the replacement reply. If kit
-      // discovery previously succeeded and a subsequent refresh returns a
-      // malformed reply, leaving the old `kits` array/`<select>` intact would
-      // let `updateGate()` keep Conjure enabled with stale data, and Retry
-      // would invoke generation instead of reloading (because
-      // `kits.length !== 0`). Resetting here — before any validation can
-      // throw — guarantees a malformed refresh always lands in the
+      // DRO-242 (fail closed, Copilot review round 4) — clear the previously trusted kit state
+      // BEFORE validating the replacement reply. If kit discovery previously succeeded and a
+      // subsequent refresh returns a malformed reply, leaving the old `kits` array/`<select>`
+      // intact would let `updateGate()` keep Conjure enabled with stale data, and Retry would
+      // invoke generation instead of reloading (because `kits.length !== 0`). Resetting here —
+      // before any validation can throw — guarantees a malformed refresh always lands in the
       // zero-kits state, regardless of what came before it.
       kits = [];
       try {
         var reply = await bridge.callTool(LIST_KITS_TOOL, {});
-        // DRO-242 (fail closed, Copilot review round 6) — a NEWER discovery
-        // (triggered by `setBridge`/`setUnavailable` racing ahead of this
-        // `await`) has already claimed the generation counter. Replies can
-        // resolve out of order — an older call's `callTool` promise may
-        // settle AFTER a newer one's, in either success or failure — so this
-        // stale call must not mutate `kits` or the DOM at all; whatever the
-        // newer call decided (or is still deciding) must win.
+        // DRO-242 (fail closed, Copilot review round 6) — a NEWER discovery (triggered by
+        // `setBridge`/`setUnavailable` racing ahead of this `await`) has already claimed the
+        // generation counter. Replies can resolve out of order — an older call's `callTool` promise
+        // may settle AFTER a newer one's, in either success or failure — so this stale call must
+        // not mutate `kits` or the DOM at all; whatever the newer call decided (or is still
+        // deciding) must win.
         if (myGeneration !== kitDiscoveryGeneration) return;
-        // DRO-242 (fail closed, Copilot review round 4) — the canonical
-        // `list_kits` output schema is strict at the reply level
-        // (`additionalProperties: false`,
-        // `packages/server/src/tools/list_kits.test.ts:174-178`): the only
-        // allowed key is `kits`. `hasOnlyKeys` here (in addition to the
-        // existing `Array.isArray(reply.kits)` check) rejects any reply that
-        // supplies extra top-level keys, e.g. `{ kits: [], unexpected: true }`.
+        // DRO-242 (fail closed, Copilot review round 4) — the canonical `list_kits` output schema
+        // is strict at the reply level (`additionalProperties: false`,
+        // `packages/server/src/tools/list_kits.test.ts:174-178`): the only allowed key is `kits`.
+        // `hasOnlyKeys` here (in addition to the existing `Array.isArray(reply.kits)` check)
+        // rejects any reply that supplies extra top-level keys, e.g. `{ kits: [], unexpected: true
+        // }`.
         if (!isPlainObject(reply) || !hasOnlyKeys(reply, ["kits"]) || !Array.isArray(reply.kits)) {
           throw new Error("The host returned malformed UI-kit data.");
         }
-        // DRO-242 (fail closed) — every entry must be structurally valid
-        // (list_kits' own `{ id, name, owner, updatedAt, canEdit }` output
-        // schema) before it is trusted at all; a single malformed entry
-        // rejects the whole reply rather than being silently dropped. Only
-        // AFTER that structural check does the existing `canEdit === true`
-        // gating filter down to the editable subset.
+        // DRO-242 (fail closed) — every entry must be structurally valid (list_kits' own `{ id,
+        // name, owner, updatedAt, canEdit }` output schema) before it is trusted at all; a single
+        // malformed entry rejects the whole reply rather than being silently dropped. Only AFTER
+        // that structural check does the existing `canEdit === true` gating filter down to the
+        // editable subset.
         if (!reply.kits.every(isKitEntry)) {
           throw new Error("The host returned malformed UI-kit data.");
         }
@@ -3367,14 +3340,12 @@
               : "Choose the UI kit this draft should match.";
         }
       } catch (error) {
-        // DRO-242 (fail closed, Copilot review round 6) — a stale call's
-        // rejection must not clobber a newer call's (possibly already
-        // successful) state either.
+        // DRO-242 (fail closed, Copilot review round 6) — a stale call's rejection must not clobber
+        // a newer call's (possibly already successful) state either.
         if (myGeneration !== kitDiscoveryGeneration) return;
-        // `kits` was already reset to `[]` above, before validation ran, so
-        // it can never retain a previously-successful discovery here. Clear
-        // the `<select>` DOM to match — otherwise a stale `<option>` list
-        // (and a stale `kitSelect.value`) would survive a malformed refresh
+        // `kits` was already reset to `[]` above, before validation ran, so it can never retain a
+        // previously-successful discovery here. Clear the `<select>` DOM to match — otherwise a
+        // stale `<option>` list (and a stale `kitSelect.value`) would survive a malformed refresh
         // even though the in-memory `kits` array no longer backs it.
         kitSelect.replaceChildren();
         kitSelect.disabled = true;
@@ -3403,10 +3374,10 @@
       void submitGenerate(event);
     });
     retry.addEventListener("click", function () {
-      // The one retry button covers two distinct failures. If kit discovery is
-      // what failed, no kit is selected and submitGenerate() early-returns —
-      // leaving the user stuck without a reload. So when the host is present but
-      // no kits loaded, retry discovery; otherwise retry the generation.
+      // The one retry button covers two distinct failures. If kit discovery is what failed, no kit
+      // is selected and submitGenerate() early-returns — leaving the user stuck without a reload.
+      // So when the host is present but no kits loaded, retry discovery; otherwise retry the
+      // generation.
       if (bridge && kits.length === 0) {
         errorBox.hidden = true;
         void loadKits();
@@ -3418,15 +3389,14 @@
     navigate(initialRoute, true, initialRoute === "generate");
     void loadKits();
 
-    // M7-02 (#234) AC11 — persist the exact Refine handoff context Browse
-    // hands off, and render it into the Review empty-state (no consumer
-    // beyond that existed before this issue; full refine/apply is M7-03).
+    // M7-02 (#234) AC11 — persist the exact Refine handoff context Browse hands off, and render it
+    // into the Review empty-state (no consumer beyond that existed before this issue; full
+    // refine/apply is M7-03).
     function renderRefineContext(context) {
       var dl = doc.getElementById("review-refine-context");
-      // Copilot review (PR #248) — when a Refine handoff context IS present,
-      // "Conjure a component first" is misleading: the user just came FROM
-      // a component (via Browse's Refine action), not from a blank state.
-      // Swap the empty-state heading/detail copy to reflect that a refine
+      // Copilot review (PR #248) — when a Refine handoff context IS present, "Conjure a component
+      // first" is misleading: the user just came FROM a component (via Browse's Refine action), not
+      // from a blank state. Swap the empty-state heading/detail copy to reflect that a refine
       // target was supplied, while still noting full refine/apply is M7-03.
       var heading = doc.getElementById("review-empty-heading");
       var detail = doc.getElementById("review-empty-detail");
@@ -3468,27 +3438,30 @@
         hostAvailable = Boolean(nextBridge);
         hostPending = false;
         kitState.textContent = "Discovering editable UI kits…";
+        // Copilot (round 2) — Review only recomputes host availability inside its own render, so
+        // without this its Refine/Apply affordances keep whatever the bridge was at first paint.
+        review.refresh();
         void loadKits();
       },
       setUnavailable: function () {
         bridge = null;
         hostAvailable = false;
         hostPending = false;
+        review.refresh();
         void loadKits();
       },
       showProgress: function (message) {
         if (inFlight) showProgress(message);
       },
-      // Copilot review (PR #248) — `writeRoute` alone only updates the URL;
-      // it never renders the newly-active view or fires `popstate`, so a
-      // Refine handoff left the Browse view visible with `?route=review` in
-      // the address bar. Route through the shell's own `navigate`, which both
-      // calls `writeRoute` AND `renderRoute` (moving focus into Review), so
-      // Refine actually lands the user in Review instead of a stale Browse.
+      // Copilot review (PR #248) — `writeRoute` alone only updates the URL; it never renders the
+      // newly-active view or fires `popstate`, so a Refine handoff left the Browse view visible
+      // with `?route=review` in the address bar. Route through the shell's own `navigate`, which
+      // both calls `writeRoute` AND `renderRoute` (moving focus into Review), so Refine actually
+      // lands the user in Review instead of a stale Browse.
       setRefineContext: function (context) {
-        // AC2/S2 — a Browse handoff lands a REAL reviewable draft: the bytes
-        // Browse already read become the review baseline, so it renders, runs
-        // the checklist, and (being in the kit) unlocks Refine.
+        // AC2/S2 — a Browse handoff lands a REAL reviewable draft: the bytes Browse already read
+        // become the review baseline, so it renders, runs the checklist, and (being in the kit)
+        // unlocks Refine.
         var seeded = false;
         if (review && context && context.source && context.path && context.componentName) {
           review.addDraft(
@@ -3516,16 +3489,15 @@
           );
           seeded = true;
         }
-        // Only fall back to the context card when no draft could be seeded;
-        // otherwise it would sit under a populated review as dead metadata.
+        // Only fall back to the context card when no draft could be seeded; otherwise it would sit
+        // under a populated review as dead metadata.
         renderRefineContext(seeded ? null : context);
         navigate("review", false, true);
       },
-      // Exposed for direct unit testing of context-gathering behavior (token
-      // files, root styles.css, component sampling, deadline handling)
-      // without having to drive the full submitGenerate flow end to end.
-      // `deadlineMs` lets tests override KIT_CONTEXT_DEADLINE_MS so the
-      // "deadline elapses" case doesn't have to wait on the real 8s value.
+      // Exposed for direct unit testing of context-gathering behavior (token files, root
+      // styles.css, component sampling, deadline handling) without having to drive the full
+      // submitGenerate flow end to end. `deadlineMs` lets tests override KIT_CONTEXT_DEADLINE_MS so
+      // the "deadline elapses" case doesn't have to wait on the real 8s value.
       buildKitContext: function (hostBridge, kitId, kitName, deadlineMs) {
         return buildKitContext(hostBridge, kitId, kitName, deadlineMs);
       },
@@ -3533,10 +3505,9 @@
   }
 
   /**
-   * AC5 — filter rendered cards by a case-insensitive substring of the
-   * component `name`. Hides non-matching cards, and hides a whole group
-   * section when none of its cards match (so an empty group header doesn't
-   * linger). An empty query reveals everything.
+   * AC5 — filter rendered cards by a case-insensitive substring of the component `name`. Hides
+   * non-matching cards, and hides a whole group section when none of its cards match (so an empty
+   * group header doesn't linger). An empty query reveals everything.
    *
    * @param {HTMLElement} grid
    * @param {string} query
@@ -3561,15 +3532,13 @@
   }
 
   /**
-   * Copilot review (PR #248) — `#grid` is `hidden` in the shipped
-   * `index.html` (Browse workbench is the visible surface now); both
-   * `renderError` and `renderToolResultError` wrote ONLY into that hidden
-   * element, so a failed manifest fetch or a `ui/notifications/tool-result`
-   * error left Browse showing its ordinary "Select a component…"
-   * placeholder forever — the user had no visible signal anything failed.
-   * Mirror the same message into the visible `#browse-detail` pane (a
-   * no-op, like the rest of Browse wiring, when that element isn't present
-   * — e.g. the fixture-only grid tests).
+   * Copilot review (PR #248) — `#grid` is `hidden` in the shipped `index.html` (Browse workbench is
+   * the visible surface now); both `renderError` and `renderToolResultError` wrote ONLY into that
+   * hidden element, so a failed manifest fetch or a `ui/notifications/tool-result` error left
+   * Browse showing its ordinary "Select a component…" placeholder forever — the user had no visible
+   * signal anything failed. Mirror the same message into the visible `#browse-detail` pane (a
+   * no-op, like the rest of Browse wiring, when that element isn't present — e.g. the fixture-only
+   * grid tests).
    *
    * @param {Document} doc
    * @param {string} detail
@@ -3586,9 +3555,8 @@
   }
 
   /**
-   * Render a visible error state in the grid (never throw out of `boot`) — a
-   * failed manifest fetch should tell the developer what to do, not blow up
-   * the page.
+   * Render a visible error state in the grid (never throw out of `boot`) — a failed manifest fetch
+   * should tell the developer what to do, not blow up the page.
    *
    * @param {Document} doc
    * @param {HTMLElement} grid
@@ -3604,29 +3572,28 @@
       "). Run the genie MCP server against this kit first.";
     box.textContent = message;
     grid.appendChild(box);
-    // Copilot review (PR #248) — `grid` is hidden once Browse is the visible
-    // surface; mirror this into the workbench so the error is actually seen.
+    // Copilot review (PR #248) — `grid` is hidden once Browse is the visible surface; mirror this
+    // into the workbench so the error is actually seen.
     renderBrowseWorkbenchError(doc, message);
   }
 
-  // ── Browse UI-kit workbench (M7-02 / #234) ─────────────────────────────────
+  // ── Browse UI-kit workbench (M7-02 / #234) ────
   //
-  // Turns the M4 grid into a navigable tree + component-detail workbench,
-  // reusing the same manifest, iframe sandbox, and HMR machinery above.
-  // Everything here is additive: `renderGrid`/`applyFilter`/HMR are untouched,
-  // and this module only reads the manifest — it never mutates it (AC2/AC3).
+  // Turns the M4 grid into a navigable tree + component-detail workbench, reusing the same
+  // manifest, iframe sandbox, and HMR machinery above. Everything here is additive:
+  // `renderGrid`/`applyFilter`/HMR are untouched, and this module only reads the manifest — it
+  // never mutates it (AC2/AC3).
   //
-  // Design reference: `docs/designs/design-6/01-ui-kit-browser.svg` +
-  // `design.md` §§7, 11-14. Decision #5 (issue #234): the shipped manifest
-  // carries NO variant concept (`store/manifest.ts` / `manifest/compiler.ts`
-  // have no `variant` field) — so `computeVariantTabs` below deliberately
-  // renders Default-only with Hover/Focus/Disabled declared-but-disabled,
-  // rather than inventing a new schema.
+  // Design reference: `docs/designs/design-6/01-ui-kit-browser.svg` + `design.md` §§7, 11-14.
+  // Decision #5 (issue #234): the shipped manifest carries NO variant concept (`store/manifest.ts`
+  // / `manifest/compiler.ts` have no `variant` field) — so `computeVariantTabs` below deliberately
+  // renders Default-only with Hover/Focus/Disabled declared-but-disabled, rather than inventing a
+  // new schema.
 
   /**
-   * Case-insensitive substring match against a component's name AND group —
-   * the same "supported metadata" search scope the product-behavior section
-   * of #234 describes. Pure; never mutates its inputs.
+   * Case-insensitive substring match against a component's name AND group — the same "supported
+   * metadata" search scope the product-behavior section of #234 describes. Pure; never mutates its
+   * inputs.
    *
    * @param {object} component
    * @param {string} needle — already-lowercased query.
@@ -3645,15 +3612,13 @@
   }
 
   /**
-   * Project a compiled manifest into the Browse tree shape: groups (in the
-   * manifest's own deterministic order, via {@link computeGroupOrder}), each
-   * holding its matching components, plus overall counts and the two
-   * distinct "nothing to show" flags AC4 requires:
+   * Project a compiled manifest into the Browse tree shape: groups (in the manifest's own
+   * deterministic order, via {@link computeGroupOrder}), each holding its matching components, plus
+   * overall counts and the two distinct "nothing to show" flags AC4 requires:
    *   - `isEmptyKit`  — the KIT itself has zero components (no search applied
-   *     or not — an empty kit is empty regardless of the query).
+   * or not — an empty kit is empty regardless of the query).
    *   - `isNoMatch`   — the kit has components, but the current `search`
-   *     matched none of them.
-   * Never mutates `manifest`.
+   * matched none of them. Never mutates `manifest`.
    *
    * @param {object} manifest
    * @param {string=} search
@@ -3697,19 +3662,18 @@
       groups: groups,
       totalCount: totalCount,
       isEmptyKit: isEmptyKit,
-      // A kit with data but a query that hid everything is a distinct state
-      // from "the kit is empty" (AC4) — never true when the kit itself is
-      // empty (that's `isEmptyKit`'s job) or when there is no active query.
+      // A kit with data but a query that hid everything is a distinct state from "the kit is empty"
+      // (AC4) — never true when the kit itself is empty (that's `isEmptyKit`'s job) or when there
+      // is no active query.
       isNoMatch: !isEmptyKit && totalCount === 0 && needle !== "",
     };
   }
 
   /**
-   * Resolve a `{kitId, group, componentName}` selection against a projected
-   * tree by STABLE IDENTITY (never DOM/array index — AC3/Decision #7).
-   * `kitId` is accepted for the caller's bookkeeping (a future multi-kit
-   * host) but the current single-kit tree only disambiguates on
-   * `group + componentName`, matching the compiled manifest's own identity.
+   * Resolve a `{kitId, group, componentName}` selection against a projected tree by STABLE IDENTITY
+   * (never DOM/array index — AC3/Decision #7). `kitId` is accepted for the caller's bookkeeping (a
+   * future multi-kit host) but the current single-kit tree only disambiguates on `group +
+   * componentName`, matching the compiled manifest's own identity.
    *
    * @param {ReturnType<typeof projectManifestToTree>} tree
    * @param {{kitId?: string, group?: string, componentName?: string}} selection
@@ -3733,10 +3697,9 @@
   }
 
   /**
-   * A UI-kit change always invalidates a prior selection's identity (AC/
-   * product-behavior: "changing UI kit clears an invalid prior component
-   * selection"). Returns `null` unconditionally — callers choose the new
-   * default (first valid component, or none) deterministically themselves;
+   * A UI-kit change always invalidates a prior selection's identity (AC/ product-behavior:
+   * "changing UI kit clears an invalid prior component selection"). Returns `null` unconditionally
+   * — callers choose the new default (first valid component, or none) deterministically themselves;
    * this helper only guarantees the OLD identity is never silently kept.
    *
    * @param {ReturnType<typeof projectManifestToTree>} _tree — the NEW kit's tree.
@@ -3748,9 +3711,9 @@
   }
 
   /**
-   * Serialize a selection into `URLSearchParams`-compatible query params —
-   * the deep-link contract (Decision #7): `kitId`, `group`, `componentName`
-   * all survive refresh without relying on array position.
+   * Serialize a selection into `URLSearchParams`-compatible query params — the deep-link contract
+   * (Decision #7): `kitId`, `group`, `componentName` all survive refresh without relying on array
+   * position.
    *
    * @param {{kitId?: string, group?: string, componentName?: string}} selection
    * @returns {string}
@@ -3771,10 +3734,10 @@
   }
 
   /**
-   * Parse a deep-link's `URLSearchParams` back into a selection, or `null`
-   * when `group`/`componentName` (the two identity-bearing fields) are not
-   * BOTH present — a partial link is not a valid selection (AC4's
-   * "unknown selection falls back to a controlled not-found state").
+   * Parse a deep-link's `URLSearchParams` back into a selection, or `null` when
+   * `group`/`componentName` (the two identity-bearing fields) are not BOTH present — a partial link
+   * is not a valid selection (AC4's "unknown selection falls back to a controlled not-found
+   * state").
    *
    * @param {URLSearchParams} params
    * @returns {{kitId: string, group: string, componentName: string}|null}
@@ -3794,10 +3757,9 @@
   var VARIANT_TAB_ORDER = ["default", "hover", "focus", "disabled"];
 
   /**
-   * Decision #5 — the compiled manifest carries no variant concept today.
-   * Returns the four Design-6 tabs with ONLY `default` marked available;
-   * the rest are declared-but-disabled with an accessible reason, never a
-   * fabricated rendered state (AC8). If a future manifest version adds a
+   * Decision #5 — the compiled manifest carries no variant concept today. Returns the four Design-6
+   * tabs with ONLY `default` marked available; the rest are declared-but-disabled with an
+   * accessible reason, never a fabricated rendered state (AC8). If a future manifest version adds a
    * `variants` array, this is the single place that would start reading it.
    *
    * @param {object} component
@@ -3828,12 +3790,11 @@
   var SOURCE_TRUNCATE_LENGTH = 20_000;
 
   /**
-   * Prepare raw source text for safe, plain-text display: never executed,
-   * never `innerHTML`'d (callers must use `textContent`), and truncated
-   * progressively for large files rather than rendering megabytes inline.
-   * Non-string input (a failed/absent read) degrades to an empty, non-
-   * truncated result rather than throwing (AC16 — a hostile/malformed read
-   * must not take the panel down).
+   * Prepare raw source text for safe, plain-text display: never executed, never `innerHTML`'d
+   * (callers must use `textContent`), and truncated progressively for large files rather than
+   * rendering megabytes inline. Non-string input (a failed/absent read) degrades to an empty, non-
+   * truncated result rather than throwing (AC16 — a hostile/malformed read must not take the panel
+   * down).
    *
    * @param {unknown} raw
    * @param {number=} limit
@@ -3847,11 +3808,10 @@
   }
 
   /**
-   * Build the exact context object Refine hands to Review (AC11): the
-   * selected kit/group/component/variant, and nothing else — no mutation,
-   * no write. `viewer.js` has no Review-side consumer yet beyond the M7-01
-   * shell's empty-draft view (M7-03 is the actual apply workflow); this is a
-   * pure, independently-testable data-shaping step so that wiring is a small
+   * Build the exact context object Refine hands to Review (AC11): the selected
+   * kit/group/component/variant, and nothing else — no mutation, no write. `viewer.js` has no
+   * Review-side consumer yet beyond the M7-01 shell's empty-draft view (M7-03 is the actual apply
+   * workflow); this is a pure, independently-testable data-shaping step so that wiring is a small
    * final piece rather than an untested one.
    *
    * @param {string} kitId
@@ -3860,48 +3820,59 @@
    * @returns {{kitId: string, group: string, componentName: string, variant: string}}
    */
   /**
-   * The kit-relative file a Browse component's bytes were read from.
-   * `sourcePath` is authoritative because the embedded manifest rewrites
-   * `path` to an absolute/data transport URL for the preview iframe; an
-   * absolute URL is never a kit-relative write target, so it is rejected.
+   * The kit-relative file a Browse component's bytes were read from. `sourcePath` is authoritative
+   * because the embedded manifest rewrites `path` to an absolute/data transport URL for the preview
+   * iframe; an absolute URL is never a kit-relative write target, so it is rejected.
    */
   function browseSourcePath(component) {
     if (!component) return "";
     var candidate = component.sourcePath || component.path;
     if (typeof candidate !== "string" || !candidate) return "";
-    return /^[a-z][a-z0-9+.-]*:/i.test(candidate) || candidate.indexOf("//") === 0
-      ? ""
-      : candidate;
+    return /^[a-z][a-z0-9+.-]*:/i.test(candidate) || candidate.indexOf("//") === 0 ? "" : candidate;
+  }
+
+  /**
+   * Mirror the server's `parseComponentPath`: `refine` matches on path segment 3 — the component
+   * DIRECTORY. A manifest `name` is only the preview file's basename, so `Button/preview.html` is
+   * named e.g. "Primary buttons" and sending that yields `ERR_COMPONENT_NOT_FOUND`.
+   */
+  function componentDirFromPath(path) {
+    if (typeof path !== "string") return "";
+    var parts = path.split("/");
+    return parts.length >= 4 && parts[0] === "components" ? parts[2] : "";
   }
 
   function buildRefineContext(kitId, component, variant, source) {
     var group = (component && component.group) || "";
-    var componentName = (component && component.componentName) || "";
+    var displayName = (component && component.componentName) || "";
+    var path =
+      browseSourcePath(component) ||
+      (group && displayName
+        ? "components/" + group + "/" + displayName + "/" + displayName + ".html"
+        : "");
     return {
       kitId: kitId || "",
       group: group,
-      componentName: componentName,
+      componentName: componentDirFromPath(path) || displayName,
+      // Kept for the UI: what Browse shows the user is not what the server resolves a refine
+      // against.
+      displayName: displayName,
       variant: variant || "default",
-      // AC2/S2 — Browse already read these bytes; carrying them seeds a REAL
-      // draft. `null` (read failed / source-less) means "context, no draft".
+      // AC2/S2 — Browse already read these bytes; carrying them seeds a REAL draft. `null` (read
+      // failed / source-less) means "context, no draft".
       source: typeof source === "string" && source ? source : null,
       // Copilot #2 (PR #250) — Browse reads bytes from `sourcePath || path`;
-      // fabricating `<Name>/<Name>.html` would plan a write to a DIFFERENT
-      // file than the one whose bytes we hold. (Embedded rewrites `path`.)
-      path: browseSourcePath(component) ||
-        (group && componentName
-          ? "components/" + group + "/" + componentName + "/" + componentName + ".html"
-          : ""),
+      // fabricating `<Name>/<Name>.html` would plan a write to a DIFFERENT file than the one whose
+      // bytes we hold. (Embedded rewrites `path`.)
+      path: path,
     };
   }
 
   /**
-   * Render the 240px Browse tree: kit header, one labelled section per group
-   * with a live count, and keyboard-operable `role="treeitem"` rows (AC/a11y:
-   * arrow-key roving tabindex, Home/End, Enter/Space to select). Distinguishes
-   * the three "nothing selected yet" states (AC4): empty kit (CTA to
-   * Generate), no-filter-match (scoped Clear-filter action), and the normal
-   * populated tree.
+   * Render the 240px Browse tree: kit header, one labelled section per group with a live count, and
+   * keyboard-operable `role="treeitem"` rows (AC/a11y: arrow-key roving tabindex, Home/End,
+   * Enter/Space to select). Distinguishes the three "nothing selected yet" states (AC4): empty kit
+   * (CTA to Generate), no-filter-match (scoped Clear-filter action), and the normal populated tree.
    *
    * @param {Document} doc
    * @param {HTMLElement} container
@@ -3919,16 +3890,14 @@
   }
 
   /**
-   * Copilot review (PR #248) — the removed-selection focus fallback used to
-   * try ONLY the full tree's `[tabindex="0"]` treeitem, then the search
-   * input. At the responsive breakpoints below 1100px, though, that treeitem
-   * still exists in the DOM but is hidden (`visibility: hidden` in the
-   * 720–1099px rail-overlay mode, `display: none` in the <720px compact
-   * mode) — so `.focus()` on it silently failed, and neither the rail toggle
-   * nor the compact `<select>` (the ACTUAL visible navigation control at
-   * those widths) was ever tried before falling through to search. Walk the
-   * candidates in specificity order and focus the first one that's both
-   * present and visible.
+   * Copilot review (PR #248) — the removed-selection focus fallback used to try ONLY the full
+   * tree's `[tabindex="0"]` treeitem, then the search input. At the responsive breakpoints below
+   * 1100px, though, that treeitem still exists in the DOM but is hidden (`visibility: hidden` in
+   * the 720–1099px rail-overlay mode, `display: none` in the <720px compact mode) — so `.focus()`
+   * on it silently failed, and neither the rail toggle nor the compact `<select>` (the ACTUAL
+   * visible navigation control at those widths) was ever tried before falling through to search.
+   * Walk the candidates in specificity order and focus the first one that's both present and
+   * visible.
    *
    * @param {Document} doc
    * @param {HTMLElement} treeContainer
@@ -3955,38 +3924,32 @@
     var select = typeof onSelect === "function" ? onSelect : function () {};
 
     var treeEl = doc.createElement("div");
-    // Copilot review (PR #248, a11y) — `role="tree"` requires ARIA
-    // `treeitem` children (`aria-required-children`); it's only set once we
-    // know we're building the REAL tree branch below. The empty-kit and
-    // no-match states render a plain message/action instead, so `treeEl`
-    // stays a plain unlabeled `div` for those (still gets the rail-toggle/
-    // overlay/compact-nav responsive treatment — just not the `tree` role
-    // it doesn't structurally satisfy).
+    // Copilot review (PR #248, a11y) — `role="tree"` requires ARIA `treeitem` children
+    // (`aria-required-children`); it's only set once we know we're building the REAL tree branch
+    // below. The empty-kit and no-match states render a plain message/action instead, so `treeEl`
+    // stays a plain unlabeled `div` for those (still gets the rail-toggle/ overlay/compact-nav
+    // responsive treatment — just not the `tree` role it doesn't structurally satisfy).
     treeEl.className = "browse-tree";
     treeEl.id = "browse-tree-nav";
 
-    // Copilot #13 (AC14, 720–1099px) — a 44px group rail whose activation
-    // opens an IDENTIFIABLE overlay tree, rather than only shrinking every
-    // row label to its first letter (which left same-initial components
-    // visually indistinguishable and offered no way to open real
-    // navigation). `.tree-sidebar`'s CSS at this breakpoint hides
-    // `#browse-tree-nav` off-canvas by default and only the rail toggle is
-    // visible; activating it reveals `#browse-tree-nav` as a real overlay
-    // (`browse-tree--overlay-open`) without covering focus invisibly — the
-    // toggle itself IS the 44px rail control, and its `aria-expanded`/
-    // `aria-controls` make the relationship programmatically discoverable.
+    // Copilot #13 (AC14, 720–1099px) — a 44px group rail whose activation opens an IDENTIFIABLE
+    // overlay tree, rather than only shrinking every row label to its first letter (which left
+    // same-initial components visually indistinguishable and offered no way to open real
+    // navigation). `.tree-sidebar`'s CSS at this breakpoint hides `#browse-tree-nav` off-canvas by
+    // default and only the rail toggle is visible; activating it reveals `#browse-tree-nav` as a
+    // real overlay (`browse-tree--overlay-open`) without covering focus invisibly — the toggle
+    // itself IS the 44px rail control, and its `aria-expanded`/ `aria-controls` make the
+    // relationship programmatically discoverable.
     //
-    // Copilot review (PR #248) — this rail toggle, the overlay `treeEl`, and
-    // the <720px `compactNav` below are now ALWAYS built, even for the
-    // empty-kit and no-match states. The earlier revision returned before
-    // building any of this responsive chrome for those two states, so at
-    // the 720–1099px breakpoint (where `.tree-sidebar` collapses the raw
-    // sidebar column to 44px and hides `#browse-tree-nav` off-canvas by
-    // default) their message + Clear-filter/Generate action rendered
-    // directly inside that 44px column instead of inside the overlay,
-    // risking unusable/overflowing layout. The empty/no-match content is
-    // now placed INSIDE `treeEl` (see below), so it participates in the
-    // same rail/overlay/compact-nav responsive behavior as the real tree.
+    // Copilot review (PR #248) — this rail toggle, the overlay `treeEl`, and the <720px
+    // `compactNav` below are now ALWAYS built, even for the empty-kit and no-match states. The
+    // earlier revision returned before building any of this responsive chrome for those two states,
+    // so at the 720–1099px breakpoint (where `.tree-sidebar` collapses the raw sidebar column to
+    // 44px and hides `#browse-tree-nav` off-canvas by default) their message +
+    // Clear-filter/Generate action rendered directly inside that 44px column instead of inside the
+    // overlay, risking unusable/overflowing layout. The empty/no-match content is now placed INSIDE
+    // `treeEl` (see below), so it participates in the same rail/overlay/compact-nav responsive
+    // behavior as the real tree.
     var railToggle = doc.createElement("button");
     railToggle.type = "button";
     railToggle.className = "browse-tree__rail-toggle";
@@ -4013,11 +3976,10 @@
       }
     });
 
-    // Copilot #14 (AC14, <720px) — the <720px band collapses into a
-    // breadcrumb + `<select>` dropdown compact nav, rather than only
-    // stacking the full tree into a 40vh scrolling sidebar (which offered
-    // no breadcrumb and no dropdown). `.tree-sidebar`'s CSS shows only this
-    // element at that breakpoint.
+    // Copilot #14 (AC14, <720px) — the <720px band collapses into a breadcrumb + `<select>`
+    // dropdown compact nav, rather than only stacking the full tree into a 40vh scrolling sidebar
+    // (which offered no breadcrumb and no dropdown). `.tree-sidebar`'s CSS shows only this element
+    // at that breakpoint.
     var compactNav = doc.createElement("div");
     compactNav.className = "browse-tree__compact-nav";
     var compactBreadcrumb = doc.createElement("p");
@@ -4038,9 +4000,9 @@
       link.textContent = "Go to Generate";
       emptyBox.append(heading, link);
       treeEl.appendChild(emptyBox);
-      // Copilot review (PR #248) — <720px hides `treeEl` entirely (CSS) and
-      // shows only `compactNav`, so the message needs its OWN copy there
-      // too, not just inside the (now off-canvas-at-this-width) tree.
+      // Copilot review (PR #248) — <720px hides `treeEl` entirely (CSS) and shows only
+      // `compactNav`, so the message needs its OWN copy there too, not just inside the (now
+      // off-canvas-at-this-width) tree.
       compactNav.appendChild(emptyBox.cloneNode(true));
       container.append(railToggle, treeEl, compactNav);
       return;
@@ -4057,18 +4019,17 @@
       clear.textContent = "Clear filter";
       noMatchBox.append(noMatchMsg, clear);
       treeEl.appendChild(noMatchBox);
-      // Copilot review (PR #248) — same <720px rationale as isEmptyKit
-      // above: give the compact nav its own live copy of the Clear-filter
-      // action rather than one hidden inside the off-canvas tree. The
-      // `container`-level click handler on `[data-clear-filter]` (below)
-      // matches by attribute, not by node identity, so either copy works.
+      // Copilot review (PR #248) — same <720px rationale as isEmptyKit above: give the compact nav
+      // its own live copy of the Clear-filter action rather than one hidden inside the off-canvas
+      // tree. The `container`-level click handler on `[data-clear-filter]` (below) matches by
+      // attribute, not by node identity, so either copy works.
       compactNav.appendChild(noMatchBox.cloneNode(true));
       container.append(railToggle, treeEl, compactNav);
       return;
     }
 
-    // Real tree branch — now safe to declare the ARIA `tree` role, since
-    // only `treeitem` children (built below) get appended to `treeEl`.
+    // Real tree branch — now safe to declare the ARIA `tree` role, since only `treeitem` children
+    // (built below) get appended to `treeEl`.
     treeEl.setAttribute("role", "tree");
     treeEl.setAttribute("aria-label", "UI kit components");
 
@@ -4080,24 +4041,22 @@
     placeholderOption.textContent = "Choose a component…";
     placeholderOption.disabled = true;
     compactSelect.appendChild(placeholderOption);
-    // Tracks whether `selected` (if any) actually matched a component that
-    // survived the current filter. If the selected component was filtered
-    // out of the tree, no <option> below will carry `selected = true`, so
-    // the placeholder is selected instead — otherwise the browser silently
-    // falls back to selecting the FIRST real option, misrepresenting the
-    // compact <select> as pointing at a component that isn't actually the
-    // detail pane/breadcrumb's selection (Copilot review: bug #21).
+    // Tracks whether `selected` (if any) actually matched a component that survived the current
+    // filter. If the selected component was filtered out of the tree, no <option> below will carry
+    // `selected = true`, so the placeholder is selected instead — otherwise the browser silently
+    // falls back to selecting the FIRST real option, misrepresenting the compact <select> as
+    // pointing at a component that isn't actually the detail pane/breadcrumb's selection (Copilot
+    // review: bug #21).
     var selectedOptionFound = false;
 
     var allItems = [];
-    // Parallel lookup for the compact <select>'s options — see the option
-    // construction below for why this replaced a delimited `value` string.
+    // Parallel lookup for the compact <select>'s options — see the option construction below for
+    // why this replaced a delimited `value` string.
     var compactOptionEntries = [];
-    // Roving tabindex (a11y): exactly ONE item is in Tab order at a time.
-    // `tabbableCandidate` tracks that single item as we walk the tree so a
-    // LATER-discovered selected row can demote an EARLIER first-row
-    // candidate that already received tabindex="0" — otherwise both stay
-    // "0" and produce two Tab stops (Copilot review: bug #9).
+    // Roving tabindex (a11y): exactly ONE item is in Tab order at a time. `tabbableCandidate`
+    // tracks that single item as we walk the tree so a LATER-discovered selected row can demote an
+    // EARLIER first-row candidate that already received tabindex="0" — otherwise both stay "0" and
+    // produce two Tab stops (Copilot review: bug #9).
     var tabbableCandidate = null;
     for (var g = 0; g < tree.groups.length; g++) {
       var group = tree.groups[g];
@@ -4123,14 +4082,14 @@
         item.dataset.group = group.name;
         item.dataset.componentName = component.componentName;
         if (isSelected) {
-          // A selected row always wins the single tab stop, demoting
-          // whatever candidate (e.g. the first row) was previously chosen.
+          // A selected row always wins the single tab stop, demoting whatever candidate (e.g. the
+          // first row) was previously chosen.
           if (tabbableCandidate) tabbableCandidate.setAttribute("tabindex", "-1");
           item.setAttribute("tabindex", "0");
           tabbableCandidate = item;
         } else if (!tabbableCandidate) {
-          // No selection yet encountered — the first row is the provisional
-          // candidate until/unless a selected row later demotes it.
+          // No selection yet encountered — the first row is the provisional candidate until/unless
+          // a selected row later demotes it.
           item.setAttribute("tabindex", "0");
           tabbableCandidate = item;
         } else {
@@ -4140,18 +4099,15 @@
         allItems.push(item);
 
         var option = doc.createElement("option");
-        // Encode (group, componentName) as the option's index into a parallel
-        // lookup array rather than packing both into `value` as a delimited
-        // string. A delimiter character (even a NUL, which is NOT a valid
-        // XML/HTML character and gets replaced with U+FFFD by the HTML
-        // parser's tokenizer during the CSP-hashed embedded-tier inlining —
-        // silently corrupting this exact inline <script> and invalidating
-        // its SHA-256 CSP hash, which is what caused every card to fail to
-        // render under the `ui://` vehicle) can never safely round-trip
-        // through a re-parsed HTML document. Group/component names may
-        // themselves contain any character (including spaces or the
-        // delimiter candidate), so no delimiter is truly safe — only an
-        // out-of-band index is.
+        // Encode (group, componentName) as the option's index into a parallel lookup array rather
+        // than packing both into `value` as a delimited string. A delimiter character (even a NUL,
+        // which is NOT a valid XML/HTML character and gets replaced with U+FFFD by the HTML
+        // parser's tokenizer during the CSP-hashed embedded-tier inlining — silently corrupting
+        // this exact inline <script> and invalidating its SHA-256 CSP hash, which is what caused
+        // every card to fail to render under the `ui://` vehicle) can never safely round-trip
+        // through a re-parsed HTML document. Group/component names may themselves contain any
+        // character (including spaces or the delimiter candidate), so no delimiter is truly safe —
+        // only an out-of-band index is.
         option.value = String(compactOptionEntries.length);
         compactOptionEntries.push({ group: group.name, componentName: component.componentName });
         option.textContent = group.name + " / " + component.componentName;
@@ -4176,9 +4132,8 @@
 
     function activate(item) {
       select({ group: item.dataset.group, componentName: item.dataset.componentName });
-      // Closing the overlay on activation returns focus predictably (a11y
-      // requirement: "Focus remains visible and returns predictably when an
-      // overlay tree closes").
+      // Closing the overlay on activation returns focus predictably (a11y requirement: "Focus
+      // remains visible and returns predictably when an overlay tree closes").
       if (treeEl.classList.contains("browse-tree--overlay-open")) {
         treeEl.classList.remove("browse-tree--overlay-open");
         railToggle.setAttribute("aria-expanded", "false");
@@ -4223,13 +4178,11 @@
   }
 
   /**
-   * Render the component detail stage: breadcrumb, heading (with `@genie`
-   * marker ONLY when `registered`/`validated` is a proven fact, never
-   * fabricated — AC9), variant tabs (Default-only per Decision #5), the
-   * reused sandboxed preview iframe (same sandbox/lazy/CSP contract as the
-   * grid's own `createCard`), a metadata panel, a sanitized source panel, and
-   * the Refine action (disabled + explained when no MCP host bridge is
-   * present — AC13).
+   * Render the component detail stage: breadcrumb, heading (with `@genie` marker ONLY when
+   * `registered`/`validated` is a proven fact, never fabricated — AC9), variant tabs (Default-only
+   * per Decision #5), the reused sandboxed preview iframe (same sandbox/lazy/CSP contract as the
+   * grid's own `createCard`), a metadata panel, a sanitized source panel, and the Refine action
+   * (disabled + explained when no MCP host bridge is present — AC13).
    *
    * @param {Document} doc
    * @param {HTMLElement} container
@@ -4238,10 +4191,10 @@
   function renderBrowseDetail(doc, container, state) {
     container.replaceChildren();
     var component = state.component;
-    // A stable-ish id derived from group/component identity — safe for use
-    // as an element id (no `[` `]` `.` etc. survive real component names,
-    // but even if one did, `id`/`aria-controls`/`aria-labelledby` only need
-    // to agree with EACH OTHER, not be a valid CSS selector).
+    // A stable-ish id derived from group/component identity — safe for use as an element id (no `[`
+    // `]` `.` etc. survive real component names, but even if one did,
+    // `id`/`aria-controls`/`aria-labelledby` only need to agree with EACH OTHER, not be a valid CSS
+    // selector).
     var idBase =
       "browse-detail-" +
       String(component.group || "group").replace(/[^a-zA-Z0-9_-]/g, "_") +
@@ -4279,10 +4232,9 @@
     refineButton.className = "btn-clay";
     refineButton.setAttribute("data-refine-action", "true");
     refineButton.textContent = "Refine →";
-    // Copilot review (PR #248, AC13) — gated on `refineAvailable` (a real
-    // MCP-App host bridge), NOT `hostAvailable` (which is also true for the
-    // standalone source-read-only adapter and would wrongly enable Refine
-    // for browser-only users — see `refineEnabled`'s comment in
+    // Copilot review (PR #248, AC13) — gated on `refineAvailable` (a real MCP-App host bridge), NOT
+    // `hostAvailable` (which is also true for the standalone source-read-only adapter and would
+    // wrongly enable Refine for browser-only users — see `refineEnabled`'s comment in
     // `initBrowseController`).
     if (!state.refineAvailable) {
       refineButton.disabled = true;
@@ -4299,9 +4251,9 @@
       container.appendChild(refineExplain);
     } else if (typeof state.onRefine === "function") {
       refineButton.addEventListener("click", function () {
-        // AC2/S2 — resolve LAZILY: the pane paints before `read_file` lands
-        // and only the source subpanel is repainted, so this handler's
-        // captured `state.source` would stay `null` forever.
+        // AC2/S2 — resolve LAZILY: the pane paints before `read_file` lands and only the source
+        // subpanel is repainted, so this handler's captured `state.source` would stay `null`
+        // forever.
         var liveSource =
           typeof state.resolveSource === "function" ? state.resolveSource() : state.source;
         state.onRefine(buildRefineContext(state.kitId, component, "default", liveSource));
@@ -4327,9 +4279,9 @@
       button.id = tabId;
       var isActiveTab = tab.id === "default";
       button.setAttribute("aria-selected", isActiveTab ? "true" : "false");
-      // AC15 — wire every rendered tab (available or declared-but-disabled)
-      // to the single preview stage `tabpanel` it controls, so assistive
-      // tech can determine the tab-to-panel relationship (Copilot #18).
+      // AC15 — wire every rendered tab (available or declared-but-disabled) to the single preview
+      // stage `tabpanel` it controls, so assistive tech can determine the tab-to-panel relationship
+      // (Copilot #18).
       button.setAttribute("aria-controls", previewPanelId);
       button.setAttribute("tabindex", isActiveTab ? "0" : "-1");
       if (!tab.available) {
@@ -4348,15 +4300,13 @@
       if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
         event.preventDefault();
         var delta = event.key === "ArrowRight" ? 1 : -1;
-        // Copilot review (PR #248) — with only Default enabled (Decision
-        // #5), a single step always landed on a disabled declared-but-
-        // unavailable tab, which cannot receive focus: `tabButtons[next]`
-        // kept `tabindex=-1` and `.focus()` was a no-op, so the roving
-        // tabindex silently stuck (ArrowRight then did nothing on repeat,
-        // since focus never actually left Default). Step past every
-        // disabled tab in the arrow's direction; if every OTHER tab is
-        // disabled, this converges back on the current index and is a
-        // harmless no-op, matching a single real tab in the tablist.
+        // Copilot review (PR #248) — with only Default enabled (Decision #5), a single step always
+        // landed on a disabled declared-but- unavailable tab, which cannot receive focus:
+        // `tabButtons[next]` kept `tabindex=-1` and `.focus()` was a no-op, so the roving tabindex
+        // silently stuck (ArrowRight then did nothing on repeat, since focus never actually left
+        // Default). Step past every disabled tab in the arrow's direction; if every OTHER tab is
+        // disabled, this converges back on the current index and is a harmless no-op, matching a
+        // single real tab in the tablist.
         var next = index;
         for (var step = 0; step < tabButtons.length; step++) {
           next = (((next + delta) % tabButtons.length) + tabButtons.length) % tabButtons.length;
@@ -4373,9 +4323,9 @@
     // Preview stage — reuses the SAME sandbox contract as `createCard`.
     var stage = doc.createElement("div");
     stage.className = "preview-stage";
-    // AC15/AC18 — the stage is the panel every variant tab's `aria-controls`
-    // points at; `aria-labelledby` the active (Default) tab so its
-    // accessible name tracks whichever variant is selected.
+    // AC15/AC18 — the stage is the panel every variant tab's `aria-controls` points at;
+    // `aria-labelledby` the active (Default) tab so its accessible name tracks whichever variant is
+    // selected.
     stage.id = previewPanelId;
     stage.setAttribute("role", "tabpanel");
     stage.setAttribute("aria-labelledby", idBase + "-tab-default");
@@ -4384,10 +4334,9 @@
     label.className = "stage-label";
     label.setAttribute("role", "status");
     label.setAttribute("aria-live", "polite");
-    // AC7 — a distinct loading state: the label starts as "Preview ·
-    // Loading…" and only becomes "Preview · Default" once the iframe's
-    // `load` event actually fires, so a slow/stalled preview isn't silently
-    // presented as already-rendered (Copilot #16).
+    // AC7 — a distinct loading state: the label starts as "Preview · Loading…" and only becomes
+    // "Preview · Default" once the iframe's `load` event actually fires, so a slow/stalled preview
+    // isn't silently presented as already-rendered (Copilot #16).
     label.textContent = "Preview · Loading…";
     stage.appendChild(label);
 
@@ -4396,10 +4345,8 @@
     iframe.setAttribute("loading", "lazy");
     iframe.setAttribute("src", component.path || "");
     iframe.setAttribute("title", accessibleName(component.componentName, "preview"));
-    // Mirror `createCard`'s iframe contract (Copilot #10): a sandboxed
-    // iframe with no `allow-same-origin` is STILL natively focusable, so it
-    // must be explicitly pulled out of Tab order or Tab would land inside
-    // the sandboxed frame after the variant tabs.
+    // Mirror `createCard` (Copilot #10): a sandboxed iframe is still natively focusable, so Tab
+    // would otherwise land inside the frame after the variant tabs.
     iframe.setAttribute("tabindex", "-1");
     var size = parseViewport(component.viewport);
     if (size) {
@@ -4409,27 +4356,23 @@
     } else {
       iframe.setAttribute("height", String(DEFAULT_CARD_HEIGHT));
     }
-    // Copilot review (PR #248) — an `<iframe>` does NOT reliably emit
-    // `error` for a failed navigation: per spec/observed browser behavior, a
-    // 404/500 response or even most CSP-frame-ancestors blocks still fire
-    // `load` once the (error) document finishes loading — `error` only
-    // fires for lower-level failures (DNS/network refusal), which this
-    // same-origin preview path essentially never hits. A pure `load`/`error`
-    // listener pair therefore mislabels most real preview failures as
-    // "Preview · Default". Pragmatic mitigation: `component.path` is always
-    // a same-origin, server-relative URL, so probe it with a same-origin
-    // `fetch` BEFORE pointing the iframe at it — an HTTP-level failure
-    // response is a reliable signal `load` cannot give us. If the probe
-    // can't run at all (no `fetch`, e.g. a stripped test `doc.defaultView`)
-    // this degrades to the original `load`/`error`-only behavior rather than
-    // ever blocking the preview outright.
+    // Copilot review (PR #248) — an `<iframe>` does NOT reliably emit `error` for a failed
+    // navigation: per spec/observed browser behavior, a 404/500 response or even most
+    // CSP-frame-ancestors blocks still fire `load` once the (error) document finishes loading —
+    // `error` only fires for lower-level failures (DNS/network refusal), which this same-origin
+    // preview path essentially never hits. A pure `load`/`error` listener pair therefore mislabels
+    // most real preview failures as "Preview · Default". Pragmatic mitigation: `component.path` is
+    // always a same-origin, server-relative URL, so probe it with a same-origin `fetch` BEFORE
+    // pointing the iframe at it — an HTTP-level failure response is a reliable signal `load` cannot
+    // give us. If the probe can't run at all (no `fetch`, e.g. a stripped test `doc.defaultView`)
+    // this degrades to the original `load`/`error`-only behavior rather than ever blocking the
+    // preview outright.
     //
-    // Residual limitation: this still cannot detect a navigation that fails
-    // AFTER an initial 200 (e.g. the iframe document errors out client-side
-    // once loaded), nor a same-origin response whose body renders as a
-    // blank/broken page while returning 200 (a fetch-level check only sees
-    // the HTTP status, not the rendered result) — those remain
-    // indistinguishable from a real successful preview by this heuristic.
+    // Residual limitation: this still cannot detect a navigation that fails AFTER an initial 200
+    // (e.g. the iframe document errors out client-side once loaded), nor a same-origin response
+    // whose body renders as a blank/broken page while returning 200 (a fetch-level check only sees
+    // the HTTP status, not the rendered result) — those remain indistinguishable from a real
+    // successful preview by this heuristic.
     var probeFetch =
       doc.defaultView && typeof doc.defaultView.fetch === "function" ? doc.defaultView.fetch : null;
     var markBroken = function () {
@@ -4494,30 +4437,27 @@
     // Source panel (AC10) — sanitized plain text, progressive truncation.
     var sourceBox = doc.createElement("div");
     sourceBox.className = "browse-source";
-    // Copilot review (PR #248) — a generic `div` with only `aria-label` has
-    // no accessible ROLE, so assistive tech has nowhere to expose that
-    // label as a landmark/section name; the "Component source" label was
-    // effectively unreachable. `role="region"` makes this a labelled
-    // landmark region, giving the source controls an announced section
-    // context.
+    // Copilot review (PR #248) — a generic `div` with only `aria-label` has no accessible ROLE, so
+    // assistive tech has nowhere to expose that label as a landmark/section name; the "Component
+    // source" label was effectively unreachable. `role="region"` makes this a labelled landmark
+    // region, giving the source controls an announced section context.
     sourceBox.setAttribute("role", "region");
     sourceBox.setAttribute("aria-label", "Component source");
-    // Copilot review (PR #248) — a stable marker so a later source-only
-    // update (see `renderBrowseDetailSource`) can locate and replace just
-    // this subpanel instead of rebuilding the entire detail pane (which
-    // would tear down and re-fetch the still-valid preview iframe above).
+    // Copilot review (PR #248) — a stable marker so a later source-only update (see
+    // `renderBrowseDetailSource`) can locate and replace just this subpanel instead of rebuilding
+    // the entire detail pane (which would tear down and re-fetch the still-valid preview iframe
+    // above).
     sourceBox.setAttribute("data-browse-source-panel", "true");
     renderBrowseSourceBoxContent(doc, sourceBox, state);
     container.appendChild(sourceBox);
   }
 
   /**
-   * Builds the source subpanel's content (source text / loading / error
-   * copy) into an already-created `sourceBox` container. Extracted from
-   * `renderBrowseDetail` so the source-read settle handler can update just
-   * this subpanel in place (Copilot review, PR #248) rather than replacing
-   * the whole detail pane — including its live preview iframe — every time
-   * an async source read resolves.
+   * Builds the source subpanel's content (source text / loading / error copy) into an
+   * already-created `sourceBox` container. Extracted from `renderBrowseDetail` so the source-read
+   * settle handler can update just this subpanel in place (Copilot review, PR #248) rather than
+   * replacing the whole detail pane — including its live preview iframe — every time an async
+   * source read resolves.
    *
    * @param {Document} doc
    * @param {Element} sourceBox
@@ -4567,9 +4507,9 @@
       });
       sourceBox.append(copyButton, copyStatus);
     } else if (state.sourceLoading) {
-      // AC7 — a settled failed read is the ONLY time the "could not be
-      // read" copy is honest; a read that simply hasn't resolved yet must
-      // say so distinctly (Copilot #17), never present as an error.
+      // AC7 — a settled failed read is the ONLY time the "could not be read" copy is honest; a read
+      // that simply hasn't resolved yet must say so distinctly (Copilot #17), never present as an
+      // error.
       var loading = doc.createElement("p");
       loading.setAttribute("role", "status");
       loading.setAttribute("aria-live", "polite");
@@ -4585,16 +4525,15 @@
   }
 
   /**
-   * Updates ONLY the source subpanel of an already-rendered detail pane, in
-   * place — leaving the breadcrumb/heading/variant tabs/preview iframe
-   * untouched. Used by the async source-read settle handler (guarded by the
-   * caller's render-generation check) so resolving a source read no longer
-   * tears down and re-fetches a perfectly valid live preview iframe just to
-   * paint the source text underneath it (Copilot review, PR #248).
+   * Updates ONLY the source subpanel of an already-rendered detail pane, in place — leaving the
+   * breadcrumb/heading/variant tabs/preview iframe untouched. Used by the async source-read settle
+   * handler (guarded by the caller's render-generation check) so resolving a source read no longer
+   * tears down and re-fetches a perfectly valid live preview iframe just to paint the source text
+   * underneath it (Copilot review, PR #248).
    *
-   * Falls back to a full `renderBrowseDetail` re-render if the subpanel
-   * marker isn't found (e.g. an older/differently-shaped container), so
-   * behavior degrades safely rather than silently doing nothing.
+   * Falls back to a full `renderBrowseDetail` re-render if the subpanel marker isn't found (e.g. an
+   * older/differently-shaped container), so behavior degrades safely rather than silently doing
+   * nothing.
    *
    * @param {Document} doc
    * @param {Element} container
@@ -4610,11 +4549,10 @@
   }
 
   /**
-   * Render the "component removed during HMR" controlled state (AC4/product-
-   * behavior: "If the selected component disappears, show a controlled
-   * removed state and move focus to the nearest valid navigation control").
-   * This function only renders the message; moving focus is the caller's job
-   * (it owns the tree DOM and knows the nearest valid item).
+   * Render the "component removed during HMR" controlled state (AC4/product- behavior: "If the
+   * selected component disappears, show a controlled removed state and move focus to the nearest
+   * valid navigation control"). This function only renders the message; moving focus is the
+   * caller's job (it owns the tree DOM and knows the nearest valid item).
    *
    * @param {Document} doc
    * @param {HTMLElement} container
@@ -4634,19 +4572,17 @@
   }
 
   /**
-   * Wire the tree + detail panes together against a live manifest: owns the
-   * current selection (deep-link-aware — Decision #7), re-projects the tree
-   * on search/manifest changes, and re-renders detail atomically on
-   * selection (AC5 — "stale content from the prior selection is not shown as
-   * current", satisfied because both panes are rebuilt from the SAME
-   * `tree`/`selection` read on every call, never patched piecemeal).
+   * Wire the tree + detail panes together against a live manifest: owns the current selection
+   * (deep-link-aware — Decision #7), re-projects the tree on search/manifest changes, and
+   * re-renders detail atomically on selection (AC5 — "stale content from the prior selection is not
+   * shown as current", satisfied because both panes are rebuilt from the SAME `tree`/`selection`
+   * read on every call, never patched piecemeal).
    *
-   * Used by BOTH vehicles now (Copilot #1): the fetch tier calls this with
-   * `hostBridge: null` (no MCP host), and the embedded `ui://genie/grid`
-   * tier calls it with the real host bridge once the handshake resolves
-   * (`setHostBridge`), so Refine/source-read still route through the host
-   * (AC12/AC13). Call sites are gated on `#browse-workbench` existing, which
-   * only the fixture-only grid tests omit.
+   * Used by BOTH vehicles now (Copilot #1): the fetch tier calls this with `hostBridge: null` (no
+   * MCP host), and the embedded `ui://genie/grid` tier calls it with the real host bridge once the
+   * handshake resolves (`setHostBridge`), so Refine/source-read still route through the host
+   * (AC12/AC13). Call sites are gated on `#browse-workbench` existing, which only the fixture-only
+   * grid tests omit.
    *
    * @param {Document} doc
    * @param {{hostBridge?: {callTool: Function}|null, kitId?: string, kitName?: string, onRefine?: (ctx: object) => void}} opts
@@ -4672,27 +4608,23 @@
     var manifest = { components: [], groups: [] };
     var selection = null; // {group, componentName}
     var hostBridge = options.hostBridge || null;
-    // Copilot review (PR #248, AC13) — source-read capability and Refine
-    // capability are NOT the same thing. `hostBridge` here may be the
-    // standalone `createStandaloneSourceBridge` adapter, which only ever
-    // supports `mcp__genie__read_file` and explicitly rejects everything
-    // else (never Refine/Conjure — Decision #6). `refineEnabled` tracks the
-    // REAL MCP-App host bridge only, and is flipped true exclusively by
-    // `setHostBridge` (the embedded tier's post-handshake callback) — the
-    // standalone tier never calls `setHostBridge`, so this stays false there
-    // even though `hostBridge` is truthy for source reads.
+    // Copilot review (PR #248, AC13) — source-read capability and Refine capability are NOT the
+    // same thing. `hostBridge` here may be the standalone `createStandaloneSourceBridge` adapter,
+    // which only ever supports `mcp__genie__read_file` and explicitly rejects everything else
+    // (never Refine/Conjure — Decision #6). `refineEnabled` tracks the REAL MCP-App host bridge
+    // only, and is flipped true exclusively by `setHostBridge` (the embedded tier's post-handshake
+    // callback) — the standalone tier never calls `setHostBridge`, so this stays false there even
+    // though `hostBridge` is truthy for source reads.
     var refineEnabled = false;
-    // AC3/Copilot #7 — a monotonic generation counter. Every `renderAll()`
-    // call bumps it and captures its own value; an in-flight async source
-    // read is only allowed to commit if the generation it captured is STILL
-    // the current one when it resolves. This closes a race a pure identity
-    // check (group+componentName) cannot: HMR replacing the SAME selected
-    // component (identity unchanged, content/path changed) while an older
-    // read for the PRIOR content is still in flight.
+    // AC3/Copilot #7 — a monotonic generation counter. Every `renderAll()` call bumps it and
+    // captures its own value; an in-flight async source read is only allowed to commit if the
+    // generation it captured is STILL the current one when it resolves. This closes a race a pure
+    // identity check (group+componentName) cannot: HMR replacing the SAME selected component
+    // (identity unchanged, content/path changed) while an older read for the PRIOR content is still
+    // in flight.
     var renderGeneration = 0;
-    // Bytes of the currently selected component, once `read_file` resolves.
-    // Reset to `null` on every (re)render so a stale body can never be
-    // attributed to a newly selected component.
+    // Bytes of the currently selected component, once `read_file` resolves. Reset to `null` on
+    // every (re)render so a stale body can never be attributed to a newly selected component.
     var latestSource = null;
 
     function currentSearch() {
@@ -4704,10 +4636,9 @@
       try {
         var next = new win.URL(win.location.href);
         if (sel) {
-          // Copilot #8 — serialize kitId too, so a saved/shared link
-          // disambiguates across kits instead of only group+componentName
-          // (which could collide with a same-named component in a
-          // different kit once re-opened there).
+          // Copilot #8 — serialize kitId too, so a saved/shared link disambiguates across kits
+          // instead of only group+componentName (which could collide with a same-named component in
+          // a different kit once re-opened there).
           next.searchParams.set("kitId", options.kitId || "");
           next.searchParams.set("group", sel.group);
           next.searchParams.set("componentName", sel.componentName);
@@ -4724,13 +4655,11 @@
 
     function fetchSource(component) {
       if (!hostBridge || !component) return Promise.resolve(null);
-      // Copilot #4 — embedded manifests rewrite `component.path` to an
-      // absolute/data transport URL for the IFRAME's `src`, but preserve the
-      // kit-relative file identity in `sourcePath`. A host read-file tool
-      // has a relative-path contract, so it MUST receive `sourcePath` (when
-      // present) rather than the rewritten transport URL, which would
-      // always fail (or worse, resolve to the wrong file) against a real
-      // host.
+      // Copilot #4 — embedded manifests rewrite `component.path` to an absolute/data transport URL
+      // for the IFRAME's `src`, but preserve the kit-relative file identity in `sourcePath`. A host
+      // read-file tool has a relative-path contract, so it MUST receive `sourcePath` (when present)
+      // rather than the rewritten transport URL, which would always fail (or worse, resolve to the
+      // wrong file) against a real host.
       var readPath = component.sourcePath || component.path;
       if (!readPath) return Promise.resolve(null);
       return hostBridge
@@ -4752,29 +4681,25 @@
         component: component,
         source: source,
         sourceLoading: sourceLoading,
-        // AC2/S2 — Refine resolves bytes through this at click time. The
-        // render-time `source` is `null` on first paint (read still in
-        // flight), so a snapshot would hand Review an empty baseline forever.
+        // AC2/S2 — Refine resolves bytes through this at click time. The render-time `source` is
+        // `null` on first paint (read still in flight), so a snapshot would hand Review an empty
+        // baseline forever.
         resolveSource: function () {
           return latestSource;
         },
         hostAvailable: Boolean(hostBridge),
-        // Copilot review (PR #248, AC13) — gates the Refine button
-        // separately from source-read availability; see `refineEnabled`'s
-        // own comment above.
+        // Copilot review (PR #248, AC13) — gates the Refine button separately from source-read
+        // availability; see `refineEnabled`'s own comment above.
         refineAvailable: refineEnabled,
-        // Copilot review (PR #248) — this previously called
-        // `writeRoute(win, "review", false)` (a PUSH) unconditionally, before
-        // the real shell's `setRefineContext` (`initProductShell`) ran its
-        // own `navigate("review", false, true)` — which itself does a
-        // SECOND `writeRoute` push plus render/focus. That put two
-        // identical "review" history entries on the stack, so a single Back
-        // press after a Refine handoff landed back on "review" instead of
-        // Browse. `replace: true` here means this write is never itself a
-        // second history entry — it only ensures the URL reflects "review"
-        // when no shell is attached at all (the controller is exercised
-        // standalone in tests with no shell), while a REAL shell's own push
-        // (via `navigate`) remains the only entry Back has to undo.
+        // Copilot review (PR #248) — this previously called `writeRoute(win, "review", false)` (a
+        // PUSH) unconditionally, before the real shell's `setRefineContext` (`initProductShell`)
+        // ran its own `navigate("review", false, true)` — which itself does a SECOND `writeRoute`
+        // push plus render/focus. That put two identical "review" history entries on the stack, so
+        // a single Back press after a Refine handoff landed back on "review" instead of Browse.
+        // `replace: true` here means this write is never itself a second history entry — it only
+        // ensures the URL reflects "review" when no shell is attached at all (the controller is
+        // exercised standalone in tests with no shell), while a REAL shell's own push (via
+        // `navigate`) remains the only entry Back has to undo.
         onRefine: function (context) {
           if (win) writeRoute(win, "review", true);
           if (typeof options.onRefine === "function") options.onRefine(context);
@@ -4782,14 +4707,12 @@
       };
     }
 
-    // Copilot #24 — identity of the last selection whose detail/source panel
-    // was actually (re)rendered. A plain search-filter keystroke only needs
-    // to refresh the filtered tree list; re-rendering the detail panel and
-    // re-issuing a `mcp__genie__read_file` call for a selection that hasn't
-    // changed is wasted work — it visibly reloads the preview iframe on
-    // every character typed. Callers that DO need the detail panel refreshed
-    // even when the selection is unchanged (HMR content updates, a host
-    // bridge becoming available) pass `forceDetailRender: true`.
+    // Copilot #24 — identity of the last selection whose detail/source panel was actually
+    // (re)rendered. A plain search-filter keystroke only needs to refresh the filtered tree list;
+    // re-rendering the detail panel and re-issuing a `mcp__genie__read_file` call for a selection
+    // that hasn't changed is wasted work — it visibly reloads the preview iframe on every character
+    // typed. Callers that DO need the detail panel refreshed even when the selection is unchanged
+    // (HMR content updates, a host bridge becoming available) pass `forceDetailRender: true`.
     var lastRenderedSelectionKey = undefined;
 
     function selectionKey(sel) {
@@ -4797,17 +4720,16 @@
     }
 
     function renderAll(forceDetailRender) {
-      // Copilot #6 — project the FILTERED tree only for the visible tree
-      // list/counts; selection resolution below always uses the UNFILTERED
-      // manifest, so typing a filter that hides the selected component never
-      // conflates "filtered out" with "removed from the manifest".
+      // Copilot #6 — project the FILTERED tree only for the visible tree list/counts; selection
+      // resolution below always uses the UNFILTERED manifest, so typing a filter that hides the
+      // selected component never conflates "filtered out" with "removed from the manifest".
       var filteredTree = projectManifestToTree(manifest, currentSearch());
       var unfilteredTree = projectManifestToTree(manifest, "");
       renderBrowseTree(doc, treeContainer, filteredTree, currentSearch(), select, selection);
 
-      // Copilot #24 — skip the detail-panel rebuild (and its source re-read)
-      // when the selection identity hasn't actually changed since the last
-      // time it was rendered and no caller has demanded a fresh render.
+      // Copilot #24 — skip the detail-panel rebuild (and its source re-read) when the selection
+      // identity hasn't actually changed since the last time it was rendered and no caller has
+      // demanded a fresh render.
       var nextKey = selectionKey(selection);
       if (!forceDetailRender && nextKey === lastRenderedSelectionKey) return;
       lastRenderedSelectionKey = nextKey;
@@ -4829,17 +4751,15 @@
       var resolved = resolveSelection(unfilteredTree, selection);
       if (!resolved.found) {
         renderBrowseDetailRemoved(doc, detailContainer, { componentName: selection.componentName });
-        // Move focus to the nearest valid navigation control (AC/a11y) —
-        // whichever one is actually visible at the current breakpoint (see
-        // `focusVisibleBrowseNavControl`'s own doc comment).
+        // Move focus to the nearest valid navigation control (AC/a11y) — whichever one is actually
+        // visible at the current breakpoint (see `focusVisibleBrowseNavControl`'s own doc comment).
         focusVisibleBrowseNavControl(doc, treeContainer, searchInput);
         return;
       }
 
-      // Copilot #17 — the initial render for a host-backed selection must
-      // show a distinct LOADING state, not the settled-failure copy; the
-      // failure copy is reserved for when the async read below actually
-      // resolves to `null`.
+      // Copilot #17 — the initial render for a host-backed selection must show a distinct LOADING
+      // state, not the settled-failure copy; the failure copy is reserved for when the async read
+      // below actually resolves to `null`.
       latestSource = null;
       renderBrowseDetail(
         doc,
@@ -4850,12 +4770,10 @@
       if (!hostBridge) return;
 
       fetchSource(resolved.component).then(function (source) {
-        // Copilot #7 — stale-result guard: only the render generation that
-        // is STILL current when this read resolves may commit. A plain
-        // identity check (group/componentName only, the prior guard) cannot
-        // catch HMR replacing the same-identity component's content/path
-        // while an older read for the PRIOR content is in flight; the
-        // generation counter does.
+        // Copilot #7 — stale-result guard: only the render generation that is STILL current when
+        // this read resolves may commit. A plain identity check (group/componentName only, the
+        // prior guard) cannot catch HMR replacing the same-identity component's content/path while
+        // an older read for the PRIOR content is in flight; the generation counter does.
         if (generation !== renderGeneration) return;
         if (
           !selection ||
@@ -4864,10 +4782,9 @@
         ) {
           return;
         }
-        // Copilot review (PR #248) — update only the source subpanel in
-        // place, guarded by the generation/selection checks above, instead
-        // of a full `renderBrowseDetail` that would tear down and re-fetch
-        // the still-live preview iframe just to paint the resolved source.
+        // Copilot review (PR #248) — update only the source subpanel in place, guarded by the
+        // generation/selection checks above, instead of a full `renderBrowseDetail` that would tear
+        // down and re-fetch the still-live preview iframe just to paint the resolved source.
         latestSource = source;
         renderBrowseDetailSource(
           doc,
@@ -4881,10 +4798,9 @@
       selection = sel;
       writeSelectionToUrl(sel);
       renderAll();
-      // Copilot #22 — `renderAll()` rebuilds the tree DOM from scratch, which
-      // detaches whatever treeitem the keyboard/activation event had focus
-      // on. Without this, focus silently drops to <body> after every
-      // selection change. Restore it explicitly to the newly (re)rendered
+      // Copilot #22 — `renderAll()` rebuilds the tree DOM from scratch, which detaches whatever
+      // treeitem the keyboard/activation event had focus on. Without this, focus silently drops to
+      // <body> after every selection change. Restore it explicitly to the newly (re)rendered
       // selected row so keyboard navigation stays predictable.
       var activeItem = treeContainer.querySelector('[role="treeitem"][aria-selected="true"]');
       if (activeItem && typeof activeItem.focus === "function") activeItem.focus();
@@ -4896,20 +4812,18 @@
       if (clear && searchInput) {
         searchInput.value = "";
         renderAll();
-        // Copilot review (PR #248) — after clearing the filter, `renderAll()`
-        // rebuilds the tree DOM and the "Clear filter" button (which had
-        // focus) is detached, so focus silently drops to <body>. Return
-        // focus to the search input so the user can immediately continue
+        // Copilot review (PR #248) — after clearing the filter, `renderAll()` rebuilds the tree DOM
+        // and the "Clear filter" button (which had focus) is detached, so focus silently drops to
+        // <body>. Return focus to the search input so the user can immediately continue
         // typing/keyboard-navigating without hunting for a focus target.
         searchInput.focus();
       }
     });
 
-    // A bare `searchInput.addEventListener("input", renderAll)` would pass
-    // the DOM Event object as `renderAll`'s `forceDetailRender` argument —
-    // always truthy — silently defeating the Copilot #24 dedup on every
-    // keystroke. Wrap it so a search keystroke only ever requests the
-    // default (non-forced) render.
+    // A bare `searchInput.addEventListener("input", renderAll)` would pass the DOM Event object as
+    // `renderAll`'s `forceDetailRender` argument — always truthy — silently defeating the Copilot
+    // #24 dedup on every keystroke. Wrap it so a search keystroke only ever requests the default
+    // (non-forced) render.
     function onSearchInput() {
       renderAll();
     }
@@ -4918,12 +4832,11 @@
       searchInput.addEventListener("input", onSearchInput);
     }
 
-    // Deep-link (Decision #7): read an initial selection from the URL.
-    // Copilot #8 — a link's `kitId` (when present) must match the CURRENT
-    // kit; a mismatched kitId means the link was minted for a different kit
-    // and a same-named component here would be the wrong one, so the
-    // deep-link is rejected (falls back to no initial selection) rather
-    // than silently resolving against this kit.
+    // Deep-link (Decision #7): read an initial selection from the URL. Copilot #8 — a link's
+    // `kitId` (when present) must match the CURRENT kit; a mismatched kitId means the link was
+    // minted for a different kit and a same-named component here would be the wrong one, so the
+    // deep-link is rejected (falls back to no initial selection) rather than silently resolving
+    // against this kit.
     if (win) {
       try {
         var initial = parseSelection(new win.URL(win.location.href).searchParams);
@@ -4940,55 +4853,60 @@
     return {
       update: function (nextManifest) {
         manifest = nextManifest || { components: [], groups: [] };
-        // HMR-safe: an update never resets an unrelated selection or filter
-        // (product-behavior requirement) — `renderAll` re-resolves the SAME
-        // `selection` identity against the fresh manifest and only shows the
-        // "removed" state if it genuinely no longer resolves. Force the
-        // detail panel to re-render even though the selection's identity is
-        // unchanged — HMR can replace the SAME component's content/source,
-        // which the identity-only dedup in `renderAll` would otherwise skip.
+        // HMR-safe: an update never resets an unrelated selection or filter (product-behavior
+        // requirement) — `renderAll` re-resolves the SAME `selection` identity against the fresh
+        // manifest and only shows the "removed" state if it genuinely no longer resolves. Force the
+        // detail panel to re-render even though the selection's identity is unchanged — HMR can
+        // replace the SAME component's content/source, which the identity-only dedup in `renderAll`
+        // would otherwise skip.
         renderAll(true);
       },
-      // Copilot #1 — the embedded tier's host bridge only exists after the
-      // `ui://` MCP-App handshake resolves (asynchronously, after
-      // `initBrowseController` is first called with `hostBridge: null` so
-      // the workbench renders immediately rather than waiting on the host).
-      // This lets the boot path hand the bridge in later without recreating
-      // the whole controller (and losing the live selection/filter state).
+      // Copilot #1 — the embedded tier's host bridge only exists after the `ui://` MCP-App
+      // handshake resolves (asynchronously, after `initBrowseController` is first called with
+      // `hostBridge: null` so the workbench renders immediately rather than waiting on the host).
+      // This lets the boot path hand the bridge in later without recreating the whole controller
+      // (and losing the live selection/filter state).
       setHostBridge: function (nextBridge) {
         hostBridge = nextBridge || null;
-        // Copilot review (PR #248, AC13) — `setHostBridge` is ONLY ever
-        // called from the embedded tier's real MCP-App handshake
-        // (`onReady`/`onUnavailable` in `boot()`), never by the standalone
-        // tier's `createStandaloneSourceBridge` path. So this is exactly the
-        // signal that a real, Refine-capable host is present.
+        // Copilot review (PR #248, AC13) — `setHostBridge` is ONLY ever called from the embedded
+        // tier's real MCP-App handshake (`onReady`/`onUnavailable` in `boot()`), never by the
+        // standalone tier's `createStandaloneSourceBridge` path. So this is exactly the signal that
+        // a real, Refine-capable host is present.
         refineEnabled = Boolean(nextBridge);
-        // Force a re-render: the bridge just changed from absent to present
-        // (or vice versa), which must re-evaluate `hostAvailable`/source
-        // fetching for the SAME selection, not be skipped by the identity
-        // dedup in `renderAll`.
+        // Force a re-render: the bridge just changed from absent to present (or vice versa), which
+        // must re-evaluate `hostAvailable`/source fetching for the SAME selection, not be skipped
+        // by the identity dedup in `renderAll`.
         renderAll(true);
       },
-      // Copilot review (PR #248) — a live `card.changed`/`tokens.changed`
-      // HMR push (WS or postMessage) doesn't carry a new manifest at all —
-      // it's purely a content-repaint signal for whatever the CURRENT
-      // manifest already describes. `update()` above requires a manifest
-      // argument and is the wrong tool here; `refresh()` re-renders the
-      // selected detail (forcing past the identity dedup, exactly like
-      // `update(true)`/`setHostBridge` do) against the manifest already on
-      // file, so the selected preview/source panel picks up the repaint
-      // instead of silently going stale.
+      // Copilot review (PR #248) — a live `card.changed`/`tokens.changed` HMR push (WS or
+      // postMessage) doesn't carry a new manifest at all — it's purely a content-repaint signal for
+      // whatever the CURRENT manifest already describes. `update()` above requires a manifest
+      // argument and is the wrong tool here; `refresh()` re-renders the selected detail (forcing
+      // past the identity dedup, exactly like `update(true)`/`setHostBridge` do) against the
+      // manifest already on file, so the selected preview/source panel picks up the repaint instead
+      // of silently going stale.
       refresh: function () {
         renderAll(true);
       },
-      // AC13 — open the just-written component with LIVE bytes. No manifest
-      // re-fetch (embedded ships `connect-src 'none'`): merge in-memory, let
-      // HMR reconcile, and let `select` re-read through the host bridge.
-      openComponent: function (group, componentName) {
+      // AC13 — open the just-written component with LIVE bytes. No manifest re-fetch (embedded
+      // ships `connect-src 'none'`): merge in-memory, let HMR reconcile, and let `select` re-read
+      // through the host bridge.
+      openComponent: function (group, componentName, kitId) {
         if (!group || !componentName) return;
+        // Copilot (round 2) — Browse's kit is fixed at construction and feeds `read_file`. Opening
+        // a component from a DIFFERENT kit would read the wrong bytes under the right name. Refuse;
+        // the caller turns this into the truthful AC14 "written, but the view is stale" state.
+        //
+        // `kitId` MUST be in Browse's own namespace (`options.kitId`, i.e. the manifest name the
+        // boot seeded). It is NOT the server's kit id: `Manifest` carries no id field and a server
+        // kit id is a UUID (store/local.ts), so the two are not comparable. The post-Apply handoff
+        // therefore passes nothing — see #254 for closing that gap properly.
+        if (kitId && options.kitId && kitId !== options.kitId) {
+          throw new Error("Browse is showing " + options.kitId + ", not " + kitId + ".");
+        }
         var components = (manifest && manifest.components) || [];
-        // Copilot #6 (PR #250) — the RAW manifest keys entries by `name`;
-        // `componentName` is the TREE's shape and never matches here.
+        // Copilot #6 (PR #250) — the RAW manifest keys entries by `name`; `componentName` is the
+        // TREE's shape and never matches here.
         var known = components.some(function (component) {
           return component && component.group === group && component.name === componentName;
         });
@@ -5000,8 +4918,7 @@
               {
                 name: componentName,
                 group: group,
-                path:
-                  "components/" + group + "/" + componentName + "/" + componentName + ".html",
+                path: "components/" + group + "/" + componentName + "/" + componentName + ".html",
               },
             ]),
             groups: groups.indexOf(group) === -1 ? groups.concat([group]) : groups,
@@ -5016,30 +4933,26 @@
     };
   }
 
-  // ── HMR: per-card live refresh (M4-04 / DRO-266) ───────────────────────────
+  // ── HMR: per-card live refresh (M4-04 / DRO-266) ────
   //
   // Two transports, one pure dispatcher (`applyHmrMessage`):
   //   1. A WebSocket on `/__genie_hmr` (AC1/AC2) — the primary channel on the
-  //      Vite dev server (`http(s)://…`). The server plugin
-  //      (`src/hmr-plugin.ts`) pushes `{event:"card.changed",path}` /
-  //      `{event:"tokens.changed"}` off Vite's own file watcher.
+  // Vite dev server (`http(s)://…`). The server plugin (`src/hmr-plugin.ts`) pushes
+  // `{event:"card.changed",path}` / `{event:"tokens.changed"}` off Vite's own file watcher.
   //   2. `window` `postMessage` — the bridge for the EMBEDDED `ui://` tier,
-  //      where the grid runs inside a host iframe under strict CSP
-  //      (`default-src 'none'`, coordinated with DRO-269) that may forbid a
-  //      direct WebSocket. A host forwards the same refresh signal as a
-  //      message; we accept both the WS shape AND the research sketch's
+  // where the grid runs inside a host iframe under strict CSP (`default-src 'none'`, coordinated
+  // with DRO-269) that may forbid a direct WebSocket. A host forwards the same refresh signal as a
+  // message; we accept both the WS shape AND the research sketch's
   //      `{type:"refresh", id|path}` shape (M4-04 summary).
   //
-  // Why src-reassignment, not `iframe.contentWindow.location.reload()` (which
-  // AC2 literally names): every preview iframe is `sandbox="allow-scripts"`
-  // with NO `allow-same-origin` (M4-03 AC3, a hard security rule) — so it has
-  // an opaque origin and touching `contentWindow.location` throws cross-origin.
-  // Reassigning `src` with a fresh cache-bust token is the cross-origin-safe
-  // equivalent with the identical observable outcome: ONLY that one iframe
-  // refetches its `preview.html` and reloads; the grid never re-renders and no
-  // sibling card reflows (AC3 — the sub-100 ms, one-card-only guarantee is
-  // structural, not a timing hack). `data-path` stays the stable identity the
-  // bridge matches on; the `?__genie_hmr=N` token rides only on the live `src`.
+  // Why src-reassignment, not `iframe.contentWindow.location.reload()` (which AC2 literally names):
+  // every preview iframe is `sandbox="allow-scripts"` with NO `allow-same-origin` (M4-03 AC3, a
+  // hard security rule) — so it has an opaque origin and touching `contentWindow.location` throws
+  // cross-origin. Reassigning `src` with a fresh cache-bust token is the cross-origin-safe
+  // equivalent with the identical observable outcome: ONLY that one iframe refetches its
+  // `preview.html` and reloads; the grid never re-renders and no sibling card reflows (AC3 — the
+  // sub-100 ms, one-card-only guarantee is structural, not a timing hack). `data-path` stays the
+  // stable identity the bridge matches on; the `?__genie_hmr=N` token rides only on the live `src`.
 
   /** AC1's WebSocket endpoint path — must match `GENIE_HMR_PATH` server-side. */
   var HMR_PATH = "/__genie_hmr";
@@ -5054,10 +4967,9 @@
   var hmrReloadToken = 0;
 
   /**
-   * Normalise a raw WS frame (a JSON string) or a `postMessage` payload (a
-   * string or already-parsed object) into an internal reload command, or
-   * `null` for anything unrecognised (so unrelated `postMessage`s from other
-   * libraries are silently ignored). Accepts both wire shapes:
+   * Normalise a raw WS frame (a JSON string) or a `postMessage` payload (a string or already-parsed
+   * object) into an internal reload command, or `null` for anything unrecognised (so unrelated
+   * `postMessage`s from other libraries are silently ignored). Accepts both wire shapes:
    *   - `{ event: "card.changed", path }`  → `{ kind: "card", path }`   (WS, AC2)
    *   - `{ event: "tokens.changed" }`       → `{ kind: "tokens" }`       (WS, AC5)
    *   - `{ event: "manifest.changed" }`     → `{ kind: "manifest" }`     (WS, structural)
@@ -5101,9 +5013,9 @@
   }
 
   /**
-   * Reassign one iframe's `src` to its stable `data-src` plus a fresh
-   * cache-bust token, or install `freshSrc` from the embedded host for a
-   * data-backed card. Returns `true` when a navigation was started.
+   * Reassign one iframe's `src` to its stable `data-src` plus a fresh cache-bust token, or install
+   * `freshSrc` from the embedded host for a data-backed card. Returns `true` when a navigation was
+   * started.
    *
    * @param {HTMLIFrameElement} iframe
    * @param {number|string} token
@@ -5128,9 +5040,9 @@
   }
 
   /**
-   * AC2 — reload ONLY the card(s) whose `data-path` equals `path`. Iterates
-   * (rather than a `[data-path="…"]` selector) so a path with selector-special
-   * characters can't break matching. Returns how many iframes were reloaded.
+   * AC2 — reload ONLY the card(s) whose `data-path` equals `path`. Iterates (rather than a
+   * `[data-path="…"]` selector) so a path with selector-special characters can't break matching.
+   * Returns how many iframes were reloaded.
    *
    * @param {HTMLElement} grid
    * @param {string} path
@@ -5153,9 +5065,9 @@
   }
 
   /**
-   * AC5 — reload EVERY card iframe (a tokens/styles change repaints them all).
-   * One shared token for the batch is fine: each iframe has a distinct path, so
-   * the token only needs to differ from that iframe's previous `src`.
+   * AC5 — reload EVERY card iframe (a tokens/styles change repaints them all). One shared token for
+   * the batch is fine: each iframe has a distinct path, so the token only needs to differ from that
+   * iframe's previous `src`.
    *
    * @param {HTMLElement} grid
    * @param {number|string} token
@@ -5172,10 +5084,9 @@
   }
 
   /**
-   * Pure dispatcher: normalise a message and apply it to the grid, returning
-   * the number of iframes reloaded (0 for an unrecognised or no-match message).
-   * A caller may pin `token` for determinism; otherwise a monotonic token is
-   * used so each dispatch actually changes every affected `src`.
+   * Pure dispatcher: normalise a message and apply it to the grid, returning the number of iframes
+   * reloaded (0 for an unrecognised or no-match message). A caller may pin `token` for determinism;
+   * otherwise a monotonic token is used so each dispatch actually changes every affected `src`.
    *
    * @param {HTMLElement} grid
    * @param {unknown} message
@@ -5193,11 +5104,10 @@
   }
 
   /**
-   * AC4 (polling fallback) — pure diff of two manifests: the kit-relative paths
-   * of components PRESENT in both whose `hash` changed. Structural and rendered
-   * metadata changes are detected separately by `manifestStructureChanged` and
-   * trigger a full re-render; this helper intentionally reports only in-place
-   * content edits. Never throws on a partial/absent manifest.
+   * AC4 (polling fallback) — pure diff of two manifests: the kit-relative paths of components
+   * PRESENT in both whose `hash` changed. Structural and rendered metadata changes are detected
+   * separately by `manifestStructureChanged` and trigger a full re-render; this helper
+   * intentionally reports only in-place content edits. Never throws on a partial/absent manifest.
    *
    * @param {object} prev
    * @param {object} next
@@ -5229,17 +5139,15 @@
   }
 
   /**
-   * True when component membership/order OR declared group order changed —
-   * i.e. the grid itself must be torn down and rebuilt. Deliberately
-   * excludes `hash` (a real per-card reload via `diffManifestHashes` is
-   * enough) AND excludes `tags`/`subtitle`/`lastModified` — those never
-   * change what the GRID renders, only Browse's detail panel (see
-   * `manifestBrowseMetadataChanged` below for that comparison). Critically,
-   * `lastModified` is derived from `stat(absPath).mtime` on every compile
-   * (`packages/server/src/manifest/compiler.ts`), so it changes on EVERY
-   * real edit; including it here would force the expensive full-grid
-   * `renderManifestUpdate` path on every ordinary content-hash-changing
-   * edit instead of the lightweight per-card `reloadCardByPath` path.
+   * True when component membership/order OR declared group order changed — i.e. the grid itself
+   * must be torn down and rebuilt. Deliberately excludes `hash` (a real per-card reload via
+   * `diffManifestHashes` is enough) AND excludes `tags`/`subtitle`/`lastModified` — those never
+   * change what the GRID renders, only Browse's detail panel (see `manifestBrowseMetadataChanged`
+   * below for that comparison). Critically, `lastModified` is derived from `stat(absPath).mtime` on
+   * every compile (`packages/server/src/manifest/compiler.ts`), so it changes on EVERY real edit;
+   * including it here would force the expensive full-grid `renderManifestUpdate` path on every
+   * ordinary content-hash-changing edit instead of the lightweight per-card `reloadCardByPath`
+   * path.
    *
    * @param {object} prev
    * @param {object} next
@@ -5268,20 +5176,17 @@
   }
 
   /**
-   * True when any Browse-rendered metadata field (`tags`, `subtitle`,
-   * `lastModified`) changed for any component, independent of `hash`/
-   * structural identity.
+   * True when any Browse-rendered metadata field (`tags`, `subtitle`, `lastModified`) changed for
+   * any component, independent of `hash`/ structural identity.
    *
-   * Copilot review (PR #248) — Browse's detail panel (`renderBrowseDetail`)
-   * renders `tags`, `subtitle` (breadcrumb), and `lastModified` straight
-   * from the manifest; a manifest update that changes ONLY one of those (no
-   * path/name/group/viewport/hash change) was invisible to both
-   * `manifestStructureChanged` and `diffManifestHashes`, so `onManifestUpdate`
-   * never fired and the visible Browse detail went stale. This is checked
-   * SEPARATELY from `manifestStructureChanged` (rather than folded into it)
-   * so it only ever triggers Browse's own re-render, never the full-grid
-   * rebuild path — see that function's doc for why `lastModified` in
-   * particular must stay out of the grid-rebuild decision.
+   * Copilot review (PR #248) — Browse's detail panel (`renderBrowseDetail`) renders `tags`,
+   * `subtitle` (breadcrumb), and `lastModified` straight from the manifest; a manifest update that
+   * changes ONLY one of those (no path/name/group/viewport/hash change) was invisible to both
+   * `manifestStructureChanged` and `diffManifestHashes`, so `onManifestUpdate` never fired and the
+   * visible Browse detail went stale. This is checked SEPARATELY from `manifestStructureChanged`
+   * (rather than folded into it) so it only ever triggers Browse's own re-render, never the
+   * full-grid rebuild path — see that function's doc for why `lastModified` in particular must stay
+   * out of the grid-rebuild decision.
    *
    * @param {object} prev
    * @param {object} next
@@ -5316,10 +5221,9 @@
   }
 
   /**
-   * AC6 — increment the header's reload counter by `n` (a no-op when `n<=0` or
-   * the counter element is absent, e.g. the embedded shell). The count is
-   * mirrored in a `data-count` attribute so a test can read it without parsing
-   * display text.
+   * AC6 — increment the header's reload counter by `n` (a no-op when `n<=0` or the counter element
+   * is absent, e.g. the embedded shell). The count is mirrored in a `data-count` attribute so a
+   * test can read it without parsing display text.
    *
    * @param {Document} doc
    * @param {number} n
@@ -5335,11 +5239,10 @@
   }
 
   /**
-   * The `ws(s)://…/__genie_hmr` URL for the current location, or `null` when
-   * there is no dev server to connect to — a `file://` open or an opaque/`ui://`
-   * embedded origin. That `null` is what makes the script byte-identical across
-   * vehicles (RFC G-5): the SAME `viewer.js` simply skips the live socket where
-   * one can't exist and leans on the `postMessage` bridge instead.
+   * The `ws(s)://…/__genie_hmr` URL for the current location, or `null` when there is no dev server
+   * to connect to — a `file://` open or an opaque/`ui://` embedded origin. That `null` is what
+   * makes the script byte-identical across vehicles (RFC G-5): the SAME `viewer.js` simply skips
+   * the live socket where one can't exist and leans on the `postMessage` bridge instead.
    *
    * @param {Location|{protocol?:string,host?:string}} loc
    * @returns {string|null}
@@ -5350,9 +5253,9 @@
   }
 
   /**
-   * Wire the live-refresh channels and return a teardown function. Everything
-   * the browser touches is injectable so `hmr-client.test.ts` drives the whole
-   * thing in jsdom with fakes — no real socket, no real timers, no network:
+   * Wire the live-refresh channels and return a teardown function. Everything the browser touches
+   * is injectable so `hmr-client.test.ts` drives the whole thing in jsdom with fakes — no real
+   * socket, no real timers, no network:
    *
    *   - `win`            — the window to bind `message`/`WebSocket` on (default `window`)
    *   - `location`       — used to derive the WS URL (default `win.location`)
@@ -5363,12 +5266,11 @@
    *   - `initialManifest`— baseline so the FIRST poll can already detect a change
    *   - `pollIntervalMs` — cadence (default `HMR_POLL_INTERVAL_MS`)
    *   - `parentOrigin`   — optional trusted embedding-host origin; otherwise
-   *                        derived from `document.referrer` when available
+   * derived from `document.referrer` when available
    *
-   * The `postMessage` bridge is ALWAYS active (harmless where unused). The WS +
-   * polling only engage when {@link hmrSocketUrl} resolves (a real dev server);
-   * on `file://`/`ui://` there is nothing to poll, so we don't spin a timer
-   * against a static snapshot.
+   * The `postMessage` bridge is ALWAYS active (harmless where unused). The WS + polling only engage
+   * when {@link hmrSocketUrl} resolves (a real dev server); on `file://`/`ui://` there is nothing
+   * to poll, so we don't spin a timer against a static snapshot.
    *
    * @param {Document} doc
    * @param {object=} options
@@ -5380,10 +5282,9 @@
     if (!grid) return function () {};
 
     // Resolve each injectable via an explicit "key in opts" check (not `||`), so
-    // a test can DISABLE a capability by passing it as `undefined`/`null` — e.g.
-    // `WebSocketImpl: undefined` to exercise the no-WebSocket polling path even
-    // though the ambient jsdom `window` provides a real one. Production callers
-    // omit the key entirely and get the ambient default.
+    // a test can DISABLE a capability by passing it as `undefined`/`null` — e.g. `WebSocketImpl:
+    // undefined` to exercise the no-WebSocket polling path even though the ambient jsdom `window`
+    // provides a real one. Production callers omit the key entirely and get the ambient default.
     var win = "win" in opts ? opts.win : typeof window !== "undefined" ? window : undefined;
     var location = "location" in opts ? opts.location : win && win.location;
     var WebSocketImpl =
@@ -5426,33 +5327,27 @@
         }
         if (total > 0) bumpReloadCounter(doc, total);
       }
-      // Copilot review (PR #248) — checked against the PRE-update
-      // `lastManifest` (below reassigns it), independent of `structureChanged`/
-      // `contentChangedPaths`, so a metadata-only edit (tags/subtitle/
-      // lastModified, with no path/name/group/viewport/hash change) still
-      // notifies Browse even though it's invisible to the grid-rebuild
-      // decision above.
+      // Copilot review (PR #248) — checked against the PRE-update `lastManifest` (below reassigns
+      // it), independent of `structureChanged`/ `contentChangedPaths`, so a metadata-only edit
+      // (tags/subtitle/ lastModified, with no path/name/group/viewport/hash change) still notifies
+      // Browse even though it's invisible to the grid-rebuild decision above.
       var metadataChanged =
         Boolean(lastManifest) && manifestBrowseMetadataChanged(lastManifest, next);
       lastManifest = next;
-      // M7-02 (#234) — HMR-safe Browse: re-project the SAME live tree/
-      // selection against the fresh manifest on every update (structural or
-      // content-only alike), never resetting an unrelated selection/filter
-      // (see `initBrowseController`'s own doc for why re-resolving-by-
-      // identity is safe here).
+      // M7-02 (#234) — HMR-safe Browse: re-project the SAME live tree/ selection against the fresh
+      // manifest on every update (structural or content-only alike), never resetting an unrelated
+      // selection/filter (see `initBrowseController`'s own doc for why re-resolving-by- identity is
+      // safe here).
       //
-      // Copilot review (PR #248) — but only when the manifest actually
-      // changed. Standalone/localhost Browse polls every
-      // `HMR_POLL_INTERVAL_MS` (2s) unconditionally (no WebSocket), and
-      // every one of those ticks used to call `onManifestUpdate` even for a
-      // byte-equivalent response — `initBrowseController.update()` treats
-      // that as "manifest changed" unconditionally and re-renders detail
-      // (which re-runs `fetchSource`), so a selected component's preview and
-      // source panel silently reloaded every 2 seconds with nothing to show
-      // for it. `structureChanged` (a genuinely new/removed group or
-      // component), a non-empty `contentChangedPaths` (a real per-card hash
-      // diff), or `metadataChanged` (a Browse-visible metadata-only edit) are
-      // the only ways `next` can differ from `lastManifest` in a way Browse
+      // Copilot review (PR #248) — but only when the manifest actually changed.
+      // Standalone/localhost Browse polls every `HMR_POLL_INTERVAL_MS` (2s) unconditionally (no
+      // WebSocket), and every one of those ticks used to call `onManifestUpdate` even for a
+      // byte-equivalent response — `initBrowseController.update()` treats that as "manifest
+      // changed" unconditionally and re-renders detail (which re-runs `fetchSource`), so a selected
+      // component's preview and source panel silently reloaded every 2 seconds with nothing to show
+      // for it. `structureChanged` (a genuinely new/removed group or component), a non-empty
+      // `contentChangedPaths` (a real per-card hash diff), or `metadataChanged` (a Browse-visible
+      // metadata-only edit) are the only ways `next` can differ from `lastManifest` in a way Browse
       // should react to.
       if (
         (structureChanged || contentChangedPaths.length > 0 || metadataChanged) &&
@@ -5500,16 +5395,14 @@
       }
       var reloaded = applyHmrMessage(grid, rawData);
       if (reloaded > 0) bumpReloadCounter(doc, reloaded);
-      // Copilot review (PR #248) — `card.changed`/`tokens.changed` (and the
-      // legacy `refresh` message normalizing to the same commands) previously
-      // reloaded ONLY the hidden `#grid`'s iframes via `applyHmrMessage`
-      // above. Neither `onManifestUpdate` (fired only by the fetch-manifest
-      // path in `applyFetchedManifest`) nor anything else told Browse's
-      // selected detail iframe to refresh, so it stayed visibly stale on a
-      // live per-card/token push even though the grid updated correctly.
-      // `onCardOrTokensChanged` lets the boot() call sites force a Browse
-      // detail re-render (bypassing the identity-selection dedup) on these
-      // normalized commands specifically.
+      // Copilot review (PR #248) — `card.changed`/`tokens.changed` (and the legacy `refresh`
+      // message normalizing to the same commands) previously reloaded ONLY the hidden `#grid`'s
+      // iframes via `applyHmrMessage` above. Neither `onManifestUpdate` (fired only by the
+      // fetch-manifest path in `applyFetchedManifest`) nor anything else told Browse's selected
+      // detail iframe to refresh, so it stayed visibly stale on a live per-card/token push even
+      // though the grid updated correctly. `onCardOrTokensChanged` lets the boot() call sites force
+      // a Browse detail re-render (bypassing the identity-selection dedup) on these normalized
+      // commands specifically.
       if (
         command &&
         (command.kind === "card" || command.kind === "tokens") &&
@@ -5519,7 +5412,7 @@
       }
     }
 
-    // ── Transport 2: the postMessage bridge (embedded ui:// tier) ────────────
+    // ── Transport 2: the postMessage bridge (embedded ui:// tier) ────
     var parentOrigin = null;
     var configuredParentOrigin = "parentOrigin" in opts ? opts.parentOrigin : doc.referrer;
     var ParentURL = win && win.URL;
@@ -5533,8 +5426,8 @@
     }
 
     function onMessage(event) {
-      // Sandboxed cards can call parent.postMessage despite lacking
-      // allow-same-origin. Only the embedding host may issue refresh commands.
+      // Sandboxed cards can call parent.postMessage despite lacking allow-same-origin. Only the
+      // embedding host may issue refresh commands.
       if (!event || !win || event.source !== win.parent) return;
       if (parentOrigin && event.origin !== parentOrigin) return;
       handle(event && "data" in event ? event.data : event);
@@ -5543,7 +5436,7 @@
       win.addEventListener("message", onMessage);
     }
 
-    // ── AC4: polling fallback ────────────────────────────────────────────────
+    // ── AC4: polling fallback ────
     function poll() {
       if (torn || pollInFlight || !fetchImpl) return;
       pollInFlight = true;
@@ -5556,8 +5449,7 @@
           applyFetchedManifest(next);
         })
         .catch(function () {
-          // A transient fetch failure must not kill the poll loop — try again
-          // next tick.
+          // A transient fetch failure must not kill the poll loop — try again next tick.
         })
         .then(finishManifestFetch);
     }
@@ -5567,7 +5459,7 @@
       pollTimer = setIntervalImpl(poll, pollIntervalMs);
     }
 
-    // ── Transport 1: the WebSocket (primary, dev-server only) ────────────────
+    // ── Transport 1: the WebSocket (primary, dev-server only) ────
     var url = hmrSocketUrl(location);
     if (url && WebSocketImpl) {
       try {
@@ -5575,22 +5467,21 @@
         socket.onmessage = function (event) {
           handle(event && "data" in event ? event.data : event);
         };
-        // A socket error or close (server gone, CSP block, network drop) falls
-        // back to polling — but only once (guarded inside startPolling).
+        // A socket error or close (server gone, CSP block, network drop) falls back to polling —
+        // but only once (guarded inside startPolling).
         socket.onerror = startPolling;
         socket.onclose = startPolling;
       } catch {
-        // Constructing the socket threw (e.g. a CSP `connect-src` block) — go
-        // straight to the polling fallback.
+        // Constructing the socket threw (e.g. a CSP `connect-src` block) — go straight to the
+        // polling fallback.
         startPolling();
       }
     } else if (url && !WebSocketImpl) {
-      // A dev server is present but this environment has no WebSocket at all —
-      // poll from the start.
+      // A dev server is present but this environment has no WebSocket at all — poll from the start.
       startPolling();
     }
-    // else (url === null): file:// / ui:// — no dev server to reach; the
-    // postMessage bridge above is the only live channel, by design.
+    // else (url === null): file:// / ui:// — no dev server to reach; the postMessage bridge above
+    // is the only live channel, by design.
 
     return function teardown() {
       torn = true;
@@ -5613,24 +5504,23 @@
   }
 
   /**
-   * Read the manifest inlined by the embedded `ui://genie/grid` tier (M4-06):
-   * a `<script type="application/json" id="manifest">` data island whose text
-   * content is the compiled manifest JSON. Returns the parsed object, or
-   * `null` when there is no such node (the `file://` / localhost tiers, which
-   * fetch instead) OR the node is present but not usable — wrong `type`, empty,
-   * or malformed JSON. A `null` return is the caller's signal to fall back to
-   * the network path; a malformed INLINE manifest deliberately degrades to that
-   * same fallback rather than throwing, so a corrupt payload surfaces as the
-   * normal error state, never an uncaught exception on the page.
+   * Read the manifest inlined by the embedded `ui://genie/grid` tier (M4-06): a `<script
+   * type="application/json" id="manifest">` data island whose text content is the compiled manifest
+   * JSON. Returns the parsed object, or `null` when there is no such node (the `file://` /
+   * localhost tiers, which fetch instead) OR the node is present but not usable — wrong `type`,
+   * empty, or malformed JSON. A `null` return is the caller's signal to fall back to the network
+   * path; a malformed INLINE manifest deliberately degrades to that same fallback rather than
+   * throwing, so a corrupt payload surfaces as the normal error state, never an uncaught exception
+   * on the page.
    *
-   * Reading `type` guards against picking up an unrelated `#manifest` element
-   * and, more importantly, means only a genuine data block (never an executable
-   * `<script>`) is ever parsed here.
+   * Reading `type` guards against picking up an unrelated `#manifest` element and, more
+   * importantly, means only a genuine data block (never an executable `<script>`) is ever parsed
+   * here.
    *
    * @param {Document} doc
    * @param {string=} elementId defaults to {@link MANIFEST_ELEMENT_ID}; pass
-   *   {@link MANIFEST_FULL_ELEMENT_ID} to read the full-kit island instead
-   *   (Copilot review, PR #248 — see that constant's own comment).
+   * {@link MANIFEST_FULL_ELEMENT_ID} to read the full-kit island instead (Copilot review, PR #248 —
+   * see that constant's own comment).
    * @returns {object | null}
    */
   function readInlineManifest(doc, elementId) {
@@ -5649,8 +5539,8 @@
   }
 
   /**
-   * Wire the `#q` search box to live-filter the rendered grid (AC5). Shared by
-   * both boot paths (inline + fetch) so the two vehicles behave identically.
+   * Wire the `#q` search box to live-filter the rendered grid (AC5). Shared by both boot paths
+   * (inline + fetch) so the two vehicles behave identically.
    *
    * @param {Document} doc
    * @param {HTMLElement} grid
@@ -5665,34 +5555,29 @@
   }
 
   /**
-   * Boot the viewer: obtain the manifest, render the grid, and wire the `#q`
-   * search input to live-filter (AC5). Resolves (never rejects) so a caller
-   * / the browser auto-boot can `await` it without an unhandled rejection;
-   * on any failure it paints the error state instead.
+   * Boot the viewer: obtain the manifest, render the grid, and wire the `#q` search input to
+   * live-filter (AC5). Resolves (never rejects) so a caller / the browser auto-boot can `await` it
+   * without an unhandled rejection; on any failure it paints the error state instead.
    *
-   * ── Manifest source: inline first, then fetch (M4-06 / DRO-268) ────────────
-   * The embedded `ui://genie/grid` tier inlines the manifest into the document
-   * (`<script type="application/json" id="manifest">`) because its CSP
-   * (`connect-src 'none'`) blocks `fetch` entirely. So `boot` reads the inline
-   * node FIRST and, when present, renders straight from it — issuing NO network
-   * request. Only when there is no inline node (the `file://` / localhost tiers)
-   * does it fall back to `fetch(MANIFEST_URL)`. This keeps `viewer.js`
-   * byte-identical across all three vehicles (RFC G-5) while honouring each
-   * tier's transport.
+   * ── Manifest source: inline first, then fetch (M4-06 / DRO-268) ────
+   * The embedded `ui://genie/grid` tier inlines the manifest into the document (`<script
+   * type="application/json" id="manifest">`) because its CSP (`connect-src 'none'`) blocks `fetch`
+   * entirely. So `boot` reads the inline node FIRST and, when present, renders straight from it —
+   * issuing NO network request. Only when there is no inline node (the `file://` / localhost tiers)
+   * does it fall back to `fetch(MANIFEST_URL)`. This keeps `viewer.js` byte-identical across all
+   * three vehicles (RFC G-5) while honouring each tier's transport.
    *
    * @param {Document} doc
    * @param {typeof fetch} fetchImpl
    * @returns {Promise<void>}
    */
   /**
-   * Copilot #3 (AC13) — a minimal `HostBridge`-shaped adapter for standalone
-   * Browse (`file://` / localhost, no MCP host) that still supports source
-   * inspection: `mcp__genie__read_file` reads the SAME-ORIGIN kit-relative
-   * path via the ordinary `fetch` already used for the manifest, rather than
-   * hard-coding a null bridge that guarantees every read fails. Any other
-   * tool name rejects — this adapter exists ONLY to satisfy Browse's
-   * read-only source panel, never to fake Refine/Conjure (those still
-   * correctly require a real MCP host and stay disabled — Decision #6).
+   * Copilot #3 (AC13) — a minimal `HostBridge`-shaped adapter for standalone Browse (`file://` /
+   * localhost, no MCP host) that still supports source inspection: `mcp__genie__read_file` reads
+   * the SAME-ORIGIN kit-relative path via the ordinary `fetch` already used for the manifest,
+   * rather than hard-coding a null bridge that guarantees every read fails. Any other tool name
+   * rejects — this adapter exists ONLY to satisfy Browse's read-only source panel, never to fake
+   * Refine/Conjure (those still correctly require a real MCP host and stay disabled — Decision #6).
    *
    * @param {(url: string) => Promise<Response>} fetchImpl
    * @returns {{callTool: Function, destroy(): void}}
@@ -5703,22 +5588,19 @@
         if (name !== "mcp__genie__read_file" || !args || typeof args.path !== "string") {
           return Promise.reject(new Error("Standalone Browse cannot call " + name + "."));
         }
-        // Path containment: reject anything that isn't a plain kit-relative
-        // path (no `..` segments, no scheme, no leading slash) — the same
-        // boundary a real host's read-file tool would enforce server-side
-        // (AC16), kept here since this adapter has no server to defer to.
+        // Path containment: reject anything that isn't a plain kit-relative path (no `..` segments,
+        // no scheme, no leading slash) — the same boundary a real host's read-file tool would
+        // enforce server-side (AC16), kept here since this adapter has no server to defer to.
         //
-        // Copilot review (PR #248) — the original check only rejected a
-        // literal `..` substring and a literal leading `/`, which the browser
-        // URL parser doesn't treat as the only escape hatches: (1) it treats
-        // backslashes as forward slashes for http(s) URLs, so
-        // `\\evil.example/x` resolves same as `//evil.example/x` (protocol-
-        // relative, off-origin) without ever containing a literal `/` at
-        // index 0; and (2) a percent-encoded segment (`%2e%2e`, `%2E%2e`,
-        // etc.) doesn't contain the literal string `..` pre-decode, but
-        // normalizes to `..` once `fetchImpl` (the real `fetch`) parses it.
-        // Decode first, then reject on backslashes, any leading separator,
-        // and any decoded `.`/`..` segment — closing both bypasses.
+        // Copilot review (PR #248) — the original check only rejected a literal `..` substring and
+        // a literal leading `/`, which the browser URL parser doesn't treat as the only escape
+        // hatches: (1) it treats backslashes as forward slashes for http(s) URLs, so
+        // `\\evil.example/x` resolves same as `//evil.example/x` (protocol- relative, off-origin)
+        // without ever containing a literal `/` at index 0; and (2) a percent-encoded segment
+        // (`%2e%2e`, `%2E%2e`, etc.) doesn't contain the literal string `..` pre-decode, but
+        // normalizes to `..` once `fetchImpl` (the real `fetch`) parses it. Decode first, then
+        // reject on backslashes, any leading separator, and any decoded `.`/`..` segment — closing
+        // both bypasses.
         var path = args.path;
         var decodedPath;
         try {
@@ -5730,18 +5612,14 @@
         var hasUnsafeSegment = segments.some(function (segment) {
           return segment === "." || segment === "..";
         });
-        // Copilot review (PR #248) — the WHATWG URL parser (and therefore
-        // `fetch`) strips leading/trailing "C0 control or space" characters
-        // (tabs, newlines, plain spaces, etc.) BEFORE scheme detection, so a
-        // value like "\nhttps://evil.example/x" has no leading scheme letter
-        // by the raw-string checks below yet is still parsed as an absolute,
-        // cross-origin URL once handed to `fetchImpl`. Reject any leading or
-        // trailing character in that stripped set up front so the scheme/
-        // separator checks below can't be bypassed by hiding them behind
-        // whitespace the parser would normalize away.
-        // Intentional: \x00-\x20 is exactly the WHATWG "C0 control or
-        // space" set the URL parser trims before scheme detection; that is
-        // the bypass being closed.
+        // Copilot review (PR #248) — the WHATWG URL parser (and therefore `fetch`) strips
+        // leading/trailing "C0 control or space" characters (tabs, newlines, plain spaces, etc.)
+        // BEFORE scheme detection, so a value like "\nhttps://evil.example/x" has no leading scheme
+        // letter by the raw-string checks below yet is still parsed as an absolute, cross-origin
+        // URL once handed to `fetchImpl`. Reject any leading or trailing character in that stripped
+        // set up front so the scheme/ separator checks below can't be bypassed by hiding them
+        // behind whitespace the parser would normalize away. Intentional: \x00-\x20 is the WHATWG
+        // "C0 control or space" set the URL parser trims first; that is the bypass being closed.
         // eslint-disable-next-line no-control-regex
         var URL_C0_OR_SPACE_RE = /^[\x00- ]|[\x00- ]$/;
         if (
@@ -5782,33 +5660,29 @@
         var inlineSearch = doc.defaultView && doc.defaultView.location;
         renderGrid(doc, grid, filterManifestBySearch(inline, inlineSearch?.search || ""));
         wireSearch(doc, grid);
-        // M4-04 (DRO-266) — this tier is EXACTLY who the postMessage bridge
-        // exists for (its strict CSP, connect-src 'none', blocks fetch AND a
-        // direct WebSocket alike — see initHmr's own header). hmrSocketUrl
-        // resolves to null here (no http(s) origin with a host — see its own
-        // doc), so initHmr transparently skips the WS + polling paths and
-        // wires ONLY the `message` listener: no network access is attempted,
-        // satisfying the CSP without special-casing this branch. Omitting
-        // this call (as an earlier revision did) left the bridge dead code in
-        // the one tier it was built for. Best-effort, like the fetch path
-        // below: a throw here must never take down an otherwise-good render.
+        // M4-04 (DRO-266) — this tier is EXACTLY who the postMessage bridge exists for (its strict
+        // CSP, connect-src 'none', blocks fetch AND a direct WebSocket alike — see initHmr's own
+        // header). hmrSocketUrl resolves to null here (no http(s) origin with a host — see its own
+        // doc), so initHmr transparently skips the WS + polling paths and wires ONLY the `message`
+        // listener: no network access is attempted, satisfying the CSP without special-casing this
+        // branch. Omitting this call (as an earlier revision did) left the bridge dead code in the
+        // one tier it was built for. Best-effort, like the fetch path below: a throw here must
+        // never take down an otherwise-good render.
 
-        // Copilot review (PR #248) — Browse must navigate the WHOLE kit even
-        // when this embedded resource's PRIMARY `#manifest` island (`inline`,
-        // used for the grid view above and the HMR diff baseline below) was
-        // pre-filtered to one `componentName`/`group` by `buildGridDocument`.
-        // `#manifest-full` (only emitted when the request WAS filtered — see
-        // `MANIFEST_FULL_ELEMENT_ID`'s own doc) carries the same kit,
-        // unfiltered; fall back to `inline` when it's absent, the common
-        // already-full-kit case where there's nothing to widen.
+        // Copilot review (PR #248) — Browse must navigate the WHOLE kit even when this embedded
+        // resource's PRIMARY `#manifest` island (`inline`, used for the grid view above and the HMR
+        // diff baseline below) was pre-filtered to one `componentName`/`group` by
+        // `buildGridDocument`. `#manifest-full` (only emitted when the request WAS filtered — see
+        // `MANIFEST_FULL_ELEMENT_ID`'s own doc) carries the same kit, unfiltered; fall back to
+        // `inline` when it's absent, the common already-full-kit case where there's nothing to
+        // widen.
         var browseSeedManifest = readInlineManifest(doc, MANIFEST_FULL_ELEMENT_ID) || inline;
 
-        // Copilot #1 (AC1/AC12/AC13) — embedded Browse must actually
-        // initialize the workbench too, not just leave content in the
-        // hidden `#grid`. `hostBridge` starts `null` (the handshake hasn't
-        // resolved yet) and is handed to the controller once `initMcpApp`'s
-        // `onReady` fires, via `setHostBridge` — never recreating the
-        // controller, so any selection/filter already made survives.
+        // Copilot #1 (AC1/AC12/AC13) — embedded Browse must actually initialize the workbench too,
+        // not just leave content in the hidden `#grid`. `hostBridge` starts `null` (the handshake
+        // hasn't resolved yet) and is handed to the controller once `initMcpApp`'s `onReady` fires,
+        // via `setHostBridge` — never recreating the controller, so any selection/filter already
+        // made survives.
         var browseController = initBrowseController(doc, {
           hostBridge: null,
           kitId: browseSeedManifest && browseSeedManifest.name,
@@ -5820,15 +5694,12 @@
           },
         });
 
-        // Copilot review (PR #248) — seed the controller with the FULL kit
-        // manifest (falling back to whatever's inlined as `#manifest` when
-        // there's no separate full island), mirroring the standalone tier's
-        // fix (Copilot #2 above). `initHmr({initialManifest})` only records
-        // `inline` as its OWN diff baseline — it never calls
-        // `onManifestUpdate` for it — so without this explicit `update()`,
-        // embedded Browse rendered the empty-kit placeholder until a later
-        // tool-result or HMR message arrived (and stayed empty forever if
-        // neither did).
+        // Copilot review (PR #248) — seed the controller with the FULL kit manifest (falling back
+        // to whatever's inlined as `#manifest` when there's no separate full island), mirroring the
+        // standalone tier's fix (Copilot #2 above). `initHmr({initialManifest})` only records
+        // `inline` as its OWN diff baseline — it never calls `onManifestUpdate` for it — so without
+        // this explicit `update()`, embedded Browse rendered the empty-kit placeholder until a
+        // later tool-result or HMR message arrived (and stayed empty forever if neither did).
         browseController.update(browseSeedManifest);
 
         var teardownHmr = function () {};
@@ -5838,10 +5709,9 @@
             onManifestUpdate: function (next) {
               browseController.update(next);
             },
-            // Copilot review (PR #248) — see `onCardOrTokensChanged`'s doc
-            // comment in `initHmr` and `refresh`'s in `initBrowseController`:
-            // a per-card/token HMR push carries no new manifest, so only a
-            // forced re-render of the currently selected detail (against the
+            // Copilot review (PR #248) — see `onCardOrTokensChanged`'s doc comment in `initHmr` and
+            // `refresh`'s in `initBrowseController`: a per-card/token HMR push carries no new
+            // manifest, so only a forced re-render of the currently selected detail (against the
             // manifest already on file) picks it up.
             onCardOrTokensChanged: function () {
               browseController.refresh();
@@ -5850,18 +5720,16 @@
         } catch {
           /* live refresh is an enhancement, never a boot blocker */
         }
-        // The inlined tier IS the embedded MCP-App surface, so the postMessage
-        // host bridge applies to EVERY inlined resource — not only the bare
-        // tool-result shell. Query-bearing `ui://` resources (e.g. the preview
-        // URI carrying `kitId`) are intentionally emitted WITHOUT the
-        // tool-result-shell marker (grid-resource.ts), yet still use the MCP-App
-        // MIME type and still run inside a host frame. Gating the bridge on that
-        // marker wrongly flagged their Generate tab "Host unavailable". Start the
-        // shell in the pending state and let initMcpApp resolve ready/unavailable
-        // from the actual host handshake.
+        // The inlined tier IS the embedded MCP-App surface, so the postMessage host bridge applies
+        // to EVERY inlined resource — not only the bare tool-result shell. Query-bearing `ui://`
+        // resources (e.g. the preview URI carrying `kitId`) are intentionally emitted WITHOUT the
+        // tool-result-shell marker (grid-resource.ts), yet still use the MCP-App MIME type and
+        // still run inside a host frame. Gating the bridge on that marker wrongly flagged their
+        // Generate tab "Host unavailable". Start the shell in the pending state and let initMcpApp
+        // resolve ready/unavailable from the actual host handshake.
         var shellController = initProductShell(doc, undefined, {
-          // AC13 — close the loop into Browse and re-read the bytes. A throw
-          // surfaces as the truthful "written, but the view is stale" state.
+          // AC13 — close the loop into Browse and re-read the bytes. A throw surfaces as the
+          // truthful "written, but the view is stale" state.
           onApplied: function (applied) {
             browseController.openComponent(applied.group, applied.componentName);
           },
@@ -5910,19 +5778,17 @@
         renderGrid(doc, grid, filterManifestBySearch(manifest, fetchedLocation?.search || ""));
         wireSearch(doc, grid);
 
-        // M7-02 (#234) — standalone/localhost Browse workbench. Reuses the
-        // SAME fetched manifest as the grid above (no parallel catalog —
-        // Decision #1); a no-op when `#browse-workbench` isn't present in
-        // this document (e.g. the fixture-only grid tests).
+        // M7-02 (#234) — standalone/localhost Browse workbench. Reuses the SAME fetched manifest as
+        // the grid above (no parallel catalog — Decision #1); a no-op when `#browse-workbench`
+        // isn't present in this document (e.g. the fixture-only grid tests).
         //
-        // Copilot #3 (AC13) — standalone still supports source inspection
-        // via `createStandaloneSourceBridge`'s same-origin relative fetch,
-        // rather than a hard-coded null bridge that made `fetchSource`
-        // always resolve `null`.
+        // Copilot #3 (AC13) — standalone still supports source inspection via
+        // `createStandaloneSourceBridge`'s same-origin relative fetch, rather than a hard-coded
+        // null bridge that made `fetchSource` always resolve `null`.
         var standaloneShellController = initProductShell(doc, null, {
-          // AC13 — same close-the-loop contract as the embedded tier.
-          // `browseController` is assigned immediately below; this closure
-          // only ever runs long after boot, so the reference is safe.
+          // AC13 — same close-the-loop contract as the embedded tier. `browseController` is
+          // assigned immediately below; this closure only ever runs long after boot, so the
+          // reference is safe.
           onApplied: function (applied) {
             browseController.openComponent(applied.group, applied.componentName);
           },
@@ -5938,20 +5804,18 @@
           },
         });
 
-        // Copilot #2 — supply the ALREADY-FETCHED manifest to the controller
-        // up front. `initHmr`'s `initialManifest` is only its OWN polling/
-        // diff baseline, and `onManifestUpdate` fires no earlier than the
-        // first refresh — without this call, standalone Browse would render
-        // the empty-kit placeholder until the first HMR tick.
+        // Copilot #2 — supply the ALREADY-FETCHED manifest to the controller up front. `initHmr`'s
+        // `initialManifest` is only its OWN polling/ diff baseline, and `onManifestUpdate` fires no
+        // earlier than the first refresh — without this call, standalone Browse would render the
+        // empty-kit placeholder until the first HMR tick.
         browseController.update(manifest);
 
-        // M4-04 (DRO-266) — engage live per-card refresh AFTER the grid exists,
-        // handing the just-fetched manifest in as the polling baseline so the
-        // fallback's very first tick can already spot a hash change. Best-effort:
-        // if it throws (an exotic embed with no window at all), the static grid
-        // still stands. The teardown fn is intentionally unused here — the
-        // browser page lives until navigation; tests call `initHmr` directly and
-        // own their own teardown.
+        // M4-04 (DRO-266) — engage live per-card refresh AFTER the grid exists, handing the
+        // just-fetched manifest in as the polling baseline so the fallback's very first tick can
+        // already spot a hash change. Best-effort: if it throws (an exotic embed with no window at
+        // all), the static grid still stands. The teardown fn is intentionally unused here — the
+        // browser page lives until navigation; tests call `initHmr` directly and own their own
+        // teardown.
         try {
           initHmr(doc, {
             initialManifest: manifest,
@@ -5975,18 +5839,16 @@
       });
   }
 
-  // ── Browser auto-boot ─────────────────────────────────────────────────────
-  // The ONLY side-effecting line. Guarded so evaluating this script under a
-  // test harness that hasn't triggered a real navigation still behaves, and
-  // so the auto-boot never fires twice. In the browser, `fetch` and
-  // `document` are ambient globals.
+  // ── Browser auto-boot ────
+  // The ONLY side-effecting line. Guarded so evaluating this script under a test harness that
+  // hasn't triggered a real navigation still behaves, and so the auto-boot never fires twice. In
+  // the browser, `fetch` and `document` are ambient globals.
   if (typeof document !== "undefined" && typeof fetch !== "undefined") {
     void boot(document, fetch);
   }
 
-  // Test-only seam — see file header. No-op (and no global write at all)
-  // unless a test harness pre-defines the hook object before this script
-  // runs.
+  // Test-only seam — see file header. No-op (and no global write at all) unless a test harness
+  // pre-defines the hook object before this script runs.
   if (typeof window !== "undefined" && window.__genieViewerTestHooks) {
     window.__genieViewerTestHooks.MANIFEST_URL = MANIFEST_URL;
     window.__genieViewerTestHooks.DEFAULT_CARD_HEIGHT = DEFAULT_CARD_HEIGHT;
@@ -6061,6 +5923,9 @@
     window.__genieViewerTestHooks.computeApplyGate = computeApplyGate;
     window.__genieViewerTestHooks.canRefine = canRefine;
     window.__genieViewerTestHooks.buildPlanArgs = buildPlanArgs;
+    window.__genieViewerTestHooks.deletedPathsFromDiff = deletedPathsFromDiff;
+    window.__genieViewerTestHooks.componentDirFromPath = componentDirFromPath;
+    window.__genieViewerTestHooks.violatesEmbeddedCsp = violatesEmbeddedCsp;
     window.__genieViewerTestHooks.buildWriteFilesArgs = buildWriteFilesArgs;
     window.__genieViewerTestHooks.detectDeterministicControls = detectDeterministicControls;
     window.__genieViewerTestHooks.applyDeterministicTweak = applyDeterministicTweak;

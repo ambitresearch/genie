@@ -129,6 +129,51 @@ in the embedded tier. The manifest carries no variant concept today, so variant 
 Default-only; Hover/Focus/Disabled are declared-but-disabled rather than a new, unreviewed
 schema addition (`computeVariantTabs`).
 
+### Viewer script constraints
+
+`packages/viewer/static/viewer.js` is the one script every preview vehicle boots into, so a
+handful of constraints shape almost every decision in it.
+
+**Classic script, not an ES module.** `index.html` loads it via `<script src="./viewer.js">`
+with no `type="module"`. It shipped briefly as a module, and that broke the `file://` vehicle
+outright: every `file://` document gets an opaque, distinct origin, so the ES module loader's
+same-origin check fails and the script never executes ("blocked by CORS policy" in a real
+headless Chromium run). Dynamic `import()` fails identically. A classic script runs the same
+under `file://`, the Vite dev server, and inside a sandboxed iframe — the only option that
+satisfies byte-identity across vehicles. Modern syntax (`const`/`let`, arrows, template
+literals, optional chaining, `async`/`await`) is all still available; only `import`/`export`
+are off the table, and this is the only script in the kit tree.
+
+**Manifest contract.** The shipped compiler emits
+`{version, name, generatedAt, groups: string[], components: [{name, group, path, viewport,
+hash, lastModified}]}` at `.genie/manifest.json` — not the `cards[]` shape the original
+research sketch used. `viewport` is the RAW marker string, either `"WxH"` or a named token
+kept opaque. `list_components` parses `components` and would throw on a `cards` key, so the
+viewer reads `components[]` and parses the string viewport itself.
+
+Section order prefers the manifest's own `groups: string[]`, which the compiler already
+resolved from `_groups.json` server-side. `computeGroupOrder` always appends any group present
+in the components that the declared list omitted, mirroring the server's own remainder logic,
+so a partial or absent `groups[]` never silently drops a group's cards.
+
+**Pure functions plus a guarded auto-boot.** Every function takes its `document` (and `fetch`)
+as an argument and returns DOM rather than reaching for ambient globals, so tests can drive the
+whole script inside a programmatic jsdom window. Because a classic script cannot be imported
+for its bindings, the pure helpers are exposed on `window.__genieViewerTestHooks` — but only
+when that object already exists before the script runs, which only a test harness arranges.
+Production pages never define it, so nothing is exposed and the shipped page carries no
+footprint.
+
+**Security and accessibility.** Each preview iframe is `sandbox="allow-scripts"` with no
+`allow-same-origin`, so a compromised preview cannot reach the viewer's origin, cookies, or
+storage. Card names are written via `textContent`, never `innerHTML`. Each card is a
+keyboard-operable `role="link"` with `tabindex="0"`, an explicit `aria-label` (without one a
+screen reader concatenates heading, group pill, and viewport into one run-on name), and a
+`keydown` handler — `role="link"` supplies semantics but never key handling. The card's iframe
+is pulled out of Tab order with `tabindex="-1"`, because a sandboxed iframe without
+`allow-same-origin` is still natively focusable; otherwise Tab order would alternate card,
+iframe, card, iframe.
+
 ## Transport and authentication
 
 Stdio relies on the harness-owned child-process boundary. HTTP exposes `POST /mcp` and

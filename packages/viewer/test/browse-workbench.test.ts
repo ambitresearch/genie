@@ -429,10 +429,18 @@ describe("Refine handoff context", () => {
     // `components/actions/Primary buttons/Primary buttons.html`, a path with a
     // space in it that no kit has ever contained. Planning a write against
     // that path would have created a second, phantom component.
+    //
+    // Copilot (round 2): `componentName` is the component DIRECTORY, because
+    // that is what the server's `parseComponentPath` matches on (path segment
+    // 3). The manifest `name` is only the preview file's basename, so sending
+    // "Primary buttons" would have produced `ERR_COMPONENT_NOT_FOUND` against
+    // a component that is plainly there. The display name survives separately
+    // so the UI can still call it what the user calls it.
     expect(context).toEqual({
       kitId: "kit-a",
       group: "actions",
-      componentName: "Primary buttons",
+      componentName: "Button",
+      displayName: "Primary buttons",
       variant: "default",
       source: null,
       path: "components/actions/Button/preview.html",
