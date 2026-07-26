@@ -16,11 +16,14 @@ export const GET_KIT_TOOL_NAME = "mcp__genie__get_kit";
  * its id to a repo name (uppercase, `_`, `.` and single chars are all legal
  * there) and an imported kit directory is listable under any containment-safe
  * name, so `My_Kit.2` is a legitimate kitId this pattern would reject. Gate
- * INPUT on `isSafeKitId` — the shared kit-id safety rule both store adapters
- * enforce, which refuses escapes AND ids that do not spell the kit they open;
- * see its docblock in kit-files.ts for the full contract rather than relying on
- * this summary — and leave this to assert the shape of ids we generate
- * ourselves. */
+ * INPUT on `isSafeKitId` — the shared kit-id safety rule the store adapters
+ * apply on their path-taking operations, which refuses escapes AND ids that do
+ * not spell the kit they name; see its docblock in kit-files.ts for the full
+ * contract rather than relying on this summary. Note that `getKit` is NOT one of
+ * those operations: `LocalFsKitStore.getKit` joins through `kitDir`, not
+ * `safeKitDir`, and `GitHostKitStore.getKit` only `encodeURIComponent`s the id,
+ * so the schema below is the ONLY check in front of this verb's lookup. Leave
+ * the pattern to assert the shape of ids we generate ourselves. */
 export const KIT_ID_PATTERN = /^[a-z0-9-]{3,64}$/;
 
 const getKitArgsSchema = z

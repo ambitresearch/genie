@@ -5,7 +5,9 @@
  *
  *   - `isSafeKitId` (store/kit-files.ts) — the SAFETY rule, and the authority for
  *     its own rejection set: read the predicate, do not re-derive it here. It is
- *     the rule both store adapters (`store/local.ts`, `store/git-host.ts`) enforce.
+ *     the rule both store adapters (`store/local.ts`, `store/git-host.ts`) apply
+ *     on their path-taking operations — but not in `getKit`, where each reaches
+ *     the backing store unguarded, so the tool schema is the only check there.
  *     It guarantees an accepted id NEVER RESOLVES TO A DIFFERENT KIT than it
  *     spells — strictly stronger than "stays under the kits root", and the
  *     distinction is load-bearing: `victim.` never leaves the root, yet Windows
@@ -55,6 +57,7 @@ import { LocalFsKitStore } from "../store/local.js";
 import { MANIFEST_PATH } from "../store/manifest.js";
 import { resolveKitDir as resolveGridKitDir } from "../ui/grid-resource.js";
 import { seedKit } from "../../test/helpers/seed-kit.js";
+import { trackedFiles } from "../../test/helpers/tracked-files.js";
 import { ProjectNotFoundError, getKit } from "./get_kit.js";
 import { listWritableKits } from "./list_kits.js";
 import { registerPlan } from "./plan.js";
@@ -1195,10 +1198,8 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
 
     const kitVerbs: string[] = [];
     const ungated: string[] = [];
-    const sources: Array<[string, string]> = [];
     for (const file of files) {
       const source = await readFile(join(toolsDir, file), "utf8");
-      sources.push([file, source]);
       // Comments are stripped for BOTH questions asked of a file — does it take
       // a kitId, and does it gate one — so a declaration quoted in prose cannot
       // enrol a file that has none, just as a sentence naming the gate cannot
@@ -1253,29 +1254,82 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
     // universality word carrying "not" is a DENIAL of the claim — "not every
     // kit verb does" is the disclaimer, and it necessarily sits beside a
     // refusal word, so without the guard every correction reads as a relapse.
-    const QUALIFIER = String.raw`(?:that appl\w+|which appl\w+|applying|gated)`;
+    const QUALIFIER = String.raw`(?:that appl\w+|which appl\w+|applying|gated|used to)`;
     const GAP = String.raw`(?:(?!${QUALIFIER})[^.]){0,60}?`;
-    const SCOPE = String.raw`(?<!\bnot\s)(?:every|any|no)\s+kit(?:[- ]taking)?\s+verb\b`;
+    // "tool" as well as "verb". The two words name the same thing throughout
+    // this codebase, and the claim this lock exists to police was restated in
+    // `store/local.ts` and `test/store-conformance.test.ts` as "every kit-taking
+    // TOOL", one synonym away from a pattern that only knew "verb". A lock keyed
+    // to one word for a thing with two names is not a lock.
+    const SCOPE = String.raw`(?<!\bnot\s)(?:every|any|no)\s+kit(?:[- ]taking)?\s+(?:verb|tool)\b`;
     const UNIVERSAL_REFUSAL = new RegExp(
       [
         String.raw`univers\w*\s+\w*\s*refus\w*`,
         String.raw`refus\w*\s+univers\w*`,
         String.raw`\b${SCOPE}${GAP}\b(?:refus\w*|accept\w*)`,
         String.raw`\b(?:refus\w*|accept\w*)${GAP}\b${SCOPE}`,
+        // Universality asserted of the GATING itself ("every kit-taking tool
+        // gates on X"), not of a refusal. Same false claim, different verb, and
+        // the refusal arms above cannot see it. The gating word must follow the
+        // scope IMMEDIATELY: `gate` is also the ordinary NOUN for the rule and
+        // appears in almost every honest sentence about it, so allowing a gap
+        // makes `LIST_KITS_DESCRIPTION`'s correctly qualified "...safety gate,
+        // so no kit verb THAT APPLIES THAT GATE will refuse" match on its own
+        // preceding noun.
+        String.raw`\b${SCOPE}\s+(?:gates?|appl(?:y|ies))\b`,
       ].join("|"),
       "giu",
     );
 
+    // Scope is every tracked file in the package, not the tool sources alone.
+    // The claim is a statement ABOUT the tools, so it is at its most misleading
+    // exactly where it is furthest from them — the two restatements this widening
+    // caught sit in `store/local.ts` and `test/store-conformance.test.ts`, and a
+    // scan of `src/tools/*.ts` could never have seen either. Tracked files, not a
+    // disk walk, for the reason `test/helpers/tracked-files.ts` documents.
+    const serverRoot = dirname(dirname(toolsDir));
+    const SELF = join("src", "tools", "kit-id-gate.test.ts");
     const universal: string[] = [];
-    for (const [file, source] of sources) {
+    for (const relative of trackedFiles(serverRoot)) {
+      // This file is the lock, and it QUOTES the claim shapes it forbids in
+      // order to explain them. Excluding it would normally be a blind spot, so
+      // the exclusion is paid for below: the same quotations are asserted to
+      // MATCH, which is a stronger check than the negative scan it opts out of —
+      // weakening the pattern fails there instead of passing silently here.
+      if (!relative.endsWith(".ts") || relative === SELF) continue;
+      const source = await readFile(join(serverRoot, relative), "utf8");
       for (const match of source.matchAll(UNIVERSAL_REFUSAL)) {
-        universal.push(`${file}: ${match[0].replace(/\s+/gu, " ")}`);
+        universal.push(`${relative}: ${match[0].replace(/\s+/gu, " ")}`);
       }
     }
+    // Pay for excluding this file above. Each string below is a claim shape the
+    // scan must catch, and the last is the qualified wording it must NOT — the
+    // narrowing the whole lock exists to force. Asserting on them here keeps the
+    // pattern honest without letting this file's explanatory quotations read as
+    // live claims, and means a future edit that loosens the regex fails loudly
+    // rather than emptying `universal` in silence.
+    for (const shape of [
+      "an id every kit-taking verb refuses",
+      "the containment rule every kit-taking tool gates on",
+      "every kit-taking tool would refuse",
+    ]) {
+      expect(
+        new RegExp(UNIVERSAL_REFUSAL.source, "iu").test(shape),
+        `the universality pattern no longer recognises "${shape}"`,
+      ).toBe(true);
+    }
+    expect(
+      new RegExp(UNIVERSAL_REFUSAL.source, "iu").test(
+        "no kit verb that applies that gate will refuse it",
+      ),
+      "the universality pattern now fires on the QUALIFIED wording, so the only way " +
+        "to satisfy this lock would be to delete a true sentence",
+    ).toBe(false);
+
     if (universal.length > 0) {
       expect(
         ungated,
-        `these tool sources claim a refusal every kit verb makes — "${universal.join('", "')}" ` +
+        `these sources claim a refusal or a gate every kit verb makes — "${universal.join('", "')}" ` +
           `— but these verbs declare a kitId input and never apply the shared gate, so an id ` +
           `withheld as unusable is one they would in fact accept`,
       ).toEqual([]);
@@ -1393,5 +1447,140 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
         "recognises a declaration style in use, or a verb declares a kitId and " +
         "is never registered",
     ).toEqual(registryFiles);
+  });
+});
+
+// ─── Unit: what the tool layer may promise about the store layer ─────────────
+// ─── Unit: what the tool layer may promise about the store layer ─────────────
+
+describe("kitId gate — what a tool may promise about the store adapters", () => {
+  it("🔒 does not credit the adapters with a gate their getKit never applies", async () => {
+    // `get_kit`'s docblock told readers to gate input on `isSafeKitId` because it
+    // is "the rule both store adapters enforce". Both adapters DO enforce it — on
+    // the operations that route through `safeKitDir` (local) or the per-method
+    // guards (git-host). `getKit` is not one of them. It reaches the backing
+    // store directly: `LocalFsKitStore.getKit` joins through `kitMetaPath` →
+    // `kitDir`, and `GitHostKitStore.getKit` builds a repo path with
+    // `encodeURIComponent` and no predicate at all.
+    //
+    // The sentence is not merely imprecise, it inverts the risk. The tool schema
+    // is the ONLY check standing in front of those two lookups, and the docblock
+    // explaining that schema described the layer behind it as enforcing the same
+    // rule — which reads as defence-in-depth where there is none, and invites
+    // exactly the "the store will catch it anyway" reasoning that makes deleting
+    // the schema refinement look safe.
+    //
+    // Derive it rather than restate it: read each adapter's `getKit` for the gate.
+    const srcDir = dirname(dirname(fileURLToPath(import.meta.url)));
+    const serverRoot = dirname(srcDir);
+
+    /** The `{...}` block introduced by `header`, by brace matching. */
+    const blockBody = (source: string, header: string): string => {
+      const start = source.indexOf(header);
+      expect(
+        start,
+        `"${header}" not found — this derivation is reading a stale shape`,
+      ).toBeGreaterThan(-1);
+      const open = source.indexOf("{", start);
+      let depth = 0;
+      for (let i = open; i < source.length; i += 1) {
+        if (source[i] === "{") depth += 1;
+        else if (source[i] === "}") {
+          depth -= 1;
+          if (depth === 0) return source.slice(open, i + 1);
+        }
+      }
+      throw new Error(`unbalanced braces reading "${header}"`);
+    };
+
+    /** Source with comments removed — they describe the gate without applying it. */
+    const stripComments = (source: string): string =>
+      source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
+
+    const adapters = ["local.ts", "git-host.ts"];
+    const gatingGetKit: string[] = [];
+    for (const adapter of adapters) {
+      const source = await readFile(join(srcDir, "store", adapter), "utf8");
+      const body = stripComments(blockBody(source, "async getKit("));
+      if (/\b(?:isSafeKitId|safeKitDir)\b/u.test(body)) gatingGetKit.push(adapter);
+    }
+
+    // Anti-vacuity: both adapters DO apply the gate elsewhere, so a derivation
+    // that cannot find it anywhere in these files is broken, not informative.
+    // Strip comments first, for the same reason the getKit body above does —
+    // both files discuss `isSafeKitId` at length, so an unstripped check passes
+    // on the prose alone and would stay green if the adapter stopped calling it.
+    for (const adapter of adapters) {
+      const source = await readFile(join(srcDir, "store", adapter), "utf8");
+      expect(
+        /\bisSafeKitId\b/u.test(stripComments(source)),
+        `${adapter} no longer CALLS the gate anywhere — this derivation is stale`,
+      ).toBe(true);
+    }
+
+    // A credit is honest when it says WHICH operations it covers — "both adapters
+    // apply the predicate BEFORE creating anything" is true and bounded, while
+    // "the rule both store adapters enforce" is not. So the test is: does the
+    // sentence restrict itself?
+    //
+    // A first attempt derived the operation names from the `KitStore` interface
+    // and looked for one in the span. That reads as the more principled choice
+    // and is not: the stems collide with ordinary English, so `get_kit`'s own
+    // false sentence went undetected on the word "open" in "the kit they open".
+    // Deriving from the repo is right when the thing being derived IS a repo
+    // fact; here it is a property of the English. This list is closed for the
+    // same reason the universality lock's QUALIFIER is — restricting words are a
+    // feature of the language, so unlike a list of files or methods it does not
+    // drift as the codebase changes, and the fixtures below fail loudly if it
+    // ever stops discriminating.
+    const RESTRICTED =
+      /\b(?:before|after|when|unless|except|only|other than|apart from|path-taking|not in)\b/iu;
+    const GATING_VERB = /\b(?:enforce\w*|appl(?:y|ies|ied)|gates?)\b/iu;
+    const CREDIT_SPAN = /both (?:store )?adapters[^.]{0,160}/giu;
+
+    /** Every span in `text` that credits the adapters without restricting itself. */
+    const unqualifiedCredits = (text: string): string[] =>
+      [...text.matchAll(new RegExp(CREDIT_SPAN.source, "giu"))]
+        .map((match) => match[0].replace(/\s+/gu, " "))
+        .filter((span) => GATING_VERB.test(span) && !RESTRICTED.test(span));
+
+    const SELF = join("src", "tools", "kit-id-gate.test.ts");
+    const credits: string[] = [];
+    for (const relative of trackedFiles(serverRoot)) {
+      // Same bargain as the universality lock above: this file quotes the claim
+      // in order to forbid it — including inside the failure message below — so
+      // it is excluded from the negative scan and paid for by the positive
+      // fixtures that follow.
+      if (!relative.endsWith(".ts") || relative === SELF) continue;
+      const source = await readFile(join(serverRoot, relative), "utf8");
+      credits.push(...unqualifiedCredits(source).map((span) => `${relative}: ${span}`));
+    }
+
+    // Pay for that exclusion: the forbidden shape must still be recognised, and
+    // the scoped wording must still be permitted.
+    expect(
+      unqualifiedCredits("isSafeKitId, the rule both store adapters enforce"),
+      "the adapter-credit judgement no longer recognises the unqualified claim",
+    ).toHaveLength(1);
+    expect(
+      unqualifiedCredits("Both adapters apply the predicate before creating anything"),
+      "the adapter-credit judgement now fires on a credit that restricts itself, so " +
+        "satisfying this lock would mean deleting a true sentence",
+    ).toHaveLength(0);
+
+    expect(
+      credits,
+      `these sources credit both store adapters with enforcing the kitId gate without ` +
+        `saying which operations it covers — but neither adapter applies it in getKit, so the ` +
+        `tool schema is the only check in front of that lookup`,
+    ).toEqual([]);
+
+    // Pin the fact this lock encodes. If an adapter ever does gate `getKit`, this
+    // fails and the qualified wording may legitimately be widened again.
+    expect(
+      gatingGetKit,
+      "no adapter gates getKit today; if one now does, revisit the qualified wording in " +
+        "get_kit.ts, store/local.ts, preview.test.ts and this file's header",
+    ).toEqual([]);
   });
 });
