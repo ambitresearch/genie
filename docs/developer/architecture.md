@@ -301,6 +301,60 @@ is pulled out of Tab order with `tabindex="-1"`, because a sandboxed iframe with
 `allow-same-origin` is still natively focusable; otherwise Tab order would alternate card,
 iframe, card, iframe.
 
+### Standalone source-fetch path containment
+
+The standalone tier has no server to defer to, so `createStandaloneSourceBridge` enforces the
+same boundary a real host's read-file tool would enforce server-side (AC16): a plain
+kit-relative path, no `..` segments, no scheme, no leading slash.
+
+Testing the raw string is not enough, because the browser's URL parser does not treat a
+literal `..` and a literal leading `/` as the only escape hatches. It reads backslashes as
+forward slashes for http(s) URLs, so `\evil.example/x` resolves like the protocol-relative
+`//evil.example/x` — off-origin — without ever holding a `/` at index 0. And a percent-encoded
+segment (`%2e%2e`, `%2E%2e`) holds no literal `..` before decoding, yet normalizes to `..` once
+the real `fetch` parses it. So the check decodes first, then rejects backslashes, any leading
+separator, and any decoded `.` or `..` segment.
+
+Separately, the parser strips leading and trailing "C0 control or space" characters (`\x00-\x20`
+— tabs, newlines, plain spaces) BEFORE it detects the scheme. A value like `"\nhttps://evil.example/x"`
+therefore carries no leading scheme letter for a raw-string check to catch, yet still parses as
+an absolute cross-origin URL. Rejecting that set up front is what stops the scheme and separator
+checks below it from being bypassed by whitespace the parser would normalize away.
+
+### Superseded kit discovery must not land
+
+`loadKits()` captures a monotonic generation counter on entry. If a newer call has started by
+the time an older call's `await bridge.callTool(...)` settles — the bridge was swapped through
+`setBridge`/`setUnavailable`, or a fresh refresh was triggered — the older call must not touch
+`kits` or the DOM at all, in either resolution order, because network replies can complete out
+of order.
+
+Without that check a stale in-flight discovery whose reply arrives last could resurrect trusted
+`kits` state and silently re-enable Conjure and Retry on data that a newer call had already
+invalidated by failing closed.
+
+### A card/token HMR push must refresh Browse too
+
+`card.changed` and `tokens.changed` (and the legacy `refresh` message, which normalizes to the
+same commands) reload the hidden `#grid`'s iframes through `applyHmrMessage`. Nothing in that
+path tells Browse's selected detail iframe to re-render: `onManifestUpdate` fires only from the
+fetch-manifest path in `applyFetchedManifest`, and a per-card or per-token push carries no new
+manifest at all. Browse would sit visibly stale while the grid updated correctly.
+
+`onCardOrTokensChanged` exists so the `boot()` call sites can force a Browse detail re-render —
+bypassing the identity-selection dedup, which would otherwise treat "same component selected"
+as nothing to do — on those normalized commands specifically.
+
+### Every inlined resource is hosted
+
+The inlined tier IS the embedded MCP-App surface, so the postMessage host bridge applies to
+every inlined resource, not only the bare tool-result shell. Query-bearing `ui://` resources —
+the preview URI carrying `kitId`, for instance — are deliberately emitted WITHOUT the
+tool-result-shell marker (`grid-resource.ts`), yet still use the MCP-App MIME type and still run
+inside a host frame. Gating the bridge on that marker wrongly reported "Host unavailable" on
+their Generate tab. The shell therefore starts in the pending state and lets `initMcpApp`
+resolve ready or unavailable from the actual host handshake.
+
 ## Transport and authentication
 
 Stdio relies on the harness-owned child-process boundary. HTTP exposes `POST /mcp` and

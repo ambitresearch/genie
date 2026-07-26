@@ -286,14 +286,8 @@
     // re-lowercases per keystroke.
     article.setAttribute("data-name", (card.name || "").toLowerCase());
 
-    // M4-09 AC3 — keyboard-operable card: `tabindex="0"` puts it in Tab order, `role="link"` + an
-    // explicit `aria-label` give it a clean accessible name (see the module doc's "Accessibility"
-    // section — without the label, a screen reader concatenates the heading + group pill + viewport
-    // text with no separators), and Enter/click activate it (`role="link"` supplies semantics only,
-    // never key handling — unlike a real `<a>`, so the listener below is required, not decorative).
-    // There is no dedicated card-detail route yet (M4-05 leaves "per-card detail view" out of scope
-    // for v1), so the placeholder destination is the component's own preview: the one real,
-    // already-working URL a card carries.
+    // M4-09 AC3 — `role="link"` supplies semantics only, never key handling, so the Enter listener
+    // below is required. See architecture.md, "Validation and preview" > Security and accessibility.
     article.setAttribute("tabindex", "0");
     article.setAttribute("role", "link");
     // `accessibleName` guards against axe-core's `link-name` (critical): an empty-string aria-label
@@ -3261,14 +3255,8 @@
     var status = doc.getElementById("app-status");
     var drafts = createDraftStore();
     var kits = [];
-    // DRO-242 (fail closed, Copilot review round 5/6) — a monotonic "discovery generation" counter.
-    // `loadKits()` captures the current value on entry; if a NEWER call has started (bridge swapped
-    // via `setBridge`/`setUnavailable`, or a fresh refresh triggered) by the time an OLDER call's
-    // `await bridge.callTool(...)` resolves — in either order, since network replies can complete
-    // out of order — the older call's resolution/rejection must not mutate `kits`/the DOM at all.
-    // Without this, a stale in-flight discovery whose reply finally arrives after a newer (possibly
-    // malformed-and-already-failed-closed) one could resurrect trusted `kits` state and silently
-    // re-enable Conjure/Retry on data a subsequent call had already invalidated.
+    // Monotonic generation: `loadKits()` captures it on entry and a superseded call must not
+    // mutate `kits`/the DOM. See architecture.md, "Superseded kit discovery must not land".
     var kitDiscoveryGeneration = 0;
     var inFlight = false;
     var hostAvailable = Boolean(bridge);
@@ -4337,14 +4325,8 @@
       }
       var reloaded = applyHmrMessage(grid, rawData);
       if (reloaded > 0) bumpReloadCounter(doc, reloaded);
-      // Copilot review (PR #248) — `card.changed`/`tokens.changed` (and the legacy `refresh`
-      // message normalizing to the same commands) previously reloaded ONLY the hidden `#grid`'s
-      // iframes via `applyHmrMessage` above. Neither `onManifestUpdate` (fired only by the
-      // fetch-manifest path in `applyFetchedManifest`) nor anything else told Browse's selected
-      // detail iframe to refresh, so it stayed visibly stale on a live per-card/token push even
-      // though the grid updated correctly. `onCardOrTokensChanged` lets the boot() call sites force
-      // a Browse detail re-render (bypassing the identity-selection dedup) on these normalized
-      // commands specifically.
+      // A per-card/token push carries no new manifest, so nothing else refreshes Browse's selected
+      // detail. See architecture.md, "A card/token HMR push must refresh Browse too".
       if (
         command &&
         (command.kind === "card" || command.kind === "tokens") &&
@@ -4509,19 +4491,8 @@
         if (name !== "mcp__genie__read_file" || !args || typeof args.path !== "string") {
           return Promise.reject(new Error("Standalone Browse cannot call " + name + "."));
         }
-        // Path containment: reject anything that isn't a plain kit-relative path (no `..` segments,
-        // no scheme, no leading slash) — the same boundary a real host's read-file tool would
-        // enforce server-side (AC16), kept here since this adapter has no server to defer to.
-        //
-        // Copilot review (PR #248) — the original check only rejected a literal `..` substring and
-        // a literal leading `/`, which the browser URL parser doesn't treat as the only escape
-        // hatches: (1) it treats backslashes as forward slashes for http(s) URLs, so
-        // `\\evil.example/x` resolves same as `//evil.example/x` (protocol- relative, off-origin)
-        // without ever containing a literal `/` at index 0; and (2) a percent-encoded segment
-        // (`%2e%2e`, `%2E%2e`, etc.) doesn't contain the literal string `..` pre-decode, but
-        // normalizes to `..` once `fetchImpl` (the real `fetch`) parses it. Decode first, then
-        // reject on backslashes, any leading separator, and any decoded `.`/`..` segment — closing
-        // both bypasses.
+        // Decode BEFORE testing, then reject backslashes, any leading separator, and any decoded
+        // `.`/`..` segment. See architecture.md, "Standalone source-fetch path containment".
         var path = args.path;
         var decodedPath;
         try {
@@ -4533,14 +4504,8 @@
         var hasUnsafeSegment = segments.some(function (segment) {
           return segment === "." || segment === "..";
         });
-        // Copilot review (PR #248) — the WHATWG URL parser (and therefore `fetch`) strips
-        // leading/trailing "C0 control or space" characters (tabs, newlines, plain spaces, etc.)
-        // BEFORE scheme detection, so a value like "\nhttps://evil.example/x" has no leading scheme
-        // letter by the raw-string checks below yet is still parsed as an absolute, cross-origin
-        // URL once handed to `fetchImpl`. Reject any leading or trailing character in that stripped
-        // set up front so the scheme/ separator checks below can't be bypassed by hiding them
-        // behind whitespace the parser would normalize away. Intentional: \x00-\x20 is the WHATWG
-        // "C0 control or space" set the URL parser trims first; that is the bypass being closed.
+        // \x00-\x20 is the WHATWG "C0 control or space" set the URL parser trims BEFORE scheme
+        // detection. See architecture.md, "Standalone source-fetch path containment".
         // eslint-disable-next-line no-control-regex
         var URL_C0_OR_SPACE_RE = /^[\x00- ]|[\x00- ]$/;
         if (
@@ -4641,13 +4606,8 @@
         } catch {
           /* live refresh is an enhancement, never a boot blocker */
         }
-        // The inlined tier IS the embedded MCP-App surface, so the postMessage host bridge applies
-        // to EVERY inlined resource — not only the bare tool-result shell. Query-bearing `ui://`
-        // resources (e.g. the preview URI carrying `kitId`) are intentionally emitted WITHOUT the
-        // tool-result-shell marker (grid-resource.ts), yet still use the MCP-App MIME type and
-        // still run inside a host frame. Gating the bridge on that marker wrongly flagged their
-        // Generate tab "Host unavailable". Start the shell in the pending state and let initMcpApp
-        // resolve ready/unavailable from the actual host handshake.
+        // Start pending and let initMcpApp resolve from the real handshake — the bridge must NOT be
+        // gated on the tool-result marker. See architecture.md, "Every inlined resource is hosted".
         var shellController = initProductShell(doc, undefined, {
           // AC13 — close the loop into Browse and re-read the bytes. A throw surfaces as the
           // truthful "written, but the view is stale" state.
