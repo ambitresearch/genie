@@ -288,7 +288,7 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     ).toBeFalsy();
   });
 
-  it("🔒 every kit-taking verb refuses a containment-unsafe kitId at its own gate", async () => {
+  it("🔒 every containment-gated kit-taking verb refuses an unsafe kitId at its own gate", async () => {
     // Relaxing the SHAPE rule must not relax the CONTAINMENT rule. `""`, `.`,
     // `..` and any separator still escape the single-kit namespace and are
     // still refused.
@@ -338,6 +338,32 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     // the same reason their handlers' `catch` blocks never see a schema
     // failure. Omitting them would leave both gates deletable in silence,
     // since the advertised-schema lock below cannot see a `.refine()` at all.
+    //
+    // ⚠️ EXHAUSTIVE OVER CONTAINMENT-GATED VERBS, NOT OVER kitId-TAKING VERBS.
+    // `validate` also takes a top-level `kitId` and is deliberately NOT here.
+    // It is the one kitId-taking verb that applies no containment rule, and
+    // that is a real asymmetry with `store/kit-files.ts`'s shared rule — but it
+    // is PRE-EXISTING and not a gate this file can pin, for reasons that were
+    // verified rather than assumed:
+    //   · it was never gated. At `de353bcd` (pre-#276) its input was already
+    //     `kitId: z.string().min(1)`, so the widening neither opened nor closed
+    //     it. `validate.ts` contains no `isSafeKitId`, no `KIT_ID_PATTERN` and
+    //     no `KIT_ID_SAFETY_MESSAGE` — it predates the split this file closes.
+    //   · its counts facet never builds a kit path, so there is no containment
+    //     boundary here to escape. The only two `join()`s in `validate.ts` are
+    //     `join(reportsDir, "<timestamp>-<rand>.json")` and the reportsDir
+    //     default `join(cwd, ".genie", "reports")`; NEITHER interpolates
+    //     `kitId`. The id reaches the report's JSON body and Prometheus metric
+    //     LABELS only. So the residual concern is label cardinality and
+    //     contract consistency, NOT path traversal.
+    //   · its full-scan facet does reach the store, whose adapters already
+    //     apply `isSafeKitId` — so that half is covered where the rule lives.
+    // Gating it is a wire-contract change (an id accepted today starts being
+    // refused) and belongs in its own change with its own reasoning, exactly as
+    // the deferred items in #276/#279/#281 were argued rather than smuggled.
+    // Documented here so the NEXT verb that takes a kitId is placed in one
+    // bucket or the other CONSCIOUSLY — an unexplained absence from this table
+    // is how the original eight-site drift survived review in the first place.
     const REFUSES_AT = {
       mcp__genie__get_kit: "schema",
       mcp__genie__preview: "schema",
@@ -494,9 +520,9 @@ describe("kitId gate — the advertised input contract", () => {
     // JSON Schema keyword, so a verb that gates correctly advertises no
     // `pattern` at all — indistinguishable here from one that dropped its gate
     // entirely. This test catches a verb RE-TIGHTENING onto the slug regex;
-    // only its behavioural counterpart above ("🔒 every kit-taking verb refuses
-    // a containment-unsafe kitId at its own gate") catches one dropping it.
-    // Neither is sufficient alone; both are required.
+    // only its behavioural counterpart above ("🔒 every containment-gated
+    // kit-taking verb refuses an unsafe kitId at its own gate") catches one
+    // dropping it. Neither is sufficient alone; both are required.
     const { tools } = await client.listTools();
     const offenders: string[] = [];
 
