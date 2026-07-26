@@ -141,7 +141,7 @@ export function buildResourceUri(params: ResourceUriParams): string {
 
 // ─── kitId → kit dir (path safety) ───────────────────────────────────────────
 
-/** A `kitId` that fails the shared `isSafeKitId` containment rule. */
+/** A `kitId` that fails the shared `isSafeKitId` rule (containment + identity). */
 export class InvalidKitIdError extends Error {
   readonly code = "InvalidKitIdError";
   constructor(readonly kitId: string) {
@@ -186,6 +186,13 @@ export class KitNotFoundError extends Error {
  * reports as the contained `root\.. ` — reaches the filesystem as `root\..`.
  * Containment cannot be judged from `join`'s output alone, which is precisely
  * why the rule lives in ONE place instead of being restated per call site.
+ *
+ * The first fix for that was itself incomplete, which is the sharper lesson:
+ * it refused only ids that trim away to NOTHING, still admitting `victim..` →
+ * `victim`. That one never leaves the kits root, so it is not a containment
+ * failure at all — it is an IDENTITY failure, one id naming two kits. The
+ * predicate therefore guarantees "names exactly one kit", which is strictly
+ * stronger than "stays under the root"; do not re-derive it as the latter.
  *
  * ⚠️ NAME COLLISION — a second, unrelated `resolveKitDir` is exported from
  * `src/ui/grid-resource.ts`. Both apply the SAME rule (`isSafeKitId`), so they

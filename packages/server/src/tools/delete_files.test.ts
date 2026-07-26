@@ -233,6 +233,38 @@ describe("deleteFiles", () => {
     }
   });
 
+  it("🔒 AC3 — a plan kitId that Win32 trims to a SIBLING kit is rejected", async () => {
+    // The loop above covers aliases that trim away to NOTHING (they name the
+    // kits root or its parent). This is the other half of the same class: an id
+    // that trims to a different NON-EMPTY name aliases a sibling kit, so it
+    // never leaves the kits root and no containment check can catch it.
+    //
+    //   Windows: `<kitsRoot>\victim-kit..` OPENS AS `<kitsRoot>\victim-kit`.
+    //
+    // Unlike the loop above this is discriminating on ubuntu CI, because we also
+    // create the alias directory: on POSIX `victim-kit..` is a real, distinct
+    // directory, so WITHOUT the gate the delete SUCCEEDS. It is refused only
+    // because `isSafeKitId` rejects the id itself. (On Windows the `mkdir` below
+    // would not create a second directory at all — it would reuse `victim-kit`,
+    // which is exactly why the id can never legitimately name a kit there.)
+    const victimDir = join(harness.kitsRoot, "victim-kit");
+    await mkdir(victimDir, { recursive: true });
+    await writeFile(join(victimDir, "secret.txt"), "do-not-delete", "utf8");
+
+    const aliasDir = join(harness.kitsRoot, "victim-kit..");
+    await mkdir(aliasDir, { recursive: true });
+    await writeFile(join(aliasDir, "decoy.txt"), "x", "utf8");
+
+    const state = await createPlan("victim-kit..", ["**/*"], ["**/*"], process.cwd());
+
+    await expect(
+      deleteFiles(harness.store, { planId: state.planId, paths: ["decoy.txt"] }),
+    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+
+    expect(existsSync(join(aliasDir, "decoy.txt"))).toBe(true);
+    expect(existsSync(join(victimDir, "secret.txt"))).toBe(true);
+  });
+
   it("🔒 AC3 — a kit whose id merely EMBEDS dots stays deletable (parity with plan/write_files)", async () => {
     // The inverse failure of the same predicate drift: rejecting any id
     // *containing* ".." also rejected `my..kit`, which `isSafeKitId` — and

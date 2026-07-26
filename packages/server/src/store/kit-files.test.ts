@@ -9,7 +9,7 @@ import { isSafeKitId, sriSha256 } from "./kit-files.js";
  */
 describe("isSafeKitId", () => {
   it("accepts ordinary single-segment kit ids", () => {
-    for (const id of ["acme-kit", "kit1", "My_Kit.2", "a", "..kit", "kit..", "my..kit"]) {
+    for (const id of ["acme-kit", "kit1", "My_Kit.2", "a", "..kit", "my..kit"]) {
       expect(isSafeKitId(id)).toBe(true);
     }
   });
@@ -51,12 +51,36 @@ describe("isSafeKitId", () => {
     }
   });
 
-  it("🔒 still accepts ids whose trailing dots/spaces are merely cosmetic", () => {
-    // The alias rule must close the escape WITHOUT re-tightening the shape.
-    // `kit..` and `my..kit` are named in `isSafeKitId`'s docblock as
-    // deliberately allowed; they trim to a non-empty literal child of the root
-    // and cannot escape it.
-    for (const id of ["kit..", "my..kit", "..kit", "My_Kit.2", "a.", "a ", "kit. "]) {
+  it("🔒 rejects the Win32 trailing-space/dot aliases of a SIBLING kit", () => {
+    // The rule above closes the aliases that trim away to nothing (they name the
+    // kits ROOT or its parent). This closes the rest of the same class: an id
+    // that trims to a DIFFERENT, NON-EMPTY name is an alias for a sibling kit.
+    //
+    //   `join(root, "victim..")` → `root\victim..` → Win32 → `root\victim`
+    //
+    // Containment is not the whole contract: `isSafeKitId` promises a kitId
+    // names ONE kit. A plan for `victim..` stays under the kits root and still
+    // mutates or deletes `victim`, because `LocalFsKitStore.deleteFile` and
+    // `writeFiles` resolve through the unsafe `kitDir`, with this predicate as
+    // the only guard.
+    //
+    // Rejecting costs nothing on the platform where the alias is live: Windows
+    // strips trailing dots/spaces in `mkdir` too, so a directory named
+    // `victim..` CANNOT EXIST there. The id can only ever alias — it can never
+    // name a real kit. (Contrast case-insensitivity: `Victim` and `victim` also
+    // collide on Windows/macOS, but each CAN name the single real directory, so
+    // that is a filesystem property, not a gate hole — and refusing uppercase is
+    // the very over-rejection this PR exists to remove.)
+    for (const id of ["victim..", "victim.", "victim ", "kit..", "a.", "a ", "kit. "]) {
+      expect(isSafeKitId(id), `expected ${JSON.stringify(id)} to be refused`).toBe(false);
+    }
+  });
+
+  it("🔒 still accepts ids whose dots/spaces are interior or leading", () => {
+    // The alias rule must close the escape WITHOUT re-tightening the shape —
+    // these are the ids the pre-unification slug gate wrongly refused. Win32
+    // only trims the TRAILING run, so none of these normalize to another name.
+    for (const id of ["my..kit", "..kit", "My_Kit.2", "a b", ". kit", "UPPER", "ui", "a"]) {
       expect(isSafeKitId(id), `expected ${JSON.stringify(id)} to be allowed`).toBe(true);
     }
   });
