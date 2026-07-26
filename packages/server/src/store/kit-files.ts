@@ -260,6 +260,36 @@ export const KIT_ID_SAFETY_MESSAGE =
   "kitId must name a single kit: it cannot be empty, `.`, `..`, end in a dot or a space, " +
   "or contain a path separator or a NUL byte.";
 
+/**
+ * The three kinds of defect `isSafeKitId` refuses, in the order the docblock
+ * above introduces them, phrased to complete "This guards against …".
+ *
+ * These are DATA rather than prose because the count has drifted before. Five
+ * guards implement three categories, so a caller cannot infer one number from
+ * the other, and `preview.ts` spent a release telling users a refusal guarded
+ * "both" an escape and an alias — twenty lines above its own comment saying
+ * there were three. The NUL guard had added a category that is neither.
+ *
+ * `kit-files.test.ts` locks this array's length against the "refuses N
+ * different kinds of id" claim in that docblock, so a fourth category cannot be
+ * added to the predicate without both moving together.
+ */
+export const KIT_ID_SAFETY_CATEGORIES = [
+  "escaping the kits root",
+  "an id that aliases a different kit inside it",
+  "an id that names a path no filesystem call can express",
+] as const;
+
+/**
+ * Why an id was refused, for appending to {@link KIT_ID_SAFETY_MESSAGE} in a
+ * user-facing error. Built from {@link KIT_ID_SAFETY_CATEGORIES} so no call
+ * site has to enumerate them — the restatement is the defect this whole change
+ * exists to remove.
+ */
+export const KIT_ID_SAFETY_RATIONALE = `This guards against ${KIT_ID_SAFETY_CATEGORIES.join(
+  ", against ",
+)}.`;
+
 // ─── Default + .genieignore exclusion ────────────────────────────────────────
 
 /** A predicate over a kit-root-relative, forward-slash path. */

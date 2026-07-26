@@ -47,7 +47,7 @@ import {
   type PreviewReader,
 } from "../ui/grid-resource.js";
 
-import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE, KIT_ID_SAFETY_RATIONALE } from "../store/kit-files.js";
 
 export const PREVIEW_TOOL_NAME = "mcp__genie__preview";
 
@@ -145,14 +145,13 @@ export function buildResourceUri(params: ResourceUriParams): string {
 export class InvalidKitIdError extends Error {
   readonly code = "InvalidKitIdError";
   constructor(readonly kitId: string) {
-    // Reuse the centralised wording rather than restating it: this message had
-    // drifted from `KIT_ID_SAFETY_MESSAGE` and so silently under-described the
-    // rule once the Win32 dots-and-spaces aliases were closed.
-    super(
-      `Invalid kitId "${kitId}": ${KIT_ID_SAFETY_MESSAGE} ` +
-        "This guards both against escaping the kits root and against an id that " +
-        "aliases a different kit inside it.",
-    );
+    // Both halves are centralised, and for the same reason twice over. The
+    // rejection SET drifted from `KIT_ID_SAFETY_MESSAGE` once the Win32
+    // dots-and-spaces aliases were closed; the rationale then drifted again,
+    // still claiming a refusal guarded "both" an escape and an alias after the
+    // NUL guard added a third category that is neither. Restating either here
+    // is what caused both, so this builds the message from the shared pieces.
+    super(`Invalid kitId "${kitId}": ${KIT_ID_SAFETY_MESSAGE} ${KIT_ID_SAFETY_RATIONALE}`);
     this.name = "InvalidKitIdError";
   }
 }

@@ -5,7 +5,13 @@ import { describe, expect, it } from "vitest";
 
 import { assertRangePatchesCve202527210 } from "../../test/helpers/node-cve.js";
 
-import { isSafeKitId, KIT_ID_SAFETY_MESSAGE, sriSha256 } from "./kit-files.js";
+import {
+  isSafeKitId,
+  KIT_ID_SAFETY_CATEGORIES,
+  KIT_ID_SAFETY_MESSAGE,
+  KIT_ID_SAFETY_RATIONALE,
+  sriSha256,
+} from "./kit-files.js";
 
 /**
  * The ONE kitId-safety rule shared by `list_files`, `read_file`, and both
@@ -66,6 +72,38 @@ describe("isSafeKitId", () => {
     // Guard the guard: if either regex silently stops matching, the assertion
     // above passes vacuously at 0 === 0.
     expect(guards.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("🔒 explains a rejection with every category the predicate refuses", () => {
+    // The same drift class as the test above, one level out. That lock counts
+    // GUARDS against BULLETS; this one counts CATEGORIES against the number the
+    // docblock claims. They are deliberately different numbers — five guards
+    // implement three kinds of defect — so neither test subsumes the other.
+    //
+    // The failure this prevents: `preview.ts` told users a refusal guarded
+    // "both against escaping the kits root and against an id that aliases a
+    // different kit inside it" — two categories — twenty lines above its own
+    // comment saying there are three. The NUL guard had introduced a category
+    // that is neither an escape nor an alias, and the user-facing string kept
+    // the old shape, so a user reading it would conclude their id had been
+    // judged a traversal attempt.
+    //
+    // So the categories are now DATA, the error prose is BUILT from that data,
+    // and the count is checked against the docblock's own claim. A fourth kind
+    // fails here until both move.
+    const source = readFileSync(path.join(import.meta.dirname, "kit-files.ts"), "utf8");
+
+    const claim = /refuses (\w+) different kinds of id/u.exec(source);
+    expect(claim).not.toBeNull();
+    const declared = { two: 2, three: 3, four: 4, five: 5 }[claim![1] as string];
+    expect(declared).toBeDefined();
+
+    expect(KIT_ID_SAFETY_CATEGORIES.length).toBe(declared);
+    // Every category must survive into the rendered rationale; a join that
+    // silently dropped one would otherwise pass the count check above.
+    for (const category of KIT_ID_SAFETY_CATEGORIES) {
+      expect(KIT_ID_SAFETY_RATIONALE).toContain(category);
+    }
   });
 
   it("🔒 rejects an id no filesystem call could ever accept", () => {
