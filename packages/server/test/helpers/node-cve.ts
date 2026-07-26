@@ -333,11 +333,11 @@ function logicalLines(text: string): string[] {
  * requirement at all?". A doc phrasing its requirement as `Requires Node 23.x`
  * answered no to the first and yes to the second, so it was never checked.
  *
- * Attribution is per CLAUSE, not per line. A line may pin several tools at
- * once — `Install Node 22 (pnpm >=10.34.4)` — and reading the whole line as
- * Node's handed the sweep pnpm's floor as if the document had claimed it. On
- * that line the only floor returned was the foreign one, so the reported
- * over-claim named a version the prose never applied to Node at all.
+ * Attribution is per CLAUSE, not per line. One logical line may pin several
+ * tools at once — `Install Node 22 (pnpm >=10.34.4)` — and this used to read
+ * the whole line as Node's, handing the sweep pnpm's floor as if the document
+ * had claimed it. The only floor returned there was the foreign one, so the
+ * reported over-claim named a version the prose never applied to Node at all.
  *
  * A clause naming no tool INHERITS the previous clause's subject, because the
  * canonical prose relies on it: in `Node.js 22.19.0–22.x, or 24.4.1 or newer`
@@ -393,8 +393,9 @@ function eachNodeClause(text: string, visit: (clause: string, line: string) => v
 /**
  * Every open-ended Node floor a doc claims, e.g. `≥22.19.0` or "22.19 or newer".
  *
- * Only floors attributed to Node on the same line count, and only clauses with
- * no upper bound. The name always said both; the patterns said neither, so a
+ * Only floors attributed to Node within the same logical line count, and only
+ * clauses with no upper bound. The name always said both; the patterns said
+ * neither, so a
  * caller that trusted the name would read a contrast ratio as a runtime promise
  * and read `>=22.19.0 <23` as an open-ended one.
  *
@@ -404,13 +405,14 @@ function eachNodeClause(text: string, visit: (clause: string, line: string) => v
  * search for the prose form.
  */
 export function findOpenEndedNodeFloors(text: string): string[] {
-  // Attribution is per line: a version counts only where Node is what is being
-  // versioned. Without that the function matched any `>=x.y` and reported design
+  // Attribution is per clause within a logical line: a version counts only
+  // where Node is what is being versioned. Without that the function matched
+  // any `>=x.y` and reported design
   // tokens and unrelated tool floors as Node prerequisites, which is why the
   // documentation sweep could not simply scan the repository.
   //
-  // Scanning the whole line, rather than a window running forward from the word
-  // `node`, also stops an early match from hiding a later one: in
+  // Scanning the whole logical line, rather than a window running forward from
+  // the word `node`, also stops an early match from hiding a later one: in
   // `>=22.19.0 <23 || >=24.4.1` the bounded arm consumed the line's only `node`
   // mention, so the arm that actually is open-ended was never reached.
   const patterns = [

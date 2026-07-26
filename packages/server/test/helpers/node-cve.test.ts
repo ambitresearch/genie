@@ -1,3 +1,7 @@
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -212,7 +216,7 @@ describe("satisfiesRange — empty comparator sets are wildcards", () => {
     ).toEqual(["24.4.1"]);
   });
   it("🔒 does not attribute a co-listed tool's floor to Node", () => {
-    // Attribution was per LINE, so any prerequisite line naming Node handed the
+    // Attribution used to be per LINE, so any prerequisite line naming Node handed
     // function every version on it — including versions belonging to a tool
     // listed alongside. That is a false POSITIVE in the repository sweep: a
     // guide correctly pinning `Node 22 (pnpm >=10.34.4)` was read as claiming a
@@ -367,5 +371,106 @@ describe("statesNodeRequirement — soft-wrapped claims", () => {
     ]) {
       expect(statesNodeRequirement(doc), doc).toBe(false);
     }
+  });
+});
+
+/**
+ * Two fixes in this review widened a behaviour and left their own prose behind.
+ * `statesNodeRequirement` replaced shape-based discovery, and `logicalLines`
+ * replaced physical-line attribution — yet the docblocks wrapping both went on
+ * describing the superseded contract, so a reader re-deriving the rule from the
+ * comment would rebuild the narrower version the fix had just removed.
+ *
+ * That is the same failure as the eight kitId gates this PR unifies: a contract
+ * restated in several places, corrected in one. The answer used elsewhere in
+ * this review is to ask the TREE rather than a hand-listed pair of sites, so
+ * these scan every comment under `packages/server/test/` for the two abandoned
+ * vocabularies. A comment that NEGATES the old wording, or that marks itself as
+ * a historical record with `used to`, is a record rather than a claim.
+ */
+describe("node-cve prose — the contract its comments teach", () => {
+  const testRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+  /** Every comment under the test tree, `*`/`//` markers and wrapping removed. */
+  const comments = (): { rel: string; text: string }[] => {
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith(".ts")) files.push(full);
+      }
+    };
+    walk(testRoot);
+
+    const found: { rel: string; text: string }[] = [];
+    for (const file of files) {
+      const source = readFileSync(file, "utf-8");
+      const raw = [
+        ...source.matchAll(/\/\*[\s\S]*?\*\//gu),
+        ...source.matchAll(/(?:^|[^:])(\/\/.*(?:\n\s*\/\/.*)*)/gmu),
+      ].map((match) => match[0]);
+      for (const comment of raw) {
+        // Unwrap so a phrase broken across two comment lines is still one
+        // phrase; the drift these police is prose, and prose wraps.
+        const text = comment
+          .replace(/\/\*+|\*+\/|^\s*\*|^\s*\/\//gmu, " ")
+          .replace(/\s+/gu, " ")
+          .trim();
+        if (text) found.push({ rel: path.relative(testRoot, file), text });
+      }
+    }
+    return found;
+  };
+
+  /** A negation immediately before the phrase makes the sentence a correction. */
+  const asserted = (text: string, phrase: RegExp): boolean => {
+    if (/\bused to\b/iu.test(text)) return false;
+    // A `g` regex carries `lastIndex` across calls, so the scanner is rebuilt
+    // here and every predicate below stays stateless. Written the other way
+    // this file passed one lock vacuously while the drift it names was live.
+    for (const hit of text.matchAll(new RegExp(phrase.source, "giu"))) {
+      const before = text.slice(Math.max(0, (hit.index ?? 0) - 40), hit.index ?? 0);
+      if (!/\b(?:not|no|never|rather than|instead of|no longer)\b/iu.test(before)) return true;
+    }
+    return false;
+  };
+
+  it("🔒 no comment still attributes a Node floor to a physical line", () => {
+    const GRANULARITY = /\b(?:on the same line|per line|the whole line|each line)\b/iu;
+    const SWEEP = /\b(?:node|clause|floor|requirement|attribution)\b/iu;
+
+    const considered: string[] = [];
+    const stale: string[] = [];
+    for (const { rel, text } of comments()) {
+      if (!SWEEP.test(text)) continue;
+      // `logical line` is the corrected vocabulary, so it must not read as the
+      // abandoned one.
+      const probe = text.replace(/logical lines?/giu, "logical-unit");
+      if (!GRANULARITY.test(probe)) continue;
+      considered.push(rel);
+      if (asserted(probe, GRANULARITY)) stale.push(rel);
+    }
+
+    // Guards against passing because the vocabulary vanished from the tree
+    // altogether, which would make the assertion below true of nothing.
+    expect(considered.length).toBeGreaterThan(0);
+    expect(stale).toEqual([]);
+  });
+
+  it("🔒 no comment still scopes documentation discovery to an open-ended floor", () => {
+    const SHAPE = /\bopen-ended\b/iu;
+    const SCOPE = /\b(?:is|are) in scope\b|\bcoverage is\b/iu;
+
+    const considered: string[] = [];
+    const stale: string[] = [];
+    for (const { rel, text } of comments()) {
+      if (!SHAPE.test(text)) continue;
+      considered.push(rel);
+      if (SCOPE.test(text) && asserted(text, SHAPE)) stale.push(rel);
+    }
+
+    expect(considered.length).toBeGreaterThan(0);
+    expect(stale).toEqual([]);
   });
 });

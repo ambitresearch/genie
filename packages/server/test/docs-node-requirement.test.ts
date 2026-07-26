@@ -50,12 +50,14 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
  * from `README.md` and from `docs/developer/contributing.md` — which went on
  * promising `Node >= 22.19.0` while this lock reported green. A lock whose
  * coverage is retyped by hand fails exactly the way the eight kitId gates this
- * PR unifies failed, so the coverage is now derived: any markdown that states
- * an open-ended Node floor is in scope automatically, including files that do
- * not exist yet.
+ * PR unifies failed, so the coverage is now derived: any markdown that states a
+ * Node requirement at all is in scope automatically, including files that do not
+ * exist yet. Discovery deliberately never asks what SHAPE the claim takes — see
+ * `statesNodeRequirement`, which is why a bounded `Node >=23 <24` is checked
+ * too.
  *
- * `.nvmrc` is out of scope by construction rather than by omission: it holds a
- * bare version with no floor spelling, so it states one convenient local
+ * `.nvmrc` is out of scope by construction rather than by omission: the sweep
+ * reads markdown, and a bare version pinned for local use states one convenient
  * version rather than a promise about the supported range. No workflow reads
  * it, and CI builds a `node: [22, 24]` matrix of bare majors.
  */
