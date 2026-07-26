@@ -9,6 +9,8 @@ import { LocalFsKitStore } from "./store/local.js";
 import { KitAlreadyExistsError, KIT_TYPE } from "./store/interface.js";
 import { slugify, buildKitId } from "./tools/create_kit.js";
 import { KIT_ID_PATTERN } from "./tools/get_kit.js";
+import { compileManifest } from "./manifest/compiler.js";
+import { resolveKitDir } from "./ui/grid-resource.js";
 
 // ────────────────────────────────────────────────────────────
 // Unit tests — pure functions
@@ -105,9 +107,7 @@ describe("LocalFsKitStore", () => {
     expect(kit.type).toBe(KIT_TYPE);
     expect(kit.createdAt).toBeTruthy();
 
-    const kitJson = JSON.parse(
-      await readFile(join(tempDir, "kits", kitId, ".kit.json"), "utf-8"),
-    );
+    const kitJson = JSON.parse(await readFile(join(tempDir, "kits", kitId, ".kit.json"), "utf-8"));
     expect(kitJson.id).toBe(kitId);
     expect(kitJson.name).toBe("My Kit");
     expect(kitJson.type).toBe("GENIE_KIT");
@@ -117,9 +117,7 @@ describe("LocalFsKitStore", () => {
   it("throws KitAlreadyExistsError on collision", async () => {
     const kitId = "dup-kit-aaaaaa";
     await store.createKit("Dup Kit", kitId);
-    await expect(store.createKit("Dup Kit 2", kitId)).rejects.toThrow(
-      KitAlreadyExistsError,
-    );
+    await expect(store.createKit("Dup Kit 2", kitId)).rejects.toThrow(KitAlreadyExistsError);
   });
 });
 
@@ -361,5 +359,95 @@ describe("create_kit tool (via MCP)", () => {
     const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
     const parsed = JSON.parse(text) as { error: string };
     expect(parsed.error).toBe("InvalidKitName");
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Kit-identity invariant (#254)
+// ────────────────────────────────────────────────────────────
+/**
+ * Browse's `read_file` and the cross-kit guard both key off the id embedded in a
+ * compiled manifest. That works only because `manifest.name` happens to equal the
+ * server kit id, and that equality is *incidental* — it falls out of two unrelated
+ * lines:
+ *
+ *   - `LocalFsKitStore.kitDir(id) = join(baseDir, id)`  — the dir is named by the id
+ *   - `compileManifest`'s `name: basename(projectRoot)` — the name is read back off
+ *     that dir
+ *
+ * Nothing declares the two must agree. A compiler that took an explicit name, or a
+ * store that nested kits one level deeper, would silently decouple them and Browse
+ * would start resolving `read_file` against a directory that does not exist. These
+ * tests pin the equality across the real chain so such a change fails loudly here
+ * instead of in the viewer.
+ */
+describe("kit identity — manifest.name === kit.id (#254)", () => {
+  let tempDir: string;
+  let kitsRoot: string;
+  let client: Client;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "genie-kitid-"));
+    kitsRoot = join(tempDir, "kits");
+    const server = createServer({ kitsRoot });
+    client = new Client({ name: "test", version: "0" });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverT), client.connect(clientT)]);
+  });
+
+  afterEach(async () => {
+    await client.close();
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  /** Create a kit through the real MCP tool and return its server-assigned id. */
+  async function createKitViaMcp(name: string): Promise<string> {
+    const result = await client.callTool({
+      name: "mcp__genie__create_kit",
+      arguments: { name },
+    });
+    const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
+    return (JSON.parse(text) as { kitId: string }).kitId;
+  }
+
+  it("compiles a manifest whose `name` is the server kit id, not the display name", async () => {
+    const kitId = await createKitViaMcp("My Fancy Kit");
+    const { manifest } = await compileManifest(join(kitsRoot, kitId));
+
+    expect(manifest.name).toBe(kitId);
+    // The display name is a *different* field and must not leak into the manifest:
+    // "My Fancy Kit" is not a resolvable directory.
+    expect(manifest.name).not.toBe("My Fancy Kit");
+  });
+
+  it("Browse can resolve the compiled manifest.name straight back to the kit dir", async () => {
+    const kitId = await createKitViaMcp("Round Trip Kit");
+    const { manifest } = await compileManifest(join(kitsRoot, kitId));
+
+    // This is the exact call Browse's resource handler makes. If `manifest.name`
+    // ever stopped being the kit id this returns a path that does not exist (or
+    // null, for a name that fails KIT_ID_PATTERN) and every read_file 404s.
+    expect(resolveKitDir(kitsRoot, manifest.name)).toBe(join(kitsRoot, kitId));
+    await access(join(kitsRoot, kitId, ".kit.json"));
+  });
+
+  it("assigns a slug-derived id — the store's randomUUID() fallback is unreachable from create_kit", async () => {
+    // create_kit always passes an explicit `buildKitId(name)`, so `createKit`'s
+    // `kitId ?? randomUUID()` never fires on this path. A UUID would still satisfy
+    // KIT_ID_PATTERN, so the equality above would survive — but the id would stop
+    // being human-traceable, which is a regression worth catching.
+    const kitId = await createKitViaMcp("Slug Derived");
+    expect(kitId).toMatch(/^slug-derived-[0-9a-f]{6}$/);
+    expect(kitId).not.toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it("holds for a name whose slug differs sharply from the display name", async () => {
+    // Punctuation/casing/spacing all collapse in the slug, so this is the case
+    // where a display-name leak would be most obvious.
+    const kitId = await createKitViaMcp("  Weird   NAME  with__spaces  ");
+    const { manifest } = await compileManifest(join(kitsRoot, kitId));
+
+    expect(manifest.name).toBe(kitId);
+    expect(resolveKitDir(kitsRoot, manifest.name)).toBe(join(kitsRoot, kitId));
   });
 });
