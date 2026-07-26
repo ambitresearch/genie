@@ -36,9 +36,10 @@
  *
  * The 🔒 tests are the regression locks.
  */
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -54,7 +55,7 @@ import { MANIFEST_PATH } from "../store/manifest.js";
 import { resolveKitDir as resolveGridKitDir } from "../ui/grid-resource.js";
 import { seedKit } from "../../test/helpers/seed-kit.js";
 import { ProjectNotFoundError, getKit } from "./get_kit.js";
-import { listWritableKits } from "./list_kits.js";
+import { LIST_KITS_DESCRIPTION, listWritableKits } from "./list_kits.js";
 import { registerPlan } from "./plan.js";
 import type { BootRequest, BootedViewer, ViewerBooter } from "./preview.js";
 import { InvalidKitIdError, resolveKitDir as resolvePreviewKitDir } from "./preview.js";
@@ -1152,6 +1153,56 @@ describe("kitId gate — list_kits never advertises an id the gate refuses", () 
     for (const kit of listed) {
       expect(isSafeKitId(kit.id), `advertised but gate-refused: ${kit.id}`).toBe(true);
       await expect(getKit(store, { kitId: kit.id })).resolves.toMatchObject({ id: kit.id });
+    }
+  });
+});
+// ─── Unit: what list_kits is entitled to promise ─────────────────────────────
+
+describe("kitId gate — what list_kits may promise about other verbs", () => {
+  it("🔒 does not promise a refusal from verbs that never apply the gate", async () => {
+    // `list_kits` omits ids the shared gate refuses, and justified that by
+    // claiming every kit verb would refuse them anyway. That is a statement
+    // about OTHER tools, so it can only be as true as they are — and it is
+    // false for any verb reaching the store through its own looser schema.
+    // Derive the two sets rather than reasoning about them in prose, because
+    // reasoning about a rule at a distance is the defect this PR exists to fix.
+    const toolsDir = dirname(fileURLToPath(import.meta.url));
+    const files = (await readdir(toolsDir)).filter(
+      (file) => file.endsWith(".ts") && !file.endsWith(".test.ts"),
+    );
+
+    const kitVerbs: string[] = [];
+    const ungated: string[] = [];
+    for (const file of files) {
+      const source = await readFile(join(toolsDir, file), "utf8");
+      if (!/kitId:\s*z\./u.test(source)) continue;
+      kitVerbs.push(file);
+      // `get_kit` applies the gate inside its own args schema, so delegating to
+      // it counts — that is how `create_project` gates `bind_kit`'s kitId.
+      const gated =
+        /\b(?:isSafeKitId|assertKitLive)\b/u.test(source) || /from "\.\/get_kit\.js"/u.test(source);
+      if (!gated) ungated.push(file);
+    }
+
+    // Anti-vacuity: the gate spans most of the kit-taking surface, so an empty
+    // or near-empty derivation means the scan broke, not that the claim holds.
+    expect(kitVerbs.length).toBeGreaterThan(4);
+
+    // Only the refusal direction is policed here. "every kit verb would refuse
+    // X" needs every verb to gate, which is what `ungated` measures. The
+    // description's other universal — "no kit verb will refuse" a SAFE id —
+    // rests on a different premise (no verb is NARROWER than the shared rule)
+    // and is locked by its own two tests above: the advertised-schema check and
+    // the behavioural refusal check.
+    const universal =
+      LIST_KITS_DESCRIPTION.match(/\b(?:every|any) kit verb\b[^.]{0,40}?\brefuses?\b/giu) ?? [];
+    if (universal.length > 0) {
+      expect(
+        ungated,
+        `list_kits' description says "${universal.join('", "')}", but these declare a kitId ` +
+          `input and never apply the shared gate, so an id it withholds as unusable is one ` +
+          `they would in fact accept`,
+      ).toEqual([]);
     }
   });
 });
