@@ -695,9 +695,9 @@ async function readClineHubLockPids(
       continue;
     }
 
-    let parsed: { pid?: unknown };
+    let parsed: unknown;
     try {
-      parsed = JSON.parse(raw) as { pid?: unknown };
+      parsed = JSON.parse(raw);
     } catch {
       // The file exists, so a daemon wrote it; a torn read means its owner is
       // indeterminate, not absent.
@@ -705,7 +705,16 @@ async function readClineHubLockPids(
       continue;
     }
 
-    const { pid } = parsed;
+    // `JSON.parse` happily returns `null`, a number or a string for a
+    // truncated or half-rewritten lock. Reading `pid` off one of those throws
+    // a `TypeError` out of teardown's `finally`, replacing whatever assertion
+    // the test was already reporting -- the same masking failure #259 caused.
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      indeterminate.push(`lock ${relative} (malformed)`);
+      continue;
+    }
+
+    const { pid } = parsed as { pid?: unknown };
     if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) {
       pids.push(pid);
     } else if ("pid" in parsed) {
@@ -774,7 +783,12 @@ async function scanClineHubDaemonPids(
   return pids;
 }
 
-type ClineHubTermination = "already-exited" | "terminated" | "killed" | "timed-out";
+type ClineHubTermination =
+  | "already-exited"
+  | "terminated"
+  | "killed"
+  | "timed-out"
+  | "unverifiable";
 
 interface TerminateAndWaitOptions {
   escalateAfterMs?: number;
@@ -784,6 +798,12 @@ interface TerminateAndWaitOptions {
   sendSignal?: (pid: number, signal: NodeJS.Signals) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Re-proves, immediately before the escalation signal, that the pid is still
+   * the process we meant to kill. Defaults to trusting the caller's earlier
+   * check so this helper stays usable on its own.
+   */
+  confirmIdentity?: () => Promise<ClineHubPidVerdict> | ClineHubPidVerdict;
 }
 
 interface RemoveClineSmokeTreeOptions extends StopClineHubDaemonsOptions {
@@ -795,6 +815,13 @@ interface RemoveClineSmokeTreeOptions extends StopClineHubDaemonsOptions {
  * `SIGKILL` after `escalateAfterMs` and giving up after `timeoutMs`. Never
  * throws: teardown must not mask the assertion failure that a test is already
  * reporting.
+ *
+ * `SIGKILL` is unblockable, so it gets its own identity check. Liveness alone
+ * only proves *some* process owns the pid: if `SIGTERM` worked and the OS
+ * recycled the pid during the wait, escalating would kill a bystander. The
+ * verdict decides what happens next -- `"mismatch"` means our target is gone
+ * (`"already-exited"`), while `"unknown"` reports `"unverifiable"` so the
+ * caller keeps the temp tree instead of deleting under a possible writer.
  */
 async function terminateAndWait(
   pid: number,
@@ -806,6 +833,7 @@ async function terminateAndWait(
     pollMs = 25,
     isAlive = processIsAlive,
     now = () => Date.now(),
+    confirmIdentity = () => "match" as ClineHubPidVerdict,
     sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
     sendSignal = (target: number, signal: NodeJS.Signals) => {
       try {
@@ -828,6 +856,10 @@ async function terminateAndWait(
       return "timed-out";
     }
     if (!escalated && elapsed >= escalateAfterMs) {
+      const verdict = await confirmIdentity();
+      if (verdict !== "match") {
+        return verdict === "mismatch" ? "already-exited" : "unverifiable";
+      }
       escalated = true;
       sendSignal(pid, "SIGKILL");
     }
@@ -937,7 +969,14 @@ async function stopClineHubDaemons(
   for (const pid of candidates) {
     const verdict = await verifyClineHubDaemonPid(pid, base, options);
     if (verdict === "match") {
-      outcomes.set(pid, await terminateAndWait(pid, options));
+      const outcome = await terminateAndWait(pid, {
+        ...options,
+        confirmIdentity: () => verifyClineHubDaemonPid(pid, base, options),
+      });
+      outcomes.set(pid, outcome);
+      if (outcome === "unverifiable") {
+        unverified.push(`pid ${pid} (identity lost before SIGKILL)`);
+      }
     } else if (verdict === "unknown") {
       unverified.push(`pid ${pid}`);
     }
@@ -1109,6 +1148,117 @@ it.skipIf(process.platform === "win32")(
     }
   },
 );
+
+it("treats a lock whose JSON root is not an object as indeterminate", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  await writeFile(join(base, "marker.txt"), "x", "utf8");
+  const warnings: string[] = [];
+
+  try {
+    await removeClineSmokeTree(base, {
+      platform: "win32",
+      // Syntactically valid JSON that is not a lock record -- a truncated or
+      // half-rewritten lock can land here. Reading `pid` off it would throw a
+      // TypeError out of teardown's `finally` and mask the real assertion, so
+      // it has to be recorded as indeterminate like any other unusable lock.
+      readLockFile: () => "null",
+      warn: (message) => warnings.push(message),
+    });
+
+    await expect(stat(base)).resolves.toBeTruthy();
+    expect(warnings.join("\n")).toContain("locks");
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+it("stops escalating once a signalled pid can no longer be proven to be the daemon", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  const lockPath = join(base, CLINE_HUB_LOCK_PATHS[0]!);
+  await mkdir(dirname(lockPath), { recursive: true });
+  await writeFile(lockPath, JSON.stringify({ pid: 424_243, authToken: "test" }), "utf8");
+  const signalled: Array<[number, NodeJS.Signals]> = [];
+  const warnings: string[] = [];
+  let clock = 0;
+  let probes = 0;
+
+  try {
+    await removeClineSmokeTree(base, {
+      timeoutMs: 500,
+      escalateAfterMs: 100,
+      pollMs: 10,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      platform: "linux",
+      isAlive: () => true,
+      // The pid proves itself once, is sent SIGTERM, and then becomes
+      // unreadable -- the daemon may have exited and the OS may have handed
+      // the pid to something we cannot inspect. SIGKILL at that point is a
+      // coin flip on an unrelated process.
+      describeProcess: () => {
+        probes += 1;
+        if (probes === 1) {
+          return `cline ${CLINE_HUB_DAEMON_FLAG} --cwd ${base}`;
+        }
+        throw new Error("ps: operation not permitted");
+      },
+      sendSignal: (pid, signal) => signalled.push([pid, signal]),
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(signalled).toEqual([[424_243, "SIGTERM"]]);
+    // Identity is unprovable, so the tree stays: deleting under something that
+    // might still be the hub daemon is the #259 race.
+    await expect(stat(base)).resolves.toBeTruthy();
+    expect(warnings.join("\n")).toContain("424243");
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+it("still deletes when a signalled pid is proven to be a foreign process", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  const lockPath = join(base, CLINE_HUB_LOCK_PATHS[0]!);
+  await mkdir(dirname(lockPath), { recursive: true });
+  await writeFile(lockPath, JSON.stringify({ pid: 424_244, authToken: "test" }), "utf8");
+  const signalled: Array<[number, NodeJS.Signals]> = [];
+  const warnings: string[] = [];
+  let clock = 0;
+  let probes = 0;
+
+  try {
+    await removeClineSmokeTree(base, {
+      timeoutMs: 500,
+      escalateAfterMs: 100,
+      pollMs: 10,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      platform: "linux",
+      isAlive: () => true,
+      // Here the pid demonstrably belongs to something else now, which means
+      // our daemon did exit. Not escalating must not turn into leaking the
+      // tree on every run -- that would satisfy the test above vacuously.
+      describeProcess: () => {
+        probes += 1;
+        return probes === 1
+          ? `cline ${CLINE_HUB_DAEMON_FLAG} --cwd ${base}`
+          : "/usr/bin/some-unrelated-process";
+      },
+      sendSignal: (pid, signal) => signalled.push([pid, signal]),
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(signalled).toEqual([[424_244, "SIGTERM"]]);
+    await expect(stat(base)).rejects.toThrow();
+    expect(warnings).toEqual([]);
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
 
 it("leaves the temp tree when a lock pid cannot be inspected", async () => {
   const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
