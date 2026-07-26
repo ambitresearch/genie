@@ -38,9 +38,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createServer } from "../server.js";
 import { isSafeKitId } from "../store/kit-files.js";
+import { LocalFsKitStore } from "../store/local.js";
 import { MANIFEST_PATH } from "../store/manifest.js";
 import { resolveKitDir as resolveGridKitDir } from "../ui/grid-resource.js";
 import { seedKit } from "../../test/helpers/seed-kit.js";
+import { ProjectNotFoundError, getKit } from "./get_kit.js";
 import type { BootRequest, BootedViewer, ViewerBooter } from "./preview.js";
 import { InvalidKitIdError, resolveKitDir as resolvePreviewKitDir } from "./preview.js";
 
@@ -484,5 +486,121 @@ describe("kitId gate — shape is relaxed, existence is not", () => {
       result.isError,
       `expected get_kit to reject a missing kit: ${JSON.stringify(result)}`,
     ).toBe(true);
+  });
+});
+
+// ─── The hole left in `list_kits`' promise, which is NOT a gate defect ────────
+
+/**
+ * Surfaced by the review round on #277, the superseded parallel take on this
+ * same asymmetry. Recorded here because it directly qualifies the promise the
+ * first suite in this file asserts — "list_kits returns the imported kit — this
+ * is the promise every verb below must honour". That promise has a hole, and it
+ * is NOT the one this file fixes.
+ *
+ * The two `KitStore` adapters disagree about what a LocalFs kit's identity IS:
+ *
+ *   - `GitHostKitStore` — `listKits` returns `id: repo.name` and `readKitMeta`
+ *     returns `id: kitId`, deliberately DISCARDING any `id` inside `.kit.json`
+ *     ("the repository name is authoritative for the kit's identity"). List and
+ *     get therefore route through the same value and cannot diverge.
+ *   - `LocalFsKitStore` — `listKits` returns `id: meta.id`, read out of each
+ *     `<dir>/.kit.json`, but `getKit` resolves `kitMetaPath(kitId)` =
+ *     `join(baseDir, kitId, ".kit.json")`, i.e. it treats the id as a DIRECTORY
+ *     NAME. When a hand-imported or restored-from-backup kit's `.kit.json`
+ *     declares an `id` that is not its directory name, `list_kits` advertises an
+ *     id `get_kit` cannot resolve.
+ *
+ * Every other fixture in this file (and `test/helpers/seed-kit.ts`) writes
+ * `id: kitId` into `<kitsRoot>/<kitId>/`, forcing dirname === id, so no existing
+ * test can reach this. The narrow `KIT_ID_PATTERN` gate masked it for ids like
+ * `My_Kit.2` by refusing them earlier, for the wrong reason.
+ *
+ * This is pinned, not fixed. Deciding whether `meta.id` or the directory name is
+ * authoritative for LocalFs kit identity is a store-semantics change covered by
+ * the adapter conformance suites, not a tool-layer gate change. The assertions
+ * below fail the moment anyone changes that behaviour, so the decision cannot be
+ * made silently.
+ */
+describe("kitId gate — the hole in list_kits' promise is a STORE defect", () => {
+  let tempDir: string;
+  let kitsRoot: string;
+  let client: Client;
+
+  /** The id `.kit.json` declares. */
+  const DECLARED_ID = "My_Kit.2";
+  /** The directory that actually holds the kit. */
+  const DIR_NAME = "physical-name";
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "genie-kitid-divergent-"));
+    process.env.GENIE_HOME = tempDir;
+    kitsRoot = join(tempDir, "kits");
+    await mkdir(kitsRoot, { recursive: true });
+
+    await seedImportedKit(kitsRoot, DIR_NAME);
+    // Re-declare a DIFFERENT id than the directory name. This is the only
+    // divergence; the kit is otherwise byte-identical to every other fixture.
+    await writeFile(
+      join(kitsRoot, DIR_NAME, ".kit.json"),
+      JSON.stringify({
+        id: DECLARED_ID,
+        name: `Imported ${DECLARED_ID}`,
+        type: "GENIE_KIT",
+        createdAt: new Date().toISOString(),
+      }),
+      "utf-8",
+    );
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createServer({
+      kitsRoot,
+      projectsRoot: join(tempDir, "projects"),
+      previewBooter: stubBooter(),
+    });
+    await server.connect(serverTransport);
+
+    client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+    await client.connect(clientTransport);
+  });
+
+  afterEach(async () => {
+    await client.close();
+    await rm(tempDir, { recursive: true, force: true });
+    delete process.env.GENIE_HOME;
+  });
+
+  it("🔒 pins LocalFs listing by meta.id while resolving by directory name", async () => {
+    const store = new LocalFsKitStore(kitsRoot);
+
+    // `list_kits` advertises the id `.kit.json` declares...
+    expect((await store.listKits()).map((kit) => kit.id)).toEqual([DECLARED_ID]);
+
+    // ...and the containment gate admits it, so the gate is not what fails...
+    expect(isSafeKitId(DECLARED_ID)).toBe(true);
+
+    // ...yet `getKit` routes by directory name, so the advertised id 404s while
+    // the never-advertised directory name resolves. Neither line moves if the
+    // gate is widened or narrowed: this is store identity semantics.
+    await expect(getKit(store, { kitId: DECLARED_ID })).rejects.toBeInstanceOf(
+      ProjectNotFoundError,
+    );
+    expect((await getKit(store, { kitId: DIR_NAME })).id).toBe(DECLARED_ID);
+  });
+
+  it("the divergence is user-visible: list_kits offers an id get_kit refuses", async () => {
+    const listed = await client.callTool({ name: "mcp__genie__list_kits", arguments: {} });
+    expect(listed.isError, JSON.stringify(listed)).toBeFalsy();
+    const kits = payload(listed) as unknown as { id: string }[];
+    expect(kits.map((k) => k.id)).toContain(DECLARED_ID);
+
+    const got = await client.callTool({
+      name: "mcp__genie__get_kit",
+      arguments: { kitId: DECLARED_ID },
+    });
+
+    // Refused by the STORE (kit not found), not by the gate — `DECLARED_ID` is
+    // containment-safe and clears the schema. Documented, not endorsed.
+    expect(got.isError, `expected the advertised id to 404: ${JSON.stringify(got)}`).toBe(true);
   });
 });
