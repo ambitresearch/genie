@@ -290,6 +290,9 @@ jobs:
       # below AA. Same runner, same Chromium install as the audit above.
       # GENIE_REQUIRE_A11Y_BROWSER=1 upgrades a silent skip to a loud failure,
       # honouring the same "vacuous skip must fail somewhere" contract.
+      # The script pins `--outputFile.junit` to its own filename so this run
+      # doesn't overwrite the axe audit's reports/junit.xml (the config hardcodes
+      # that single path for every invocation).
       - name: "Run #247 Browse contrast pins (light + dark)"
         env:
           VITEST_JUNIT: "1"
@@ -312,7 +315,11 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-report-viewer-a11y
-          path: reports/junit.xml
+          # The contrast run writes its own filename (see its step above), so it
+          # survives alongside whichever suite last wrote reports/junit.xml.
+          path: |
+            reports/junit.xml
+            reports/junit-browse-contrast.xml
           if-no-files-found: warn
           retention-days: 7
 
@@ -386,6 +393,11 @@ jobs:
       # under 90s, so folding another browser-driving suite into that process
       # would make an unrelated acceptance criterion fail. Reuses this job's
       # build + Chromium install rather than paying for a fourth CI job.
+      #
+      # The script pins `--outputFile.junit` to its own filename. vitest.config.ts
+      # hardcodes `reports/junit.xml`, so without that override this second
+      # invocation would overwrite the three-vehicle report written above and the
+      # `test-report-viewer-e2e` artefact would silently contain only this suite.
       - name: "Run #247 Browse E2E (tree nav, HMR removal, MCP read_file)"
         env:
           VITEST_JUNIT: "1"
@@ -406,7 +418,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-report-viewer-e2e
-          path: reports/junit.xml
+          # Both reports: the three-vehicle gate's and the Browse suite's.
+          path: |
+            reports/junit.xml
+            reports/junit-m7-02-browse.xml
           if-no-files-found: warn
           retention-days: 7
 

@@ -268,26 +268,47 @@ describe.skipIf(!chromiumAvailable)("M7-02 Browse workbench E2E (#247)", () => {
       expect(await view.locator('[role="treeitem"][tabindex="0"]').count()).toBe(1);
 
       const names = await treeItemNames(view);
-      // ArrowDown asserts against the *second* row, so the tree must have one.
       expect(names.length).toBe(EXPECTED_COMPONENT_COUNT);
+      const firstRow = names[0] ?? "";
       const secondRow = names[1] ?? "";
+      const lastRow = names[names.length - 1] ?? "";
+      // End/Home are only meaningful if the extremes are distinct rows.
+      expect(new Set([firstRow, secondRow, lastRow]).size).toBe(3);
+
       await view.locator('[role="treeitem"]').first().focus();
+
+      // Drive every key `viewer-browse.js` binds, not just ArrowDown: ArrowUp,
+      // Home and End were otherwise exercised only under jsdom, so a real-
+      // browser regression in any of the three (e.g. a missed preventDefault
+      // letting the pane scroll instead of moving focus) would go unseen here.
+      const traversal: Array<{ key: string; expected: string }> = [
+        { key: "ArrowDown", expected: secondRow },
+        { key: "ArrowUp", expected: firstRow },
+        { key: "End", expected: lastRow },
+        { key: "Home", expected: firstRow },
+      ];
+      for (const step of traversal) {
+        await page.keyboard.press(step.key);
+        await expect
+          .poll(() => activeRowText(view), {
+            message: `${step.key} should focus "${step.expected}"`,
+          })
+          .toContain(step.expected);
+        // The roving contract must hold after *every* move, not just the last.
+        expect(await view.locator('[role="treeitem"][tabindex="0"]').count()).toBe(1);
+      }
+
+      // Land back on row 2 and open it, so Enter is asserted against a row
+      // reached by keyboard rather than the initial default.
       await page.keyboard.press("ArrowDown");
-      await expect
-        .poll(() =>
-          view.evaluate(() => {
-            const browserGlobals = globalThis as unknown as BrowserGlobals;
-            return browserGlobals.document.activeElement?.textContent?.trim() ?? "";
-          }),
-        )
-        .toContain(secondRow);
-      // Still exactly one tab stop after moving.
-      expect(await view.locator('[role="treeitem"][tabindex="0"]').count()).toBe(1);
+      await expect.poll(() => activeRowText(view)).toContain(secondRow);
 
       await page.keyboard.press("Enter");
-      await expect.poll(() => view.locator(".browse-breadcrumb").textContent()).toContain(names[1]);
+      await expect
+        .poll(() => view.locator(".browse-breadcrumb").textContent())
+        .toContain(secondRow);
       expect(await view.locator('[role="treeitem"][aria-selected="true"]').textContent()).toContain(
-        names[1],
+        secondRow,
       );
     } finally {
       await page.close();
@@ -380,6 +401,15 @@ describe.skipIf(!chromiumAvailable)("M7-02 Browse workbench E2E (#247)", () => {
     const vite = await startViteVehicle(structural.kitDir);
     const page = await browser.newPage();
 
+    // Capture the genie HMR socket's frames. This has to be attached BEFORE
+    // navigation to catch the handshake. See the transport assertion below for
+    // why an outcome-only check is not enough.
+    const hmrFrames: string[] = [];
+    page.on("websocket", (ws) => {
+      if (!ws.url().includes("__genie_hmr")) return;
+      ws.on("framereceived", (frame) => hmrFrames.push(String(frame.payload)));
+    });
+
     try {
       const view = await gotoBrowse(page, vite.url);
       await expect.poll(() => view.locator('[role="treeitem"]').count()).toBe(2);
@@ -391,14 +421,36 @@ describe.skipIf(!chromiumAvailable)("M7-02 Browse workbench E2E (#247)", () => {
       await rm(join(structural.kitDir, "components", "surfaces", "Card", "Card.html"));
       await compileManifest(structural.kitDir);
 
-      // No manual `update()` — the real `initHmr` has to notice, via whichever
-      // transport is live: the Vite dev-server WebSocket normally, the 2 s
-      // manifest poll as the documented fallback. The generous window covers
-      // both, so this passes on a socket-less runner too.
+      // No manual `update()` — the real `initHmr` has to notice on its own.
       await expect
         .poll(() => view.locator('[role="treeitem"]').count(), { timeout: 20_000 })
         .toBe(1);
       expect(await treeItemNames(view)).toEqual(["Button"]);
+
+      // Pin the TRANSPORT, not just the outcome. `initHmr` has two paths: the
+      // `/__genie_hmr` WebSocket push and a 2 s manifest poll fallback. The
+      // assertions above are satisfied by *either*, so on their own they would
+      // stay green even with the socket completely broken — the poll would
+      // quietly cover for it and the regression would ship. Requiring the
+      // `manifest.changed` broadcast (the frame that drives
+      // `fetchManifestUpdate()`) is what makes this a real socket test, and it
+      // discriminates without depending on timing.
+      await expect
+        .poll(
+          () =>
+            hmrFrames.filter((raw) => {
+              try {
+                return (JSON.parse(raw) as { event?: string }).event === "manifest.changed";
+              } catch {
+                return false;
+              }
+            }).length,
+          {
+            timeout: 10_000,
+            message: `no manifest.changed frame on /__genie_hmr; frames seen: ${JSON.stringify(hmrFrames)}`,
+          },
+        )
+        .toBeGreaterThan(0);
 
       // A full page reload would ALSO drop the row — but it would drop the
       // selection with it and leave the placeholder. The removed-state panel is
@@ -540,6 +592,21 @@ function treeItemNames(view: Frame): Promise<string[]> {
   return view
     .locator('[role="treeitem"]')
     .evaluateAll((nodes) => nodes.map((n) => n.textContent?.trim() ?? ""));
+}
+
+/**
+ * Label of the currently focused tree row.
+ *
+ * Read off `document.activeElement` rather than `[tabindex="0"]` so it proves
+ * real focus actually moved, not merely that the roving attribute was
+ * reshuffled — the two can disagree if a handler updates state but never calls
+ * `.focus()`, which is exactly the regression this assertion exists to catch.
+ */
+function activeRowText(view: Frame): Promise<string> {
+  return view.evaluate(() => {
+    const browserGlobals = globalThis as unknown as BrowserGlobals;
+    return browserGlobals.document.activeElement?.textContent?.trim() ?? "";
+  });
 }
 
 /** Full-page screenshot into the report dir (mirrors m4-viewer's artefacts). */

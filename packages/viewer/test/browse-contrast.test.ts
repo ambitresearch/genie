@@ -261,7 +261,14 @@ const PINS: readonly Pin[] = [
     label: ".browse-tree__no-match [data-clear-filter] (recovery affordance)",
     selector: "#browse-tree-nav .browse-tree__no-match [data-clear-filter]",
     state: "no-match",
-    target: AA_UI,
+    // AA_BODY, not AA_UI. This is a button, but the pair being pinned is its
+    // visible "Clear filter" *text*, and the button inherits `--text-sm`
+    // (0.875rem = 14px) from `.browse-tree__no-match` without overriding it.
+    // 14px is under WCAG's large-text floor (18pt/24px, or 14pt/18.66px bold),
+    // so 1.4.3 governs at 4.5:1 — the 3:1 of 1.4.11 applies to non-text
+    // component boundaries, not to a label. Gating at AA_UI would let a
+    // regression into the 3:1–4.49:1 band pass this dedicated check.
+    target: AA_BODY,
   },
 ];
 
@@ -384,7 +391,12 @@ afterAll(async () => {
   await browser?.close();
   if (server) await closeServer(server);
   if (root) await rm(root, { recursive: true, force: true });
-});
+  // Explicit budget: vitest's default *hook* timeout is 10s, and this teardown
+  // closes Chromium, closes the HTTP server, and recursively removes the
+  // fixture root. That combination has already blown 10s on a loaded runner,
+  // which surfaces as `Error: Hook timed out in 10000ms` and a non-zero exit
+  // even when every test passed. 30s matches the sibling E2E suite's teardown.
+}, 30_000);
 
 /** Boot Browse in `scheme`, drive it into `state`, and hand back the page. */
 async function bootBrowse(
