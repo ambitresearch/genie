@@ -151,15 +151,10 @@
   var ANY_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
   var SAFE_FRAME_SCHEME_RE = /^(?:https?|data):/i;
   /**
-   * The port group is OPTIONAL because `authorityFor` omits the port when it is 80, so a broker
-   * bound there mints `http://127.0.0.1/d/<token>`; requiring a port would silently drop that
-   * draft back to `srcdoc`. The alternation is the exact 1-65535 range `parsePort` enforces --
-   * a looser `[0-9]{1,5}` would accept authorities the broker can never bind, which is precisely
-   * what a barrier exists to exclude.
+   * The one shape the card-asset broker mints. Optional port group, exact 1-65535 alternation, and
+   * kept a LITERAL so CodeQL can parse it; see `docs/developer/architecture.md` —
+   * "Broker-served draft previews (#257)".
    */
-  // Kept a LITERAL rather than an assembled `new RegExp`: CodeQL has to parse this pattern to
-  // accept `isDraftPreviewSrc` as a barrier guard on the iframe-`src` sink, and a concatenated
-  // source string is not reliably constant-folded for that analysis.
   // prettier-ignore
   var DRAFT_PREVIEW_SRC_RE = /^http:\/\/127\.0\.0\.1(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?\/d\/[0-9a-f]{32}$/;
 
@@ -179,11 +174,8 @@
   }
 
   /**
-   * Is this exactly a card-asset-broker draft URL? Anchored end to end against the one shape the
-   * broker mints -- loopback host, `/d/`, a 16-byte hex token -- so a tool result can never aim
-   * the review frame anywhere else. Split out and called in guard position for the same reason as
-   * `isSafeFrameSrc`: static analysis clears taint at a guard, not at a transformer.
-   *
+   * Is this exactly a card-asset-broker draft URL? Called in GUARD position, never as a
+   * transformer -- see architecture.md, "Broker-served draft previews (#257)".
    * @param {unknown} url
    * @returns {boolean}
    */
@@ -1088,11 +1080,9 @@
   }
 
   /**
-   * Copilot round 7 (#257) — the server publishes `previewUrl` (`conjure.ts`, `refine.ts`, both
-   * `z.string().optional()`), and `applyDeterministicTweak` clears it by ASSIGNING `undefined`, so
-   * the key survives `Object.keys`. Type-check only: whether a URL may aim the frame is decided by
-   * `isDraftPreviewSrc` in barrier position at render time. Rejecting a bad URL here would destroy
-   * an otherwise good draft and move the security decision off the sink CodeQL tracks.
+   * Type-check ONLY; the frame-aiming decision belongs to `isDraftPreviewSrc` at render time. The
+   * key survives `Object.keys` because tweaks clear it by assigning `undefined`. See
+   * architecture.md, "Broker-served draft previews (#257)".
    */
   function isOptionalPreviewUrl(value) {
     return value === undefined || typeof value === "string";
@@ -1529,11 +1519,8 @@
       if (decision === "approved") decision = "none";
     }
 
-    // #257 round 7 -- the broker keeps only the newest 32 drafts, but this history is
-    // unbounded and every entry stays reselectable. An evicted document answers 404, and
-    // an iframe fires `load` for HTTP errors, so the frame would report a blank page as a
-    // successful render. The broker names what it dropped; forget those URLs here so the
-    // draft falls back to the `srcdoc` bytes this store already holds.
+    // The broker evicts; this history does not. Forget the URLs it names so the draft falls back
+    // to `srcdoc`. See architecture.md, "Broker-served draft previews (#257)".
     function retireExpiredPreviews(result) {
       var gone = result && result.expiredPreviewUrls;
       if (!gone || !gone.length) return;
@@ -1906,10 +1893,7 @@
       if (Object.prototype.hasOwnProperty.call(result, key)) next[key] = result[key];
     }
     next.files = files;
-    // Copilot round 6 (PR #273) — the broker published the PARENT's bytes. A tweak rewrites them
-    // here and never reaches the broker, so inheriting the URL would make the frame fetch the
-    // pre-tweak document while Apply writes the tweaked one. Clearing it drops this draft to
-    // `srcdoc`, which renders exactly the bytes Apply will write.
+    // The broker published the PARENT's bytes; a tweak never reaches it. See architecture.md.
     next.previewUrl = undefined;
     // Copilot #5 (PR #250) — AC8 promises a RECOMPUTED diff. Inheriting `result.diff` shows nothing
     // (parent was a generation) or the previous edit's stale counts (parent was a refine). Both
@@ -2230,10 +2214,8 @@
         store.setRenderState("fail");
         render();
       });
-      // #257 -- when the server published a broker URL, FETCH the draft instead of inlining it.
-      // A fetched document gets the broker's own response-header CSP (sha256 hashes over the exact
-      // bytes it serves); `srcdoc` can only inherit the embedder's, which was minted before this
-      // draft existed. Guard in barrier position: a tool result must never aim this frame off-host.
+      // FETCH a broker-published draft so it gets the broker's own response-header CSP; guard in
+      // barrier position. See architecture.md, "Broker-served draft previews (#257)".
       var candidate = draft.result ? draft.result.previewUrl : null;
       var served = isDraftPreviewSrc(candidate) ? candidate : null;
       if (served) frame.src = served;
