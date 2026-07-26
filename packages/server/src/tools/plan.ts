@@ -20,6 +20,17 @@ import {
   MAX_WRITES,
   MAX_WILDCARDS,
 } from "../plans/index.js";
+import { KIT_ID_PATTERN } from "./get_kit.js";
+import { NotFoundError } from "../store/interface.js";
+
+/**
+ * The slice of `KitStore` this tool needs: resolve a kit by id, throwing when
+ * it does not exist. Narrowed to one method (as `bind_kit`/`get_project` do)
+ * so tests can stub it and so `plan` states exactly what it depends on.
+ */
+export interface PlanKitStore {
+  getKit(kitId: string): Promise<unknown>;
+}
 
 /** Input schema for plan (Zod v4). */
 const inputSchema = {
@@ -57,9 +68,51 @@ const outputSchema = {
 } as const;
 
 /**
- * Register the `mcp__genie__plan` tool on the given MCP server.
+ * Build the rejection payload for an unresolvable `kitId`.
+ *
+ * Deliberately the same envelope the plan guard emits for `planNotFound` /
+ * `pathOutsidePlan` (see middleware/plan-guard.ts): a JSON-RPC-shaped
+ * `{ code: -32602, message, data: { reason, … } }` with `isError: true`, so a
+ * client can branch on `code`/`data.reason` uniformly across the whole
+ * plan-scoped write path. Built locally rather than borrowing the guard's
+ * helper because `plan` is not a guarded verb — it has no `planId` to resolve,
+ * so widening `PlanGuardRejectReason` with a reason the guard can never emit
+ * would be the wrong coupling.
  */
-export function registerPlan(server: McpServer): void {
+function kitNotFoundResult(kitId: string): {
+  isError: true;
+  content: { type: "text"; text: string }[];
+} {
+  process.stderr.write(
+    JSON.stringify({ event: "plan.rejected", reason: "kitNotFound", kitId }) + "\n",
+  );
+
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          code: -32602,
+          message:
+            `Kit "${kitId}" does not exist. A plan authorizes writes into a ` +
+            `specific kit, so it cannot be issued for one that cannot be resolved.`,
+          data: { reason: "kitNotFound", kitId },
+        }),
+      },
+    ],
+  };
+}
+
+/**
+ * Register the `mcp__genie__plan` tool on the given MCP server.
+ *
+ * `store` is required, not optional: it is what makes the `kitId` check
+ * fail-closed. An optional store would silently restore the very defect this
+ * validates against (#252). Pass the *same* instance the write verbs use, so
+ * `plan` validates against exactly the store that will later be written to.
+ */
+export function registerPlan(server: McpServer, store: PlanKitStore): void {
   server.registerTool(
     "mcp__genie__plan",
     {
@@ -84,6 +137,39 @@ export function registerPlan(server: McpServer): void {
       deletes?: string[];
       localDir?: string;
     }) => {
+      // Validate the kit BEFORE anything else. A plan is a scoped write
+      // authorization for one specific kit, and downstream path containment is
+      // enforced *relative to that kit* — so an unresolvable kitId weakens the
+      // containment guarantee itself, not just the error message. Without this,
+      // a typo'd or stale kitId produced a valid planId and `write_files` then
+      // created the directory and wrote bytes into it (#252).
+      //
+      // Checked here rather than in the Zod schema so the failure returns the
+      // structured JSON payload below instead of a generic thrown MCP protocol
+      // error — the same reasoning the `writes` field documents above.
+      //
+      // Shape first: `..`, path separators, and out-of-charset ids name no
+      // valid kit, so they surface as the same rejection a genuinely-missing
+      // kit would (the store applies that precedent to unsafe ids too). It also
+      // keeps `getKit` — which resolves a path without re-checking id safety —
+      // from reading above the kits root.
+      if (!KIT_ID_PATTERN.test(kitId)) {
+        return kitNotFoundResult(kitId);
+      }
+      try {
+        await store.getKit(kitId);
+      } catch (err: unknown) {
+        // Only a genuine "no such kit" becomes `kitNotFound`. An I/O or
+        // transport fault (EACCES here, a network error behind a git-host
+        // store) is re-thrown so it surfaces as itself instead of masquerading
+        // as a missing kit — still fail-closed, since either way no plan is
+        // issued, but honest about which failure actually happened.
+        if (err instanceof NotFoundError) {
+          return kitNotFoundResult(kitId);
+        }
+        throw err;
+      }
+
       // Default localDir to cwd
       const resolvedLocalDir = localDir ? resolve(localDir) : process.cwd();
 

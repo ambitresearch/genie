@@ -253,10 +253,12 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // issues a planId; write_files (below) validates every call against it via
   // the M1-13 plan-guard middleware (`middleware/plan-guard.ts`).
   // `plans/index.ts` owns its own persistence root (`${GENIE_HOME}/plans`) and
-  // TTL (`GENIE_PLAN_TTL`) internally, so there's no store instance to thread
-  // through here — the module singleton is shared across the guard and the
-  // plan tool.
-  registerPlan(server);
+  // TTL (`GENIE_PLAN_TTL`) internally — the module singleton is shared across
+  // the guard and the plan tool. The store is threaded in purely to resolve the
+  // requested `kitId` before a plan is issued (#252): it is the *same* instance
+  // the write verbs below use, so `plan` validates against exactly the store
+  // that will later be written to.
+  registerPlan(server, kitStore);
 
   // write_files (M1-08; store-routed in M1-14a-1b / DRO-565): validates planId +
   // writes-glob membership via the M1-13 plan-guard middleware (one shared seam

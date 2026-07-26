@@ -26,7 +26,8 @@ const PLAN_TOOL_NAME = "mcp__genie__plan";
 // The kitId every plan in this suite is created against. The destination of a
 // write is the KIT (DRO-565 re-plumb) — `<kitsRoot>/<KIT_ID>/…` — while
 // `localDir` remains only the SOURCE base a `localPath` is read from.
-const KIT_ID = "k";
+// Must satisfy `KIT_ID_PATTERN` now that `plan` validates the kit (#252).
+const KIT_ID = "wf-kit";
 
 async function tempDir(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), prefix));
@@ -518,8 +519,11 @@ async function makeWireHarness(): Promise<WireHarness> {
   const kitsRoot = await tempDir("genie-wf-wire-kits-");
   const kitDir = join(kitsRoot, KIT_ID);
   const kitStore = new LocalFsKitStore(kitsRoot);
+  // `plan` now resolves the kit before issuing a planId (#252), so the wire
+  // harness seeds a real kit in the same store the plan tool validates against.
+  await kitStore.createKit("Write Files Wire Kit", KIT_ID);
   const server = new McpServer({ name: "genie-test", version: "0" });
-  registerPlan(server);
+  registerPlan(server, kitStore);
   registerWriteFilesTool(server, kitStore);
 
   const client = new Client({ name: "test", version: "0" });
