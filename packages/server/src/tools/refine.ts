@@ -162,6 +162,8 @@ export interface RefineResult extends Record<string, unknown> {
    * own bytes (#257). Present only when a card asset broker is already running;
    * absent everywhere else, where the viewer keeps its `srcdoc` fallback. */
   previewUrl?: string;
+  /** Broker URLs that stopped resolving when this draft was published (#257). */
+  expiredPreviewUrls?: readonly string[];
 }
 
 export type RefinedFile = GeneratedFileWithEncoding;
@@ -735,7 +737,7 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
     attempts,
   });
 
-  const previewUrl = publishDraftPreview(deps.getRunningCardAssetBroker?.(), files, {
+  const preview = publishDraftPreview(deps.getRunningCardAssetBroker?.(), files, {
     componentName: component.componentName,
     group: component.group,
   });
@@ -748,7 +750,10 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
     manifestEntry: component.manifestEntry,
     usage,
     // Spread so the key is absent rather than explicitly `undefined`.
-    ...(previewUrl === undefined ? {} : { previewUrl }),
+    ...(preview.url === undefined ? {} : { previewUrl: preview.url }),
+    // Same reason, plus: an empty array would tell the viewer nothing and cost a
+    // field on every single call.
+    ...(preview.expired.length === 0 ? {} : { expiredPreviewUrls: preview.expired }),
   };
 }
 
@@ -783,6 +788,7 @@ const refineOutputShape = {
     })
     .strict(),
   previewUrl: z.string().optional(),
+  expiredPreviewUrls: z.array(z.string()).optional(),
 };
 
 export function registerRefineTool(server: McpServer, deps: RefineDeps): void {

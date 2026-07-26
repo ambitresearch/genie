@@ -1087,10 +1087,41 @@
     );
   }
 
+  /**
+   * Copilot round 7 (#257) — the server publishes `previewUrl` (`conjure.ts`, `refine.ts`, both
+   * `z.string().optional()`), and `applyDeterministicTweak` clears it by ASSIGNING `undefined`, so
+   * the key survives `Object.keys`. Type-check only: whether a URL may aim the frame is decided by
+   * `isDraftPreviewSrc` in barrier position at render time. Rejecting a bad URL here would destroy
+   * an otherwise good draft and move the security decision off the sink CodeQL tracks.
+   */
+  function isOptionalPreviewUrl(value) {
+    return value === undefined || typeof value === "string";
+  }
+
+  /** The broker's eviction notice (#257): absent, or a list of URLs it stopped serving. */
+  function isOptionalPreviewUrlList(value) {
+    if (value === undefined) return true;
+    if (!Array.isArray(value)) return false;
+    for (var i = 0; i < value.length; i++) {
+      if (typeof value[i] !== "string") return false;
+    }
+    return true;
+  }
+
   function isConjureResult(value) {
     return Boolean(
       hasReviewableCore(value) &&
-      hasOnlyKeys(value, ["componentName", "group", "files", "manifestEntry", "usage"]) &&
+      hasOnlyKeys(value, [
+        "componentName",
+        "group",
+        "files",
+        "manifestEntry",
+        "usage",
+        "previewUrl",
+        "expiredPreviewUrls",
+      ]) &&
+      isOptionalPreviewUrl(value.previewUrl) &&
+      isOptionalPreviewUrlList(value.expiredPreviewUrls) &&
       hasMatchingHtmlPreview(value.files) &&
       isManifestEntry(value.manifestEntry) &&
       isConjureUsage(value.usage),
@@ -1160,7 +1191,16 @@
   function isRefineResult(value) {
     if (!isPlainObject(value)) return false;
     if (
-      !hasOnlyKeys(value, ["componentName", "group", "files", "manifestEntry", "usage", "diff"])
+      !hasOnlyKeys(value, [
+        "componentName",
+        "group",
+        "files",
+        "manifestEntry",
+        "usage",
+        "diff",
+        "previewUrl",
+        "expiredPreviewUrls",
+      ])
     ) {
       return false;
     }
@@ -1175,6 +1215,8 @@
       files: value.files,
       manifestEntry: value.manifestEntry,
       usage: value.usage,
+      previewUrl: value.previewUrl,
+      expiredPreviewUrls: value.expiredPreviewUrls,
     });
   }
 
@@ -1487,8 +1529,30 @@
       if (decision === "approved") decision = "none";
     }
 
+    // #257 round 7 -- the broker keeps only the newest 32 drafts, but this history is
+    // unbounded and every entry stays reselectable. An evicted document answers 404, and
+    // an iframe fires `load` for HTTP errors, so the frame would report a blank page as a
+    // successful render. The broker names what it dropped; forget those URLs here so the
+    // draft falls back to the `srcdoc` bytes this store already holds.
+    function retireExpiredPreviews(result) {
+      var gone = result && result.expiredPreviewUrls;
+      if (!gone || !gone.length) return;
+      for (var i = 0; i < drafts.length; i++) {
+        var previous = drafts[i].result;
+        if (!previous || typeof previous.previewUrl !== "string") continue;
+        for (var j = 0; j < gone.length; j++) {
+          if (gone[j] !== previous.previewUrl) continue;
+          // Assigning `undefined` rather than deleting keeps the key enumerable, which is
+          // what the strict validators already accept for a locally cleared preview.
+          previous.previewUrl = undefined;
+          break;
+        }
+      }
+    }
+
     return {
       addDraft: function (result, source) {
+        retireExpiredPreviews(result);
         sequence += 1;
         var number = drafts.length + 1;
         var draft = {

@@ -1136,13 +1136,14 @@ function stderrLines(): Array<
 }
 
 describe("#257 — draft preview URL", () => {
-  function brokerStub(url: string) {
+  function brokerStub(url: string, expired: readonly string[] = []) {
     const registerDraft = vi.fn(() => ({
       token: "t".repeat(32),
       hostname: "127.0.0.1",
       authority: "127.0.0.1:4173",
       origin: "http://127.0.0.1:4173",
       url,
+      expired,
     }));
     return { registerDraft } as unknown as CardAssetBroker;
   }
@@ -1159,6 +1160,27 @@ describe("#257 — draft preview URL", () => {
     const card = goodComponent().files.find((file) => file.path.endsWith("/Button/Button.html"))!;
     expect(card).toBeDefined();
     expect(broker.registerDraft).toHaveBeenCalledExactlyOnceWith(card.content);
+  });
+
+  it("forwards the broker's eviction notice so the viewer can retire dead URLs", async () => {
+    const dead = "http://127.0.0.1:4173/d/" + "0".repeat(32);
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const broker = brokerStub("http://127.0.0.1:4173/d/abc123", [dead]);
+
+    const res = await conjure({ chat, getRunningCardAssetBroker: () => broker }, args());
+
+    expect(res.expiredPreviewUrls).toEqual([dead]);
+  });
+
+  it("omits expiredPreviewUrls when the broker evicted nothing", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const broker = brokerStub("http://127.0.0.1:4173/d/abc123");
+
+    const res = await conjure({ chat, getRunningCardAssetBroker: () => broker }, args());
+
+    // An always-present empty array would cost a field on every call and tell the
+    // viewer nothing; absence is the signal that nothing was dropped.
+    expect(Object.keys(res)).not.toContain("expiredPreviewUrls");
   });
 
   it("omits previewUrl when no broker is running so remote hosts are unchanged", async () => {

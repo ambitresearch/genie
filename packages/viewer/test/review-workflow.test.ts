@@ -3672,6 +3672,36 @@ describe("#257 — broker-served draft preview", () => {
     document.head.append(meta);
   }
 
+  /**
+   * Copilot round 7 (#257) — every case below seeds through `controller.addDraft`, which skips the
+   * strict validators the REAL Generate and Refine paths run. The server emits `previewUrl`
+   * (`conjure.ts`, `refine.ts`), so those validators must accept it or the feature never reaches
+   * Review at all. The end-to-end Generate proof lives in `generate-workflow.test.ts`.
+   */
+  it("accepts a served previewUrl through both strict validators (#257 round 7)", () => {
+    const hooks = loadHooks();
+    expect(hooks.isConjureResult(conjureResult({ previewUrl: DRAFT_URL }))).toBe(true);
+    expect(hooks.isRefineResult(refineResult({ previewUrl: DRAFT_URL, diff: "" }))).toBe(true);
+  });
+
+  it("accepts a locally cleared previewUrl through both strict validators (#257 round 7)", () => {
+    const hooks = loadHooks();
+    // `applyDeterministicTweak` clears it by ASSIGNING `undefined`, so the KEY survives —
+    // `hasOnlyKeys` reads `Object.keys`, which still reports it.
+    const tweaked = { ...conjureResult(), previewUrl: undefined };
+    expect(Object.keys(tweaked)).toContain("previewUrl");
+    expect(hooks.isConjureResult(tweaked)).toBe(true);
+    expect(hooks.isRefineResult({ ...tweaked, diff: "" })).toBe(true);
+  });
+
+  it("still rejects a non-string previewUrl (#257 round 7)", () => {
+    const hooks = loadHooks();
+    expect(hooks.isConjureResult(conjureResult({ previewUrl: 42 }))).toBe(false);
+    // `isRefineResult` rebuilds a plain object before delegating, so it must FORWARD the key —
+    // omitting it would silently wave a hostile value past the type check.
+    expect(hooks.isRefineResult(refineResult({ previewUrl: 42 }))).toBe(false);
+  });
+
   it("points the frame at the broker draft URL instead of srcdoc", () => {
     const { document, controller } = loadWired(HAPPY_REPLIES);
     controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
@@ -3680,6 +3710,42 @@ describe("#257 — broker-served draft preview", () => {
     // embedder's. Serving the draft is the whole point of #257, so `srcdoc` must be unset.
     expect(frame.getAttribute("src")).toBe(DRAFT_URL);
     expect(frame.hasAttribute("srcdoc")).toBe(false);
+  });
+
+  // #257 round 7 — the broker keeps 32 drafts; this history is unbounded. An evicted
+  // document answers 404 and an iframe fires `load` for HTTP errors, so a stranded draft
+  // used to render blank while the viewer reported a healthy preview.
+  it("stops pointing a reselected draft at a preview URL the broker evicted", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
+    expect(frameOf(document).getAttribute("src")).toBe(DRAFT_URL);
+
+    const NEXT_URL = DRAFT_URL.replace(/[0-9a-f]{32}$/, "f".repeat(32));
+    controller.addDraft(conjureResult({ previewUrl: NEXT_URL, expiredPreviewUrls: [DRAFT_URL] }), {
+      kitId: "k",
+      kitLabel: "K",
+    });
+    expect(frameOf(document).getAttribute("src")).toBe(NEXT_URL);
+
+    // Reselect through the switcher a reviewer actually uses, not a store back door.
+    const buttons = document.querySelectorAll<HTMLButtonElement>("#review-draft-switcher button");
+    buttons[0].dispatchEvent(new document.defaultView!.Event("click", { bubbles: true }));
+    expect(controller.state().currentNumber).toBe(1);
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("accepts the broker eviction notice through both strict validators (#257 round 7)", () => {
+    const hooks = loadHooks();
+    const notice = { expiredPreviewUrls: [DRAFT_URL] };
+    expect(hooks.isConjureResult(conjureResult(notice))).toBe(true);
+    expect(hooks.isRefineResult(refineResult(notice))).toBe(true);
+    // Same trap as `previewUrl`: `isRefineResult` rebuilds the object, so a missing
+    // forward would wave a hostile value straight past the type check.
+    expect(hooks.isConjureResult(conjureResult({ expiredPreviewUrls: [7] }))).toBe(false);
+    expect(hooks.isRefineResult(refineResult({ expiredPreviewUrls: [7] }))).toBe(false);
+    expect(hooks.isRefineResult(refineResult({ expiredPreviewUrls: "nope" }))).toBe(false);
   });
 
   it("falls back to srcdoc when the server published no preview URL", () => {

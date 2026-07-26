@@ -80,6 +80,17 @@ export interface CardAssetDraft {
   readonly origin: string;
   /** Absolute URL of the draft document. */
   readonly url: string;
+  /**
+   * URLs this registration evicted (#257 round 7).
+   *
+   * The viewer's draft history is unbounded and lets a reviewer reselect any past
+   * draft, so a silently dropped document would be reselected and fetched as an
+   * empty 404. An iframe fires `load` for HTTP errors, so the viewer cannot detect
+   * that itself, and the broker sets no CORS headers so it cannot pre-flight either.
+   * Naming the casualties is therefore the only signal available: the viewer clears
+   * `previewUrl` on those drafts and falls back to the `srcdoc` bytes it still holds.
+   */
+  readonly expired: readonly string[];
 }
 
 /** One loopback listener intended to live for the MCP server process lifetime. */
@@ -452,33 +463,45 @@ class LoopbackCardAssetBroker implements CardAssetBroker {
       token = randomBytes(OPAQUE_TOKEN_BYTES).toString("hex");
     } while (this.#draftsByToken.has(token));
 
-    const publicDraft: CardAssetDraft = Object.freeze({
+    const pendingDraft = {
       token,
       hostname: this.address,
       authority: this.#authority,
       origin: this.#origin,
       url: `${this.#origin}/d/${token}`,
-    });
+    };
     // Hash the bytes now rather than per request; they can never change, and a
     // reviewer flipping between drafts should not re-parse each one.
+    const publicDraft: CardAssetDraft = Object.freeze({
+      ...pendingDraft,
+      expired: Object.freeze(this.#evictExcessDrafts()),
+    });
     this.#draftsByToken.set(token, {
       public: publicDraft,
       bytes: Buffer.from(html, "utf8"),
       policy: cardCsp(html),
     });
-    this.#evictExcessDrafts();
     return publicDraft;
   }
 
-  /** Drop least-recently-served drafts until the store is back within its cap. */
-  #evictExcessDrafts(): void {
-    while (this.#draftsByToken.size > MAX_LIVE_DRAFTS) {
+  /**
+   * Drop least-recently-served drafts until the store is back within its cap and
+   * report their URLs so the viewer can stop pointing at them (#257 round 7).
+   *
+   * Runs BEFORE the incoming draft is stored, hence the `+ 1` — the new entry is
+   * always the most recently used and must never evict itself.
+   */
+  #evictExcessDrafts(): string[] {
+    const expired: string[] = [];
+    while (this.#draftsByToken.size + 1 > MAX_LIVE_DRAFTS) {
       // Map iteration is insertion-ordered and `#touchDraft` re-inserts on every
       // serve, so the first key is the least recently used entry.
       const oldest = this.#draftsByToken.keys().next();
-      if (oldest.done === true) return;
+      if (oldest.done === true) break;
       this.#draftsByToken.delete(oldest.value);
+      expired.push(`${this.#origin}/d/${oldest.value}`);
     }
+    return expired;
   }
 
   /** Move a served draft to the back of the eviction queue. */

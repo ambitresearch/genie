@@ -25,15 +25,28 @@ interface PreviewableFile {
  * the origin the host already authorizes for kit cards.
  *
  * Publishing is best-effort by design: it is a fidelity improvement layered on a
- * generation that already succeeded, so every failure path returns `undefined`
- * and leaves the caller on the `srcdoc` fallback.
+ * generation that already succeeded, so every failure path returns an empty
+ * result and leaves the caller on the `srcdoc` fallback.
  */
+export interface PublishedDraftPreview {
+  /** Absolute URL of this draft, or `undefined` when publishing was skipped. */
+  url?: string;
+  /**
+   * URLs the broker evicted to make room (#257 round 7). The viewer keeps every
+   * past draft and lets a reviewer reselect any of them, so it must be told which
+   * ones stopped resolving and fall back to the `srcdoc` bytes it still holds.
+   */
+  expired: readonly string[];
+}
+
+const NOTHING_PUBLISHED: PublishedDraftPreview = Object.freeze({ expired: Object.freeze([]) });
+
 export function publishDraftPreview(
   broker: CardAssetBroker | undefined,
   files: readonly PreviewableFile[],
   identity: DraftIdentity,
-): string | undefined {
-  if (broker === undefined) return undefined;
+): PublishedDraftPreview {
+  if (broker === undefined) return NOTHING_PUBLISHED;
 
   // Scoped to THIS component, not to "some component's card". `NAMED_HTML_PATH`
   // only describes the canonical shape, so a result carrying
@@ -45,15 +58,16 @@ export function publishDraftPreview(
   // at all rather than pasting it in unchecked. Sibling HTML such as
   // `dark-mode.html` is legal but is not the preview.
   const expected = `components/${identity.group}/${identity.componentName}/${identity.componentName}.html`;
-  if (!NAMED_HTML_PATH.test(expected)) return undefined;
+  if (!NAMED_HTML_PATH.test(expected)) return NOTHING_PUBLISHED;
   const card = files.find(
     (file) => file.path === expected && (file.encoding ?? "utf-8") === "utf-8",
   );
-  if (card === undefined) return undefined;
+  if (card === undefined) return NOTHING_PUBLISHED;
 
   try {
-    return broker.registerDraft(card.content).url;
+    const draft = broker.registerDraft(card.content);
+    return { url: draft.url, expired: draft.expired };
   } catch {
-    return undefined;
+    return NOTHING_PUBLISHED;
   }
 }

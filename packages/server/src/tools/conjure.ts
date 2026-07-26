@@ -478,6 +478,8 @@ export interface ConjureResult extends Record<string, unknown> {
    * (local stdio app surfaces); absent everywhere else, where the viewer keeps
    * its `srcdoc` fallback. */
   previewUrl?: string;
+  /** Broker URLs that stopped resolving when this draft was published (#257). */
+  expiredPreviewUrls?: readonly string[];
 }
 
 /** Injectable URL-fetch seam for tests (AC7). When omitted, production uses the
@@ -782,7 +784,7 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
   });
 
   const files = normalizeGeneratedFiles(component.files);
-  const previewUrl = publishDraftPreview(deps.getRunningCardAssetBroker?.(), files, {
+  const preview = publishDraftPreview(deps.getRunningCardAssetBroker?.(), files, {
     componentName: component.componentName,
     group: component.group,
   });
@@ -795,7 +797,10 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
     usage,
     // Spread so the key is absent rather than explicitly `undefined`: the tool
     // boundary serializes this straight into `structuredContent`.
-    ...(previewUrl === undefined ? {} : { previewUrl }),
+    ...(preview.url === undefined ? {} : { previewUrl: preview.url }),
+    // Same reason, plus: an empty array would tell the viewer nothing and cost a
+    // field on every single call.
+    ...(preview.expired.length === 0 ? {} : { expiredPreviewUrls: preview.expired }),
   };
 }
 
@@ -829,6 +834,7 @@ const conjureOutputShape = {
     })
     .strict(),
   previewUrl: z.string().optional(),
+  expiredPreviewUrls: z.array(z.string()).optional(),
 };
 
 export function registerConjureTool(server: McpServer, deps: ConjureDeps = {}): void {

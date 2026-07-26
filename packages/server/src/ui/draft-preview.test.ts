@@ -40,7 +40,7 @@ describe("publishDraftPreview", () => {
   it("publishes the component's own <Name>.html and returns its URL", () => {
     const { broker, registerDraft } = brokerStub("http://127.0.0.1:4173/d/deadbeef");
 
-    const url = publishDraftPreview(broker, files(), IDENTITY);
+    const { url } = publishDraftPreview(broker, files(), IDENTITY);
 
     expect(url).toBe("http://127.0.0.1:4173/d/deadbeef");
     expect(registerDraft).toHaveBeenCalledExactlyOnceWith(CARD);
@@ -49,7 +49,7 @@ describe("publishDraftPreview", () => {
   it("returns undefined without a broker so non-local transports are unaffected", () => {
     // Remote/HTTP hosts never get a loopback broker; the viewer must fall back
     // to `srcdoc` rather than pointing a frame at an origin that does not exist.
-    expect(publishDraftPreview(undefined, files(), IDENTITY)).toBeUndefined();
+    expect(publishDraftPreview(undefined, files(), IDENTITY).url).toBeUndefined();
   });
 
   it("ignores non-preview HTML that merely sits in the component directory", () => {
@@ -86,7 +86,7 @@ describe("publishDraftPreview", () => {
     const { broker, registerDraft } = brokerStub();
 
     expect(
-      publishDraftPreview(broker, files(), { componentName: "Missing", group: "inputs" }),
+      publishDraftPreview(broker, files(), { componentName: "Missing", group: "inputs" }).url,
     ).toBeUndefined();
     expect(registerDraft).not.toHaveBeenCalled();
   });
@@ -105,7 +105,7 @@ describe("publishDraftPreview", () => {
     ];
 
     expect(
-      publishDraftPreview(broker, oversized, { componentName: long, group: "inputs" }),
+      publishDraftPreview(broker, oversized, { componentName: long, group: "inputs" }).url,
     ).toBeUndefined();
     expect(registerDraft).not.toHaveBeenCalled();
   });
@@ -117,7 +117,7 @@ describe("publishDraftPreview", () => {
       publishDraftPreview(broker, [{ path: "components/a/B/B.css", content: "x" }], {
         componentName: "B",
         group: "a",
-      }),
+      }).url,
     ).toBe(undefined);
     expect(registerDraft).not.toHaveBeenCalled();
   });
@@ -131,7 +131,7 @@ describe("publishDraftPreview", () => {
       }),
     } as unknown as CardAssetBroker;
 
-    expect(publishDraftPreview(broker, files(), IDENTITY)).toBeUndefined();
+    expect(publishDraftPreview(broker, files(), IDENTITY).url).toBeUndefined();
   });
 
   it("skips base64 files so binary content is never decoded as markup", () => {
@@ -140,7 +140,7 @@ describe("publishDraftPreview", () => {
       { path: "components/inputs/Button/Button.html", content: "AAAA", encoding: "base64" },
     ];
 
-    expect(publishDraftPreview(broker, encoded, IDENTITY)).toBeUndefined();
+    expect(publishDraftPreview(broker, encoded, IDENTITY).url).toBeUndefined();
     expect(registerDraft).not.toHaveBeenCalled();
   });
 });

@@ -923,13 +923,14 @@ function stderrLines(): Array<
 }
 
 describe("#257 — draft preview URL", () => {
-  function brokerStub(url: string) {
+  function brokerStub(url: string, expired: readonly string[] = []) {
     const registerDraft = vi.fn(() => ({
       token: "t".repeat(32),
       hostname: "127.0.0.1",
       authority: "127.0.0.1:4173",
       origin: "http://127.0.0.1:4173",
       url,
+      expired,
     }));
     return { registerDraft } as unknown as CardAssetBroker;
   }
@@ -946,6 +947,23 @@ describe("#257 — draft preview URL", () => {
     )!;
     expect(card).toBeDefined();
     expect(broker.registerDraft).toHaveBeenCalledExactlyOnceWith(card.content);
+  });
+
+  it("forwards the broker's eviction notice so the viewer can retire dead URLs", async () => {
+    const dead = "http://127.0.0.1:4173/d/" + "0".repeat(32);
+    const broker = brokerStub("http://127.0.0.1:4173/d/feed01", [dead]);
+
+    const res = await refine(deps({ getRunningCardAssetBroker: () => broker }), args());
+
+    expect(res.expiredPreviewUrls).toEqual([dead]);
+  });
+
+  it("omits expiredPreviewUrls when the broker evicted nothing", async () => {
+    const broker = brokerStub("http://127.0.0.1:4173/d/feed01");
+
+    const res = await refine(deps({ getRunningCardAssetBroker: () => broker }), args());
+
+    expect(Object.keys(res)).not.toContain("expiredPreviewUrls");
   });
 
   it("omits previewUrl when no broker is running", async () => {

@@ -694,6 +694,29 @@ describe("card asset draft serving", () => {
     expect(asKit.status).toBe(404);
   });
 
+  // #257 round 7 — eviction used to strand live viewer history entries. The viewer's
+  // draft list is unbounded and lets a reviewer reselect any past draft, but an iframe
+  // fires `load` for HTTP errors, so a silently dropped document rendered as a blank
+  // "success". The broker now names its casualties so the viewer can fall back to the
+  // `srcdoc` bytes it still holds.
+  it("reports the drafts it evicted so the viewer can stop pointing at them", async () => {
+    const broker = await start({ env: {} });
+    const live = [];
+    for (let i = 0; i < MAX_LIVE_DRAFTS; i += 1) live.push(broker.registerDraft(`<p>${i}</p>`));
+
+    // Nothing is over the cap yet, so nothing has been dropped.
+    expect(live.every((draft) => draft.expired.length === 0)).toBe(true);
+    expect((await fetchDraft(broker, live[0])).status).toBe(200);
+
+    // Serving `live[0]` above made `live[1]` the least recently used entry.
+    const overflow = broker.registerDraft("<p>overflow</p>");
+
+    expect(overflow.expired).toEqual([live[1].url]);
+    expect((await fetchDraft(broker, live[1])).status).toBe(404);
+    expect((await fetchDraft(broker, live[0])).status).toBe(200);
+    expect((await fetchDraft(broker, overflow)).status).toBe(200);
+  });
+
   it("does not widen the frame origins a host must authorize", async () => {
     const broker = await start({ env: {} });
     const before = broker.frameOrigins();
