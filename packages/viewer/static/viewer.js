@@ -3013,6 +3013,37 @@
   }
 
   /**
+   * Payload of the first `content[]` entry whose text parses to a JSON object.
+   *
+   * A tool that declares no `outputSchema` is spec-correct in omitting
+   * `structuredContent` and returning its payload only as JSON text, which is
+   * what kit-wide `validate` and `create_kit` do. Treating those as failures
+   * made their results unreadable to the viewer (genie#251).
+   *
+   * Non-text entries, unparseable text, and JSON primitives are skipped: a
+   * number or string is valid JSON but never a tool payload, and resolving one
+   * would hand callers a value they immediately destructure fields from.
+   *
+   * @param {object|undefined} result Raw `tools/call` result from the host.
+   * @returns {object|undefined} Parsed payload, or `undefined` when none applies.
+   */
+  function textResultPayload(result) {
+    var content = result && result.content;
+    if (!Array.isArray(content)) return undefined;
+    for (var i = 0; i < content.length; i++) {
+      var entry = content[i];
+      if (!entry || entry.type !== "text" || typeof entry.text !== "string") continue;
+      try {
+        var parsed = JSON.parse(entry.text);
+        if (isPlainObject(parsed)) return parsed;
+      } catch {
+        // A human-readable line rather than a payload. Keep scanning.
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * @typedef {{callTool(name:string,args:object,callTimeoutMs?:number|null):Promise<object>,destroy():void}} HostBridge
    */
   function createHostBridge(win, host, onProgress, timeoutMs) {
@@ -3038,7 +3069,15 @@
         return;
       }
       var structured = data.result && data.result.structuredContent;
-      if (!structured || typeof structured !== "object") {
+      if (!isPlainObject(structured)) {
+        // genie#251 — `structuredContent` is only guaranteed for tools that
+        // declare an `outputSchema`. Read the text payload before failing.
+        // `isPlainObject` rather than a bare `typeof`: MCP constrains
+        // `outputSchema` to an object root, so an array would pass `typeof`
+        // while handing field-based callers an unusable shape.
+        structured = textResultPayload(data.result);
+      }
+      if (!isPlainObject(structured)) {
         request.reject(new Error("The host returned a malformed tool result."));
         return;
       }
