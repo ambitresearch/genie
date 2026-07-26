@@ -150,7 +150,8 @@ export class InvalidKitIdError extends Error {
     // rule once the Win32 dots-and-spaces aliases were closed.
     super(
       `Invalid kitId "${kitId}": ${KIT_ID_SAFETY_MESSAGE} ` +
-        "This guards against path traversal into the kits root.",
+        "This guards both against escaping the kits root and against an id that " +
+        "aliases a different kit inside it.",
     );
     this.name = "InvalidKitIdError";
   }

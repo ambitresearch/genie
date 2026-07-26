@@ -120,7 +120,7 @@ export function sriSha256(bytes: Buffer | string): string {
  * DRO-581 unification). Lives here — not in a tool module — because the store
  * layer (post-#114) also needs it, and `store/*` must not import from `tools/*`.
  *
- * This is the *containment* rule and it is the correct INPUT gate. It is not
+ * This is the shared kitId rule and it is the correct INPUT gate. It is not
  * `KIT_ID_PATTERN` (`tools/get_kit.ts`), which is a *shape* rule describing the
  * ids `create_kit` mints; `KitId` is an opaque, adapter-assigned string and
  * `list_kits` promises what it returns is valid input everywhere, so gating

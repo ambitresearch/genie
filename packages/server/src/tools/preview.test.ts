@@ -260,6 +260,15 @@ describe("resolveKitDir", () => {
     },
   );
 
+  it("🔒 the error explains cross-kit aliasing too, not just traversal", () => {
+    // `victim.` is refused, but NOT because it escapes: on Win32 it normalises to
+    // `victim`, a SIBLING kit that is still under the kits root. An error that
+    // blames "path traversal into the kits root" therefore mis-explains an entire
+    // rejection class to the user, and points them at the wrong fix.
+    const message = new InvalidKitIdError("victim.").message;
+    expect(message).toMatch(/alias|another kit|a different kit|sibling/iu);
+  });
+
   // Changed deliberately, not incidentally. "UPPER", "x" and "with space" used
   // to throw because this guard was `KIT_ID_PATTERN` — a shape rule describing
   // ids *minted by `create_kit`* — standing in for a containment rule. None of

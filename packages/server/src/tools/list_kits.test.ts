@@ -120,6 +120,21 @@ describe("listWritableKits", () => {
     expect(LIST_KITS_DESCRIPTION).toMatch(/unusable|not (?:a )?valid|cannot be used|refuse/iu);
   });
 
+  it("🔒 does not promise round-trip acceptance this store cannot deliver", () => {
+    // Part G of `kit-id-gate.test.ts` pins a divergence this PR deliberately does NOT
+    // fix: `LocalFsKitStore.listKits` reports `.kit.json`'s `id`, while `getKit`
+    // resolves a DIRECTORY name. A kit in directory `alpha` declaring `{"id":"beta"}`
+    // is therefore advertised as `beta` — which passes `isSafeKitId` and is then a
+    // 404 in `get_kit`. So "guarantees every id it returns is accepted by the other
+    // kit verbs" is false, and falsified by a test in this very change.
+    //
+    // The filter enforces exactly one thing: no id is returned that a verb would
+    // refuse as UNSAFE. Say that, and nothing stronger.
+    expect(LIST_KITS_DESCRIPTION).not.toMatch(/guarantees? +every +id/iu);
+    expect(LIST_KITS_DESCRIPTION).not.toMatch(/accepted by the other kit verbs/iu);
+    expect(LIST_KITS_DESCRIPTION).toMatch(/safety gate|shared safety|safety rule/iu);
+  });
+
   it("🔒 the disclosed filter is the one listWritableKits actually applies", async () => {
     // Pins prose to behaviour: an id the description says is omitted must really be
     // omitted. Without this the two can drift back apart silently.
