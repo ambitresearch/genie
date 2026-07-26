@@ -790,7 +790,10 @@ describe.skipIf(!chromiumAvailable)("#257 — the eviction notice executes in a 
       const parentDoc =
         '<!doctype html><html><head><meta charset="utf-8"><title>p</title></head><body>' +
         "<script>window.__got=[];addEventListener('message',function(e){window.__got.push(e.data);});</script>" +
-        '<iframe id="f" src="' +
+        // `renderPreview` ships `sandbox="allow-scripts"` with NO `allow-same-origin`, so the
+        // production frame runs at an OPAQUE origin. Framing without that attribute would
+        // prove the notice runs somewhere the viewer never puts it.
+        '<iframe id="f" sandbox="allow-scripts" src="' +
         deadUrl +
         '"></iframe></body></html>';
 

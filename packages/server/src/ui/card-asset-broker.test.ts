@@ -773,7 +773,9 @@ describe("card asset draft serving", () => {
     const response = await fetchDraft(broker, draft, { path: `/d/${"1".repeat(32)}` });
     const body = response.body.toString("utf8");
     const policy = String(response.headers["content-security-policy"]);
-    const script = body.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    // Case-insensitive: HTML tag names are case-insensitive, so a `<SCRIPT>` the broker
+    // might one day emit must still be extracted rather than silently skipping the check.
+    const script = body.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
     const scriptSrc = policy.split("; ").find((directive) => directive.startsWith("script-src "));
 
     expect(script).toBeTypeOf("string");

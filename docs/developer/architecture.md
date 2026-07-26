@@ -538,6 +538,43 @@ quadratic and can lock the UI before the new draft renders. An over-long list, o
 not the broker's own URL shape, fails the whole result closed — the same fail-closed rule every
 other field's validator follows — rather than being silently trimmed.
 
+#### When ANOTHER viewer causes the eviction
+
+`expiredPreviewUrls` only reaches the caller whose own `registerDraft` pushed the LRU over. The
+LRU is process-global, so viewer B conjuring can evict viewer A's draft — and A is told nothing.
+A then holds a `previewUrl` the broker 404s, and because a cross-origin iframe fires **`load`, not
+`error`**, for an HTTP error status, A renders a blank frame and treats it as a good preview.
+
+The evicted document reporting its own URL is the only signal such a viewer can receive: it cannot
+read the cross-origin body or status, and it gets no error event. So `#serveDraft` answers an
+unknown token with a small HTML notice — rather than an empty 404 — whose inline script posts
+`{ genie: "draft-expired", url: location.href }` to its parent. The notice carries its own
+response-header CSP with a `script-src` sha256 minted from the exact script text it serves, so the
+constant and the hash cannot drift apart.
+
+The viewer's listener is deliberately narrow. It retires the reported URL only, by **exact match**
+against `previewUrl`s it already holds, and repaints **only when** that URL is the draft currently
+on screen — `render()` never reassigns `frame.src`, so a model-only retirement would otherwise
+leave the dead frame up. Every other draft keeps serving its own bytes; the retired draft itself
+survives and falls back to its stored `srcdoc`. The 32-draft memory bound is untouched, and the
+viewer heals exactly when the reviewer looks at the affected draft.
+
+`targetOrigin` is `"*"` on purpose: the parent origin varies by tier (`file://`, `localhost`, an
+MCP App host), so no single correct value exists, and the payload names only a URL that is already
+dead — never a secret. The viewer likewise does **not** origin-check the inbound message. That is
+defence in depth rather than a load-bearing control here: the handler is a strict no-op unless the
+URL matches a draft this viewer already holds, so the worst a hostile framed page can achieve is
+downgrading one of its own previews to the `srcdoc` the viewer already has locally. Checking the
+origin would require the viewer to know the broker origin, which it knows only implicitly from the
+draft URLs it was handed.
+
+Because the notice's script is admitted by a **hash**, a Node test that recomputes sha256 over the
+script it just extracted proves only that the pair is self-consistent — a hash minted over the
+wrong bytes in an internally consistent way would keep it green while a real browser refused the
+script. `grid-resource.csp.chromium.test.ts` therefore frames a genuinely evicted URL in real
+Chromium, from a real cross-origin parent, using the production `sandbox="allow-scripts"` (no
+`allow-same-origin`, i.e. an opaque origin), and asserts the parent receives the message.
+
 ### Why embedded Browse still calls initHmr (M4-04)
 
 The embedded tier is EXACTLY who the postMessage bridge exists for: its strict CSP
