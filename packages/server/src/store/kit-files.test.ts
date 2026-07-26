@@ -27,6 +27,47 @@ describe("KIT_ID_SAFETY_MESSAGE", () => {
 });
 
 describe("isSafeKitId", () => {
+  it("🔒 documents exactly as many rejection rules as it enforces", () => {
+    // The terminating fix for a drift class that recurred four times in this
+    // change: a hand-written enumeration of a machine-derivable fact. Three
+    // separate places restate this predicate's rejection set — its own
+    // docblock, KIT_ID_SAFETY_MESSAGE, and preview.ts's resolveKitDir comment —
+    // and each time a guard was added, at least one of them was left describing
+    // the previous rule set. Reviewers caught it every time, which is precisely
+    // the failure: prose review is the wrong tool for an arithmetic invariant.
+    //
+    // So derive it. Count the guards in the function BODY and the bullets in
+    // the list immediately above it, and require the two to agree. A new guard
+    // now fails here until it is written down, and a bullet deleted during a
+    // docblock rewrite fails here too. Neither number is typed into this test,
+    // so the lock cannot itself go stale — the defect it exists to prevent.
+    const source = readFileSync(path.join(import.meta.dirname, "kit-files.ts"), "utf8");
+
+    const bodyStart = source.indexOf("export function isSafeKitId");
+    expect(bodyStart).toBeGreaterThan(-1);
+    const body = source.slice(bodyStart, source.indexOf("\n}", bodyStart));
+    const guards = body.match(/return false;/gu) ?? [];
+
+    // The docblock is the comment block that ends where the function begins.
+    const docblock = source.slice(source.lastIndexOf("/**", bodyStart), bodyStart);
+    // Only the top-level bullets of the "It returns false for:" list; the
+    // "NOT in scope" list below it is indented identically, so cut at its
+    // header rather than counting every dash in the block. Search for that
+    // header AFTER the list start — the prose above the list forward-references
+    // it by name, and an unanchored indexOf finds the reference, not the header.
+    const listStart = docblock.indexOf("It returns false for");
+    expect(listStart).toBeGreaterThan(-1);
+    const scopeHeader = docblock.indexOf("NOT in scope", listStart);
+    expect(scopeHeader).toBeGreaterThan(listStart);
+    const returnsFalseList = docblock.slice(listStart, scopeHeader);
+    const bullets = returnsFalseList.match(/^ \* {3}- /gmu) ?? [];
+
+    expect(bullets.length).toBe(guards.length);
+    // Guard the guard: if either regex silently stops matching, the assertion
+    // above passes vacuously at 0 === 0.
+    expect(guards.length).toBeGreaterThanOrEqual(5);
+  });
+
   it("🔒 rejects an id no filesystem call could ever accept", () => {
     // A NUL byte is a third category, distinct from the traversal and Win32
     // name-normalization rules above. It does not reach a DIFFERENT kit — it

@@ -129,17 +129,20 @@ export function sriSha256(bytes: Buffer | string): string {
  *
  * A `kitId` names a single directory (LocalFs) or repo (git host) directly
  * under the store's kits root. This is a CONTAINMENT-AND-IDENTITY rule, not a
- * containment rule. It refuses two different kinds of id: those that would let
- * a caller escape that namespace, and those that stay inside it but do not
- * SPELL the kit they open. The second kind is easy to miss precisely because a
+ * containment rule. It refuses three different kinds of id: those that would
+ * let a caller escape that namespace, those that stay inside it but do not
+ * SPELL the kit they open, and those that spell no path any filesystem call
+ * will accept. The second kind is easy to miss precisely because a
  * `join`-based containment check passes it — see the sibling sub-case below.
  *
  * The invariant, stated once: every accepted id is its own Win32 path-component
- * NORMALIZATION, so it names the directory it opens on every platform. It does
- * not, and cannot cheaply, collapse filesystem name-EQUIVALENCE — see "NOT in
- * scope" below for where that line falls and why.
+ * NORMALIZATION, so it names the directory it opens on every platform, and is
+ * REPRESENTABLE, so the store fails it as a missing kit rather than as a bad
+ * argument. It does not, and cannot cheaply, collapse filesystem
+ * name-EQUIVALENCE — see "NOT in scope" below for where that line falls and why.
  *
- * It returns false for:
+ * It returns false for (one bullet per guard in the body; the count is locked
+ * in `kit-files.test.ts` so this list cannot fall behind the code again):
  *
  *   - the empty string — `join(kitsRoot, "")` is the kits ROOT itself, so an
  *     empty kitId plus a crafted `path` (e.g. `other-kit/secret.txt`) would
@@ -165,7 +168,16 @@ export function sriSha256(bytes: Buffer | string): string {
  *         as their only guard.
  *     Refusing costs nothing on the platform where the alias is live: Windows
  *     applies the same trim in `mkdir`, so a directory named `victim..` cannot
- *     exist there. Such an id can only ever alias; it can never name a kit.
+ *     exist there. Such an id can only ever alias; it can never name a kit;
+ *   - any id containing a NUL byte. This is a third category, neither an escape
+ *     nor an alias: it spells a path no filesystem call can express. Node
+ *     rejects it during ARGUMENT VALIDATION with `ERR_INVALID_ARG_VALUE` — and
+ *     quotes the offending absolute path back in the message — rather than
+ *     returning `ENOENT`, so without this guard a store call leaks the kits
+ *     root to any caller who sends one byte. MCP arguments are JSON, which
+ *     carries `\u0000` verbatim, so this is reachable input, not a theoretical
+ *     one. NUL ONLY: the other control characters are legal POSIX directory
+ *     names, and refusing them would re-create this rule's own defect.
  *
  * Ids that merely EMBED or LEAD with dots (`my..kit`, `..kit`, `. kit`) survive
  * unchanged through the Win32 trim — it only touches the trailing run — so they

@@ -170,9 +170,14 @@ export class KitNotFoundError extends Error {
  * Resolve a `kitId` to its on-disk kit directory under `kitsRoot`, rejecting
  * any id that could escape that root BEFORE the `join` — an unvalidated id like
  * `../../etc` would otherwise climb out (RFC §10 T-13, the same traversal class
- * `write_files`/`read_file` guard). Only containment is checked here; existence
- * is checked by {@link runPreview} before compilation so a missing kit cannot
- * create a phantom one through manifest persistence.
+ * `write_files`/`read_file` guard). Only identifier SAFETY is checked here —
+ * and safety is broader than containment: `isSafeKitId` also refuses ids that
+ * stay under the root but alias a DIFFERENT kit inside it, and ids that name a
+ * path no filesystem call can express at all. Read the three categories off
+ * that predicate's docblock rather than inferring them from the word
+ * "traversal" above. Existence is a separate question, checked by
+ * {@link runPreview} before compilation so a missing kit cannot create a
+ * phantom one through manifest persistence.
  *
  * The rule is `isSafeKitId`, NOT the create_kit slug shape; see that predicate's
  * docblock for the authoritative rejection set, deliberately not restated here.
