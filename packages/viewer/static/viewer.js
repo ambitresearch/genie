@@ -2310,17 +2310,36 @@
     // destroys work irrecoverably. Warn about exactly the drafts that would be
     // lost, and nothing else:
     //
-    //   - Nothing applied. After Apply the bytes are on disk; whatever else is
-    //     still in the switcher is a rejected alternative, not unsaved work.
     //   - Only drafts whose bytes are NOT already in the kit. A Browse -> Review
     //     handoff seeds draft #1 from the kit's own file, and derivedInfo() clears
     //     componentInKit the moment a refine or tweak makes the bytes diverge, so
     //     this flag is exactly "would reloading lose these bytes?".
+    //   - Only drafts newer than the applied one. Apply stamps a SPECIFIC draft;
+    //     it and everything before it are either on disk now or alternatives the
+    //     user rejected by choosing another, and losing a rejected alternative is
+    //     the outcome they already picked. But the tweak sliders stay live during
+    //     and after flight, so a LATER draft can exist while appliedDraftId is
+    //     still set -- that one is new work nothing has written.
+
+    // Every current engine substitutes its own wording, so this text is for the
+    // handful that still render the page's string. It only has to be non-empty.
+    var UNSAVED_DRAFT_PROMPT = "This draft has not been applied to your kit yet.";
     var unloadGuard = null;
 
     function hasUnsavedDrafts(state) {
-      if (state.appliedDraftId) return false;
+      // 0 keeps every draft in scope, which is also the right fallback if the
+      // applied id somehow names no draft: the guard fails safe by prompting.
+      var applied = 0;
+      if (state.appliedDraftId) {
+        for (var a = 0; a < state.drafts.length; a += 1) {
+          if (state.drafts[a].id === state.appliedDraftId) applied = state.drafts[a].number;
+        }
+      }
       for (var i = 0; i < state.drafts.length; i += 1) {
+        // <= rather than <: apply also sets componentInKit on the draft it stamped,
+        // so skipping it here is redundant today. The two are written independently
+        // though, so keep the floor inclusive rather than lean on that coupling.
+        if (state.drafts[i].number <= applied) continue;
         var info = meta[state.drafts[i].id];
         if (!info || !info.componentInKit) return true;
       }
@@ -2340,9 +2359,10 @@
       if (wanted) {
         unloadGuard = function (event) {
           event.preventDefault();
-          // Legacy engines read the assigned string rather than preventDefault().
-          event.returnValue = "";
-          return "";
+          // Legacy engines read the assigned value rather than preventDefault(),
+          // and HTML shows the dialog when defaultPrevented OR returnValue !== ""
+          // -- so an empty string would contribute nothing on that channel.
+          event.returnValue = UNSAVED_DRAFT_PROMPT;
         };
         win.addEventListener("beforeunload", unloadGuard);
         return;

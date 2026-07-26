@@ -58,16 +58,21 @@ Because that loss is unrecoverable, the standalone tier registers a `beforeunloa
 (`syncUnloadGuard`, re-evaluated on every `render`) so the browser shows its native "leave
 site?" prompt. It is deliberately narrow, and each condition removes a false positive:
 
-| Condition                                         | Why                                                                                                                                                                                                                                                                 |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Standalone tier only (`win.parent === win`)       | Embedded, the user is closing the **host**, not genie. The prompt is hostile there and several hosts suppress it anyway, so teardown UX stays the host's call.                                                                                                      |
-| Nothing applied yet                               | After Apply the bytes are on disk. Drafts still in the switcher are rejected alternatives, not unsaved work.                                                                                                                                                        |
-| At least one draft whose bytes are not in the kit | A Browse → Review handoff seeds draft #1 from the kit's own file, so reloading there loses nothing. `derivedInfo()` clears `componentInKit` as soon as a refine or tweak makes the bytes diverge, which makes the flag exactly "would reloading lose these bytes?". |
+| Condition                                         | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Standalone tier only (`win.parent === win`)       | Embedded, the user is closing the **host**, not genie. The prompt is hostile there and several hosts suppress it anyway, so teardown UX stays the host's call.                                                                                                                                                                                                                                                                                     |
+| No draft newer than the applied one               | Apply stamps one **specific** draft. It and everything before it are either on disk now or alternatives the user rejected by choosing another, and losing a rejected alternative is the outcome they already picked. A _later_ draft is different: the tweak sliders stay live during and after flight, so one can exist while `appliedDraftId` is still set, and its bytes were never written. An earlier Apply must not disarm the guard for it. |
+| At least one draft whose bytes are not in the kit | A Browse → Review handoff seeds draft #1 from the kit's own file, so reloading there loses nothing. `derivedInfo()` clears `componentInKit` as soon as a refine or tweak makes the bytes diverge, which makes the flag exactly "would reloading lose these bytes?".                                                                                                                                                                                |
 
-The handler drives both channels — `preventDefault()` for the current spec and
-`returnValue = ""` for older engines — because a real `BeforeUnloadEvent` exposes
-`returnValue` as a plain string slot where assignment does _not_ imply `preventDefault()`.
-In-app route changes never reach it: they are `pushState`, not an unload.
+The handler drives both channels — `preventDefault()` for the current spec and a **non-empty**
+`returnValue` for older engines. Both parts matter. A real `BeforeUnloadEvent` exposes
+`returnValue` as a plain string slot where assignment does _not_ imply `preventDefault()`, so the
+legacy channel has to be driven explicitly; and HTML shows the dialog when the event was
+default-prevented **or** `returnValue !== ""`, so assigning an empty string would contribute
+nothing on engines that honour only that channel. The handler returns nothing: the
+return-a-string channel comes from HTML's event-**handler** processing algorithm, which runs for
+`onbeforeunload` and never for an `addEventListener` listener. In-app route changes never reach
+the handler at all: they are `pushState`, not an unload.
 
 ### Partial apply is not an apply
 

@@ -3777,6 +3777,20 @@ describe("unsaved-draft unload guard (#256)", () => {
     expect(fireUnload(wired.window).defaultPrevented).toBe(false);
   });
 
+  it("prompts again for a draft created after the apply", async () => {
+    // Copilot round 1 on #270. `markApplied` stamps a SPECIFIC draft, and the
+    // tweak sliders stay live during and after flight, so a later draft can
+    // exist with `appliedDraftId` still set. That draft is new work nothing has
+    // written -- an earlier apply must not disarm the guard for it.
+    const wired = guarded();
+    addDraft(wired);
+    await driveApply(wired);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+    addDraft(wired);
+    expect(wired.controller.state().appliedDraftId).not.toBeNull();
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
   it("prompts through both the modern and the legacy channel", () => {
     const wired = guarded();
     addDraft(wired);
@@ -3795,7 +3809,11 @@ describe("unsaved-draft unload guard (#256)", () => {
     const prevented = vi.spyOn(event, "preventDefault");
     wired.window.dispatchEvent(event);
     expect(prevented).toHaveBeenCalled();
-    expect(legacy).toBe("");
+    // Per HTML, the dialog shows when `defaultPrevented` OR `returnValue !== ""`.
+    // An empty string therefore contributes nothing on engines that honour only
+    // the legacy channel, so the value has to be non-empty to mean anything.
+    expect(legacy).toBeTruthy();
+    expect(legacy).not.toBe("");
   });
 
   it("never prompts in the embedded tier", () => {
