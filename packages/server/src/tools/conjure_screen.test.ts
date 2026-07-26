@@ -501,12 +501,17 @@ describe("LocalScaffoldScreenGenerator", () => {
 
   // ── 🔒 provenance-note injection (the header comment is a sink) ─────────────
   //
-  // `renderScaffold` escapes `title` at all four of its sinks (`escapeHtml` ×3,
-  // `escapeJsx` ×1) but embedded `note` raw at all three. `note` carries
-  // `kitId`, and `isSafeKitId` is a *containment* rule about path segments — it
-  // deliberately permits `>` and newlines, neither of which can escape a
-  // directory. So a listable kit can carry a comment-terminator into generated
-  // source.
+  // Still true, and why the payloads below are reachable ids rather than
+  // hypotheticals: `note` carries `kitId`, and `isSafeKitId` is a *containment*
+  // rule about path segments — it deliberately permits `>` and newlines,
+  // neither of which can escape a directory.
+  //
+  // No longer true, as of this PR: `renderScaffold` escaped `title` at all four
+  // of its sinks (`escapeHtml` ×3, `escapeJsx` ×1) but embedded `note` raw at
+  // all three, so a listable kit COULD carry a comment-terminator into
+  // generated source. `note` is now escaped at all three sinks too
+  // (`escapeHtmlComment` ×2, `escapeLineComment` ×1). The `it`s below are what
+  // keep that a fact rather than a claim.
   //
   // Attribution, precisely: `KIT_ID_PATTERN` banned these characters *by
   // accident*, as a side effect of being a narrow slug allowlist. #276 widened
@@ -515,9 +520,9 @@ describe("LocalScaffoldScreenGenerator", () => {
   // raw from persisted bindings, and `create_project`'s `kitBindingShape` gates
   // only with `z.string().min(1)`); a partial #276 regression for `explicit`.
   //
-  // The remedy is to escape at the SINK, not to re-narrow the id rule —
-  // re-narrowing would re-create the visible-but-unusable defect the whole
-  // #276/#279/#281/#283/#286 cycle existed to remove.
+  // The remedy — taken here — is to escape at the SINK, not to re-narrow the id
+  // rule; re-narrowing would re-create the visible-but-unusable defect the
+  // whole #276/#279/#281/#283/#286 cycle existed to remove.
   describe("🔒 the provenance note cannot escape its comment", () => {
     // Pinned mechanically rather than asserted in prose: if a future change to
     // `isSafeKitId` were to start rejecting these, THIS is the line that should
