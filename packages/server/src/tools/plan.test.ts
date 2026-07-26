@@ -626,13 +626,14 @@ describe("plan tool — kitId validation (#252)", () => {
     });
   });
 
-  it("rejects malformed kitIds with the same typed error", async () => {
-    // `..`, path separators, and out-of-charset ids name no valid kit, so they
-    // surface as the same rejection a genuinely-missing kit would — mirroring
-    // the store's own precedent for unsafe ids (store/local.ts). Rejecting the
-    // shape *before* touching the store also keeps `getKit` from resolving a
-    // path above kitsRoot.
-    for (const bad of ["..", "../escape", "a/b", "UPPER", "ab", "a".repeat(65)]) {
+  it("rejects containment-unsafe kitIds with the same typed error", async () => {
+    // `""`, `.`, `..`, and any id carrying a path separator escape the
+    // single-kit namespace, so they are refused by the shared `isSafeKitId`
+    // rule *before* the store is touched — which also keeps `getKit` (it
+    // resolves a path without re-checking id safety) from reading above
+    // kitsRoot. They surface as the same rejection a genuinely-missing kit
+    // would, mirroring the store's own precedent for unsafe ids.
+    for (const bad of ["..", ".", "../escape", "a/b", "a\\b"]) {
       const result = await client.callTool({
         name: "mcp__genie__plan",
         arguments: { kitId: bad, writes: ["*.html"] },
@@ -643,6 +644,58 @@ describe("plan tool — kitId validation (#252)", () => {
         code: -32602,
         data: { reason: "kitNotFound", kitId: bad },
       });
+    }
+  });
+
+  it("rejects safe-but-absent kitIds by lookup, with the same typed error", async () => {
+    // These are all containment-safe, so they reach the store and are refused
+    // because no such kit resolves — not because of their charset. Same
+    // envelope either way, so a client branches on one reason.
+    for (const bad of ["UPPER", "ab", "a".repeat(65), "My_Kit.2", "..kit"]) {
+      const result = await client.callTool({
+        name: "mcp__genie__plan",
+        arguments: { kitId: bad, writes: ["*.html"] },
+      });
+
+      expect(result.isError, `expected rejection for kitId ${JSON.stringify(bad)}`).toBe(true);
+      expect(payload(result)).toMatchObject({
+        code: -32602,
+        data: { reason: "kitNotFound", kitId: bad },
+      });
+    }
+  });
+
+  it("🔒 plans against a resolvable kit whose id is not create_kit-shaped", async () => {
+    // Regression lock for the review finding on #263: `KitId` is an opaque,
+    // adapter-assigned string. `KIT_ID_PATTERN` (/^[a-z0-9-]{3,64}$/) describes
+    // only ids MINTED by create_kit, while an imported or git-host kit may
+    // legitimately be named `My_Kit.2` or `a`. `read_file`/`list_files` already
+    // browse such kits through `isSafeKitId`, and `list_kits` promises the ids
+    // it returns are valid input to `plan` — so gating `plan` on the stricter
+    // pattern would make a resolvable, browsable kit unwritable.
+    for (const importedId of ["My_Kit.2", "a", "..kit"]) {
+      const kitDir = join(kitsRoot, importedId);
+      await mkdir(kitDir, { recursive: true });
+      await writeFile(
+        join(kitDir, ".kit.json"),
+        JSON.stringify({
+          id: importedId,
+          name: `Imported ${importedId}`,
+          type: "GENIE_KIT",
+          createdAt: new Date().toISOString(),
+        }),
+      );
+
+      const result = await client.callTool({
+        name: "mcp__genie__plan",
+        arguments: { kitId: importedId, writes: ["*.html"], localDir: tempDir },
+      });
+
+      expect(
+        result.isError,
+        `expected ${JSON.stringify(importedId)} to plan: ${JSON.stringify(result)}`,
+      ).toBeFalsy();
+      expect(payload(result).planId).toBeTruthy();
     }
   });
 
@@ -791,5 +844,57 @@ describe("plan tool — kitId validation (#252)", () => {
     } finally {
       await stubClient.close();
     }
+  });
+
+  it("🔒 re-throws a REAL LocalFsKitStore read fault, not just a stubbed one", async () => {
+    // Regression lock for the review finding on #263. The stub above proves the
+    // branch in plan.ts, but not the adapter: `readMeta` used to `catch {}`
+    // every error and return undefined, which `getKit` then turned into
+    // NotFoundError — so an unreadable kit reached plan.ts already disguised as
+    // a missing one and the narrowed catch could never fire. `readMeta` now
+    // swallows only genuine absence (ENOENT/ENOTDIR) and re-throws real faults.
+    //
+    // Forced with a DIRECTORY at the .kit.json path: `readFile` then fails
+    // EISDIR deterministically, on every platform and regardless of whether the
+    // suite runs as root (which would defeat a chmod-based test in CI).
+    const brokenId = "unreadable-kit";
+    await mkdir(join(kitsRoot, brokenId, ".kit.json"), { recursive: true });
+
+    const result = await client.callTool({
+      name: "mcp__genie__plan",
+      arguments: { kitId: brokenId, writes: ["*.html"], localDir: tempDir },
+    });
+
+    expect(result.isError, JSON.stringify(result)).toBe(true);
+    const text = ((result.content as { type: string; text: string }[]) ?? [])[0]?.text ?? "";
+    // The kit EXISTS but cannot be read — reporting "does not exist" would send
+    // an operator hunting a typo instead of a broken backend.
+    expect(text).not.toContain("kitNotFound");
+    expect(text).toMatch(/EISDIR|illegal operation on a directory/i);
+
+    // Still fail-closed: no plan authorization was issued.
+    let plans: string[];
+    try {
+      plans = await readdir(join(tempDir, "plans"));
+    } catch {
+      plans = [];
+    }
+    expect(plans).toEqual([]);
+  });
+
+  it("still lists kits when one neighbour's metadata is unreadable", async () => {
+    // The strictness above must NOT leak into enumeration: listKits walks a root
+    // that may hold foreign or half-written entries, and one bad neighbour must
+    // not fail the whole listing (hence readMetaIfReadable). Guards against a
+    // fix for the above regressing list_kits / the empty-state grid.
+    await mkdir(join(kitsRoot, "broken-neighbour", ".kit.json"), { recursive: true });
+
+    const result = await client.callTool({ name: "mcp__genie__list_kits", arguments: {} });
+
+    expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    const content = (result as { content?: { type: string; text: string }[] }).content ?? [];
+    const kits = JSON.parse(content[0]?.text ?? "[]") as { id: string }[];
+    expect(kits.map((k) => k.id)).toContain(kitId);
+    expect(kits.map((k) => k.id)).not.toContain("broken-neighbour");
   });
 });

@@ -20,7 +20,7 @@ import {
   MAX_WRITES,
   MAX_WILDCARDS,
 } from "../plans/index.js";
-import { KIT_ID_PATTERN } from "./get_kit.js";
+import { isSafeKitId } from "../store/kit-files.js";
 import { NotFoundError } from "../store/interface.js";
 
 /**
@@ -148,12 +148,20 @@ export function registerPlan(server: McpServer, store: PlanKitStore): void {
       // structured JSON payload below instead of a generic thrown MCP protocol
       // error — the same reasoning the `writes` field documents above.
       //
-      // Shape first: `..`, path separators, and out-of-charset ids name no
-      // valid kit, so they surface as the same rejection a genuinely-missing
-      // kit would (the store applies that precedent to unsafe ids too). It also
-      // keeps `getKit` — which resolves a path without re-checking id safety —
-      // from reading above the kits root.
-      if (!KIT_ID_PATTERN.test(kitId)) {
+      // Containment first, via the SHARED store rule. `isSafeKitId` rejects
+      // exactly the ids that escape a single-kit namespace (`""`, `.`, `..`,
+      // anything with a separator), which is what keeps `getKit` — it resolves a
+      // path without re-checking id safety — from reading above the kits root.
+      //
+      // Deliberately NOT `KIT_ID_PATTERN`. That pattern describes ids *minted by
+      // `create_kit`*; `KitId` is documented as an opaque, adapter-assigned
+      // string, and `list_kits` promises the ids it returns are valid input
+      // here. An imported or git-host kit may legitimately be named `My_Kit.2`
+      // or `a` — `read_file` and `list_files` already browse such kits through
+      // `isSafeKitId`, so gating `plan` on the stricter pattern would make a
+      // resolvable, browsable kit unwritable. Existence is `getKit`'s call, not
+      // the charset's.
+      if (!isSafeKitId(kitId)) {
         return kitNotFoundResult(kitId);
       }
       try {
