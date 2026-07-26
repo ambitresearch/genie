@@ -112,7 +112,7 @@ describe("listWritableKits", () => {
     // the prose has to account for both:
     //
     //   - stored type is not GENIE_KIT (interop records sharing the store)
-    //   - the id would be refused by every kit-taking verb (`isSafeKitId`)
+    //   - the id would be refused by the kit verbs that apply the shared gate
     //
     // Guard the exact word too: "every ... kit visible to the current store" claimed a
     // completeness this function has never had since the safety filter landed.

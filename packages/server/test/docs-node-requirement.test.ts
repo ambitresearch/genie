@@ -172,7 +172,7 @@ describe("published Node requirement", () => {
     expect(nodeFloorOverclaim("22.19.0", range)).toBe("23.0.0");
   });
   it("\u{1f512} is never described as something npm enforces", async () => {
-    // `engines.node` only refuses an install under `engine-strict`, which this
+    // An install is halted over that field only under `engine-strict`, which this
     // repository does not set: npm warns `EBADENGINE` and installs anyway. A
     // comment claiming npm blocks the install is not a harmless simplification
     // \u2014 it states this file's whole reason backwards. If the field stopped a
@@ -180,8 +180,25 @@ describe("published Node requirement", () => {
     const npmrc = await read(".npmrc").catch(() => "");
     if (/^\s*engine-strict\s*=\s*true/mu.test(npmrc)) return;
 
-    const enforcement =
-      /\b(?:refuses?|blocks?|prevents?|rejects?)\b[^.]{0,60}?\binstall[^.]{0,200}?\bengines\b/giu;
+    // Order-free by construction. The first version of this lock required
+    // refusal -> install -> field, which is the order the sites already found
+    // happened to use. One doc put the field first and named no install at all,
+    // so the lock read that file and reported clean while the exact drift it
+    // exists to stop sat inside it. A pattern derived from the instances you
+    // already found only ever confirms that search. So: any refusal verb
+    // co-occurring with the field inside one sentence, in either direction.
+    //
+    // The field is matched by its full name (or backticked) rather than as a
+    // bare word, because "engines" is also ordinary English for a JavaScript
+    // runtime -- `docs/developer/architecture.md` discusses `preventDefault()`
+    // on "older engines", which is a true sentence about browsers and not a
+    // claim about any manifest.
+    const FIELD = "(?:`engines(?:\\.node)?`|engines\\.node)";
+    const REFUSAL = "(?:refus\\w*|block\\w*|prevent\\w*|reject\\w*|bar(?:s|red)?|stop\\w*)";
+    const enforcement = new RegExp(
+      `(?:${FIELD}[^.]{0,160}?\\b${REFUSAL}\\b|\\b${REFUSAL}\\b[^.]{0,160}?${FIELD})`,
+      "giu",
+    );
 
     const offenders: string[] = [];
     for (const file of await repoFiles((f) => f.endsWith(".md") || f.endsWith(".ts"))) {
