@@ -3786,6 +3786,77 @@ describe("unsaved-draft unload guard (#256)", () => {
     expect(fireUnload(wired.window).defaultPrevented).toBe(false);
   });
 
+  it("still stops prompting for the alternatives that lost to the applied draft", async () => {
+    // The floor's real job, pinned so the lineage fix below cannot over-correct:
+    // two takes on the SAME component are alternatives, and applying the second
+    // is the user choosing against the first. Nothing there is unsaved work.
+    const wired = guarded();
+    addDraft(wired);
+    addDraft(wired);
+    await driveApply(wired);
+    expect(wired.controller.state().appliedDraftId).toBe("draft-2");
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("keeps prompting for an earlier draft of a component the applied one never touched", async () => {
+    // Copilot (round 10, PR #270) — the applied-draft floor was a LINEAGE rule
+    // wearing a number's clothes. The review store never resets between
+    // components: Generate and a Browse handoff both append into one list, so a
+    // lower number can be independent unsaved work rather than a rejected
+    // alternative. Applying `Button` says nothing about an `Alpha` nobody wrote.
+    const wired = guarded();
+    wired.controller.addDraft(
+      conjureResult({
+        componentName: "Alpha",
+        files: [fileEntry("components/actions/Alpha/Alpha.html", `${MARKER}\n<b>Alpha</b>\n`)],
+      }),
+      { kitId: "my-kit", kitLabel: "My Kit", model: "design-default", componentInKit: false },
+    );
+    addDraft(wired);
+    await driveApply(wired);
+    expect(wired.controller.state().appliedDraftId).toBe("draft-2");
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("keeps prompting for an unapplied draft that belongs to another kit", async () => {
+    // Same component name, different kit: the applied bytes landed somewhere
+    // else entirely, so the earlier draft is still unwritten.
+    const wired = guarded();
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "other-kit",
+      kitLabel: "Other Kit",
+      model: "design-default",
+      componentInKit: false,
+    });
+    addDraft(wired);
+    await driveApply(wired);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("keeps prompting when neither draft can say which component it is", async () => {
+    // `controller.addDraft` is a public seam that takes the object as given -- the
+    // shape validators run on HOST replies, upstream of here. If two drafts both
+    // arrive without an identity they must not collapse into one lineage and
+    // cancel each other out; an unreadable identity matches nothing, on purpose.
+    const wired = guarded();
+    const nameless = () => {
+      const result = conjureResult() as Record<string, unknown>;
+      delete result.componentName;
+      return result as unknown as Parameters<typeof wired.controller.addDraft>[0];
+    };
+    const info = {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "design-default",
+      componentInKit: false,
+    };
+    wired.controller.addDraft(nameless(), info);
+    wired.controller.addDraft(nameless(), info);
+    await driveApply(wired);
+    expect(wired.controller.state().appliedDraftId).toBe("draft-2");
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
   it("stops prompting the moment the bytes land, not when the kit refresh returns", async () => {
     // Copilot round 3 — `syncUnloadGuard` runs only from `render()`, and `confirmApply` renders
     // BELOW its `await` on the host's post-apply refresh. In the real boot path that callback

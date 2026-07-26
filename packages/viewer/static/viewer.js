@@ -2379,12 +2379,26 @@
     var UNSAVED_DRAFT_PROMPT = "This draft has not been applied to your kit yet.";
     var unloadGuard = null;
 
+    // Which component a draft proposes, as one comparable key. The store never resets between
+    // components, so Generate and a Browse handoff append into ONE list; see architecture.md.
+    // An unreadable identity yields a key nothing matches, which keeps the draft in scope.
+    function lineageOf(draft, info) {
+      var result = (draft && draft.result) || {};
+      var name = typeof result.componentName === "string" ? result.componentName : null;
+      if (!name) return null;
+      var group = typeof result.group === "string" ? result.group : "";
+      return ((info && info.kitId) || "") + "\u0000" + group + "\u0000" + name;
+    }
+
     function hasUnsavedDrafts(state) {
       // 0 keeps every draft in scope, the right fallback if the applied id names no draft.
       var applied = 0;
+      var appliedLineage = null;
       if (state.appliedDraftId) {
         for (var a = 0; a < state.drafts.length; a += 1) {
-          if (state.drafts[a].id === state.appliedDraftId) applied = state.drafts[a].number;
+          if (state.drafts[a].id !== state.appliedDraftId) continue;
+          applied = state.drafts[a].number;
+          appliedLineage = lineageOf(state.drafts[a], meta[state.drafts[a].id]);
         }
       }
       for (var i = 0; i < state.drafts.length; i += 1) {
@@ -2393,8 +2407,15 @@
         // in the kit, so the draft sorts below a newer applied one, yet the file it meant to
         // remove is still on disk and nothing else records which path that was.
         if (info && info.pendingDeletes && info.pendingDeletes.length) return true;
-        // <= rather than <: redundant today, but the two are written independently.
-        if (state.drafts[i].number <= applied) continue;
+        // Applying a draft rejects the drafts it was chosen OVER -- the earlier takes on the
+        // same component. It says nothing about a draft for a different component or kit, which
+        // stays unsaved work. `null` lineage never matches, so it is never skipped.
+        if (
+          state.drafts[i].number <= applied &&
+          appliedLineage !== null &&
+          lineageOf(state.drafts[i], info) === appliedLineage
+        )
+          continue;
         if (!info || !info.componentInKit) return true;
       }
       return false;
