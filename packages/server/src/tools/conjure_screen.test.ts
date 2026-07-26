@@ -687,8 +687,14 @@ describe("LocalScaffoldScreenGenerator", () => {
     // tests instead of 36 and loses no falsifier.
     //
     // LF and CR are absent deliberately — they never reach `neutralizeControls`
-    // because `toSingleLine` collapses them first, and `JS_LINE_TERMINATORS`
-    // above already pins that. This table is about one helper's own class.
+    // because `toSingleLine` collapses them first. That collapse is pinned by
+    // the two `JS_LINE_TERMINATORS` tables below, one per escape: `react` for
+    // `escapeLineComment` and `html` for `escapeHtmlComment`. An earlier
+    // revision of this comment cited only the first and called it settled,
+    // which was a false-yes coverage claim of exactly the kind the paragraph
+    // above warns about — the html half did not exist and dropping
+    // `toSingleLine` from `escapeHtmlComment` left the whole file green.
+    // This table is about one helper's own class.
     //
     // Names spell out the codepoint rather than interpolating the character:
     // every member is non-printing, so an interpolated name renders blank and
@@ -813,6 +819,45 @@ describe("LocalScaffoldScreenGenerator", () => {
         // No line carries the payload as executable source.
         const uncommented = lines.filter((l) => !l.trimStart().startsWith("//"));
         expect(uncommented.some((l) => l.includes("alert(1)"))).toBe(false);
+      },
+    );
+
+    // Raised by a Copilot review comment that was suppressed as low-confidence
+    // and so never opened a thread — it was right. The `<`/`>` pair above is
+    // the only html/vue coverage of the note, and `HTML_BREAKOUT` contains no
+    // line terminator, so every assertion there holds whether or not the note
+    // is flattened. Verified by mutation, not argued: dropping `toSingleLine`
+    // from `escapeHtmlComment` left all 63 tests green.
+    //
+    // Unlike the `//` sink this is not a containment property. A line
+    // terminator cannot close `-->`, and U+2028/U+2029 are not HTML line
+    // terminators at all — `escapeHtmlComment` collapses them only because it
+    // shares `toSingleLine`. What is pinned here is the header's *shape*
+    // contract: one comment, one line, not splittable by a caller-supplied id.
+    //
+    // `html` only, matching the CONTROL_CLASS economy above. `escapeHtmlComment`
+    // is the single helper both HTML-ish sinks call, and the three-framework NUL
+    // block plus the `<`/`>` pair are what pin that `vue` calls it too.
+    it.each(JS_LINE_TERMINATORS)(
+      "html — a kitId cannot split the header comment across lines (terminator %s)",
+      async (_name, term) => {
+        const result = await generator.generate(
+          request({
+            framework: "html",
+            entryPath: "s/index.html",
+            kit: { kitId: lineBreakout(term), via: "explicit" },
+          }),
+        );
+        const content = result.files[0]?.content ?? "";
+        // The FULL terminator class, for the same reason as the react table: a
+        // "\n"-only split leaves a U+2028 payload on the same apparent line and
+        // the assertion passes against unflattened output.
+        const lines = content.split(/[\r\n\u2028\u2029]/);
+        const headerIdx = lines.findIndex((l) => l.includes("genie conjure_screen"));
+        expect(headerIdx).toBeGreaterThanOrEqual(0);
+        // Opener, note and terminator all on the one line.
+        expect(lines[headerIdx]).toContain("alert(1)");
+        expect(lines[headerIdx]?.trimEnd().endsWith("-->")).toBe(true);
       },
     );
 
