@@ -31,6 +31,74 @@ describe("KIT_ID_SAFETY_MESSAGE", () => {
     expect(KIT_ID_SAFETY_MESSAGE).toMatch(/dot or a space|dot nor a space/iu);
     expect(KIT_ID_SAFETY_MESSAGE).toMatch(/NUL|null byte/iu);
   });
+
+  it("🔒 gives every kind of rule its own verb rather than sharing one", () => {
+    // The test above checks that each rule is MENTIONED. This one checks the
+    // mention is grammatical, which is a different failure and was a live one:
+    // the message read "it cannot be empty, `.`, `..`, end in a dot or a space,
+    // or contain a path separator or a NUL byte" — one verb, "cannot be",
+    // distributed across five list items. The last two are verb phrases, not
+    // nouns, so a user read "cannot be end in a dot" and "cannot be contain a
+    // path separator". This is the only string a rejected caller sees.
+    //
+    // Derive the requirement instead of pinning the wording. A guard's English
+    // verb is decided by the SHAPE of its test, not by its subject: comparing
+    // the whole id needs "be", matching an anchored suffix needs "end", and
+    // testing a substring needs "contain". So classify each guard by operator
+    // and require the message to carry that verb with its own "cannot". Add a
+    // `startsWith` guard later and this fails until the message grows a
+    // matching "cannot start with" clause — the wording cannot silently fall
+    // back to a shared verb again.
+    const source = readFileSync(path.join(import.meta.dirname, "kit-files.ts"), "utf8");
+    const bodyStart = source.indexOf("export function isSafeKitId");
+    expect(bodyStart).toBeGreaterThan(-1);
+    const body = source.slice(bodyStart, source.indexOf("\n}", bodyStart));
+
+    const KINDS = [
+      { kind: "identity", operator: /===/u, verb: /\bcannot be\b/iu, verbText: "cannot be" },
+      {
+        kind: "suffix",
+        operator: /\$\/u?\.test\(/u,
+        verb: /\bcannot end\b/iu,
+        verbText: "cannot end",
+      },
+      {
+        kind: "containment",
+        operator: /\.includes\(/u,
+        verb: /\bcannot contain\b/iu,
+        verbText: "cannot contain",
+      },
+    ] as const;
+
+    const guardLines = body.split("\n").filter((line) => line.includes("return false;"));
+    expect(guardLines.length).toBeGreaterThanOrEqual(5);
+
+    const required = new Set<(typeof KINDS)[number]>();
+    for (const line of guardLines) {
+      const matched = KINDS.filter((k) => k.operator.test(line));
+      // Every guard must classify as exactly one kind. A guard matching none
+      // is a shape this lock cannot speak about — it would otherwise pass by
+      // being invisible — and one matching two makes the required verb
+      // ambiguous. Either way the classifier, not the message, needs updating.
+      expect(
+        matched.map((k) => k.kind),
+        `guard did not classify uniquely: ${line.trim()}`,
+      ).toHaveLength(1);
+      required.add(matched[0]!);
+    }
+
+    // Anti-vacuity: the predicate really does mix all three shapes today, so a
+    // classifier that silently stopped matching cannot leave this passing on an
+    // empty requirement set.
+    expect([...required].map((k) => k.kind).sort()).toEqual(["containment", "identity", "suffix"]);
+
+    for (const { kind, verb, verbText } of required) {
+      expect(
+        KIT_ID_SAFETY_MESSAGE,
+        `${kind} guards need their own "${verbText}" clause, not a shared verb`,
+      ).toMatch(verb);
+    }
+  });
 });
 
 describe("isSafeKitId", () => {
