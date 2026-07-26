@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -184,9 +185,9 @@ describe("isSafeKitId", () => {
     //   `join(root, "victim..")` → `root\victim..` → Win32 → `root\victim`
     //
     // Containment is not the whole contract: `isSafeKitId` promises an accepted
-    // id SPELLS THE DIRECTORY IT OPENS. (Not that it names one kit — the test
-    // below deliberately accepts `Victim` and `VICTIM~1`, which are alternate
-    // spellings of one real directory.) A plan for `victim..` stays under the
+    // id NEVER RESOLVES TO A DIFFERENT KIT THAN IT SPELLS. (Not that it opens a
+    // kit at all — the test below deliberately accepts `Victim` and `VICTIM~1`,
+    // alternate spellings of one real directory, and `CON`, which is a device.) A plan for `victim..` stays under the
     // kits root and still
     // mutates or deletes `victim`, because `LocalFsKitStore.deleteFile` and
     // `writeFiles` resolve through the unsafe `kitDir`, with this predicate as
@@ -284,6 +285,44 @@ it("🔒 no accepted kitId can carry the CVE-2025-27210 device-name shape", () =
   ]) {
     expect(isSafeKitId(id), `${JSON.stringify(id)} must be refused`).toBe(false);
   }
+});
+
+// The rationale above is the reason THIS lock exists. `isSafeKitId` deliberately
+// accepts Win32 device names, so any prose promising that an accepted id "spells
+// the directory it opens" is false by the predicate's own accepted set — a device
+// name opens a device, not a directory. That claim was restated at four sites and
+// review caught two of them, so the check is repo-wide rather than per file.
+//
+// It is DERIVED, not a banned phrase: the ban is conditional on the predicate
+// still admitting a device name. Tighten `isSafeKitId` to refuse them and this
+// lock retires itself instead of outlawing wording that has become true.
+it("🔒 no rationale promises an accepted kitId opens a kit directory", () => {
+  const deviceNames = ["CON", "NUL", "PRN", "AUX", "COM1", "LPT1"].filter(isSafeKitId);
+  // Anti-vacuity: the claim is only wrong while these stay accepted.
+  expect(deviceNames.length).toBeGreaterThan(0);
+
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
+  const skip = new Set(["node_modules", "dist", ".git", "coverage", ".turbo"]);
+  const sources: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.(?:ts|tsx|md)$/u.test(entry.name)) sources.push(full);
+    }
+  };
+  walk(repoRoot);
+  expect(sources.length).toBeGreaterThan(100);
+
+  const offenders = sources.filter((file) =>
+    // Collapse docblock leaders first: the claim spans a line break at every
+    // site, so a same-line pattern silently passes.
+    /spells?\s+the\s+directory\s+it\s+opens/iu.test(
+      readFileSync(file, "utf8").replace(/\n\s*\*?\s*/gu, " "),
+    ),
+  );
+  expect(offenders.map((f) => path.relative(repoRoot, f))).toEqual([]);
 });
 
 // The rationale above argues the kitId GATE is unaffected by CVE-2025-27210.

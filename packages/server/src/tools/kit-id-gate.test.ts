@@ -6,15 +6,16 @@
  *   - `isSafeKitId` (store/kit-files.ts) — the SAFETY rule, and the authority for
  *     its own rejection set: read the predicate, do not re-derive it here. It is
  *     the rule both store adapters (`store/local.ts`, `store/git-host.ts`) enforce.
- *     It guarantees an accepted id SPELLS THE DIRECTORY IT OPENS — strictly
- *     stronger than "stays under the kits root", and the distinction is load-
- *     bearing: `victim.` never leaves the root, yet Windows trims the trailing
- *     dot at the syscall boundary and opens the sibling kit `victim`. Framing
- *     this as pure containment ("everything else is a literal child, so it
- *     cannot escape") is what let three separate alias classes through review.
- *     It does NOT promise the filesystem has only one spelling for that
- *     directory — case folding and NTFS 8.3 short names are alternate spellings
- *     of ONE kit, explicitly out of scope; the predicate names them.
+ *     It guarantees an accepted id NEVER RESOLVES TO A DIFFERENT KIT than it
+ *     spells — strictly stronger than "stays under the kits root", and the
+ *     distinction is load-bearing: `victim.` never leaves the root, yet Windows
+ *     trims the trailing dot at the syscall boundary and opens the sibling kit
+ *     `victim`. Framing this as pure containment ("everything else is a literal
+ *     child, so it cannot escape") is what let three separate alias classes
+ *     through review. It does NOT promise an accepted id opens a kit directory
+ *     at all: case folding and NTFS 8.3 short names are alternate spellings of
+ *     ONE kit, and Win32 device names spell no kit, so both stay deliberately
+ *     out of scope; the predicate names them.
  *   - `KIT_ID_PATTERN` `/^[a-z0-9-]{3,64}$/` (tools/get_kit.ts) — a SHAPE rule
  *     describing ids MINTED by `create_kit`.
  *
@@ -64,8 +65,8 @@ import { InvalidKitIdError, resolveKitDir as resolvePreviewKitDir } from "./prev
  * Ids a `create_kit`-minted slug would never produce but an imported or
  * git-host kit legitimately can. Every one of these is safe on BOTH counts
  * `isSafeKitId` guarantees: each resolves to a literal child of the kits root
- * (never above it) AND survives a Win32 trailing-[ .] trim unchanged, so each
- * spells the directory it opens on every platform.
+ * (never above it) AND survives a Win32 trailing-[ .] trim unchanged, so on
+ * every platform each names the same kit it spells.
  */
 const IMPORTED_KIT_IDS = ["My_Kit.2", "a", "UPPER"] as const;
 
