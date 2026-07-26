@@ -658,10 +658,9 @@ function neutralizeControls(value: string): string {
  *      non-conforming document — even though no parser in this repo rejects it.
  *      Escaping `<` costs one character class and turns a property that has to
  *      be argued per-construct into one sentence: the note cannot contribute a
- *      terminator, a nested `<!--`, or a tag. `neutralizeControls` below serves
- *      this same heading for a different character class — see its docblock for
- *      why control characters are a conformance problem and not a containment
- *      one.
+ *      terminator, a nested `<!--`, or a tag. `neutralizeControls` serves this
+ *      same heading for a different character class — see its docblock for why
+ *      control characters are a conformance problem and not a containment one.
  *
  * Deliberately still NOT `escapeHtml`: that also rewrites `"` to `&quot;`, which
  * would turn the quotes around every ordinary kit name into entity noise for no
