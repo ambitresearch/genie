@@ -2379,9 +2379,8 @@
     var UNSAVED_DRAFT_PROMPT = "This draft has not been applied to your kit yet.";
     var unloadGuard = null;
 
-    // Which component a draft proposes, as one comparable key. The store never resets between
-    // components, so Generate and a Browse handoff append into ONE list; see architecture.md.
-    // An unreadable identity yields a key nothing matches, which keeps the draft in scope.
+    // Which component a draft proposes, as one comparable key. `null` matches nothing, so an
+    // unreadable identity keeps its draft in scope.
     function lineageOf(draft, info) {
       var result = (draft && draft.result) || {};
       var name = typeof result.componentName === "string" ? result.componentName : null;
@@ -2407,9 +2406,8 @@
         // in the kit, so the draft sorts below a newer applied one, yet the file it meant to
         // remove is still on disk and nothing else records which path that was.
         if (info && info.pendingDeletes && info.pendingDeletes.length) return true;
-        // Applying a draft rejects the drafts it was chosen OVER -- the earlier takes on the
-        // same component. It says nothing about a draft for a different component or kit, which
-        // stays unsaved work. `null` lineage never matches, so it is never skipped.
+        // Earlier AND same lineage: an alternative the user rejected. Earlier alone is not --
+        // the store is append-only across components. See the architecture.md row.
         if (
           state.drafts[i].number <= applied &&
           appliedLineage !== null &&
