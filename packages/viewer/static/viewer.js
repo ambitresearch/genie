@@ -3012,13 +3012,6 @@
     return "The tool returned an error.";
   }
 
-  function isPayloadObject(value) {
-    // MCP models `structuredContent` as a JSON object/map, and constrains
-    // `outputSchema` to an object root. An array passes `typeof === "object"`
-    // but hands field-based callers the same unusable shape a primitive would.
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-  }
-
   /**
    * Payload of the first `content[]` entry whose text parses to a JSON object.
    *
@@ -3042,7 +3035,7 @@
       if (!entry || entry.type !== "text" || typeof entry.text !== "string") continue;
       try {
         var parsed = JSON.parse(entry.text);
-        if (isPayloadObject(parsed)) return parsed;
+        if (isPlainObject(parsed)) return parsed;
       } catch {
         // A human-readable line rather than a payload. Keep scanning.
       }
@@ -3076,12 +3069,15 @@
         return;
       }
       var structured = data.result && data.result.structuredContent;
-      if (!isPayloadObject(structured)) {
+      if (!isPlainObject(structured)) {
         // genie#251 — `structuredContent` is only guaranteed for tools that
         // declare an `outputSchema`. Read the text payload before failing.
+        // `isPlainObject` rather than a bare `typeof`: MCP constrains
+        // `outputSchema` to an object root, so an array would pass `typeof`
+        // while handing field-based callers an unusable shape.
         structured = textResultPayload(data.result);
       }
-      if (!isPayloadObject(structured)) {
+      if (!isPlainObject(structured)) {
         request.reject(new Error("The host returned a malformed tool result."));
         return;
       }
