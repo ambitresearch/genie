@@ -234,6 +234,57 @@ describe("createServer preview transport policy", () => {
     expect(cardAssets.startCardAssetBroker).not.toHaveBeenCalled();
   });
 
+  // #257 is delivered for the local stdio tier only, and this pins that boundary so
+  // it stays a decision rather than drift. Where no loopback broker is created, the
+  // accessor `conjure`/`refine` hold must stay permanently empty: they then publish no
+  // draft, emit no `previewUrl`, and the viewer keeps its inline `srcdoc` preview. A
+  // loopback URL would be worse than nothing here — it names a port on the SERVER host,
+  // which the user's browser cannot reach.
+  it.each([
+    ["an HTTP transport", { transportKind: "http" as const }, undefined],
+    [
+      "an explicitly remote locality",
+      { transportKind: "stdio" as const, previewLocality: "remote" as const },
+      undefined,
+    ],
+    ["a configured previews base URL", { transportKind: "stdio" as const }, "https://cdn.test"],
+  ])(
+    "leaves the draft-publishing accessor permanently empty for %s",
+    async (_label, options, baseUrl) => {
+      if (baseUrl !== undefined) vi.stubEnv("GENIE_PREVIEWS_BASE_URL", baseUrl);
+      try {
+        const server = createServer(options);
+        const conjureDeps = conjure.registerConjureTool.mock.calls[0]?.[1] as {
+          getRunningCardAssetBroker?: () => typeof cardAssets.instance | undefined;
+        };
+        const refineDeps = refine.registerRefineTool.mock.calls[0]?.[1] as {
+          getRunningCardAssetBroker?: () => typeof cardAssets.instance | undefined;
+        };
+
+        // The accessor still exists, so the verbs need no transport-aware branch...
+        expect(conjureDeps.getRunningCardAssetBroker).toBeTypeOf("function");
+        expect(refineDeps.getRunningCardAssetBroker).toBeTypeOf("function");
+        // ...and nothing can ever fill it, because no starting provider was handed out.
+        expect(
+          (grid.registerGridResource.mock.calls[0]?.[1] as { getCardAssetBroker?: unknown })
+            .getCardAssetBroker,
+        ).toBeUndefined();
+
+        const client = new Client({ name: "narrowed", version: "0" });
+        const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+        await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+        await client.listTools();
+        await client.close();
+
+        expect(conjureDeps.getRunningCardAssetBroker!()).toBeUndefined();
+        expect(refineDeps.getRunningCardAssetBroker!()).toBeUndefined();
+        expect(cardAssets.startCardAssetBroker).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("resolves an omitted transport at startup before lazily starting the broker", async () => {
     const server = createServer();
     const previewOptions = preview.registerPreviewTool.mock.calls[0]?.[1] as {

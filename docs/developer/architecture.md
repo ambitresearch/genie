@@ -331,6 +331,17 @@ inlining it. A fetched document gets the broker's own response-header CSP — sh
 exact bytes it serves — whereas `srcdoc` can only inherit the embedder's, which was minted before
 this draft existed.
 
+Broker-served previews are scoped to the **local stdio tier**, where the server and the viewer's
+browser share a host. `createServer` builds no broker provider for an HTTP transport, a declared
+remote locality, or a configured `GENIE_PREVIEWS_BASE_URL`, so `getRunningCardAssetBroker` stays
+empty there and `conjure`/`refine` publish no `previewUrl`. The broker binds **loopback on the
+server host**, so its URL names a port the remote user's browser cannot reach; publishing one would
+swap a working inline preview for a blank frame. `GENIE_PREVIEWS_BASE_URL` is not a substitute
+either — it addresses published kit assets, whereas drafts are unwritten, ephemeral, and capped at
+32 live. Those deployments therefore keep the `srcdoc` preview, which renders correctly everywhere
+and only forgoes the per-draft response-header CSP. A browser-reachable draft route needs its own
+authentication and lifetime design, and is deliberately left out of this change.
+
 `DRAFT_PREVIEW_SRC_RE` is anchored end to end against the one shape the broker mints: loopback
 host, `/d/`, a 16-byte hex token. The port group is **optional**, because `authorityFor` omits the
 port when it is 80 and a broker bound there mints `http://127.0.0.1/d/<token>`; requiring a port

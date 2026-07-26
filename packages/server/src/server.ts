@@ -220,6 +220,20 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // broker: generation is pure and must not acquire a listening socket. The
   // viewer starts the broker when it reads the grid resource, which necessarily
   // precedes any review, so by then this is populated.
+  //
+  // SCOPE (#257): broker-served draft previews are a LOCAL STDIO capability. Where
+  // `mayNeedLocalCardBroker` is false — HTTP transport, declared remote locality, or
+  // a configured GENIE_PREVIEWS_BASE_URL — no starting provider is created, so this
+  // stays `undefined` for the process's life and the verbs publish nothing. That is
+  // deliberate, not a gap: the broker binds LOOPBACK on the server host, so its URL
+  // is unreachable from a remote user's browser, and handing one out would render a
+  // blank frame instead of a preview. Those deployments keep the inline `srcdoc`
+  // preview, which is correct everywhere and merely inherits the embedder's CSP.
+  // GENIE_PREVIEWS_BASE_URL is not a substitute: it addresses published KIT assets,
+  // not per-draft documents, which are ephemeral, unwritten, and capped at 32 live.
+  // A browser-reachable draft route for remote transports needs its own authn and
+  // lifetime design and is out of scope here. Pinned by "leaves the draft-publishing
+  // accessor permanently empty" in `server-preview-transport.test.ts`.
   let runningCardAssetBroker: CardAssetBroker | undefined;
   const getRunningCardAssetBroker = (): CardAssetBroker | undefined => runningCardAssetBroker;
 
