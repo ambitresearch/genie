@@ -75,6 +75,29 @@ describe("release changelog version headings", () => {
 });
 
 describe("mcpb bundle manifest (AC1)", () => {
+  // CVE-2025-27210 (fixed in Node 20.19.4 / 22.17.1 / 24.4.1) lets a Windows
+  // reserved device-name segment walk `path.join` out of a base directory. Both
+  // published packages raised their floors past it; this bundle deliberately did
+  // NOT, because it ships `platforms: ["darwin"]` and the CVE is Windows-only.
+  // That reasoning is load-bearing and invisible in the manifest, so pin it: the
+  // day the bundle adds win32, the floor has to be raised in the same commit.
+  it("🔒 the bundle runtime floor stays consistent with the platforms it ships", () => {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const platforms: string[] = manifest.compatibility?.platforms ?? [];
+    const range: string = manifest.compatibility?.runtimes?.node ?? "";
+    expect(platforms.length).toBeGreaterThan(0);
+    expect(range).toMatch(/^>=/u);
+    if (platforms.includes("win32")) {
+      const m = /^>=\s*(\d+)\.(\d+)\.(\d+)/u.exec(range);
+      expect(m, `a win32 bundle needs an explicit patched floor, got ${range}`).not.toBe(null);
+      const [major, minor, patch] = m!.slice(1).map(Number) as [number, number, number];
+      expect(
+        major > 22 || minor > 17 || (major === 22 && minor === 17 && patch >= 1),
+        `${range} predates the CVE-2025-27210 fix (22.17.1)`,
+      ).toBe(true);
+    }
+  });
+
   it("mcpb/manifest.json exists and declares the required fields", () => {
     expect(existsSync(manifestPath)).toBe(true);
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
