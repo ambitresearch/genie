@@ -1903,8 +1903,20 @@ describe("PR #250 review findings", () => {
   // `componentInKit: true` onto the refined draft re-opens the Refine gate,
   // and the next call reloads the OLDER on-disk component — silently dropping
   // the first refinement.
+  //
+  // The fixture must DIVERGE from the parent for that hazard to exist at all.
+  // Bare `refineResult()` reuses `conjureResult()`'s files verbatim, so it would
+  // hand back the kit's own bytes and there would be no refinement to drop — see
+  // "unload guard ignores byte-identical derivatives (#256)".
   it("marks a refined draft as not yet in the kit", async () => {
-    const wired = loadWired({ ...HAPPY_REPLIES, mcp__genie__refine: refineResult() });
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__refine: refineResult({
+        files: [
+          fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Red</button>\n`),
+        ],
+      }),
+    });
     wired.controller.addDraft(conjureResult(), {
       kitId: "my-kit",
       kitLabel: "My Kit",
@@ -3857,6 +3869,96 @@ describe("unsaved-draft unload guard (#256)", () => {
     expect(fireUnload(wired.window).defaultPrevented).toBe(false);
     // A refine/tweak reply is PROPOSED bytes that exist nowhere on disk.
     addDraft(wired, false);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+});
+
+/**
+ * Copilot (round 4, PR #270) — `derivedInfo()` cleared `componentInKit`
+ * unconditionally, so ANY derive prompted on unload. But a derive that produces
+ * byte-identical output holds exactly the bytes already on disk, and reloading
+ * it loses nothing. The flag has to describe the bytes we hold, not the mere
+ * fact that a derive happened.
+ */
+describe("unload guard ignores byte-identical derivatives (#256)", () => {
+  const CHANGED = [
+    fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Different</button>\n`),
+  ];
+
+  async function refined(files?: ReturnType<typeof fileEntry>[]) {
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      // `refineResult()` reuses `conjureResult()`'s files verbatim, so by
+      // default the reply is byte-identical to the parent while still carrying
+      // a NON-EMPTY `diff` string. That gap is exactly the point: the model's
+      // diff is a claim, the bytes it returned are the evidence.
+      mcp__genie__refine: refineResult(files ? { files } : {}),
+    });
+    // Refine is gated on `componentInKit`, so its parent is always in the kit.
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+    });
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "leave it exactly as it is";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    (wired.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.controller.state().drafts).toHaveLength(2);
+    });
+    return wired;
+  }
+
+  it("stays silent when a refine hands back the kit's own bytes", async () => {
+    const wired = await refined();
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("still prompts the moment those bytes actually diverge", async () => {
+    const wired = await refined(CHANGED);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  // The tweak path carries no `componentInKit` gate, so it is the only way to derive
+  // from a draft that was never on disk. Byte-identical to unsaved work is still unsaved
+  // work. The unload guard cannot see this on its own — it already prompts because of the
+  // PARENT — so the observable consequence is Refine, which must stay locked: it edits the
+  // kit's on-disk file, and there isn't one.
+  it("keeps refine locked for a no-op tweak whose parent was never in the kit", () => {
+    const wired = loadWired(HAPPY_REPLIES);
+    const parent = conjureResult({
+      files: [
+        fileEntry("components/actions/Button/Button.html", MARKER),
+        {
+          ...fileEntry("components/actions/Button/Button.css", ":root{--radius:8px;}"),
+          mimeType: "text/css",
+        },
+      ],
+    });
+    wired.controller.addDraft(parent, {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: false,
+    });
+    // Re-fire `change` without moving the slider: the rewritten declaration is identical
+    // to the one already there, so the tweak is a genuine no-op.
+    const slider = wired.document.getElementById("control-0") as HTMLInputElement;
+    expect(slider).toBeTruthy();
+    slider.dispatchEvent(new wired.window.Event("change", { bubbles: true }));
+
+    const drafts = wired.controller.state().drafts;
+    expect(drafts).toHaveLength(2);
+    // Pin the fixture itself: if this ever stops being a no-op the rest is meaningless.
+    expect(drafts[1].result.files).toEqual(parent.files);
+
+    const submit = wired.document.getElementById("refine-submit") as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    expect(wired.document.getElementById("refine-status")?.textContent).toContain(
+      "Apply this draft first",
+    );
     expect(fireUnload(wired.window).defaultPrevented).toBe(true);
   });
 });

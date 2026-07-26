@@ -2263,20 +2263,53 @@
         var info = meta[draft.id] || {};
         // id is `fileIndex:offset:--property`.
         var property = controlId.split(":").slice(2).join(":");
-        // A tweaked draft is new bytes NOT in the kit, even if its parent was applied. Inheriting
-        // `componentInKit` would re-enable Refine, which reads the kit's older source and silently
-        // discards the tweak.
-        addDraft(next, derivedInfo(info), "Adjusted " + property + ".");
+        // A tweak that MOVED bytes is not in the kit, even if its parent was applied. Inheriting
+        // `componentInKit` there would re-enable Refine, which reads the kit's older source and
+        // silently discards the tweak. A no-op tweak moved nothing, so it keeps the parent's flag.
+        addDraft(
+          next,
+          derivedInfo(info, sameFileSet(draft.result.files, next.files)),
+          "Adjusted " + property + ".",
+        );
       };
     }
 
     /**
-     * Metadata for a draft DERIVED from another (a refine reply or a deterministic tweak). Both
-     * produce PROPOSED bytes that are not on disk, so `componentInKit` must be cleared however the
-     * parent was flagged — otherwise Refine stays unlocked and its next call reloads the older
-     * on-disk source, silently discarding this draft.
+     * Byte equality over two draft file sets. Copilot (round 4, PR #270) — the model's own `diff`
+     * is a CLAIM (`refineOutputShape.diff` is a bare string and an empty one is accepted), so the
+     * bytes it returned are the only evidence. `buildUnifiedDiff` is exact only for the single
+     * declaration `applyDeterministicTweak` rewrites, so it cannot stand in as a comparator.
+     * @param {Array<Record<string, string>>} a parent draft files
+     * @param {Array<Record<string, string>>} b derived draft files
+     * @returns {boolean} true when every entry matches path, content, mimeType and encoding
      */
-    function derivedInfo(info) {
+    function sameFileSet(a, b) {
+      if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+      for (var i = 0; i < a.length; i += 1) {
+        // Order is stable: a derive rewrites entries in place, it never reorders them.
+        if (
+          a[i].path !== b[i].path ||
+          a[i].content !== b[i].content ||
+          a[i].mimeType !== b[i].mimeType ||
+          a[i].encoding !== b[i].encoding
+        ) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    /**
+     * Metadata for a draft DERIVED from another (a refine reply or a deterministic tweak). A derive
+     * that MOVED bytes is PROPOSED work sitting nowhere on disk, so `componentInKit` clears —
+     * otherwise Refine stays unlocked and its next call reloads the older on-disk source, silently
+     * discarding this draft. Copilot (round 4, PR #270) — a derive that handed back the parent's
+     * exact bytes moved nothing, so it keeps the parent's flag: reloading it loses nothing, and
+     * prompting on unload would be a lie.
+     * @param {Record<string, unknown>} info metadata of the parent draft
+     * @param {boolean} identical whether the derived bytes equal the parent's, byte for byte
+     */
+    function derivedInfo(info, identical) {
       var source = info || {};
       return {
         kitId: source.kitId,
@@ -2286,7 +2319,9 @@
         source: source.source,
         model: source.model,
         displayName: source.displayName || "",
-        componentInKit: false,
+        // Byte-identical only counts as "in the kit" when the PARENT was: bytes identical to
+        // unsaved work are still unsaved work.
+        componentInKit: Boolean(identical) && Boolean(source.componentInKit),
       };
     }
 
@@ -2541,10 +2576,15 @@
       }
       if (el.refineStatus) el.refineStatus.textContent = "";
       if (el.refineInput) el.refineInput.value = "";
-      // Copilot #4 (PR #250) — `refine` persists nothing, so a refined draft is NOT in the kit;
-      // marking it so re-opens Refine, whose next call reloads the older on-disk bytes and loses
-      // this work.
-      addDraft(outcome.result, derivedInfo(info), "Refined: " + instruction);
+      // Copilot #4 (PR #250) — `refine` persists nothing, so a refined draft whose bytes MOVED is
+      // NOT in the kit; marking it so re-opens Refine, whose next call reloads the older on-disk
+      // bytes and loses this work. Copilot (round 4, PR #270) — a refine that handed back the
+      // parent's exact bytes lost nothing, so it inherits the parent's flag instead.
+      addDraft(
+        outcome.result,
+        derivedInfo(info, sameFileSet(draft.result.files, outcome.result.files)),
+        "Refined: " + instruction,
+      );
     }
 
     function openApplyConfirm() {
