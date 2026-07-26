@@ -2317,9 +2317,12 @@
     //   - Only drafts newer than the applied one. Apply stamps a SPECIFIC draft;
     //     it and everything before it are either on disk now or alternatives the
     //     user rejected by choosing another, and losing a rejected alternative is
-    //     the outcome they already picked. But the tweak sliders stay live during
-    //     and after flight, so a LATER draft can exist while appliedDraftId is
-    //     still set -- that one is new work nothing has written.
+    //     the outcome they already picked. A LATER draft can still exist while
+    //     appliedDraftId is set: tweak and refine are frozen while `inFlight`
+    //     (`input.disabled = inFlight`) but go live again the moment apply
+    //     settles, and the switcher carries no flight guard, so the applied
+    //     draft need not be the newest one. Either way that later draft is new
+    //     work nothing has written.
 
     // Every current engine substitutes its own wording, so this text is for the
     // handful that still render the page's string. It only has to be non-empty.

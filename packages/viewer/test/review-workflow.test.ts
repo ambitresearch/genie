@@ -3778,10 +3778,11 @@ describe("unsaved-draft unload guard (#256)", () => {
   });
 
   it("prompts again for a draft created after the apply", async () => {
-    // Copilot round 1 on #270. `markApplied` stamps a SPECIFIC draft, and the
-    // tweak sliders stay live during and after flight, so a later draft can
-    // exist with `appliedDraftId` still set. That draft is new work nothing has
-    // written -- an earlier apply must not disarm the guard for it.
+    // Copilot round 1 on #270. `markApplied` stamps a SPECIFIC draft. Tweak and
+    // refine are frozen while `inFlight`, but they go live again the moment the
+    // apply settles, so a later draft can exist with `appliedDraftId` still set.
+    // That draft is new work nothing has written -- an earlier apply must not
+    // disarm the guard for it.
     const wired = guarded();
     addDraft(wired);
     await driveApply(wired);
