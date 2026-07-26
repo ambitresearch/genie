@@ -282,6 +282,73 @@ export function renderNodeRequirement(range: string): string {
 }
 
 /**
+ * Visit every clause in `text` whose subject is Node, with the version it pins.
+ *
+ * Both the floor sweep and the discovery predicate read prose the same way, so
+ * the attribution lives here once. Splitting them let discovery drift into
+ * asking a *shape* question — "does this doc state an open-ended floor?" — when
+ * the question it owes the sweep is a *subject* one: "does this doc state a Node
+ * requirement at all?". A doc phrasing its requirement as `Requires Node 23.x`
+ * answered no to the first and yes to the second, so it was never checked.
+ *
+ * Attribution is per CLAUSE, not per line. A line may pin several tools at
+ * once — `Install Node 22 (pnpm >=10.34.4)` — and reading the whole line as
+ * Node's handed the sweep pnpm's floor as if the document had claimed it. On
+ * that line the only floor returned was the foreign one, so the reported
+ * over-claim named a version the prose never applied to Node at all.
+ *
+ * A clause naming no tool INHERITS the previous clause's subject, because the
+ * canonical prose relies on it: in `Node.js 22.19.0–22.x, or 24.4.1 or newer`
+ * the clause after the comma is still about Node. Dropping the inheritance
+ * would trade a false positive for a false negative and quietly stop policing
+ * the claim this helper exists to police.
+ *
+ * "Names no tool" is decided against closed-class function words only — the
+ * conjunctions and comparatives that join two clauses about one subject. A
+ * list of TOOL names would be the hand-maintained enumeration this suite
+ * exists to replace, and would go stale the first time a guide pinned
+ * something new.
+ *
+ * Only the words BEFORE the clause's first version decide its subject. Words
+ * after it qualify the same claim rather than introducing another — real
+ * prose reads `or 24.4.1 or newer for the npm/source path, or Docker`, and
+ * treating `for the npm/source path` as a new subject drops the very floor
+ * the sweep exists to read.
+ */
+function eachNodeClause(text: string, visit: (clause: string, line: string) => void): void {
+  const CONTINUATION = new Set([
+    "or",
+    "and",
+    "to",
+    "through",
+    "up",
+    "at",
+    "least",
+    "newer",
+    "later",
+    "then",
+    "plus",
+    "version",
+    "v",
+    "x",
+  ]);
+
+  for (const line of text.split("\n")) {
+    if (!/node/iu.test(line)) continue;
+    let subjectIsNode = false;
+    for (const clause of line.split(/[,;()]|\s+and\s+/u)) {
+      const firstVersion = clause.search(/\d/u);
+      const prefix = firstVersion === -1 ? clause : clause.slice(0, firstVersion);
+      const words = prefix.toLowerCase().match(/[a-z][a-z.]*/gu) ?? [];
+      if (words.some((word) => word.includes("node"))) subjectIsNode = true;
+      else if (words.some((word) => !CONTINUATION.has(word))) subjectIsNode = false;
+      if (!subjectIsNode) continue;
+      visit(clause, line);
+    }
+  }
+}
+
+/**
  * Every open-ended Node floor a doc claims, e.g. `≥22.19.0` or "22.19 or newer".
  *
  * Only floors attributed to Node on the same line count, and only clauses with
@@ -311,66 +378,52 @@ export function findOpenEndedNodeFloors(text: string): string[] {
     /(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/gu,
   ];
 
-  // Attribution is per CLAUSE, not per line. A line may pin several tools at
-  // once — `Install Node 22 (pnpm >=10.34.4)` — and reading the whole line as
-  // Node's handed the sweep pnpm's floor as if the document had claimed it. On
-  // that line the only floor returned was the foreign one, so the reported
-  // over-claim named a version the prose never applied to Node at all.
-  //
-  // A clause naming no tool INHERITS the previous clause's subject, because the
-  // canonical prose relies on it: in `Node.js 22.19.0–22.x, or 24.4.1 or newer`
-  // the clause after the comma is still about Node. Dropping the inheritance
-  // would trade a false positive for a false negative and quietly stop policing
-  // the claim this helper exists to police.
-  //
-  // "Names no tool" is decided against closed-class function words only — the
-  // conjunctions and comparatives that join two clauses about one subject. A
-  // list of TOOL names would be the hand-maintained enumeration this suite
-  // exists to replace, and would go stale the first time a guide pinned
-  // something new.
-  //
-  // Only the words BEFORE the clause's first version decide its subject. Words
-  // after it qualify the same claim rather than introducing another — real
-  // prose reads `or 24.4.1 or newer for the npm/source path, or Docker`, and
-  // treating `for the npm/source path` as a new subject drops the very floor
-  // the sweep exists to read.
-  const CONTINUATION = new Set([
-    "or",
-    "and",
-    "to",
-    "through",
-    "up",
-    "at",
-    "least",
-    "newer",
-    "later",
-    "then",
-    "plus",
-    "version",
-    "v",
-    "x",
-  ]);
-
   const found: string[] = [];
-  for (const line of text.split("\n")) {
-    if (!/node/iu.test(line)) continue;
-    let subjectIsNode = false;
-    for (const clause of line.split(/[,;()]|\s+and\s+/u)) {
-      const firstVersion = clause.search(/\d/u);
-      const prefix = firstVersion === -1 ? clause : clause.slice(0, firstVersion);
-      const words = prefix.toLowerCase().match(/[a-z][a-z.]*/gu) ?? [];
-      if (words.some((word) => word.includes("node"))) subjectIsNode = true;
-      else if (words.some((word) => !CONTINUATION.has(word))) subjectIsNode = false;
-      if (!subjectIsNode) continue;
-      for (const pattern of patterns) {
-        for (const match of clause.matchAll(pattern)) {
-          if (match[4] !== undefined) continue;
-          found.push(`${match[1]}.${match[2]}.${match[3] ?? "0"}`);
-        }
+  eachNodeClause(text, (clause) => {
+    for (const pattern of patterns) {
+      for (const match of clause.matchAll(pattern)) {
+        if (match[4] !== undefined) continue;
+        found.push(`${match[1]}.${match[2]}.${match[3] ?? "0"}`);
       }
     }
-  }
+  });
   return found;
+}
+
+/**
+ * Does this document state a Node runtime requirement — in any shape?
+ *
+ * This is the documentation sweep's DISCOVERY step, and it is deliberately not
+ * `findOpenEndedNodeFloors`. That function answers a narrower question — "does
+ * this doc claim an open-ended floor?" — and using it to discover made a
+ * document's visibility depend on the shape of its claim. A guide stating
+ * `Requires Node 23.x`, or a bounded `Node >=23 <24`, yields no floor, so it
+ * dropped out of the discovered set and was never compared with the manifest.
+ * The wording most likely to be wrong was the wording that escaped the check.
+ *
+ * A requirement is a clause about Node carrying one of:
+ *   - a comparator-led version (`>=22`, `≥24.4.1`, `%E2%89%A5` in a badge URL),
+ *   - a version spanned or extended (`22.19.0–22.x`, `24.4.1 or newer`), or
+ *   - a version on a line whose prose says it is required.
+ *
+ * Bare mentions are excluded on purpose, because the sweep runs over every
+ * markdown file in the repository: `node docs/designs/design-6/…` is a path,
+ * `actions/setup-node … v4.4.0` versions an Action rather than the runtime, and
+ * `node: [22, 24]` describes a CI matrix. Requiring a range, a span or the word
+ * "required" is what separates a promise to the reader from an incidental
+ * number, and it is why this predicate can be pointed at the whole tree.
+ */
+export function statesNodeRequirement(text: string): boolean {
+  const COMPARATOR = /(?:>=|<=|>|<|≥|%E2%89%A5|%3E%3D)\s*\d/u;
+  const SPANNED = /\d+(?:\.\d+)*(?:\.x)?\s*(?:–|—|%E2%80%93|\bor newer\b|\bor later\b)/iu;
+  const VERSION = /\d+\.(?:\d+|x)/u;
+
+  let states = false;
+  eachNodeClause(text, (clause, line) => {
+    const required = /requir/iu.test(line) && VERSION.test(clause);
+    if (COMPARATOR.test(clause) || SPANNED.test(clause) || required) states = true;
+  });
+  return states;
 }
 
 /**

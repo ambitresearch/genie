@@ -9,6 +9,7 @@ import {
   nodeFloorOverclaim,
   renderNodeRequirement,
   satisfiesRange,
+  statesNodeRequirement,
 } from "./node-cve.js";
 
 /**
@@ -282,5 +283,53 @@ describe("nodeFloorOverclaim — the overclaims it used to answer null for", () 
 
   it("🔒 still answers null when the floor is honest", () => {
     expect(nodeFloorOverclaim("24.4.1", ">=22.19.0 <23 || >=24.4.1")).toBeNull();
+  });
+});
+
+/**
+ * The documentation sweep discovers which docs it has to check by asking each
+ * one whether it states a Node requirement at all. Deciding that with
+ * `findOpenEndedNodeFloors` made discovery depend on the shape of the claim: a
+ * doc that states its requirement as `Requires Node 23.x`, or as a bounded
+ * `Node >=23 <24`, produced no floor, dropped out of the discovered set, and was
+ * therefore never compared against the manifest. The drift the sweep exists to
+ * catch was exactly the drift that made a document invisible to it.
+ */
+describe("statesNodeRequirement — discovery independent of the claim's shape", () => {
+  it("🔒 discovers a requirement whose shape yields no open-ended floor", () => {
+    for (const prose of [
+      "Requires Node 23.x",
+      "Node >=23 <24 is required",
+      "Requires Node.js 23.5.0",
+      "- Node.js 20.1.0–20.x",
+    ]) {
+      expect(findOpenEndedNodeFloors(prose), `${prose} must yield no floor`).toEqual([]);
+      expect(statesNodeRequirement(prose), `${prose} must still be discovered`).toBe(true);
+    }
+  });
+
+  it("🔒 still discovers every shape the floor-based predicate did", () => {
+    for (const prose of [
+      "Requires Node.js 22.19.0–22.x, or 24.4.1 or newer",
+      "Node.js 22.19.0 or newer is required",
+      "node-22.19%E2%80%9322.x%20or%20%E2%89%A524.4.1",
+    ]) {
+      expect(statesNodeRequirement(prose), `${prose} must be discovered`).toBe(true);
+    }
+  });
+
+  it("🔒 does not read an incidental Node mention as a requirement", () => {
+    for (const prose of [
+      "Run `node docs/designs/design-6/contrast-check.mjs` from the repo root.",
+      "a Node test that recomputes sha256 over the notice at line 256",
+      "| `actions/setup-node` | `49933ea5288caeca8642d1e84afbd3f7d6820020` | v4.4.0 |",
+      "builds a `node: [22, 24]` matrix of bare majors",
+    ]) {
+      expect(statesNodeRequirement(prose), `${prose} is not a requirement`).toBe(false);
+    }
+  });
+
+  it("🔒 does not attribute a co-listed tool's requirement to Node", () => {
+    expect(statesNodeRequirement("Install Node 22 (pnpm >=10.34.4 is required)")).toBe(false);
   });
 });

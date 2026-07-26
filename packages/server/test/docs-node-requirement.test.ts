@@ -36,6 +36,7 @@ import {
   findOpenEndedNodeFloors,
   nodeFloorOverclaim,
   renderNodeRequirement,
+  statesNodeRequirement,
 } from "./helpers/node-cve.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -115,9 +116,15 @@ describe("published Node requirement", () => {
   it("🔒 is stated by the public prerequisites in the form the manifest implies", async () => {
     const expected = renderNodeRequirement(await enginesNode(PUBLISHED_MANIFESTS[0]));
 
+    // Discovery asks whether the doc states a Node requirement AT ALL, not
+    // whether it states an open-ended floor. Deciding it with
+    // `findOpenEndedNodeFloors` made a document's visibility depend on the shape
+    // of its claim: `Requires Node 23.x` and a bounded `Node >=23 <24` yield no
+    // floor, so a doc drifting to either wording silently left the checked set —
+    // the wording most likely to be wrong was the wording that escaped the check.
     const stating: string[] = [];
     for (const doc of await markdownFiles()) {
-      if (findOpenEndedNodeFloors(await read(doc)).length > 0) stating.push(doc);
+      if (statesNodeRequirement(await read(doc))) stating.push(doc);
     }
 
     // Guards the sweep against passing because it found nothing to check. The
