@@ -944,7 +944,17 @@ describe("cross-script seam (#253) — grid survives a missing viewer-browse.js"
       JSON.stringify(manifestObj) +
       "</scr" +
       "ipt>" +
-      '</head><body><input id="q" /><main id="grid"></main></body></html>';
+      // Models the SHIPPED shell (`static/index.html`), not a convenient
+      // stand-in: `#browse-workbench` is the VISIBLE surface and `#grid` is
+      // `hidden`, kept in the DOM only as the render target Browse re-projects
+      // from. A fixture with a plain visible `<main id="grid">` reports a
+      // healthy render (iframes exist!) while the user stares at an empty
+      // workbench, so the degradation path has to be proven against these
+      // exact attributes.
+      '</head><body><input id="q" />' +
+      '<div id="browse-workbench"><nav id="browse-tree"></nav><div id="browse-detail"></div></div>' +
+      '<div id="grid" hidden></div>' +
+      "</body></html>";
     const dom = new JSDOM(html, { runScripts: "outside-only" });
     const { window } = dom;
     const errors: string[] = [];
@@ -991,5 +1001,21 @@ describe("cross-script seam (#253) — grid survives a missing viewer-browse.js"
     // Diagnosability: whoever hits this must be pointed at the asset that
     // failed to load, not sent to debug a manifest that parsed perfectly.
     expect(errors.some((m) => m.includes("viewer-browse.js"))).toBe(true);
+  });
+
+  it("REVEALS the grid and hides the workbench it can no longer populate", async () => {
+    // "The grid still renders" is only true to a DOM query unless the shell's
+    // visibility is swapped: `#grid` ships `hidden` and `#browse-workbench`
+    // ships visible, so leaving them as-is degrades to a blank workbench —
+    // strictly worse than the grid we already rendered successfully.
+    const { document } = bootCoreOnly(twoGroupManifest());
+    await new Promise((r) => setTimeout(r, 0));
+
+    const grid = document.getElementById("grid") as HTMLElement;
+    const workbench = document.getElementById("browse-workbench") as HTMLElement;
+    expect(grid.hidden).toBe(false);
+    expect(workbench.hidden).toBe(true);
+    // …and the cards are really in the now-visible surface.
+    expect(grid.querySelectorAll("iframe").length).toBe(2);
   });
 });

@@ -4658,6 +4658,15 @@
           "served alongside viewer.js and loaded BEFORE it.",
       );
     }
+    // The shipped shell hides `#grid` and shows `#browse-workbench` (Browse
+    // re-projects the grid into the workbench on every update), so a
+    // rendered-but-hidden grid is invisible: without this swap "the grid still
+    // renders" degrades to an EMPTY workbench — strictly worse than the grid
+    // we just rendered successfully. Idempotent; `initBrowse` may run twice.
+    var gridEl = doc && doc.getElementById && doc.getElementById("grid");
+    if (gridEl) gridEl.hidden = false;
+    var workbenchEl = doc && doc.getElementById && doc.getElementById("browse-workbench");
+    if (workbenchEl) workbenchEl.hidden = true;
     // Same inert shape `initBrowseController` itself returns when the workbench
     // DOM is absent, so every core call site stays total.
     return {

@@ -95,6 +95,31 @@ describe("static/index.html (AC1)", () => {
     expect(mod?.getAttribute("type")).not.toBe("module");
   });
 
+  // #253 — `viewer.js` auto-boots on parse and immediately calls into the
+  // Browse workbench, so `viewer-browse.js` MUST already have executed. Both
+  // are classic scripts sharing one global (no ES modules: DRO-749), which
+  // makes DOM order the ONLY thing enforcing that. Every jsdom harness
+  // hand-concatenates the two sources, so nothing else in the unit suite would
+  // notice these tags being swapped in the shipped shell.
+  it("#253 — loads viewer-browse.js BEFORE viewer.js (order is load-bearing)", () => {
+    const scripts = [...doc.querySelectorAll("script[src]")].map((s) => s.getAttribute("src"));
+    const browseAt = scripts.indexOf("./viewer-browse.js");
+    const coreAt = scripts.indexOf("./viewer.js");
+
+    expect(browseAt).toBeGreaterThanOrEqual(0);
+    expect(coreAt).toBeGreaterThanOrEqual(0);
+    expect(browseAt).toBeLessThan(coreAt);
+  });
+
+  it("#253 — loads viewer-browse.js as a CLASSIC script too (no module/defer/async)", () => {
+    // `defer`/`async` would decouple execution from DOM order and reintroduce
+    // the race this pair's ordering exists to prevent.
+    const browse = doc.querySelector('script[src="./viewer-browse.js"]');
+    expect(browse?.getAttribute("type")).not.toBe("module");
+    expect(browse?.hasAttribute("defer")).toBe(false);
+    expect(browse?.hasAttribute("async")).toBe(false);
+  });
+
   it("declares a UTF-8 charset and a viewport meta", () => {
     expect(doc.querySelector("meta[charset]")?.getAttribute("charset")?.toLowerCase()).toBe(
       "utf-8",

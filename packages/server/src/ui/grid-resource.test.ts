@@ -336,6 +336,72 @@ describe("inlineViewerAssets — script-tag matcher escapes regex metacharacters
   });
 });
 
+describe("inlineViewerAssets — emitted script order is `viewerScripts` order", () => {
+  const CSS = "body{}";
+
+  // `viewer.js` auto-boots on parse and calls into the Browse workbench, so
+  // `viewer-browse.js` MUST execute first (#253). Inlining each script at its
+  // own `<script src>` tag looks equivalent to emitting them as an ordered
+  // block, but it is not: when one tag is absent the script has to be appended
+  // before `</body>`, which lands it AFTER a sibling whose tag appears earlier
+  // in the document — silently inverting the load order.
+  it("puts Browse first even when only viewer.js has a placeholder tag", () => {
+    // FAKE_INDEX references ONLY ./viewer.js — the exact shape that inverted.
+    const { html: out } = inlineViewerAssets(
+      FAKE_INDEX,
+      [
+        { name: "viewer-browse.js", source: "BROWSE_BYTES" },
+        { name: "viewer.js", source: "CORE_BYTES" },
+      ],
+      CSS,
+    );
+
+    const browseAt = out.indexOf("BROWSE_BYTES");
+    const coreAt = out.indexOf("CORE_BYTES");
+    expect(browseAt).toBeGreaterThanOrEqual(0);
+    expect(coreAt).toBeGreaterThanOrEqual(0);
+    expect(browseAt).toBeLessThan(coreAt);
+  });
+
+  it("keeps Browse first when both placeholder tags are present", () => {
+    const html =
+      "<html><head></head><body>" +
+      '<script src="./viewer-browse.js"></script><script src="./viewer.js"></script>' +
+      "</body></html>";
+    const { html: out } = inlineViewerAssets(
+      html,
+      [
+        { name: "viewer-browse.js", source: "BROWSE_BYTES" },
+        { name: "viewer.js", source: "CORE_BYTES" },
+      ],
+      CSS,
+    );
+
+    expect(out.indexOf("BROWSE_BYTES")).toBeLessThan(out.indexOf("CORE_BYTES"));
+    expect(out).not.toContain('src="./viewer-browse.js"');
+    expect(out).not.toContain('src="./viewer.js"');
+  });
+
+  // The embedded tier is `default-src 'none'`: a leftover external `src` is
+  // not merely dead weight, it is a reference the document can never resolve.
+  it("strips the tag of a viewer script it was NOT given bytes for", () => {
+    const html =
+      "<html><head></head><body>" +
+      '<script src="./viewer-browse.js"></script><script src="./viewer.js"></script>' +
+      "</body></html>";
+    const { html: out, hashes } = inlineViewerAssets(
+      html,
+      [{ name: "viewer.js", source: "CORE_BYTES" }],
+      CSS,
+    );
+
+    expect(out).toContain("CORE_BYTES");
+    expect(out).not.toContain('src="./viewer-browse.js"');
+    // Only the scripts actually inlined may contribute CSP hashes.
+    expect(hashes.scriptHashes).toHaveLength(1);
+  });
+});
+
 describe("inlineManifest (AC2)", () => {
   it("injects a script#manifest of type application/json before </head>", () => {
     const html = inlineManifest(FAKE_INDEX, manifest());
@@ -649,6 +715,35 @@ describe("buildGridDocument", () => {
     // Still valid HTML with an inline manifest, just no viewer chrome.
     expect(html).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
     expect(html.toLowerCase()).toContain('<main id="grid">');
+  });
+
+  // #253 — Browse is an ENHANCEMENT: `viewer.js` ships an inert `initBrowse`
+  // fallback so the grid keeps rendering without `viewer-browse.js`. Reading
+  // all four assets through one `Promise.all` made the embedded tier the ONE
+  // vehicle where that fallback can never run: a single unreadable Browse file
+  // rejected the whole read and degraded a perfectly good grid to the
+  // dependency-free emergency shell.
+  it("still assembles a working grid when ONLY viewer-browse.js is unreadable", async () => {
+    const partialReader: AssetReader = async (name) => {
+      if (name === "viewer-browse.js") throw new Error("ENOENT: viewer-browse.js");
+      if (name === "index.html") return FAKE_INDEX;
+      if (name === "viewer.js") return "/* viewer.js bytes */";
+      return "/* viewer.css bytes */";
+    };
+    const html = await buildGridDocument(
+      { ...baseDeps, readAsset: partialReader, compile: okCompiler(manifest()) },
+      { kitId: "acme-abc123" },
+    );
+
+    // The real core viewer is inlined — NOT the emergency shell.
+    expect(html).toContain("/* viewer.js bytes */");
+    expect(html).not.toContain("genie viewer assets unavailable");
+    // …and no dangling external reference survives: the embedded tier is
+    // `default-src 'none'`, so a leftover `src` can never resolve.
+    expect(html).not.toContain('src="./viewer-browse.js"');
+    // The CSP must hash exactly the scripts that shipped, no more.
+    const attr = /http-equiv="Content-Security-Policy"\s+content="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(attr.match(/'sha256-/g) ?? []).toHaveLength(3);
   });
 
   // ── M4-07 (DRO-269) — CSP enforcement via injected meta tag ─────────────
