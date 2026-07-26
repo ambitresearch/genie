@@ -34,7 +34,14 @@ export interface PlanKitStore {
 
 /** Input schema for plan (Zod v4). */
 const inputSchema = {
-  kitId: z.string().min(1).describe("The kit ID to create a plan for."),
+  // Intentionally NOT `.min(1)`: an empty kitId resolves to no kit, and the
+  // handler already answers that with the structured `kitNotFound` envelope
+  // (#252) plus its `plan.rejected` audit line. A schema-level minimum would
+  // pre-empt both, making the MCP SDK reject `""` at the protocol layer with a
+  // generic, non-JSON "MCP error ..." string — the exact failure mode the
+  // `writes` field below documents. Type stays `string`; emptiness is a
+  // semantic question, so the handler owns it.
+  kitId: z.string().describe("The kit ID to create a plan for."),
   // Intentionally NOT `.max(MAX_WRITES)`: a schema-level cap makes the MCP SDK
   // reject oversized arrays at the protocol layer with a generic, non-JSON
   // "MCP error ..." string — before the handler below runs. That would bypass

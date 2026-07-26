@@ -633,7 +633,12 @@ describe("plan tool — kitId validation (#252)", () => {
     // resolves a path without re-checking id safety) from reading above
     // kitsRoot. They surface as the same rejection a genuinely-missing kit
     // would, mirroring the store's own precedent for unsafe ids.
-    for (const bad of ["..", ".", "../escape", "a/b", "a\\b"]) {
+    //
+    // `""` is in this list deliberately: the input schema omits `.min(1)` so
+    // an empty id reaches the handler and gets this structured envelope, not a
+    // generic non-JSON "MCP error ..." protocol string. Re-adding that schema
+    // minimum fails this case.
+    for (const bad of ["", "..", ".", "../escape", "a/b", "a\\b"]) {
       const result = await client.callTool({
         name: "mcp__genie__plan",
         arguments: { kitId: bad, writes: ["*.html"] },
