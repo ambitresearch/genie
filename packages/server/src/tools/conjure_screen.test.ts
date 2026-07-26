@@ -7,6 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectStore } from "./create_project.js";
 import { LocalFsKitStore } from "../store/local.js";
+import { isSafeKitId } from "../store/kit-files.js";
 import {
   CONJURE_SCREEN_TOOL_NAME,
   LocalScaffoldScreenGenerator,
@@ -496,6 +497,380 @@ describe("LocalScaffoldScreenGenerator", () => {
     expect(vue.files[0]?.content).toContain("<template>");
     const react = await generator.generate(request({ framework: "react" }));
     expect(react.files[0]?.content).toContain("export default function Screen()");
+  });
+
+  // ── 🔒 provenance-note injection (the header comment is a sink) ─────────────
+  //
+  // Still true, and why the payloads below are reachable ids rather than
+  // hypotheticals: `note` carries `kitId`, and `isSafeKitId` is a *containment*
+  // rule about path segments — it deliberately permits `>` and newlines,
+  // neither of which can escape a directory.
+  //
+  // No longer true, as of this PR: `renderScaffold` escaped `title` at all four
+  // of its sinks (`escapeHtml` ×3, `escapeJsx` ×1) but embedded `note` raw at
+  // all three, so a listable kit COULD carry a comment-terminator into
+  // generated source. `note` is now escaped at all three sinks too
+  // (`escapeHtmlComment` ×2, `escapeLineComment` ×1). The `it`s below are what
+  // keep that a fact rather than a claim.
+  //
+  // Attribution, precisely: `KIT_ID_PATTERN` banned these characters *by
+  // accident*, as a side effect of being a narrow slug allowlist. #276 widened
+  // the gate — correctly — and removed that incidental cover without replacing
+  // it. Pre-existing for the `default`/`sole` arms (which `resolveKit` returns
+  // raw from persisted bindings, and `create_project`'s `kitBindingShape` gates
+  // only with `z.string().min(1)`); a partial #276 regression for `explicit`.
+  //
+  // The remedy — taken here — is to escape at the SINK, not to re-narrow the id
+  // rule; re-narrowing would re-create the visible-but-unusable defect the
+  // whole #276/#279/#281/#283/#286 cycle existed to remove.
+  describe("🔒 the provenance note cannot escape its comment", () => {
+    // Pinned mechanically rather than asserted in prose: if a future change to
+    // `isSafeKitId` were to start rejecting these, THIS is the line that should
+    // fail, so the reachability claim above can never quietly go stale.
+    const HTML_BREAKOUT = "evil--><img src=x onerror=alert(1)><!--";
+    // ECMAScript LineTerminator :: <LF> <CR> <LS> <PS>. All four end a `//`
+    // comment — verified by executing each through Node, not read off the spec.
+    //
+    // Named, rather than interpolated with %j: `JSON.stringify` leaves U+2028 and
+    // U+2029 as literal (invisible) characters, so those two cases would render
+    // identically in the reporter. When a mutation reds exactly two of these four,
+    // "which two" is the whole finding — the names have to carry it.
+    const JS_LINE_TERMINATORS = [
+      ["LF U+000A", "\n"],
+      ["CR U+000D", "\r"],
+      ["LS U+2028", "\u2028"],
+      ["PS U+2029", "\u2029"],
+    ] as const;
+    const lineBreakout = (term: string) => `evil${term}alert(1)`;
+
+    it("the payloads really are listable kitIds (reachability, not hypothesis)", () => {
+      expect(isSafeKitId(HTML_BREAKOUT)).toBe(true);
+      for (const [, term] of JS_LINE_TERMINATORS) {
+        expect(isSafeKitId(lineBreakout(term))).toBe(true);
+      }
+    });
+
+    // Raised in review: `provenanceNote`'s docblock used to claim the interpolated
+    // kitId "is gated by isSafeKitId". True for ONE of `resolveKit`'s three arms.
+    // `default` and `sole` are read straight off the project record, which is only
+    // ever schema-checked as `z.string().min(1)` — and `create_project` accepts
+    // caller-supplied `kitBindings` under exactly that shape. So the ungated arms
+    // admit a STRICTLY WIDER set, including the `/` and `\` that `isSafeKitId`
+    // exists to reject.
+    //
+    // Every other assertion in this block runs through `explicit`, i.e. the narrow
+    // arm. Without this one the suite would prove the escape holds only where a
+    // gate happens to exist, and say nothing about the wider, ungated majority —
+    // the "passes for a different reason than its name claims" shape that let the
+    // original asymmetry survive review in the first place.
+    const UNGATED_BREAKOUT = "evil/--><img src=x onerror=alert(1)><!--";
+
+    // Raised in review (round 5): the version of this block that shipped first
+    // *fabricated* the request object, so it demonstrated that the escape holds
+    // for an input we asserted was reachable rather than one we had observed
+    // arriving. The premise was true — but "true" and "shown" are different, and
+    // this file has already been bitten twice this cycle by assertions that were
+    // argued in prose and pinned by nothing.
+    //
+    // So the seam moved. These now drive the real pipeline end to end:
+    // `create_project` persists the binding, `conjure_screen` resolves it, and
+    // the request handed to the real generator is the one the recording stub
+    // *observed the pipeline emit* — never one this test wrote. If the ungated
+    // arms are ever tightened, `emitted.kit` stops matching and this fails at the
+    // premise rather than silently passing on a fabrication.
+    const UNGATED_BINDINGS: [string, { kitId: string; default?: boolean }[]][] = [
+      ["default", [{ kitId: UNGATED_BREAKOUT, default: true }]],
+      ["sole", [{ kitId: UNGATED_BREAKOUT }]],
+    ];
+
+    it.each(UNGATED_BINDINGS)(
+      "%s — an UNGATED kitId reaches the generator raw and still cannot terminate the comment",
+      async (via, kitBindings) => {
+        // Unreachable through `explicit`: this pins the two-source claim in
+        // `provenanceNote`'s docblock so it cannot quietly go stale.
+        expect(isSafeKitId(UNGATED_BREAKOUT)).toBe(false);
+
+        const { deps, projectId } = await fixture({ kitBindings });
+        await conjureScreen(deps, {
+          projectId,
+          prompt: "A page with cards",
+          framework: "html",
+        });
+
+        // The premise, established by execution rather than asserted: a
+        // containment-unsafe id was persisted by `create_project` under its
+        // `z.string().min(1)` binding shape and handed to the generator
+        // unchanged, through the arm named in the test title.
+        const emitted = deps.generator.calls[0];
+        if (!emitted) throw new Error("conjure_screen never reached the generator");
+        expect(emitted.kit).toEqual({ kitId: UNGATED_BREAKOUT, via });
+
+        const result = await generator.generate(emitted);
+        const content = result.files[0]?.content ?? "";
+        const header = content.split("\n").find((l) => l.includes("genie conjure_screen")) ?? "";
+        expect(header).not.toBe("");
+        expect(header.split("-->").length - 1).toBe(1);
+        expect(header.trimEnd().endsWith("-->")).toBe(true);
+        const note = header.slice(header.indexOf(":") + 1, header.lastIndexOf("-->"));
+        expect(note).not.toContain("<");
+        expect(note).not.toContain(">");
+        expect(content).not.toContain("<img src=x onerror=alert(1)>");
+      },
+    );
+
+    // A control character is the one caller-supplied byte class the `<`/`>`
+    // escape does not touch, and it is NOT a containment problem: nothing here
+    // can close `-->` or end a `//` line. It is a *conformance* one — but for
+    // two different reasons, which an earlier revision of this comment ran
+    // together into a claim the standard does not make.
+    //
+    // NUL is the round-trip case, and the only one: WHATWG §13.2.5.4 mandates
+    // that comment state append U+FFFD *in place of* a NUL, so leaving it raw
+    // means the bytes on disk and the bytes a browser holds in the DOM really
+    // do disagree. Every other C0/C1 control is a parse error under §13.2.3.5
+    // but is appended *unchanged* — no disagreement, so neutralising those is
+    // project policy (emit nothing a conforming parser must flag), not spec
+    // compliance. Verified with `parse5`, not read off the spec alone.
+    //
+    // Note what this deliberately does NOT assert: that `@vue/compiler-sfc`
+    // rejects it. Measured — it does not. `UNEXPECTED_NULL_CHARACTER` survives
+    // as a constant in `@vue/compiler-core` with zero `emitError` call sites
+    // since the 3.4 tokenizer rewrite, so a test shaped "the Vue build fails"
+    // would pass vacuously against unfixed code and prove nothing. The falsifier
+    // has to be the byte itself.
+    //
+    // All three frameworks, because the note reaches three sinks through two
+    // different escapes. Pinning only the HTML pair is what let `title` be
+    // escaped 4/4 while `note` was escaped 0/3 in the first place.
+    const NUL_KIT_ID = "acme\u0000ui";
+
+    it.each(["html", "vue", "react"] as const)(
+      "%s — a control character in the kitId is neutralised, not passed through",
+      async (framework) => {
+        // The gate is not what stops this one: `isSafeKitId` permits NUL, so it
+        // is in-band on the *explicit* arm too, not merely the ungated ones.
+        expect(isSafeKitId(NUL_KIT_ID)).toBe(true);
+
+        const { deps, projectId } = await fixture({
+          kitBindings: [{ kitId: NUL_KIT_ID, default: true }],
+        });
+        await conjureScreen(deps, { projectId, prompt: "A page with cards", framework });
+
+        const emitted = deps.generator.calls[0];
+        if (!emitted) throw new Error("conjure_screen never reached the generator");
+        // Raw on the way in — the neutralisation is the generator's job, and
+        // this pins that it has something to do.
+        expect(emitted.kit?.kitId).toContain("\u0000");
+
+        const result = await generator.generate(emitted);
+        const content = result.files[0]?.content ?? "";
+        expect(content).not.toContain("\u0000");
+        expect(content).toContain("\uFFFD");
+      },
+    );
+
+    // The block above pins *composition* — that the note reaches all three
+    // sinks through an escape that neutralises. This table pins *the class*:
+    // that the character set `neutralizeControls` advertises is the set it
+    // actually acts on, at every range boundary and at both deliberate
+    // exclusions.
+    //
+    // Neither subsumes the other, and sampling a single member left the class
+    // entirely unpinned: narrowing the regex to `/[\u0000]/g` was green against
+    // all 51 tests that preceded this table. A test that passes for a narrower
+    // reason than its name claims is the same defect shape as the misleading
+    // test names this cycle already repaired — here it was mine.
+    //
+    // One framework is enough *here*: the class is a property of the single
+    // shared helper both escapes call, and the three-framework block above is
+    // what pins that both call it. Splitting the two concerns this way costs 12
+    // tests instead of 36 and loses no falsifier.
+    //
+    // LF and CR are absent deliberately — they never reach `neutralizeControls`
+    // because `toSingleLine` collapses them first. That collapse is pinned by
+    // the two `JS_LINE_TERMINATORS` tables below, one per escape: `react` for
+    // `escapeLineComment` and `html` for `escapeHtmlComment`. An earlier
+    // revision of this comment cited only the first and called it settled,
+    // which was a false-yes coverage claim of exactly the kind the paragraph
+    // above warns about — the html half did not exist and dropping
+    // `toSingleLine` from `escapeHtmlComment` left the whole file green.
+    // This table is about one helper's own class.
+    //
+    // Names spell out the codepoint rather than interpolating the character:
+    // every member is non-printing, so an interpolated name renders blank and
+    // "which case failed" — the entire value of a table — is lost.
+    const CONTROL_CLASS: [name: string, char: string, expected: string][] = [
+      // in-class: C0, on both sides of every range boundary
+      ["U+0000 NUL (\\u0000-\\u0008 lower bound)", "\u0000", "\uFFFD"],
+      ["U+0001 SOH", "\u0001", "\uFFFD"],
+      ["U+0008 BS (\\u0000-\\u0008 upper bound)", "\u0008", "\uFFFD"],
+      ["U+000B VT (singleton between the ranges)", "\u000b", "\uFFFD"],
+      ["U+000E SO (\\u000E-\\u001F lower bound)", "\u000e", "\uFFFD"],
+      ["U+001F US (\\u000E-\\u001F upper bound)", "\u001f", "\uFFFD"],
+      // in-class: DEL and the C1 block
+      ["U+007F DEL (\\u007F-\\u009F lower bound)", "\u007f", "\uFFFD"],
+      ["U+0080 PAD", "\u0080", "\uFFFD"],
+      ["U+009F APC (\\u007F-\\u009F upper bound)", "\u009f", "\uFFFD"],
+      // out of class, deliberately: HTML counts these as ASCII whitespace, and
+      // neither is an ECMAScript LineTerminator, so no sink is threatened
+      ["U+0009 TAB (excluded: HTML whitespace)", "\u0009", "\u0009"],
+      ["U+000C FF (excluded: HTML whitespace)", "\u000c", "\u000c"],
+      // out of class: the first codepoint above C1. Pins that the upper range
+      // stops where it says it does rather than running on into printable text.
+      ["U+00A0 NBSP (excluded: above the C1 block)", "\u00a0", "\u00a0"],
+    ];
+
+    it.each(CONTROL_CLASS)(
+      "%s — neutralised in the note iff it is in the advertised class",
+      async (_name, char, expected) => {
+        const kitId = `acme${char}ui`;
+        // In-band on every arm: `isSafeKitId` permits all of these, so the gate
+        // is not what stops them and the escape is the only thing that can.
+        expect(isSafeKitId(kitId)).toBe(true);
+
+        const { deps, projectId } = await fixture({ kitBindings: [{ kitId, default: true }] });
+        await conjureScreen(deps, { projectId, prompt: "A page with cards", framework: "html" });
+
+        const emitted = deps.generator.calls[0];
+        if (!emitted) throw new Error("conjure_screen never reached the generator");
+        // Raw on the way in, so the assertion below is about the generator's
+        // escape and not about something upstream having already sanitised it.
+        expect(emitted.kit?.kitId).toContain(char);
+
+        const result = await generator.generate(emitted);
+        const content = result.files[0]?.content ?? "";
+        expect(content).toContain(`acme${expected}ui`);
+        if (expected !== char) expect(content).not.toContain(char);
+      },
+    );
+
+    // `<!-- … -->` can only be closed by a sequence ending in `>`, so "the note
+    // contributes no `>`" is a *provable* containment property, not a blocklist.
+    it.each(["html", "vue"] as const)("%s — a kitId cannot terminate the comment", async (fw) => {
+      const result = await generator.generate(
+        request({
+          framework: fw,
+          entryPath: fw === "html" ? "s/index.html" : "s/index.vue",
+          kit: { kitId: HTML_BREAKOUT, via: "explicit" },
+        }),
+      );
+      const content = result.files[0]?.content ?? "";
+      const header = content.split("\n").find((l) => l.includes("genie conjure_screen")) ?? "";
+      expect(header).not.toBe("");
+      // Exactly one terminator, and it is the one we appended.
+      expect(header.split("-->").length - 1).toBe(1);
+      expect(header.trimEnd().endsWith("-->")).toBe(true);
+      // The live markup the payload was trying to smuggle never materialises.
+      expect(content).not.toContain("<img src=x onerror=alert(1)>");
+      // The note contributes neither `<` nor `>`, so it cannot contribute *any*
+      // markup construct — not a terminator, not a nested `<!--`, not a tag.
+      // Stated as one property rather than argued per-construct: HTML forbids
+      // `<!--` inside comment text (WHATWG §13.1.6), so leaving it would emit a
+      // non-conforming document even though no parser in this repo rejects it.
+      const note = header.slice(header.indexOf(":") + 1, header.lastIndexOf("-->"));
+      expect(note).not.toContain("<");
+      expect(note).not.toContain(">");
+    });
+
+    // Suggested in review. The string-level assertions above prove the note cannot
+    // *terminate* the comment; this proves the artifact a caller actually receives
+    // still parses. Independent detector, and a stricter one: under a mutant that
+    // drops the escape entirely the SFC does not merely change, it loses its
+    // `<template>` block and `@vue/compiler-sfc#parse` raises — which
+    // `VueAdapter.renderPreview` turns into a hard rejection. So an unescaped note
+    // makes a *listable* kitId render as nothing at all.
+    //
+    // Dynamically imported exactly as `framework/vue.ts` does it — that module
+    // documents `@vue/compiler-sfc` as a heavy transitive graph kept off the hot path.
+    it("vue — the generated SFC still parses after escaping (renderable, not just safe)", async () => {
+      const { parse } = await import("@vue/compiler-sfc");
+      const result = await generator.generate(
+        request({
+          framework: "vue",
+          entryPath: "s/index.vue",
+          kit: { kitId: HTML_BREAKOUT, via: "explicit" },
+        }),
+      );
+      const source = result.files[0]?.content ?? "";
+      const { descriptor, errors } = parse(source, { filename: "Screen.vue" });
+      expect(errors).toHaveLength(0);
+      expect(descriptor.template?.content).toContain("<main");
+    });
+
+    // A `//` comment runs to the end of the line, so a line terminator inside the
+    // note puts attacker text on a live code line.
+    //
+    // Splitting on the FULL terminator class — not just "\n" — is load-bearing.
+    // A "\n"-only split leaves a U+2028 breakout sitting on the same apparent
+    // line, so the assertion passes while the scaffold is escapable. That is the
+    // shape of false-green this file exists to prevent.
+    it.each(JS_LINE_TERMINATORS)(
+      "react — a kitId cannot break out of the `//` line comment (terminator %s)",
+      async (_name, term) => {
+        const result = await generator.generate(
+          request({ framework: "react", kit: { kitId: lineBreakout(term), via: "explicit" } }),
+        );
+        const content = result.files[0]?.content ?? "";
+        const lines = content.split(/[\r\n\u2028\u2029]/);
+        const headerIdx = lines.findIndex((l) => l.includes("genie conjure_screen"));
+        expect(headerIdx).toBeGreaterThanOrEqual(0);
+        // The whole note stays on the commented line — nothing spills past it.
+        expect(lines[headerIdx]).toContain("alert(1)");
+        // No line carries the payload as executable source.
+        const uncommented = lines.filter((l) => !l.trimStart().startsWith("//"));
+        expect(uncommented.some((l) => l.includes("alert(1)"))).toBe(false);
+      },
+    );
+
+    // Raised by a Copilot review comment that was suppressed as low-confidence
+    // and so never opened a thread — it was right. The `<`/`>` pair above is
+    // the only html/vue coverage of the note, and `HTML_BREAKOUT` contains no
+    // line terminator, so every assertion there holds whether or not the note
+    // is flattened. Verified by mutation, not argued: dropping `toSingleLine`
+    // from `escapeHtmlComment` left all 63 tests green.
+    //
+    // Unlike the `//` sink this is not a containment property. A line
+    // terminator cannot close `-->`, and U+2028/U+2029 are not HTML line
+    // terminators at all — `escapeHtmlComment` collapses them only because it
+    // shares `toSingleLine`. What is pinned here is the header's *shape*
+    // contract: one comment, one line, not splittable by a caller-supplied id.
+    //
+    // `html` only, matching the CONTROL_CLASS economy above. `escapeHtmlComment`
+    // is the single helper both HTML-ish sinks call, and the three-framework NUL
+    // block plus the `<`/`>` pair are what pin that `vue` calls it too.
+    it.each(JS_LINE_TERMINATORS)(
+      "html — a kitId cannot split the header comment across lines (terminator %s)",
+      async (_name, term) => {
+        const result = await generator.generate(
+          request({
+            framework: "html",
+            entryPath: "s/index.html",
+            kit: { kitId: lineBreakout(term), via: "explicit" },
+          }),
+        );
+        const content = result.files[0]?.content ?? "";
+        // The FULL terminator class, for the same reason as the react table: a
+        // "\n"-only split leaves a U+2028 payload on the same apparent line and
+        // the assertion passes against unflattened output.
+        const lines = content.split(/[\r\n\u2028\u2029]/);
+        const headerIdx = lines.findIndex((l) => l.includes("genie conjure_screen"));
+        expect(headerIdx).toBeGreaterThanOrEqual(0);
+        // Opener, note and terminator all on the one line.
+        expect(lines[headerIdx]).toContain("alert(1)");
+        expect(lines[headerIdx]?.trimEnd().endsWith("-->")).toBe(true);
+      },
+    );
+
+    it("ordinary kit names stay human-readable (the fix must not entity-noise them)", async () => {
+      const result = await generator.generate(
+        request({
+          framework: "html",
+          entryPath: "s/index.html",
+          kit: { kitId: "acme-ui", via: "default" },
+        }),
+      );
+      expect(result.files[0]?.content).toContain('targeting kit "acme-ui"');
+    });
   });
 });
 

@@ -144,8 +144,19 @@ export interface ConjureScreenProjectStore {
 export interface ConjureScreenDeps {
   projectStore: ConjureScreenProjectStore;
   /** Used only to validate an *explicit* `kitId` resolves to a real kit before
-   * generating against it — default/sole kits came from bindings already
-   * validated at bind time. */
+   * generating against it.
+   *
+   * ⚠️ An earlier revision of this comment added "— default/sole kits came from
+   * bindings already validated at bind time". That is TRUE for bindings created
+   * via `bind_kit` (whose `ProjectStore.bindKit` calls `assertKitExists`) and
+   * FALSE for bindings created via `create_project`, whose `kitBindingShape.kitId`
+   * is a bare `z.string().min(1)` persisted straight into the manifest —
+   * `assertKitExists`'s only production call site is in `bindKit`.
+   *
+   * That mattered: `resolveKit` returns `default`/`sole` ids RAW, so the false
+   * symmetry was load-bearing cover for un-escaped ids reaching `renderScaffold`'s
+   * comment sinks. The escaping there does not rely on this claim — see
+   * `provenanceNote` — but the claim itself must not be restored. */
   kitStore: KitStore;
   generator: ScreenGenerator;
 }
@@ -477,7 +488,35 @@ export class LocalScaffoldScreenGenerator implements ScreenGenerator {
   }
 }
 
-/** A one-line, honest provenance note for the scaffold header comment. */
+/** An honest provenance note for the scaffold header comment.
+ *
+ * ⚠️ Returns RAW, UNESCAPED, POSSIBLY MULTI-LINE text. It interpolates `kitId`,
+ * which arrives here from TWO sources with DIFFERENT validation. Rely on
+ * neither:
+ *
+ *   - `via: "explicit"` — the caller's own `kitId`, gated by this tool's
+ *     `.refine(isSafeKitId, …)`. That is a *containment* rule about path
+ *     segments: it deliberately permits `>`, `<` and newlines, because none of
+ *     them can escape a directory. It was never an output-safety rule.
+ *   - `via: "default" | "sole"` — read straight off the project record by
+ *     `resolveKit`, which applies NO gate on those two arms. The stored value is
+ *     only ever schema-checked as `z.string().min(1)` (`kitBindingShape`, and
+ *     `projectManifestSchema` on the way back off disk — both in
+ *     `create_project.ts`), and `create_project` accepts caller-supplied
+ *     `kitBindings` under that same shape. So these arms admit a STRICTLY WIDER
+ *     set than `explicit`: additionally `.`, `..`, `/` and `\`, i.e. precisely
+ *     the ids `isSafeKitId` exists to reject.
+ *
+ * Every sink must therefore escape this UNCONDITIONALLY — never conditioned on
+ * provenance — with the helper appropriate to the comment syntax it embeds
+ * into: `escapeHtmlComment` for `<!-- … -->`, `escapeLineComment` for `//`.
+ * Adding a fourth sink without one re-opens the injection.
+ *
+ * That includes flattening. This function does NOT call `toSingleLine`, so its
+ * return value spans multiple lines whenever `kitId` does — and `isSafeKitId`
+ * permits `\n`, so that is reachable on the *gated* arm too, not only the
+ * ungated ones. Both helpers flatten, so "one line" is a property of the SINK,
+ * never of this function; it is deliberately not claimed above. */
 function provenanceNote(request: ScreenGenerationRequest): string {
   const parts: string[] = [];
   if (request.kit) {
@@ -498,7 +537,7 @@ function renderScaffold(request: ScreenGenerationRequest): string {
     case "html":
       return [
         "<!doctype html>",
-        `<!-- genie conjure_screen (M1): ${note} -->`,
+        `<!-- genie conjure_screen (M1): ${escapeHtmlComment(note)} -->`,
         '<html lang="en">',
         "  <head>",
         '    <meta charset="utf-8" />',
@@ -515,7 +554,7 @@ function renderScaffold(request: ScreenGenerationRequest): string {
       ].join("\n");
     case "vue":
       return [
-        `<!-- genie conjure_screen (M1): ${note} -->`,
+        `<!-- genie conjure_screen (M1): ${escapeHtmlComment(note)} -->`,
         "<template>",
         '  <main class="screen">',
         `    <h1>${escapeHtml(title)}</h1>`,
@@ -528,7 +567,7 @@ function renderScaffold(request: ScreenGenerationRequest): string {
       ].join("\n");
     case "react":
       return [
-        `// genie conjure_screen (M1): ${note}`,
+        `// genie conjure_screen (M1): ${escapeLineComment(note)}`,
         "export default function Screen() {",
         "  return (",
         '    <main className="screen">',
@@ -540,6 +579,108 @@ function renderScaffold(request: ScreenGenerationRequest): string {
         "",
       ].join("\n");
   }
+}
+
+/** Collapse every line terminator to a single space.
+ *
+ * Load-bearing for the `//` sink, whose *only* escape is a line terminator.
+ * U+2028 and U+2029 are included deliberately: they are JavaScript line
+ * terminators as well as `\r\n`, so omitting them would leave `react`
+ * escapable while looking correct. */
+function toSingleLine(value: string): string {
+  return value.replace(/[\r\n\u2028\u2029]+/g, " ");
+}
+
+/** Replace control characters with U+FFFD.
+ *
+ * Scope, stated precisely because it is narrower than it looks: this is a
+ * *conformance* measure, not a containment one. No control character can close
+ * an HTML comment (only a sequence ending in `>` can) and none can end a `//`
+ * comment (ECMAScript LineTerminator is exactly LF, CR, U+2028, U+2029 — all
+ * four already collapsed by `toSingleLine` above). So heading 1 of
+ * `escapeHtmlComment` is untouched by this; heading 2 is the whole reason.
+ *
+ * Two *different* justifications, kept apart because an earlier revision of
+ * this comment merged them and thereby overstated the standard:
+ *
+ *   1. U+0000 alone — a genuine round-trip defect. WHATWG HTML §13.2.5.4
+ *      (comment state) mandates that the tokenizer append U+FFFD *in place of*
+ *      a NUL. So a NUL written into a scaffold is not preserved: the file on
+ *      disk and the DOM a browser builds from it really do disagree.
+ *      Neutralising here makes the artifact byte-stable across that boundary.
+ *
+ *   2. Every other C0/C1 control — project policy, not spec substitution.
+ *      WHATWG §13.2.3.5 (preprocessing the input stream) makes these
+ *      `control-character-in-input-stream` parse errors, but comment state then
+ *      appends them *unchanged*. There is no disk/DOM disagreement to fix here.
+ *      We neutralise anyway so a generated scaffold never obliges its consumer
+ *      to parse a document that is, by the standard's own definition, in error.
+ *
+ * Verified rather than reasoned: driving `parse5` (a conforming tokenizer) with
+ * `<!-- acme<CH>ui -->` substitutes U+FFFD for U+0000 and passes U+0001, U+0008,
+ * U+000B, U+000E, U+001F, U+007F, U+0080 and U+009F through untouched. Do not
+ * re-broaden heading 1 to the whole class — it is true of NUL and nothing else.
+ *
+ * The class is the HTML definition — C0 and C1 controls *except* the four
+ * characters HTML counts as ASCII whitespace (TAB, LF, FF, CR). LF and CR are
+ * excluded here because `toSingleLine` has already turned them into a space;
+ * TAB and FF are legal whitespace and are left alone. Every range boundary and
+ * both exclusions are pinned by the table in the test file: the class is a
+ * contract, so it is tested as one rather than sampled at a single member.
+ *
+ * Measured, not assumed: `@vue/compiler-sfc` does **not** reject any of these.
+ * `UNEXPECTED_NULL_CHARACTER` (code 20) is still *defined* in
+ * `@vue/compiler-core`, but the 3.4 tokenizer rewrite left it with zero
+ * `emitError` call sites, and a NUL in comment text, element text, an attribute
+ * value or ahead of the template all parse and compile with zero errors. Do not
+ * re-document this as "the Vue build would fail" — it would not. */
+function neutralizeControls(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u0008\u000B\u000E-\u001F\u007F-\u009F]/g, "\uFFFD");
+}
+
+/** Escape a value destined for the inside of an `<!-- … -->` comment.
+ *
+ * Escapes `<` and `>`, so the note contributes no markup-significant character
+ * at all. Two independent reasons, kept separate because they carry different
+ * weight:
+ *
+ *   1. *Containment* (security). A comment can only be closed by a sequence
+ *      ending in `>` (`-->`, and the `--!>` variant browsers also honour), so
+ *      "contributes no `>`" is a **provable** property rather than a blocklist
+ *      of terminator spellings. This alone is sufficient, and it is the reason
+ *      this is not `replaceAll("--", "- -")` — that recreates `--` across a
+ *      replacement boundary, so any *odd*-length run of 3+ hyphens defeats it:
+ *      `--->` becomes `- -->`. (Even-length runs do not: `---->` becomes
+ *      `- -- ->`. Verified by executing both, not by reading the regex.)
+ *   2. *Conformance* (artifact quality). WHATWG HTML §13.1.6 forbids `<!--`
+ *      inside comment text, so passing `<` through would emit a technically
+ *      non-conforming document — even though no parser in this repo rejects it.
+ *      Escaping `<` costs one character class and turns a property that has to
+ *      be argued per-construct into one sentence: the note cannot contribute a
+ *      terminator, a nested `<!--`, or a tag. `neutralizeControls` serves this
+ *      same heading for a different character class — see its docblock for why
+ *      control characters are a conformance problem and not a containment one.
+ *
+ * Deliberately still NOT `escapeHtml`: that also rewrites `"` to `&quot;`, which
+ * would turn the quotes around every ordinary kit name into entity noise for no
+ * gain under either heading. `&` and `"` are genuinely inert in comment text. */
+function escapeHtmlComment(value: string): string {
+  return neutralizeControls(toSingleLine(value)).replace(/[<>]/g, (c) =>
+    c === "<" ? "&lt;" : "&gt;",
+  );
+}
+
+/** Escape a value destined for the tail of a `//` line comment, which runs to
+ * the end of the line and so can only be escaped by ending the line.
+ *
+ * Shares `neutralizeControls` with `escapeHtmlComment` deliberately. The note
+ * reaching all three sinks is the same caller-controlled string, so neutralizing
+ * in only the HTML pair would leave `react` passing bytes the other two strip —
+ * re-creating a sink asymmetry, which is the precise defect this block exists to
+ * remove. */
+function escapeLineComment(value: string): string {
+  return neutralizeControls(toSingleLine(value));
 }
 
 function escapeHtml(value: string): string {
