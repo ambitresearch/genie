@@ -57,7 +57,7 @@ const VIEWER_STATIC_DIR = resolve(
 );
 
 /** A viewer static asset name (the three files that make up the shell). */
-type ViewerAsset = "index.html" | "viewer.js" | "viewer.css";
+type ViewerAsset = "index.html" | "viewer-browse.js" | "viewer.js" | "viewer.css";
 
 /**
  * The 12-component fixture kit (AC3). Three groups, four components each, a mix
@@ -158,10 +158,15 @@ export async function createViewerFixture(
   };
 }
 
-/** Copy the viewer shell (index.html/viewer.js/viewer.css) into `dest`. */
+/** Copy the viewer shell (index.html/viewer-browse.js/viewer.js/viewer.css) into `dest`. */
 async function copyViewerShell(dest: string): Promise<void> {
   await mkdir(dest, { recursive: true });
-  for (const asset of ["index.html", "viewer.js", "viewer.css"] as ViewerAsset[]) {
+  for (const asset of [
+    "index.html",
+    "viewer-browse.js",
+    "viewer.js",
+    "viewer.css",
+  ] as ViewerAsset[]) {
     await cp(join(VIEWER_STATIC_DIR, asset), join(dest, asset));
   }
 }
@@ -269,6 +274,7 @@ export async function buildFileVehicle(fixture: ViewerFixture): Promise<{ url: s
 
   const indexHtml = await readViewerAsset("index.html");
   await writeFile(join(root, "index.html"), inlineManifest(indexHtml, fixture.manifest), "utf8");
+  await cp(join(VIEWER_STATIC_DIR, "viewer-browse.js"), join(root, "viewer-browse.js"));
   await cp(join(VIEWER_STATIC_DIR, "viewer.js"), join(root, "viewer.js"));
   await cp(join(VIEWER_STATIC_DIR, "viewer.css"), join(root, "viewer.css"));
   // Copy the component previews so each card's iframe src resolves relative to

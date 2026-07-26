@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { VIEWER_STATIC_FILES } from "../src/store/viewer-assets.js";
+
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const manifestPath = join(repoRoot, "mcpb", "manifest.json");
 const bundleScript = join(repoRoot, "scripts", "bundle-mcpb.mjs");
@@ -29,6 +31,22 @@ const releaseManifestPath = join(repoRoot, ".release-please-manifest.json");
 const releaseWorkflowPath = join(repoRoot, ".github", "workflows", "release.yml");
 const readmePath = join(repoRoot, "README.md");
 const MAX_BYTES = 30 * 1024 * 1024;
+
+/**
+ * Every path the unpacked `.mcpb` must contain (AC2). Hoisted to module scope
+ * so the cheap derivation test below can assert on it without paying for the
+ * full bundle+unpack the AC2/AC3/AC4 case runs.
+ */
+const REQUIRED_BUNDLE_FILES = [
+  "manifest.json",
+  "server/package.json",
+  "server/pnpm-lock.yaml",
+  "server/dist/cli.js",
+  ...VIEWER_STATIC_FILES.map((asset) => `server/dist/ui/viewer-static/${asset}`),
+  "server/node_modules/@modelcontextprotocol/sdk/package.json",
+  "server/node_modules/@esbuild/darwin-arm64/bin/esbuild",
+  "server/node_modules/@esbuild/darwin-x64/bin/esbuild",
+];
 
 function hasChangelogVersionHeading(changelog: string, version: string): boolean {
   const plainHeading = `## ${version}`;
@@ -190,6 +208,29 @@ describe("mcpb bundle manifest (AC1)", () => {
 });
 
 describe("mcpb bundle output (AC2/AC3/AC4)", () => {
+  /**
+   * #253 regression guard. `buildGridDocument` deliberately degrades to the
+   * core-only grid when `viewer-browse.js` is absent, and `loadViewerAssets`
+   * tolerates a missing file rather than failing kit creation — so a bundle
+   * that dropped the Browse workbench would still render, still pass the
+   * packaged-viewer smoke check, and just silently lose Browse.
+   *
+   * `REQUIRED_BUNDLE_FILES` now derives its viewer entries from
+   * `VIEWER_STATIC_FILES`, so the packaging guard cannot drift behind a new
+   * asset the way it drifted behind `viewer-browse.js`. That makes a
+   * "list contains asset" assertion tautological, so this pins the other half
+   * instead: every declared asset must actually exist in the viewer source. A
+   * renamed or deleted asset is otherwise invisible until Browse quietly stops
+   * shipping.
+   */
+  it("ships a real file for every declared viewer static asset", () => {
+    for (const asset of VIEWER_STATIC_FILES) {
+      const assetPath = join(repoRoot, "packages", "viewer", "static", asset);
+      expect(existsSync(assetPath), `missing viewer source asset ${asset}`).toBe(true);
+      expect(statSync(assetPath).size, `empty viewer source asset ${asset}`).toBeGreaterThan(0);
+    }
+  });
+
   it(
     "packs the complete production server under the 30 MB AC4 budget",
     () => {
@@ -213,19 +254,7 @@ describe("mcpb bundle output (AC2/AC3/AC4)", () => {
           timeout: 60_000,
         });
 
-        const requiredFiles = [
-          "manifest.json",
-          "server/package.json",
-          "server/pnpm-lock.yaml",
-          "server/dist/cli.js",
-          "server/dist/ui/viewer-static/index.html",
-          "server/dist/ui/viewer-static/viewer.css",
-          "server/dist/ui/viewer-static/viewer.js",
-          "server/node_modules/@modelcontextprotocol/sdk/package.json",
-          "server/node_modules/@esbuild/darwin-arm64/bin/esbuild",
-          "server/node_modules/@esbuild/darwin-x64/bin/esbuild",
-        ];
-        for (const path of requiredFiles) {
+        for (const path of REQUIRED_BUNDLE_FILES) {
           expect(existsSync(join(unpackDir, path)), `missing ${path}`).toBe(true);
         }
 

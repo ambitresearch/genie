@@ -5,12 +5,13 @@
  * `.kit.json` — never the viewer's static shell. Neither storage adapter nor
  * any other tool filled the gap (the viewer CLI only *validates* a kit dir,
  * it never scaffolds one; no sync tool exists), so a freshly created kit had
- * no `index.html`/`viewer.js`/`viewer.css` and none of RFC G-5's three
- * mandated vehicles (`file://` / `localhost` Vite / `ui://genie/grid`) had
- * anything to render for it. This module is the fix's shared read half: it
- * loads the three files' bytes from the shell copied into the server package,
- * falling back to `@ambitresearch/genie-viewer`'s `static/` directory during source
- * development, so both stores can copy them into a new kit's root.
+ * no `index.html`/`viewer-browse.js`/`viewer.js`/`viewer.css` and none of RFC
+ * G-5's three mandated vehicles (`file://` / `localhost` Vite /
+ * `ui://genie/grid`) had anything to render for it. This module is the fix's
+ * shared read half: it loads those files' bytes from the shell copied into the
+ * server package, falling back to `@ambitresearch/genie-viewer`'s `static/`
+ * directory during source development, so both stores can copy them into a new
+ * kit's root.
  *
  * ── Optional-peer pattern (mirrors `preview.ts` / `validate/render.ts`) ──────
  * `@ambitresearch/genie-viewer` is a workspace devDependency of `@ambitresearch/genie`, not a
@@ -33,10 +34,18 @@ export interface ViewerAsset {
 }
 
 /**
- * The exact three files a kit needs at its root for every RFC G-5 vehicle to
- * have something to render (AC1). Order matches the DRO-764 issue body.
+ * The exact files a kit needs at its root for every RFC G-5 vehicle to have
+ * something to render (AC1). Order matches the DRO-764 issue body, extended by
+ * #253 with `viewer-browse.js` — the Browse workbench, split out of `viewer.js`
+ * when that file reached the 256 KiB store read cap. It must be listed (and
+ * loaded) before `viewer.js`; see `viewer/static/index.html`.
  */
-const VIEWER_STATIC_FILES = ["index.html", "viewer.js", "viewer.css"] as const;
+export const VIEWER_STATIC_FILES = [
+  "index.html",
+  "viewer-browse.js",
+  "viewer.js",
+  "viewer.css",
+] as const;
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const BUNDLED_STATIC_DIR = join(MODULE_DIR, "..", "ui", "viewer-static");

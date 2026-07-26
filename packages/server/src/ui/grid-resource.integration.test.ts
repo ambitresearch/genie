@@ -41,11 +41,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const VIEWER_STATIC = resolve(HERE, "..", "..", "..", "viewer", "static");
 
 let realIndexHtml: string;
+let realViewerBrowseJs: string;
 let realViewerJs: string;
 let realViewerCss: string;
 
 beforeAll(() => {
   realIndexHtml = readFileSync(resolve(VIEWER_STATIC, "index.html"), "utf8");
+  realViewerBrowseJs = readFileSync(resolve(VIEWER_STATIC, "viewer-browse.js"), "utf8");
   realViewerJs = readFileSync(resolve(VIEWER_STATIC, "viewer.js"), "utf8");
   realViewerCss = readFileSync(resolve(VIEWER_STATIC, "viewer.css"), "utf8");
 });
@@ -69,13 +71,29 @@ function manifest(components: ManifestCard[]): Manifest {
 }
 
 function assemble(m: Manifest): string {
-  return inlineManifest(inlineViewerAssets(realIndexHtml, realViewerJs, realViewerCss).html, m);
+  return inlineManifest(
+    inlineViewerAssets(
+      realIndexHtml,
+      [
+        { name: "viewer-browse.js", source: realViewerBrowseJs },
+        { name: "viewer.js", source: realViewerJs },
+      ],
+      realViewerCss,
+    ).html,
+    m,
+  );
 }
 
 /**
- * Boot the REAL viewer.js against `doc` in a fresh jsdom window whose `fetch`
- * THROWS — proving the embedded tier issues zero network requests. Returns the
- * booted document for assertions.
+ * Boot the REAL viewer scripts against `doc` in a fresh jsdom window whose
+ * `fetch` THROWS — proving the embedded tier issues zero network requests.
+ * Returns the booted document for assertions.
+ *
+ * Both classic scripts are evaluated in `index.html`'s document order
+ * (browse BEFORE core, #253), because that is what a browser does with the
+ * assembled document `assemble()` produced. The degraded core-only case —
+ * `viewer-browse.js` missing at runtime — is pinned separately by the viewer
+ * package's `grid-renderer.test.ts` "cross-script seam" suite.
  */
 async function bootRealViewer(doc: string): Promise<Document> {
   const dom = new JSDOM(doc, {
@@ -88,6 +106,7 @@ async function bootRealViewer(doc: string): Promise<Document> {
   (window as any).fetch = () => {
     throw new Error("fetch called — embedded tier must not fetch under connect-src 'none'");
   };
+  window.eval(realViewerBrowseJs);
   window.eval(realViewerJs);
   // Let the guarded auto-boot's promise settle.
   await new Promise((r) => setTimeout(r, 0));
@@ -163,7 +182,14 @@ describe("M4-06 integration — real viewer assets + real assembly", () => {
 
   it("the inlined <script>/<style> bytes a browser re-parses hash to the SAME CSP allow-list value computed pre-inline", () => {
     const doc = assemble(manifest([card()]));
-    const { hashes } = inlineViewerAssets(realIndexHtml, realViewerJs, realViewerCss);
+    const { hashes } = inlineViewerAssets(
+      realIndexHtml,
+      [
+        { name: "viewer-browse.js", source: realViewerBrowseJs },
+        { name: "viewer.js", source: realViewerJs },
+      ],
+      realViewerCss,
+    );
 
     // Re-derive the hashes from what a real HTML parser sees after the fact
     // (jsdom, same as `bootRealViewer`) rather than from the pre-inline
@@ -197,6 +223,7 @@ describe("M4-06 integration — real viewer assets + real assembly", () => {
         kitsRoot: "/kits",
         readAsset: async (name) => {
           if (name === "index.html") return realIndexHtml;
+          if (name === "viewer-browse.js") return realViewerBrowseJs;
           if (name === "viewer.js") return realViewerJs;
           return realViewerCss;
         },

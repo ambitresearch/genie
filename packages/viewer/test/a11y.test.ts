@@ -181,6 +181,7 @@ async function buildAuditRoot(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "genie-viewer-a11y-"));
   // Copy the real shipped shell verbatim — this is the artefact under audit.
   await cp(join(STATIC_DIR, "index.html"), join(dir, "index.html"));
+  await cp(join(STATIC_DIR, "viewer-browse.js"), join(dir, "viewer-browse.js"));
   await cp(join(STATIC_DIR, "viewer.js"), join(dir, "viewer.js"));
   await cp(join(STATIC_DIR, "viewer.css"), join(dir, "viewer.css"));
   // Copy the fixture kit's manifest + component previews alongside it, so
@@ -195,6 +196,7 @@ async function buildAuditRoot(): Promise<string> {
 async function buildEmptyRoot(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "genie-viewer-a11y-empty-"));
   await cp(join(STATIC_DIR, "index.html"), join(dir, "index.html"));
+  await cp(join(STATIC_DIR, "viewer-browse.js"), join(dir, "viewer-browse.js"));
   await cp(join(STATIC_DIR, "viewer.js"), join(dir, "viewer.js"));
   await cp(join(STATIC_DIR, "viewer.css"), join(dir, "viewer.css"));
   await mkdir(join(dir, ".genie"), { recursive: true });

@@ -195,7 +195,13 @@ describe("AC3 — kit protocol walk (read → plan → write/delete)", () => {
     // longer literally empty either. .kit.json remains the one marker file
     // list_files never surfaces (it's the store's own existence marker, not
     // kit content).
-    expect(paths).toEqual([".genie/manifest.json", "index.html", "viewer.css", "viewer.js"]);
+    expect(paths).toEqual([
+      ".genie/manifest.json",
+      "index.html",
+      "viewer-browse.js",
+      "viewer.css",
+      "viewer.js",
+    ]);
   });
 
   it("read_file on a path that does not exist is rejected (-32602)", async () => {
