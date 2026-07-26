@@ -40,14 +40,19 @@ type ListableKitMeta = KitMeta & {
  *
  *   - `type === KIT_TYPE` drops non-genie records an interop adapter may share
  *     the same store with.
- *   - `isSafeKitId` drops ids no kit-taking verb would accept. A store adapter
- *     surfaces whatever the filesystem or git host holds — `LocalFsKitStore`
- *     returns `.kit.json`'s `id` verbatim, and on POSIX a directory may legally
- *     be named `victim.` or `victim ` — but the gate is deliberately platform-
- *     INDEPENDENT (a plan authored on Linux may run on Windows, where those
- *     spellings open the sibling `victim`). Without this filter, tightening the
- *     gate silently re-creates the defect this discovery step exists to avoid:
- *     an id that is advertised and then universally refused.
+ *   - `isSafeKitId` drops ids no kit-taking verb would accept. Both SHIPPED
+ *     adapters already skip such ids at the source (#282 added the same guard to
+ *     `LocalFsKitStore.listKits` and `GitHostKitStore.listKits`), so this filter
+ *     is defence-in-depth: `KitStore` is a public interface and this function
+ *     takes any implementation of it, including an interop or third-party
+ *     adapter that surfaces whatever its backing filesystem or host holds. On
+ *     POSIX a directory may legally be named `victim.` or `victim `, while the
+ *     gate is deliberately platform-INDEPENDENT (a plan authored on Linux may
+ *     run on Windows, where those spellings open the sibling `victim`). Without
+ *     this filter, such an adapter re-creates the defect this discovery step
+ *     exists to avoid: an id that is advertised and then universally refused.
+ *     It is not dead code — Part H of `kit-id-gate.test.ts` drives a deliberately
+ *     non-conforming store and fails if the clause is dropped.
  *
  * Filtering rather than relaxing the gate is the safe direction. The excluded id
  * is unusable on every platform, so hiding it removes a dead end; admitting it

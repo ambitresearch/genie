@@ -1,8 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
 import { createServer } from "../server.js";
 import { KIT_TYPE, type KitStore } from "../store/interface.js";
@@ -121,15 +122,18 @@ describe("listWritableKits", () => {
   });
 
   it("🔒 does not promise round-trip acceptance this store cannot deliver", () => {
-    // Part G of `kit-id-gate.test.ts` pins a divergence this PR deliberately does NOT
-    // fix: `LocalFsKitStore.listKits` reports `.kit.json`'s `id`, while `getKit`
-    // resolves a DIRECTORY name. A kit in directory `alpha` declaring `{"id":"beta"}`
-    // is therefore advertised as `beta` — which passes `isSafeKitId` and is then a
-    // 404 in `get_kit`. So "guarantees every id it returns is accepted by the other
-    // kit verbs" is false, and falsified by a test in this very change.
-    //
     // The filter enforces exactly one thing: no id is returned that a verb would
-    // refuse as UNSAFE. Say that, and nothing stronger.
+    // refuse as UNSAFE. It says nothing about EXISTENCE, and safety is the only
+    // property `listWritableKits` can establish — it takes any `KitStore`, and
+    // even against a shipped adapter a kit deleted between `list_kits` and
+    // `get_kit` is a 404. So "guarantees every id it returns is accepted by the
+    // other kit verbs" over-claims in a way no filter here could make true.
+    //
+    // (Before #282 there was a second, sharper reason: `LocalFsKitStore` routed
+    // `listKits` and `getKit` on different values, so the two could disagree
+    // about a kit that plainly existed. #282 aligned them — the over-claim did
+    // not become safe, it just lost its most vivid counter-example. Part G of
+    // `kit-id-gate.test.ts` now locks that alignment instead of pinning it.)
     expect(LIST_KITS_DESCRIPTION).not.toMatch(/guarantees? +every +id/iu);
     expect(LIST_KITS_DESCRIPTION).not.toMatch(/accepted by the other kit verbs/iu);
     expect(LIST_KITS_DESCRIPTION).toMatch(/safety gate|shared safety|safety rule/iu);
@@ -297,5 +301,77 @@ describe("mcp__genie__list_kits tool", () => {
     });
 
     expect(result.isError).toBe(true);
+  });
+});
+
+/**
+ * A drift lock for one specific stale claim, because it has now recurred THREE
+ * times in this change alone.
+ *
+ * Before #282, `LocalFsKitStore.listKits` really did report the `id` embedded in
+ * each `<dir>/.kit.json` while `getKit` routed on the DIRECTORY name — the two
+ * could diverge, and prose written against that behaviour was accurate. #282
+ * made both sides report the routing key AND made the adapter skip ids
+ * `isSafeKitId` refuses, which silently falsified every sentence naming LocalFs
+ * as a source of `.kit.json`-derived or unsafe ids.
+ *
+ * Each recurrence was caught by a reviewer rather than by the suite, and each
+ * fix was a hand-edit of the instances someone happened to grep for — the third
+ * was missed by the review that found the second. A one-time edit does not stop
+ * instance four, so the set is DERIVED: every `.ts` file under `src` is scanned,
+ * including this one.
+ *
+ * The pattern is assembled from fragments so this file's own source does not
+ * contain the phrase it searches for. That is not decoration: a lock written the
+ * obvious way matches itself, and the only ways out are to exclude the scanning
+ * file (which would blind the scan to a real offender that lived in this very
+ * file) or to weaken the pattern.
+ */
+describe("stale-adapter-claim drift lock", () => {
+  // Matches a present-tense claim that an adapter hands back the id embedded in
+  // a kit's marker file. Deliberately NOT matched: `local.ts`'s "discards" form
+  // (the correct post-#282 description) and `kit-id-gate.test.ts`'s past-tense
+  // "`listKits` returned `id: meta.id`", which is immediately followed by "#282
+  // closed that". History is allowed to describe history.
+  //
+  // The phrase itself is never written out here — spelling it would make this
+  // comment the very offender the lock reports, which is exactly how it failed
+  // on its first run.
+  const STALE_LOCALFS_ID_CLAIM = new RegExp(
+    ["(?:returns|reports)\\s+`?\\.", "kit\\.json`?'s\\s+`?id`?"].join(""),
+    "iu",
+  );
+
+  async function collectSourceFiles(dir: string): Promise<string[]> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const found: string[] = [];
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) found.push(...(await collectSourceFiles(full)));
+      else if (entry.name.endsWith(".ts")) found.push(full);
+    }
+    return found;
+  }
+
+  it("🔒 no source file still credits a shipped adapter with the marker-file id", async () => {
+    const srcDir = fileURLToPath(new URL("..", import.meta.url));
+    const files = await collectSourceFiles(srcDir);
+
+    // Non-vacuity: prove the scan actually reaches the two files this claim has
+    // drifted into, rather than passing over an empty or mis-rooted set.
+    const relative = files.map((file) => file.slice(srcDir.length));
+    expect(relative).toContain(join("tools", "list_kits.ts"));
+    expect(relative).toContain(join("tools", "list_kits.test.ts"));
+    expect(relative).toContain(join("store", "local.ts"));
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      // Collapse wrapped comment lines so a claim split across two ` * ` lines
+      // is still seen as one sentence.
+      const text = (await readFile(file, "utf8")).replace(/\n\s*\*?\s*/gu, " ");
+      if (STALE_LOCALFS_ID_CLAIM.test(text)) offenders.push(file.slice(srcDir.length));
+    }
+
+    expect(offenders).toEqual([]);
   });
 });
