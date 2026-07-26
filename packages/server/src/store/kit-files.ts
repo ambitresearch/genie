@@ -200,11 +200,14 @@ export function sriSha256(bytes: Buffer | string): string {
  *     Refusing uppercase is the original defect: `Design-System` is a
  *     legitimate git-host kit;
  *   - NTFS DOS 8.3 short names (`VICTIM~1` standing in for `Victim Component`
- *     on a volume with 8.3 generation enabled). `mkdir "VICTIM~1"` succeeds on
- *     every platform, and where a literal `VICTIM~1` exists NTFS gives the
- *     long-named kit `VICTIM~2` instead, so the two never collide. `~` is also
- *     legal in a POSIX directory name, so blanket-refusing it would make a
- *     `my~kit` kit listable and unusable — this rule's own defect, re-created;
+ *     on a volume with 8.3 generation enabled). Where that alias is assigned,
+ *     `path.join(root, "VICTIM~1")` really does open `Victim Component` — so
+ *     this IS an aliasing property, not an inability to alias, and it is
+ *     admitted for the reason given below rather than dismissed: the short name
+ *     is generated FOR that directory, so it reaches that same kit and no
+ *     other. `~` is also legal in a POSIX directory name, so blanket-refusing
+ *     it would make a `my~kit` kit listable and unusable — this rule's own
+ *     defect, re-created;
  *   - Win32 reserved device names (`CON`, `NUL`, `COM1`), which resolve to a
  *     device rather than to another kit. CVE-2025-27210 let a device name walk
  *     `path.join` OUT of a base directory, but only as a
@@ -222,9 +225,12 @@ export function sriSha256(bytes: Buffer | string): string {
  * reaches a device instead of a kit, which fails the operation rather than
  * redirecting it at another kit. All three are name-equivalence properties
  * rather than gate holes: a caller who can name a kit two ways still reaches
- * exactly one kit. Collapsing them needs the resolved path canonicalised
- * (`realpath`) and compared against the request — a store-layer change, not a
- * predicate one, and not something a denylist of characters can ever finish.
+ * exactly one kit. What they do NOT give is canonical-id identity — an accepted
+ * id can be a non-canonical spelling of the kit it opens, so a destructive verb
+ * routed by such an id acts on that kit under a name `list_kits` never handed
+ * out. Closing that needs the resolved path canonicalised (`realpath`) and
+ * compared against the request — a store-layer change, not a predicate one, and
+ * not something a denylist of characters can ever finish.
  *
  * A predicate (not a throwing helper) on purpose: each caller raises its own
  * error type/code (`ListFilesError` / `McpError` / `NotFoundError`) — only the

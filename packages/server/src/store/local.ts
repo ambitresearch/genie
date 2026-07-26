@@ -495,7 +495,10 @@ export class LocalFsKitStore implements KitStore {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       // A POSIX directory name may contain `\`, which `isSafeKitId` — the
-      // containment rule every kit-taking tool gates on — rejects. Reporting
+      // kit-id safety rule every kit-taking tool gates on (see the docblock on
+      // `isSafeKitId` in kit-files.ts: it refuses escapes, ids that do not
+      // spell the kit they open, and ids no filesystem call accepts) —
+      // rejects. Reporting
       // the directory name (below) would therefore publish an id that
       // read_file/list_files/plan/write_files/bind_kit/conjure_screen all
       // refuse. Skipping it here keeps the promise `list_kits` makes: the ids

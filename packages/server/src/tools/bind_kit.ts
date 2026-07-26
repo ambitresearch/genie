@@ -25,7 +25,9 @@ const projectIdSchema = z
 // `projectId` is minted by `create_project`, so the slug shape is a real
 // contract there. `kitId` is NOT: it is an opaque, adapter-assigned string and
 // `list_kits` promises the ids it returns bind here, so this gates on the
-// containment rule the store enforces (see `isSafeKitId`). Gating on the
+// shared kit-id safety rule the store enforces — see the `isSafeKitId` docblock
+// in kit-files.ts, which covers identity and representability as well as
+// containment. Gating on the
 // create_kit shape made an imported kit like `My_Kit.2` listable but unbindable.
 const kitIdSchema = z.string().refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE);
 

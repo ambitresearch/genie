@@ -464,6 +464,68 @@ const publishablePackages = readdirSync(new URL("../../../", import.meta.url), {
   .filter(({ manifest }) => manifest.private !== true)
   .map(({ url, manifest }) => [manifest.name ?? String(url), manifest] as const);
 
+it("🔒 no comment still calls isSafeKitId merely a containment rule", () => {
+  // The docblock above was corrected to say `isSafeKitId` is a
+  // CONTAINMENT-AND-IDENTITY rule: alongside escapes it also refuses ids that
+  // stay inside the kits root but do not SPELL the kit they open, and ids no
+  // filesystem call would accept. Callers that go on describing it as "the
+  // containment rule" teach the superseded, narrower contract, and a future
+  // caller re-deriving the check from one of those sentences would reimplement
+  // traversal defence alone and drop the identity half.
+  //
+  // Discovered, not enumerated. The same drift has now been corrected three
+  // times in this review and each time a hand-listed set of sites left one
+  // behind, so this asks the TREE which comments describe the predicate rather
+  // than trusting a list to stay complete.
+  const srcRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) files.push(full);
+    }
+  };
+  walk(srcRoot);
+
+  const describing: string[] = [];
+  const historical: string[] = [];
+  const stale: string[] = [];
+  for (const file of files) {
+    const text = readFileSync(file, "utf-8");
+    // Comments only. The predicate's NAME appears in live code at every call
+    // site; it is the prose around it that can teach the wrong contract.
+    const comments = [
+      ...text.matchAll(/\/\*[\s\S]*?\*\//gu),
+      ...text.matchAll(/(?:^|[^:])(\/\/.*(?:\n\s*\/\/.*)*)/gmu),
+    ].map((match) => match[0]);
+    for (const comment of comments) {
+      if (!comment.includes("isSafeKitId")) continue;
+      const rel = path.relative(srcRoot, file);
+      describing.push(rel);
+      // A comment that RECORDS a corrected claim has to keep quoting the wrong
+      // words to stay legible; `preview.ts` deliberately preserves the old
+      // wording as history. Only claims made in the present tense are drift.
+      if (/used to/u.test(comment)) historical.push(rel);
+      else if (/containment rule/u.test(comment)) stale.push(rel);
+    }
+  }
+
+  // Anti-vacuity, both arms. An empty walk would satisfy the assertion below
+  // while reading nothing, and if the historical exemption never fired it would
+  // be dead weight that could silently start excusing real drift.
+  expect(describing.length).toBeGreaterThan(3);
+  expect(historical.length).toBeGreaterThan(0);
+
+  expect(
+    [...new Set(stale)].sort(),
+    "these comments describe isSafeKitId as merely a containment rule, which is " +
+      "the contract it had BEFORE the identity and representability guards were " +
+      "added — say containment-and-identity, or point at the docblock in " +
+      "kit-files.ts rather than restating a narrower version of it",
+  ).toEqual([]);
+});
+
 it("🔒 the publishable-package scan actually finds both published packages", () => {
   // Guards the discovery above: a glob that silently matches nothing would make
   // every assertion below pass vacuously.

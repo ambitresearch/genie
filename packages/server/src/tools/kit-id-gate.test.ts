@@ -1159,6 +1159,27 @@ describe("kitId gate — list_kits never advertises an id the gate refuses", () 
 });
 // ─── Unit: what list_kits is entitled to promise ─────────────────────────────
 
+/**
+ * How a tool source says "this verb TAKES a kitId".
+ *
+ * Matches a `kitId` property whose VALUE is a schema, which is the fact being
+ * looked for, rather than one way of writing it. The first cut required the
+ * literal `kitId: z.` and so missed every established alternative already in
+ * the tree — `kitId: kitIdSchema` (`bind_kit`), `kitId: kitIdSchema.optional()`
+ * (`conjure_screen`) and a `z` / `.string()` split across lines
+ * (`list_components`).
+ *
+ * Keying on schema-ness is also what keeps `create_kit` out. It MINTS an id, so
+ * its only `kitId:` occurrences are the outgoing `{ kitId: kit.id }` payload and
+ * an error field; a bare `kitId:` scan reports it as an ungated kit verb, which
+ * is false — it never accepts one.
+ *
+ * This is the source-text derivation. The registry-derived inventory below is
+ * the authority, and the two are asserted equal, so neither a new declaration
+ * style nor an unregistered verb can slip past unnoticed.
+ */
+const KIT_ID_INPUT_DECL = /\bkitId\s*:\s*(?:z\s*\.|[A-Za-z_$][\w$]*[Ss]chema\b)/u;
+
 describe("kitId gate — what list_kits may promise about other verbs", () => {
   it("🔒 does not promise a refusal from verbs that never apply the gate", async () => {
     // `list_kits` omits ids the shared gate refuses, and justified that by
@@ -1178,7 +1199,12 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
     for (const file of files) {
       const source = await readFile(join(toolsDir, file), "utf8");
       sources.push([file, source]);
-      if (!/kitId:\s*z\./u.test(source)) continue;
+      // Comments are stripped for BOTH questions asked of a file — does it take
+      // a kitId, and does it gate one — so a declaration quoted in prose cannot
+      // enrol a file that has none, just as a sentence naming the gate cannot
+      // excuse a file that never calls it.
+      const code = source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/(^|[^:])\/\/.*$/gmu, "$1");
+      if (!KIT_ID_INPUT_DECL.test(code)) continue;
       kitVerbs.push(file);
       // Read the file for the gate itself. Delegation is NOT credited: a file
       // that imports a gated verb may still expose an ungated path of its own
@@ -1194,7 +1220,6 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
       // Documenting the exception would disable its detection. Stripping errs
       // toward reporting a gated file as ungated, which fails loudly here
       // rather than passing quietly.
-      const code = source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/(^|[^:])\/\/.*$/gmu, "$1");
       const gated = /\b(?:isSafeKitId|assertKitLive)\b/u.test(code);
       if (!gated) ungated.push(file);
     }
@@ -1287,5 +1312,86 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
         "`list_kits.ts` and `store/interface.ts` that enumerates them whenever " +
         "this changes, since that prose cannot be derived from the code it describes",
     ).toEqual(["create_project.ts", "validate.ts"]);
+  });
+
+  it("🔒 discovers kit-taking verbs from the registry, not from one schema spelling", async () => {
+    // The audit above is only as good as the set it audits. Its discovery used
+    // to be a source-text match for `kitId: z.` — one SPELLING of the
+    // declaration, not the fact of it. Three verbs already registered a kitId
+    // input in a different but equally established style and were invisible to
+    // it: `bind_kit` and `conjure_screen` reference a shared `kitIdSchema`, and
+    // `list_components` breaks `z` and `.string()` across lines. A newly added
+    // verb copying any of those styles would land in neither `kitVerbs` nor
+    // `ungated`, so the audit's final assertion would still pass while no
+    // longer covering it — a lock that silently stops locking.
+    //
+    // So the inventory is derived from what the server actually REGISTERS. A
+    // tool advertising a kitId anywhere in its input schema takes a kitId, no
+    // matter how the source spells it, which makes this discovery independent
+    // of layout by construction rather than by keeping a regex up to date.
+    // `create_project` is included on purpose: it declares `kitBindings[].kitId`
+    // nested rather than at the top level, and nesting is not exemption.
+    const tempDir = await mkdtemp(join(tmpdir(), "genie-kitid-registry-"));
+    process.env.GENIE_HOME = tempDir;
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createServer({
+      kitsRoot: join(tempDir, "kits"),
+      projectsRoot: join(tempDir, "projects"),
+      previewBooter: stubBooter(),
+    });
+    await server.connect(serverTransport);
+    const client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+    await client.connect(clientTransport);
+
+    let registryFiles: string[];
+    try {
+      const { tools } = await client.listTools();
+      registryFiles = tools
+        .filter((tool) => JSON.stringify(tool.inputSchema ?? {}).includes('"kitId"'))
+        .map((tool) => `${tool.name.replace(/^mcp__genie__/u, "")}.ts`)
+        .sort();
+    } finally {
+      await client.close();
+      await rm(tempDir, { recursive: true, force: true });
+      delete process.env.GENIE_HOME;
+    }
+
+    const toolsDir = dirname(fileURLToPath(import.meta.url));
+    const files = (await readdir(toolsDir)).filter(
+      (file) => file.endsWith(".ts") && !file.endsWith(".test.ts"),
+    );
+
+    // Anti-vacuity, both halves. An empty or tiny inventory would satisfy every
+    // comparison below while checking nothing, and the tool-name-to-filename
+    // convention is the only thing making a registered tool answerable to a
+    // source file — if a rename breaks it the verb drops out of the audit
+    // silently, which is the exact failure mode this test exists to prevent.
+    expect(registryFiles.length).toBeGreaterThan(4);
+    expect(
+      registryFiles.filter((file) => !files.includes(file)),
+      "a registered kit-taking tool has no source file of the same name, so the " +
+        "gate audit cannot see it — keep tool names and filenames in step",
+    ).toEqual([]);
+
+    // Comments are stripped here for PARITY with the audit's own discovery, not
+    // because anything in the tree currently hides a declaration in prose —
+    // reverting this line alone changes no result today. That is the point: the
+    // two derivations compared below have to normalise their input identically,
+    // or the first comment to quote a `kitId:` schema would make them disagree
+    // for a reason that has nothing to do with what this test is checking.
+    const declared: string[] = [];
+    for (const file of files) {
+      const source = await readFile(join(toolsDir, file), "utf8");
+      const code = source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/(^|[^:])\/\/.*$/gmu, "$1");
+      if (KIT_ID_INPUT_DECL.test(code)) declared.push(file);
+    }
+
+    expect(
+      declared.sort(),
+      "the source-text view of which verbs take a kitId disagrees with the " +
+        "registered tool inventory — either `KIT_ID_INPUT_DECL` no longer " +
+        "recognises a declaration style in use, or a verb declares a kitId and " +
+        "is never registered",
+    ).toEqual(registryFiles);
   });
 });
