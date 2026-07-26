@@ -245,8 +245,9 @@ export interface KitStore {
    *    shared gate refuses is OMITTED rather than advertised, so a listed id is
    *    always one the shared gate admits. The guarantee is about what this
    *    method returns, NOT about uniform enforcement downstream: `validate`
-   *    applies no kitId gate at all, and `create_project` gets one only
-   *    transitively via `getKit`. Stating it as "no verb would reject a listed
+   *    applies no kitId gate at all, and `create_project` persists
+   *    `kitBindings[].kitId` unresolved and ungated (its `getKit` call belongs
+   *    to `bindKit`). Stating it as "no verb would reject a listed
    *    id" would teach a uniformity the tool layer does not provide.
    *
    * Locked adapter-neutrally by `store-conformance.test.ts` →

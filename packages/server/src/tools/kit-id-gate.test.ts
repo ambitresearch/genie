@@ -1180,10 +1180,22 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
       sources.push([file, source]);
       if (!/kitId:\s*z\./u.test(source)) continue;
       kitVerbs.push(file);
-      // `get_kit` applies the gate inside its own args schema, so delegating to
-      // it counts — that is how `create_project` gates `bind_kit`'s kitId.
-      const gated =
-        /\b(?:isSafeKitId|assertKitLive)\b/u.test(source) || /from "\.\/get_kit\.js"/u.test(source);
+      // Read the file for the gate itself. Delegation is NOT credited: a file
+      // that imports a gated verb may still expose an ungated path of its own
+      // (`create_project` imports `get_kit` for `bindKit`, yet writes
+      // `kitBindings[].kitId` straight through), and crediting the import hid
+      // that verb from this list. Nothing legitimate is lost — every verb that
+      // resolves a kitId names the gate directly.
+      //
+      // Comments are stripped first, and that is not cosmetic. The most natural
+      // sentence anyone would ever write in an UNGATED verb is why it is
+      // ungated — "validate deliberately applies no isSafeKitId gate" — which
+      // on a raw-text scan marks it gated and silently empties this list.
+      // Documenting the exception would disable its detection. Stripping errs
+      // toward reporting a gated file as ungated, which fails loudly here
+      // rather than passing quietly.
+      const code = source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/(^|[^:])\/\/.*$/gmu, "$1");
+      const gated = /\b(?:isSafeKitId|assertKitLive)\b/u.test(code);
       if (!gated) ungated.push(file);
     }
 
@@ -1243,5 +1255,37 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
           `withheld as unusable is one they would in fact accept`,
       ).toEqual([]);
     }
+
+    // Pin the derivation itself, not just its use above. Prose in `list_kits`
+    // and `store/interface` names the exceptions to uniform gating by hand, and
+    // a hand-written exception list is only correct until the next verb lands —
+    // so the list has to be checkable against the code it describes.
+    //
+    // Both members are deliberate, and neither is a containment hole, because
+    // every verb that RESOLVES a kitId gates it:
+    //   - `validate.ts` takes a kitId and applies no gate at all; it never
+    //     joins the id into a path (see the note earlier in this file).
+    //   - `create_project.ts` declares `kitBindings[].kitId` as a bare
+    //     `z.string().min(1)` and `createProject()` PERSISTS it without
+    //     resolving it. Its `getKit` import serves `bindKit()` only, which is
+    //     the separate `bind_kit` verb. So a project can record a binding to an
+    //     id the shared gate refuses; the refusal surfaces at the first verb
+    //     that dereferences it, not at the write.
+    //
+    // That import is exactly why this derivation used to be wrong. Crediting a
+    // file as gated because it imports `get_kit` is FILE-granular, while gating
+    // is per input path: `create_project` imports the gated verb for one path
+    // and bypasses it on another, so the credit hid the very verb the prose was
+    // getting wrong. Every genuinely gated file names `isSafeKitId` or
+    // `assertKitLive` directly, so no delegation credit is needed to keep this
+    // list honest — several of them declare a bare `.min(1)` schema and apply
+    // the gate in the handler, which is why the check reads the file for the
+    // gate rather than requiring a refined schema.
+    expect(
+      ungated.sort(),
+      "the kitId verbs that apply no shared gate — update the prose in " +
+        "`list_kits.ts` and `store/interface.ts` that enumerates them whenever " +
+        "this changes, since that prose cannot be derived from the code it describes",
+    ).toEqual(["create_project.ts", "validate.ts"]);
   });
 });
