@@ -3,21 +3,25 @@ import { describe, expect, it, vi } from "vitest";
 import { publishDraftPreview } from "./draft-preview.js";
 import type { CardAssetBroker, CardAssetDraft } from "./card-asset-broker.js";
 
-function draftStub(url: string): CardAssetDraft {
+function draftStub(url: string, expired: readonly string[] = []): CardAssetDraft {
   return Object.freeze({
     token: "t".repeat(32),
     hostname: "127.0.0.1",
     authority: "127.0.0.1:4173",
     origin: "http://127.0.0.1:4173",
     url,
+    expired: Object.freeze([...expired]),
   });
 }
 
-function brokerStub(url = "http://127.0.0.1:4173/d/abc"): {
+function brokerStub(
+  url = "http://127.0.0.1:4173/d/abc",
+  expired: readonly string[] = [],
+): {
   broker: CardAssetBroker;
   registerDraft: ReturnType<typeof vi.fn>;
 } {
-  const registerDraft = vi.fn(() => draftStub(url));
+  const registerDraft = vi.fn(() => draftStub(url, expired));
   return { broker: { registerDraft } as unknown as CardAssetBroker, registerDraft };
 }
 
@@ -142,5 +146,24 @@ describe("publishDraftPreview", () => {
 
     expect(publishDraftPreview(broker, encoded, IDENTITY).url).toBeUndefined();
     expect(registerDraft).not.toHaveBeenCalled();
+  });
+
+  it("forwards the broker's eviction list so the viewer can retire dead previews (#257)", () => {
+    // The real broker names what it dropped in `expired`; publishing must pass that
+    // through verbatim, or the viewer keeps fetching evicted drafts that 404. A stub
+    // that omits `expired` makes this read `undefined` — the exact shape lie #257 fixes.
+    const dead = `http://127.0.0.1:4173/d/${"a".repeat(32)}`;
+    const { broker } = brokerStub("http://127.0.0.1:4173/d/deadbeef", [dead]);
+
+    expect(publishDraftPreview(broker, files(), IDENTITY).expired).toEqual([dead]);
+  });
+
+  it("reports a frozen empty eviction list, never undefined, when nothing was dropped (#257)", () => {
+    // `PublishedDraftPreview.expired` is a required frozen array and the real broker
+    // always supplies one; the fixture must too, so a future stub that drops it fails here.
+    const { broker } = brokerStub();
+    const { expired } = publishDraftPreview(broker, files(), IDENTITY);
+    expect(expired).toEqual([]);
+    expect(Object.isFrozen(expired)).toBe(true);
   });
 });

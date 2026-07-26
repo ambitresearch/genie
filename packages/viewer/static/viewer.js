@@ -1088,12 +1088,17 @@
     return value === undefined || typeof value === "string";
   }
 
-  /** The broker's eviction notice (#257): absent, or a list of URLs it stopped serving. */
+  // Cap eviction lists at the broker's own live-draft capacity (MAX_LIVE_DRAFTS,
+  // card-asset-broker.ts): it can never honestly name more URLs than it can hold, and
+  // this bounds retireExpiredPreviews' O(drafts x gone) scan; see architecture.md #257.
+  var MAX_EVICTED_PREVIEWS = 32;
+
+  /** The broker's eviction notice (#257): absent, or a bounded list of broker draft URLs. */
   function isOptionalPreviewUrlList(value) {
     if (value === undefined) return true;
-    if (!Array.isArray(value)) return false;
+    if (!Array.isArray(value) || value.length > MAX_EVICTED_PREVIEWS) return false;
     for (var i = 0; i < value.length; i++) {
-      if (typeof value[i] !== "string") return false;
+      if (!isDraftPreviewSrc(value[i])) return false;
     }
     return true;
   }

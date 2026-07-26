@@ -361,6 +361,18 @@ origin is cross-origin, so `contentDocument` is unreadable. The broker therefore
 dropped in `expiredPreviewUrls`, and the viewer forgets those URLs so the draft falls back to the
 `srcdoc` bytes the store already holds.
 
+The viewer validates that list on the way in. `expiredPreviewUrls` is accepted only when it is
+absent, or an array of at most `MAX_EVICTED_PREVIEWS` entries that each pass `isDraftPreviewSrc`.
+The cap is the broker's own `MAX_LIVE_DRAFTS` capacity (32): the broker holds at most that many
+drafts, so an honest registration can name at most that many as gone, and a list longer than the
+broker could ever mint is treated as malformed. Pinning the cap to broker capacity — not to the
+one-per-registration steady-state rate — means a legitimate result is never rejected even if the
+cap later shrinks across versions. The bound matters because `retireExpiredPreviews` walks the list
+once for every entry in the viewer's unbounded draft history, so an unchecked oversized list is
+quadratic and can lock the UI before the new draft renders. An over-long list, or any entry that is
+not the broker's own URL shape, fails the whole result closed — the same fail-closed rule every
+other field's validator follows — rather than being silently trimmed.
+
 ### `files[]` entry validation (DRO-242)
 
 DRO-242 (fail closed, Copilot review round 6) — JSON Schema's `maxLength`/`minLength` count Unicode CODE POINTS, but JS `String.length` counts UTF-16 CODE UNITS — every character outside the Basic Multilingual Plane (astral characters: most emoji, some CJK extensions) is one code point but TWO code units (a surrogate pair). A schema-valid string near either bound (e.g. exactly `maxLength` emoji) would be wrongly accepted/rejected by a raw `.length` comparison. Counting via the string iterator (`for...of` / spread) is code-point-aware — it steps over full surrogate pairs — and this early-exits once `max` is exceeded rather than materializing an array for a large string.
