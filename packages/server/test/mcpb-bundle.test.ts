@@ -90,7 +90,7 @@ describe("mcpb bundle manifest (AC1)", () => {
     expect(platforms.length).toBeGreaterThan(0);
     expect(range).toMatch(/^>=/u);
     if (platforms.includes("win32")) {
-      // Membership-based, not floor-based: the fix landed per release line, so a
+      // Interval-based, not floor-based: the fix landed per release line, so a
       // floor above 22.17.1 still admits an unpatched 24.x.
       assertRangePatchesCve202527210(range, "mcpb/manifest.json (ships win32)");
     }

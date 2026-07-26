@@ -210,7 +210,7 @@ it("🔒 the publishable-package scan actually finds both published packages", (
 it.each(publishablePackages)(
   "🔒 %s declares a Node range with no vulnerable release in it",
   (name, manifest) => {
-    // Membership-based, not floor-based. CVE-2025-27210 was fixed per release
+    // Interval-based, not floor-based. CVE-2025-27210 was fixed per release
     // line (20.19.4 / 22.17.1 / 24.4.1), so a lower endpoint above one patch
     // point says nothing about the lines above it — `>=22.19.0` reads as patched
     // but is satisfied by an unpatched 24.2.0.
