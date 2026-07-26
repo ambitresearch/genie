@@ -215,3 +215,119 @@ export function assertRangePatchesCve202527210(range: string, label: string): vo
     );
   }
 }
+
+/**
+ * Render a declared `engines.node` range as the prose the public docs must use.
+ *
+ * The prerequisites in `README.md`, `docs/user/installation.md` and
+ * `docs/developer/contributing.md` are a **promise about installability**: npm
+ * refuses to install a package whose `engines.node` the running Node fails. So a
+ * doc that says "Node 22.19 or newer" while the manifest says
+ * `>=22.19.0 <23 || >=24.4.1` is not a cosmetic mismatch — it tells a user on
+ * Node 23 or 24.2 that a command will work which cannot work, and the failure
+ * they get (`EBADENGINE`) does not explain why.
+ *
+ * That mismatch is exactly what happened when the CVE-2025-27210 floors landed:
+ * four prose claims across three files kept describing the pre-narrowing range.
+ * Rather than fix four strings and hope, the docs are checked against this
+ * rendering, so the range and its documentation cannot diverge again.
+ *
+ * Deliberately **partial**: it renders only the clause shapes actually used here
+ * and throws on anything else. A range this cannot express should fail loudly
+ * during the next change rather than quietly emit prose that is wrong — the
+ * silent-wrong-answer mode is the one being designed out.
+ */
+export function renderNodeRequirement(range: string): string {
+  const clauses = range.split("||").map((clause) => clause.trim());
+
+  const parts = clauses.map((clause) => {
+    // `>=A <B` — a bounded line, rendered as "A through the end of major B-1".
+    const bounded = /^>=(\d+)\.(\d+)\.(\d+) <(\d+)$/u.exec(clause);
+    if (bounded) {
+      const [, major, minor, patch, upper] = bounded;
+      const lastMajor = Number(upper) - 1;
+      if (String(lastMajor) !== major) {
+        throw new Error(
+          `renderNodeRequirement: clause "${clause}" spans more than one major line; ` +
+            `no prose form is defined for that.`,
+        );
+      }
+      return `${major}.${minor}.${patch}–${major}.x`;
+    }
+
+    // `>=A` — an open-ended line.
+    const open = /^>=(\d+)\.(\d+)\.(\d+)$/u.exec(clause);
+    if (open) {
+      return `${open[1]}.${open[2]}.${open[3]} or newer`;
+    }
+
+    throw new Error(
+      `renderNodeRequirement: unsupported clause "${clause}". Extend this renderer ` +
+        `(and the docs it drives) rather than loosening the assertion.`,
+    );
+  });
+
+  return `Node.js ${parts.join(", or ")}`;
+}
+
+/**
+ * Every open-ended Node floor a doc claims, e.g. `≥22.19.0` or "22.19 or newer".
+ *
+ * Covers the plain, the typographic and the URL-encoded spellings, because the
+ * README states its floor twice — once in prose and once inside a shields.io
+ * badge URL, where `≥` is percent-encoded and would otherwise be invisible to a
+ * search for the prose form.
+ */
+export function findOpenEndedNodeFloors(text: string): string[] {
+  const patterns = [
+    /(?:>=|≥|%E2%89%A5)\s*(\d+)\.(\d+)(?:\.(\d+))?/gu,
+    /(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/gu,
+  ];
+
+  const found: string[] = [];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      found.push(`${match[1]}.${match[2]}.${match[3] ?? "0"}`);
+    }
+  }
+  return found;
+}
+
+/**
+ * Does claiming "`floor` or newer" promise a runtime that `range` in fact rejects?
+ *
+ * Returns the counterexample release, or `null` when the claim is honest.
+ *
+ * A published `engines.node` is not a floor — it is a set, and since
+ * CVE-2025-27210 it is a set **with a hole in it** (`>=22.19.0 <23 || >=24.4.1`
+ * excludes all of 23.x and 24.0–24.4.0). Prose that flattens that set back to a
+ * floor re-promises the hole. So the check is the same interval reasoning
+ * `assertRangePatchesCve202527210` uses: sweep the range's own clause endpoints,
+ * which are the only places membership can change, and report the first one above
+ * the claimed floor that the range refuses. Sampling arbitrary releases would
+ * miss a narrow hole; the endpoints cannot.
+ */
+export function nodeFloorOverclaim(floor: string, range: string): string | null {
+  const endpoints = new Set<string>();
+  for (const clause of range.split("||")) {
+    for (const match of clause.matchAll(/(?:>=|<)\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/gu)) {
+      endpoints.add(`${match[1]}.${match[2] ?? "0"}.${match[3] ?? "0"}`);
+    }
+  }
+
+  const order = (version: string): number[] => version.split(".").map(Number);
+  const above = (a: string, b: string): boolean => {
+    const [x, y] = [order(a), order(b)];
+    for (let i = 0; i < 3; i += 1) {
+      if (x[i] !== y[i]) return x[i] > y[i];
+    }
+    return false;
+  };
+
+  for (const endpoint of [...endpoints].sort((a, b) => (above(a, b) ? 1 : -1))) {
+    if (above(endpoint, floor) && !satisfiesRange(endpoint, range)) {
+      return endpoint;
+    }
+  }
+  return null;
+}

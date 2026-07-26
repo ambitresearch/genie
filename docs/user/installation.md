@@ -2,7 +2,9 @@
 
 ## Prerequisites
 
-- Node.js 22.19 or newer for the npm/source path, or Docker.
+- Node.js 22.19.0–22.x, or 24.4.1 or newer for the npm/source path, or Docker.
+  Node 23 and 24.0–24.4.0 are excluded: CVE-2025-27210 was fixed in 22.17.1 and
+  24.4.1, and the 23.x line reached end-of-life before a patched release existed.
 - An OpenAI-compatible model endpoint for `conjure` and `refine`.
 - A writable location for genie's state and UI kits.
 

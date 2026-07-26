@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/ambitresearch/genie/actions/workflows/ci.yml/badge.svg)](https://github.com/ambitresearch/genie/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%E2%89%A522.19.0-brightgreen.svg)](.nvmrc)
+[![Node](https://img.shields.io/badge/node-22.19%E2%80%9322.x%20or%20%E2%89%A524.4.1-brightgreen.svg)](.nvmrc)
 
 </div>
 
@@ -36,7 +36,8 @@ _inside_ a coding harness — are genuinely useful.
 
 ## Quickstart
 
-> Requires Node ≥ 22.19.0 and [pnpm](https://pnpm.io) (`corepack enable`).
+> Requires Node.js 22.19.0–22.x, or 24.4.1 or newer, and [pnpm](https://pnpm.io)
+> (`corepack enable`).
 
 ```bash
 git clone https://github.com/ambitresearch/genie.git
