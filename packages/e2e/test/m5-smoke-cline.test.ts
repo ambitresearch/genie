@@ -84,6 +84,8 @@ import type { ChatCompletionFn } from "../../server/src/tools/conjure.js";
 import { DEFAULT_VIEWER_PORT, type ViewerBooter } from "../../server/src/tools/preview.js";
 import { createStreamableHttpRequestHandler } from "../../server/src/transport.js";
 import { bootViewer } from "../../viewer/src/index.js";
+import { shutdownClineHubDaemons } from "./support/cline-daemon.js";
+import { removeTempDir } from "./support/temp-dir.js";
 
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -864,7 +866,13 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
         new Promise<void>((resolveClose) => mcp?.close(() => resolveClose()) ?? resolveClose()),
         new Promise<void>((resolveClose) => model?.close(() => resolveClose()) ?? resolveClose()),
       ]);
-      await rm(base, { recursive: true, force: true });
+      // The Cline CLI is a thin client over a hub daemon that reparents to init and
+      // keeps writing into `<base>/.cline/data` (a cron store) long after the CLI
+      // exits. `execFileAsync` only awaits the direct child, so without this the
+      // recursive walk below races a live writer and `rmdir` throws ENOTEMPTY.
+      // Same discipline as the viewer teardown above: stop the writer, then delete.
+      await shutdownClineHubDaemons(base);
+      await removeTempDir(base);
     }
   }, 120_000);
 });
