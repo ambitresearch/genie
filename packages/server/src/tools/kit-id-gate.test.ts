@@ -340,11 +340,12 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     // since the advertised-schema lock below cannot see a `.refine()` at all.
     //
     // ⚠️ EXHAUSTIVE OVER CONTAINMENT-GATED VERBS, NOT OVER kitId-TAKING VERBS.
-    // `validate` also takes a top-level `kitId` and is deliberately NOT here.
-    // It is the one kitId-taking verb that applies no containment rule, and
-    // that is a real asymmetry with `store/kit-files.ts`'s shared rule — but it
-    // is PRE-EXISTING and not a gate this file can pin, for reasons that were
-    // verified rather than assumed:
+    // TWO kitId-taking input surfaces apply no containment rule and are
+    // deliberately NOT here. Both are real asymmetries with the shared rule in
+    // `store/kit-files.ts`, both are PRE-EXISTING, and neither is a gate this
+    // file can pin. Reasons verified rather than assumed.
+    //
+    // (1) `validate` — takes a top-level `kitId`:
     //   · it was never gated. At `de353bcd` (pre-#276) its input was already
     //     `kitId: z.string().min(1)`, so the widening neither opened nor closed
     //     it. `validate.ts` contains no `isSafeKitId`, no `KIT_ID_PATTERN` and
@@ -358,12 +359,40 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     //     contract consistency, NOT path traversal.
     //   · its full-scan facet does reach the store, whose adapters already
     //     apply `isSafeKitId` — so that half is covered where the rule lives.
-    // Gating it is a wire-contract change (an id accepted today starts being
-    // refused) and belongs in its own change with its own reasoning, exactly as
-    // the deferred items in #276/#279/#281 were argued rather than smuggled.
-    // Documented here so the NEXT verb that takes a kitId is placed in one
-    // bucket or the other CONSCIOUSLY — an unexplained absence from this table
-    // is how the original eight-site drift survived review in the first place.
+    //
+    // (2) `create_project` — takes `kitBindings[].kitId`, a SECOND kitId input
+    //     surface that is not a top-level `kitId` parameter and so is invisible
+    //     to any sweep keyed on the parameter name:
+    //   · `kitBindingShape.kitId` is a bare `z.string().min(1)`
+    //     (`create_project.ts`), and `createProject` persists the bindings
+    //     straight into the project manifest. It never calls `assertKitExists`
+    //     — the sole call site is in `bindKit`, NOT on the create path.
+    //   · also never gated: at `de353bcd` `kitBindingShape` was byte-identical
+    //     and the whole file contained ZERO `isSafeKitId`/`KIT_ID_PATTERN`
+    //     references, so again the widening neither opened nor closed it.
+    //   · not a traversal either. A binding's id flows to `conjure_screen`'s
+    //     `resolveKit` and from there into the GENERATION PROMPT text and the
+    //     manifest JSON. `conjure_screen.ts` imports no `node:path` at all —
+    //     every `join(` in it is `Array.prototype.join` building a message.
+    //   · ⚠️ but note `conjure_screen`'s `kitStore` docblock asserts that
+    //     "default/sole kits came from bindings already validated at bind
+    //     time". That is TRUE for bindings created via `bind_kit` (which does
+    //     call `assertKitExists`) and FALSE for bindings created via
+    //     `create_project`, which validates nothing. `resolveKit` validates
+    //     only its `explicit` branch; `default` and `sole` are returned
+    //     untouched. A comment asserting a symmetry that does not exist is the
+    //     precise mechanism by which the original eight-site drift survived
+    //     review — worth fixing at the source, in its own change.
+    // Gating EITHER is a wire-contract change (an id accepted today starts
+    // being refused) and belongs in its own change with its own reasoning,
+    // exactly as the deferred items in #276/#279/#281 were argued rather than
+    // smuggled. Documented here so the NEXT kitId input surface is placed in
+    // one bucket or the other CONSCIOUSLY — an unexplained absence from this
+    // table is how the original eight-site drift survived review in the first
+    // place. Note both exceptions were missed by every symbol-grep census this
+    // cycle: `validate` advertises a schema byte-identical to broad-gated
+    // siblings that gate in the HANDLER, and `create_project` carries its id on
+    // a nested `kitBindings[]` field rather than a `kitId` parameter.
     const REFUSES_AT = {
       mcp__genie__get_kit: "schema",
       mcp__genie__preview: "schema",
