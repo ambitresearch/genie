@@ -473,9 +473,15 @@ export class LocalFsKitStore implements KitStore {
    * the same rule inline rather than trusting `kitDir` (see the guard there):
    * its `kitId?` parameter is caller-supplied, and unlike the verbs below it
    * CREATES the container, so an unsafe id there writes a new directory at a
-   * caller-chosen path instead of merely failing to resolve one. The write/plan
-   * verbs (`deleteFile`/`openPlan`) keep using `kitDir` directly: their ids are
-   * server-minted or already plan-gated, and their behavior is unchanged.
+   * caller-chosen path instead of merely failing to resolve one. Every other
+   * write/plan verb keeps resolving through the UNGATED helpers and is
+   * unchanged: `deleteFile`/`writeFiles` via `kitDir`, and
+   * `openPlan`/`commitPlan`/`closePlan` via `planDir` — which roots at
+   * `plansDir`, not `baseDir`, so `safeKitDir` could not gate those even if
+   * asked. Their ids are server-minted or already plan-gated. Treat the names
+   * as EXAMPLES, not a census: grep `this.kitDir(`/`this.planDir(` for current
+   * membership. This sentence already shipped once reading as exhaustive while
+   * naming two of the five.
    *
    * NOT every read verb routes through here, and the omission is deliberate.
    * `getKit` and `listComponents` both resolve through the UNCHECKED `kitDir`,
