@@ -208,4 +208,12 @@ describe("satisfiesRange — empty comparator sets are wildcards", () => {
       findOpenEndedNodeFloors("node-22.19%E2%80%9322.x%20or%20%E2%89%A524.4.1-brightgreen.svg"),
     ).toEqual(["24.4.1"]);
   });
+  it("\u{1f512} reads a bounded comparator as bounded, not as a floor", () => {
+    // Documenting the manifest range verbatim must not read as an over-claim:
+    // `>=22.19.0 <23` promises nothing about 23.x, so only the trailing arm is
+    // an open-ended floor. Reporting the bounded one made accurate prose fail.
+    expect(findOpenEndedNodeFloors("`engines.node` is `>=22.19.0 <23 || >=24.4.1`")).toEqual([
+      "24.4.1",
+    ]);
+  });
 });
