@@ -461,8 +461,11 @@ export class LocalFsKitStore implements KitStore {
    * DRO-581). This is the store-layer half of the shared `isSafeKitId` rule and
    * the defense-in-depth guard behind each tool's own kitId check: a
    * programmatic caller that bypasses the tool must not be able to pass `""`
-   * (whose `join(baseDir, "")` is the kits ROOT — letting a crafted `path` like
-   * `other-kit/secret.txt` read a SIBLING kit), `.`/`..`, or a separator.
+   * (whose `join(baseDir, "")` is the kits ROOT), `.`/`..`, or a separator.
+   * BOTH gated verbs would be exposed, by different routes: `readFile` would
+   * turn a crafted `path` like `other-kit/secret.txt` into a SIBLING kit's
+   * bytes, while `listFiles` — which takes no `path` at all — would recursively
+   * enumerate every kit under that root (and under `..`, its parent).
    *
    * An unsafe id names no valid kit, so it surfaces as the SAME `NotFoundError`
    * a genuinely-missing kit would — this never leaks a sibling's bytes and adds
@@ -487,10 +490,11 @@ export class LocalFsKitStore implements KitStore {
    * The decision is recorded at `listKits`: the invariant is about what this
    * store PUBLISHES, and a caller that constructs an unsafe id is stopped at
    * the tool boundary, where `get_kit` and `list_components` both refine on
-   * `isSafeKitId`. Read that comment before "fixing" this. The short form: the
-   * danger this guard exists for is `""` turning a caller-supplied `path` into
-   * a SIBLING kit's bytes, and neither verb takes a `path` — `getKit` reaches
-   * one fixed filename that must parse as `KIT_TYPE` meta or it throws, and
+   * `isSafeKitId`. Read that comment before "fixing" this. The short form: what
+   * separates the two sets is the BREADTH of what a verb can reach once the
+   * directory resolves — NOT whether it takes a `path`. `listFiles` takes none
+   * and is gated anyway, because it walks the entire tree. `getKit` reaches one
+   * fixed filename that must parse as `KIT_TYPE` meta or it throws, and
    * `listComponents` reaches a second fixed path under that same directory.
    */
   private safeKitDir(kitId: KitId): string {
