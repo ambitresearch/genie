@@ -470,10 +470,19 @@ export class LocalFsKitStore implements KitStore {
    * the same rule inline rather than trusting `kitDir` (see the guard there):
    * its `kitId?` parameter is caller-supplied, and unlike the verbs below it
    * CREATES the container, so an unsafe id there writes a new directory at a
-   * caller-chosen path instead of merely failing to resolve one. The remaining
-   * write/plan verbs (`deleteFile`/`openPlan`) keep using `kitDir` directly:
-   * their ids are server-minted or already plan-gated, and their behavior is
-   * unchanged.
+   * caller-chosen path instead of merely failing to resolve one. The write/plan
+   * verbs (`deleteFile`/`openPlan`) keep using `kitDir` directly: their ids are
+   * server-minted or already plan-gated, and their behavior is unchanged.
+   *
+   * NOT every read verb routes through here, and the omission is deliberate:
+   * `getKit` resolves via `kitDir`, and `listComponents` inherits its
+   * containment by calling `getKit` before touching the manifest. The decision
+   * is recorded at `listKits` — the invariant is about what this store
+   * PUBLISHES, and a caller that constructs an unsafe id is stopped at the tool
+   * boundary. Read that comment before "fixing" this. The short form: the
+   * danger this guard exists for is `""` turning a caller-supplied `path` into
+   * a SIBLING kit's bytes, and `getKit` takes no `path` — it reaches one fixed
+   * filename that must still parse as `KIT_TYPE` meta, or it throws.
    */
   private safeKitDir(kitId: KitId): string {
     if (!isSafeKitId(kitId)) throw new NotFoundError("Kit", kitId);
