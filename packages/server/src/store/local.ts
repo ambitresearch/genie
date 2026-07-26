@@ -503,9 +503,9 @@ export class LocalFsKitStore implements KitStore {
       //
       // Filtered at the LISTING, not by gating getKit: the invariant is about
       // what this store PUBLISHES. A caller that constructs such an id itself
-      // is still stopped at the tool boundary. GitHostKitStore needs no
-      // equivalent — a repository name admits no path separator — so this
-      // keeps the two adapters agreeing rather than diverging.
+      // is still stopped at the tool boundary. GitHostKitStore.listKits carries
+      // the same filter: the clause is adapter-neutral, so enforcing it here
+      // alone would leave the shared contract passing vacuously there.
       if (!isSafeKitId(entry.name)) continue;
       const meta = await readMetaIfReadable<KitMetaFile>(this.kitMetaPath(entry.name));
       if (meta?.type === KIT_TYPE) {

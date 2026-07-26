@@ -317,8 +317,11 @@ export interface KitStore {
   /**
    * Create a new kit with the given name and metadata. Returns its metadata.
    *
-   * `kitId`, when supplied, MUST satisfy `isSafeKitId` (non-empty, not `.` or
-   * `..`, no `/` or `\`). This is a precondition, not a hint: it is checked
+   * `kitId`, when supplied, MUST satisfy `isSafeKitId`
+   * (`store/kit-files.ts`), which is the authority on what that means —
+   * deliberately NOT restated here, because the rejection set grows (#277 adds
+   * trailing dots and spaces) and a copy in this file would silently understate
+   * it. This is a precondition, not a hint: it is checked
    * before any repo/directory is created, so a rejected id leaves no partial
    * kit behind. Both adapters reject a violating id with
    * `NotFoundError("Kit", id)` — the same error every other `isSafeKitId`

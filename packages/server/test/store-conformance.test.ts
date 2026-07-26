@@ -837,9 +837,17 @@ describe("LocalFsKitStore — adapter-specific", () => {
     // Deliberately LocalFs-only, and NOT a repeat of the placement mistake this
     // suite's divergent-.kit.json test was promoted to fix. That invariant was
     // adapter-neutral, so pinning it on one adapter hid a real defect in the
-    // other. This one is adapter-REACHABLE only here: a git host admits no path
-    // separator in a repository name, so GitHostKitStore cannot enter this
-    // state and seeding it there would pin a fiction.
+    // other. THIS SEED is adapter-reachable only here: a git host admits no path
+    // separator in a repository name, so seeding a backslash there would pin a
+    // fiction.
+    //
+    // The CLAUSE, though, is adapter-neutral, and an earlier draft of this
+    // comment over-generalised the seed into it — "GitHostKitStore cannot enter
+    // this state" — which is false. `isSafeKitId` rejects more than separators,
+    // and GitHostKitStore.listKits now carries the same filter with its own
+    // host-reachable seed (`..` today, `victim.` once #277 lands). Kept as a
+    // correction rather than a silent edit: the over-generalisation is exactly
+    // what made the GitHost gap look impossible.
     const unsafeDir = join(tmpDir, "unsafe\\kit");
     await mkdir(unsafeDir, { recursive: true });
     await writeFile(
@@ -1098,6 +1106,57 @@ describe("GitHostKitStore — adapter-specific", () => {
     await expect(store.readFile(kit.id, "created.html")).rejects.toThrow(NotFoundError);
     // …and the failing file never landed.
     await expect(store.readFile(kit.id, "new.html")).rejects.toThrow(NotFoundError);
+  });
+
+  it("\u{1F512} omits a listed repository whose name isSafeKitId rejects", async () => {
+    // The GitHost half of the LocalFs `omits a directory whose name isSafeKitId
+    // rejects` test. Both stores must honour the same shared-contract clause —
+    // every id `listKits` publishes satisfies `isSafeKitId` — and until now only
+    // LocalFs enforced it. On GitHost the clause passed VACUOUSLY: the mock never
+    // returned an unsafe repo name, so the assertion never had anything to bite.
+    //
+    // Why this is not the fiction the LocalFs test declines to pin. That test
+    // seeds a BACKSLASH, which no git host admits in a repository name — correct
+    // to keep LocalFs-only. But "no backslash" does not generalise to "GitHost
+    // cannot publish an unsafe id", and the difference is about to become live:
+    // #277 tightens `isSafeKitId` to reject a trailing dot or space, while Gitea
+    // keeps allowing a repository named `victim.` (`IsUsableRepoName` permits
+    // `[-.\w]+`, rejecting only repeated dots and the reserved `.`). The moment
+    // that lands, an externally created `victim.` is a host-reachable id this
+    // store would publish and every kit-taking tool would refuse.
+    //
+    // The seed here is `..` rather than `victim.` on purpose. `victim.` is SAFE
+    // under today's predicate, so asserting on it would pass before and after the
+    // fix — a test that can never be red. `..` is rejected today, so it is a real
+    // differential; and because the filter delegates to the predicate rather than
+    // to a literal, #277's tightening propagates to `victim.` for free. Seeding
+    // it through the mock's repo endpoint models what the SEARCH endpoint hands
+    // back — createKit's own guard now refuses such a name, so the only route in
+    // is a repo this store did not mint. A remote API response is untrusted
+    // input, exactly as `safeKitDir` is documented as the defence-in-depth guard
+    // behind each tool's own kitId check.
+    const mockFetch = createMockGitHostFactory();
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
+
+    const store = new GitHostKitStore({
+      baseUrl: "https://mock-git-host.test/api/v1",
+      owner: "test-org",
+      token: "mock-token",
+    });
+
+    await store.createKit("Good Kit", "good-kit");
+    const seeded = await mockFetch("https://mock-git-host.test/api/v1/orgs/test-org/repos", {
+      method: "POST",
+      body: JSON.stringify({ name: ".." }),
+    });
+    // Guard the guard: if the mock ever starts rejecting this name the test would
+    // pass for the wrong reason, so prove the hostile repo really is present.
+    expect(seeded.ok, "mock must accept the unsafe repo name for this test to bite").toBe(true);
+
+    const ids = (await store.listKits()).map((k) => k.id);
+    expect(ids).toContain("good-kit");
+    expect(ids).not.toContain("..");
   });
 });
 

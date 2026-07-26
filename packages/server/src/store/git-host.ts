@@ -284,17 +284,30 @@ export class GitHostKitStore implements KitStore {
     // total time is bounded by the slowest request rather than the sum of all
     // N — the previous serial loop was an N+1 latency trap at limit=50.
     return Promise.all(
-      list.map(async (repo) => {
-        const meta = await this.readKitMeta(repo.name);
-        return (
-          meta ?? {
-            id: repo.name,
-            name: repo.name,
-            type: KIT_TYPE,
-            createdAt: repo.created_at,
-          }
-        );
-      }),
+      // Same clause LocalFsKitStore.listKits enforces: every id this store
+      // PUBLISHES satisfies `isSafeKitId`, so `list_kits`' promise — the ids it
+      // hands out are valid input to the tools that consume them — holds on both
+      // adapters. Repo names arrive from the host's search endpoint, not from
+      // `createKit` (whose own guard already refuses an unsafe id), so this is
+      // the untrusted-input edge: a name this store never minted. Not
+      // hypothetical — a git host admits no path separator, but `isSafeKitId`
+      // rejects more than separators, and #277 extends it to a trailing dot or
+      // space while Gitea keeps allowing a repository named `victim.`. Gating
+      // the LISTING rather than `getKit` is deliberate and matches LocalFs: a
+      // caller holding such an id is still stopped at the tool boundary.
+      list
+        .filter((repo) => isSafeKitId(repo.name))
+        .map(async (repo) => {
+          const meta = await this.readKitMeta(repo.name);
+          return (
+            meta ?? {
+              id: repo.name,
+              name: repo.name,
+              type: KIT_TYPE,
+              createdAt: repo.created_at,
+            }
+          );
+        }),
     );
   }
 
