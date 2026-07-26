@@ -132,3 +132,56 @@ describe("isVulnerableVersion", () => {
     expect(isVulnerableVersion("20.99.0")).toBe(false);
   });
 });
+
+/**
+ * Round 15 (#277): the evaluator dropped empty `||` arms, so a range with a
+ * stray trailing `||` was scored on its non-empty arms alone. npm does not read
+ * it that way. Verified against `semver@7.8.5`, the resolver npm itself uses:
+ *
+ *   validRange("")                            === "*"
+ *   validRange(">=22.19.0 <23 || >=24.4.1 ||") === "*"
+ *   satisfies("23.11.1", <that range>)         === true
+ *
+ * So the typo does not weaken the range, it **erases** it — one empty arm makes
+ * the whole thing a wildcard admitting every vulnerable release. A helper whose
+ * only job is to certify published ranges must never score such a range as safe.
+ *
+ * `semver` is not a dependency of this workspace (it is only present
+ * transitively), so the oracle's answers are pinned as constants here rather
+ * than imported, which would be a phantom dependency.
+ */
+describe("satisfiesRange — empty comparator sets are wildcards", () => {
+  const TRAILING_PIPE = ">=22.19.0 <23 || >=24.4.1 ||";
+
+  it("🔒 treats an empty range as matching every version", () => {
+    // `validRange("") === "*"`.
+    for (const v of ["0.0.1", "18.0.0", "23.11.1", "99.99.99"]) {
+      expect(satisfiesRange(v, "")).toBe(true);
+      expect(satisfiesRange(v, "   ")).toBe(true);
+    }
+  });
+
+  it("🔒 lets one empty arm widen the whole range to a wildcard", () => {
+    // Every version the non-empty arms exclude is nonetheless admitted, because
+    // the empty arm alone satisfies the `||`.
+    for (const v of ["23.11.1", "24.0.0", "24.4.0", "20.0.0"]) {
+      expect(satisfiesRange(v, TRAILING_PIPE)).toBe(true);
+    }
+    expect(satisfiesRange("22.19.0", TRAILING_PIPE)).toBe(true);
+  });
+
+  it("🔒 refuses to certify a range a stray `||` has widened", () => {
+    // The security-level consequence, and the reason the two tests above are
+    // not merely pedantic: without this the helper green-lights a published
+    // `engines.node` that accepts every CVE-2025-27210-vulnerable release.
+    expect(() => assertRangePatchesCve202527210(TRAILING_PIPE, "trailing-pipe")).toThrow(
+      /still admits Node/u,
+    );
+    // The same range with the stray `||` removed is the one this repo actually
+    // publishes, and it must still certify — so the throw above is attributable
+    // to the empty arm alone, not to some unrelated defect in the comparators.
+    expect(() =>
+      assertRangePatchesCve202527210(">=22.19.0 <23 || >=24.4.1", "published"),
+    ).not.toThrow();
+  });
+});

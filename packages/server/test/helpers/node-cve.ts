@@ -83,32 +83,41 @@ function compare(a: Version, b: Version): number {
  */
 export function satisfiesRange(version: string, range: string): boolean {
   const v = parseVersion(version);
-  return range
-    .split("||")
-    .map((clause) => clause.trim())
-    .filter((clause) => clause.length > 0)
-    .some((clause) =>
-      clause
-        .split(/\s+/u)
-        .filter((token) => token.length > 0)
-        .every((token) => {
-          const m = /^(>=|<=|>|<|=)?\s*v?(.+)$/u.exec(token);
-          if (!m) throw new Error(`unparseable comparator: ${JSON.stringify(token)}`);
-          const cmp = compare(v, parseVersion(m[2]));
-          switch (m[1] ?? "=") {
-            case ">=":
-              return cmp >= 0;
-            case ">":
-              return cmp > 0;
-            case "<=":
-              return cmp <= 0;
-            case "<":
-              return cmp < 0;
-            default:
-              return cmp === 0;
-          }
-        }),
-    );
+  return (
+    range
+      .split("||")
+      .map((clause) => clause.trim())
+      // NO `.filter(Boolean)` here: in npm's resolver an EMPTY comparator set is
+      // the wildcard `*`, not an absent clause. `semver.validRange("")` is `"*"`,
+      // and `validRange(">=22.19.0 <23 || >=24.4.1 ||")` is `"*"` too — one stray
+      // `||` erases the whole range rather than narrowing it. Dropping empty
+      // clauses would score such a range on its surviving arms and certify a
+      // published `engines.node` that in fact admits every vulnerable release.
+      // An empty clause falls through to `.every()` over zero comparators, which
+      // is vacuously true — exactly the wildcard behaviour, with no special case.
+      .some((clause) =>
+        clause
+          .split(/\s+/u)
+          .filter((token) => token.length > 0)
+          .every((token) => {
+            const m = /^(>=|<=|>|<|=)?\s*v?(.+)$/u.exec(token);
+            if (!m) throw new Error(`unparseable comparator: ${JSON.stringify(token)}`);
+            const cmp = compare(v, parseVersion(m[2]));
+            switch (m[1] ?? "=") {
+              case ">=":
+                return cmp >= 0;
+              case ">":
+                return cmp > 0;
+              case "<=":
+                return cmp <= 0;
+              case "<":
+                return cmp < 0;
+              default:
+                return cmp === 0;
+            }
+          }),
+      )
+  );
 }
 
 /**
