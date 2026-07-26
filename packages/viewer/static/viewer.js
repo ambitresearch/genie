@@ -2529,6 +2529,22 @@
       unloadGuard = null;
     }
 
+    // The broker's LRU is process-global, so another viewer can evict THIS viewer's draft and
+    // the notice goes to whoever caused it. The evicted document reports its own URL here --
+    // the only signal available, since a 404'd frame fires `load`. See architecture.md #257.
+    var brokerWin = doc.defaultView;
+    if (brokerWin && typeof brokerWin.addEventListener === "function") {
+      brokerWin.addEventListener("message", function (event) {
+        var data = event && event.data;
+        if (!data || typeof data !== "object") return;
+        if (data.genie !== "draft-expired" || typeof data.url !== "string") return;
+        var open = store.current();
+        var showing = Boolean(open && open.result && open.result.previewUrl === data.url);
+        store.retireExpiredPreviews({ expiredPreviewUrls: [data.url] });
+        if (showing) renderPreview(store.current());
+      });
+    }
+
     function render() {
       var draft = store.current();
       var state = store.state();
@@ -4694,14 +4710,8 @@
         var inlineSearch = doc.defaultView && doc.defaultView.location;
         renderGrid(doc, grid, filterManifestBySearch(inline, inlineSearch?.search || ""));
         wireSearch(doc, grid);
-        // M4-04 (DRO-266) — this tier is EXACTLY who the postMessage bridge exists for (its strict
-        // CSP, connect-src 'none', blocks fetch AND a direct WebSocket alike — see initHmr's own
-        // header). hmrSocketUrl resolves to null here (no http(s) origin with a host — see its own
-        // doc), so initHmr transparently skips the WS + polling paths and wires ONLY the `message`
-        // listener: no network access is attempted, satisfying the CSP without special-casing this
-        // branch. Omitting this call (as an earlier revision did) left the bridge dead code in the
-        // one tier it was built for. Best-effort, like the fetch path below: a throw here must
-        // never take down an otherwise-good render.
+        // M4-04 (DRO-266) — the embedded tier is exactly who the postMessage bridge exists for.
+        // See architecture.md, "Why embedded Browse still calls initHmr (M4-04)".
 
         // Copilot review (PR #248) — Browse must navigate the WHOLE kit even when this embedded
         // resource's PRIMARY `#manifest` island (`inline`, used for the grid view above and the HMR

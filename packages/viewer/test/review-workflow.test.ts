@@ -4917,3 +4917,87 @@ describe("unload guard survives a stranded deletion (#256)", () => {
     expect(fireUnload(wired.window).defaultPrevented).toBe(false);
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * #257 follow-up — cross-viewer eviction                             *
+ * ------------------------------------------------------------------ */
+
+describe("#257 follow-up — a draft evicted by ANOTHER viewer", () => {
+  const DRAFT_URL = "http://127.0.0.1:51234/d/0123456789abcdef0123456789abcdef";
+  const OTHER_URL = DRAFT_URL.replace(/[0-9a-f]{32}$/, "e".repeat(32));
+
+  function frameOf(document: Document): HTMLIFrameElement {
+    return document.querySelector("#review-preview iframe") as HTMLIFrameElement;
+  }
+
+  /**
+   * The evicted document's own report. The broker serves its 404 as a page that posts this,
+   * because a viewer that never received an `expiredPreviewUrls` notice has no other signal:
+   * a cross-origin iframe fires `load` for a 404 and the broker sets no CORS headers.
+   */
+  function reportExpired(document: Document, url: unknown): void {
+    const win = document.defaultView!;
+    win.dispatchEvent(new win.MessageEvent("message", { data: { genie: "draft-expired", url } }));
+  }
+
+  it("swaps the visible frame to srcdoc when the broker reports it expired", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
+    expect(frameOf(document).getAttribute("src")).toBe(DRAFT_URL);
+
+    // Nobody handed THIS viewer an eviction notice — the other viewer's registration got it.
+    reportExpired(document, DRAFT_URL);
+
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("retires a background draft so reselecting it later never fetches the dead URL", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
+    controller.addDraft(conjureResult({ previewUrl: OTHER_URL }), { kitId: "k", kitLabel: "K" });
+
+    // Draft #2 is on screen; #1 is the one the other viewer evicted.
+    reportExpired(document, DRAFT_URL);
+    expect(frameOf(document).getAttribute("src")).toBe(OTHER_URL);
+
+    document.querySelectorAll<HTMLButtonElement>(".review-draft-switcher__option")[0].click();
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("retires only the reported URL, leaving every other draft servable", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
+    controller.addDraft(conjureResult({ previewUrl: OTHER_URL }), { kitId: "k", kitLabel: "K" });
+
+    reportExpired(document, OTHER_URL);
+
+    // Assert at RESELECT, not repaint: `renderPreview` is the only writer of `src`/`srcdoc`,
+    // and a model-only change is invisible until the switcher rebuilds the frame.
+    const options = document.querySelectorAll<HTMLButtonElement>(".review-draft-switcher__option");
+    options[0].click();
+    expect(frameOf(document).getAttribute("src")).toBe(DRAFT_URL);
+    options[1].click();
+    expect(frameOf(document).hasAttribute("src")).toBe(false);
+  });
+
+  it("ignores malformed reports instead of trusting any framed page that posts at it", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
+    const win = document.defaultView!;
+    for (const data of [
+      null,
+      "draft-expired",
+      42,
+      { genie: "draft-expired" },
+      { url: DRAFT_URL },
+    ]) {
+      win.dispatchEvent(new win.MessageEvent("message", { data }));
+    }
+    reportExpired(document, 42);
+    expect(frameOf(document).getAttribute("src")).toBe(DRAFT_URL);
+  });
+});

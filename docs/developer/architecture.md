@@ -538,6 +538,17 @@ quadratic and can lock the UI before the new draft renders. An over-long list, o
 not the broker's own URL shape, fails the whole result closed — the same fail-closed rule every
 other field's validator follows — rather than being silently trimmed.
 
+### Why embedded Browse still calls initHmr (M4-04)
+
+The embedded tier is EXACTLY who the postMessage bridge exists for: its strict CSP
+(`connect-src 'none'`) blocks `fetch` AND a direct WebSocket alike — see `initHmr`'s own header.
+`hmrSocketUrl` resolves to `null` here (no `http(s)` origin with a host — see its own doc), so
+`initHmr` transparently skips the WS and polling paths and wires ONLY the `message` listener: no
+network access is attempted, satisfying the CSP without special-casing this branch. Omitting the
+call (as an earlier revision did) left the bridge dead code in the one tier it was built for. It is
+best-effort, like the fetch path beside it: a throw there must never take down an otherwise-good
+render.
+
 ### `files[]` entry validation (DRO-242)
 
 DRO-242 (fail closed, Copilot review round 6) — JSON Schema's `maxLength`/`minLength` count Unicode CODE POINTS, but JS `String.length` counts UTF-16 CODE UNITS — every character outside the Basic Multilingual Plane (astral characters: most emoji, some CJK extensions) is one code point but TWO code units (a surrogate pair). A schema-valid string near either bound (e.g. exactly `maxLength` emoji) would be wrongly accepted/rejected by a raw `.length` comparison. Counting via the string iterator (`for...of` / spread) is code-point-aware — it steps over full surrogate pairs — and this early-exits once `max` is exceeded rather than materializing an array for a large string.

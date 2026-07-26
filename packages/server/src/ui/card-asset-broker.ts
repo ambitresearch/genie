@@ -34,6 +34,23 @@ const CARD_RESPONSE_HEADERS = {
   "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
 } as const;
+// #257: a missing/evicted draft token answers with this document rather than an
+// empty body. The broker is process-global, so viewer B's registration can evict
+// viewer A's draft; A is never handed the expired notice, and a cross-origin iframe
+// fires load (not error) for a 404, so A would render a blank frame as a success.
+// The dead document reporting its own URL is the only signal A can ever receive.
+const DRAFT_EXPIRED_NOTICE_SCRIPT =
+  'parent.postMessage({ genie: "draft-expired", url: location.href }, "*")';
+// targetOrigin is "*" deliberately: the parent's origin varies by tier (file://,
+// localhost, the MCP App host) and the payload names only a dead URL, never a secret.
+const DRAFT_EXPIRED_NOTICE_BODY = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Draft expired</title><script>${DRAFT_EXPIRED_NOTICE_SCRIPT}</script></head><body></body></html>`;
+// Its own policy hashes only that script; style-src is 'none' since it carries none.
+const DRAFT_EXPIRED_NOTICE_CSP = [
+  EMBEDDED_CARD_CSP_DIRECTIVES[0],
+  `script-src ${cspSha256(DRAFT_EXPIRED_NOTICE_SCRIPT)}`,
+  "style-src 'none'",
+  ...EMBEDDED_CARD_CSP_DIRECTIVES.slice(1),
+].join("; ");
 
 export interface CardAssetBrokerOptions {
   /**
@@ -89,8 +106,11 @@ export interface CardAssetDraft {
    * draft, so a silently dropped document would be reselected and fetched as an
    * empty 404. An iframe fires `load` for HTTP errors, so the viewer cannot detect
    * that itself, and the broker sets no CORS headers so it cannot pre-flight either.
-   * Naming the casualties is therefore the only signal available: the viewer clears
-   * `previewUrl` on those drafts and falls back to the `srcdoc` bytes it still holds.
+   * This stays the fast path: the caller that caused the eviction clears `previewUrl`
+   * on these drafts at once and falls back to the `srcdoc` bytes it still holds. A
+   * viewer that another caller's registration evicted is not listed here, so it now
+   * learns from the evicted document itself, which reports its own dead URL (see
+   * DRAFT_EXPIRED_NOTICE_BODY).
    */
   readonly expired: readonly string[];
 }
@@ -546,7 +566,17 @@ class LoopbackCardAssetBroker implements CardAssetBroker {
   #serveDraft(token: string, req: IncomingMessage, res: ServerResponse): void {
     const draft = this.#draftsByToken.get(token);
     if (draft === undefined) {
-      sendEmpty(res, 404);
+      // #257: a viewer whose draft another caller's registration evicted was never
+      // handed the expired notice, so the dead document reports its own URL instead.
+      const body = DRAFT_EXPIRED_NOTICE_BODY;
+      res.writeHead(404, {
+        ...CARD_RESPONSE_HEADERS,
+        "content-type": "text/html; charset=utf-8",
+        "content-length": String(Buffer.byteLength(body, "utf8")),
+        "content-security-policy": DRAFT_EXPIRED_NOTICE_CSP,
+      });
+      if (req.method === "HEAD") res.end();
+      else res.end(body);
       return;
     }
     this.#touchDraft(token, draft);
