@@ -725,6 +725,10 @@ interface TerminateAndWaitOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+interface RemoveClineSmokeTreeOptions extends TerminateAndWaitOptions {
+  warn?: (message: string) => void;
+}
+
 /**
  * Signals `pid` and waits for it to actually disappear, escalating `SIGTERM` to
  * `SIGKILL` after `escalateAfterMs` and giving up after `timeoutMs`. Never
@@ -794,11 +798,65 @@ async function stopClineHubDaemons(
  * Removes a real-CLI temp tree the way #259 requires: join the detached hub
  * daemons first, then delete. `maxRetries` is defence in depth for unrelated
  * transient holders (a virus scanner, Spotlight), never the primary fix.
+ *
+ * If a daemon survives even `SIGKILL` the tree is deliberately left on disk.
+ * Deleting under a live writer is exactly the #259 race, and because this runs
+ * from a `finally`, the resulting `ENOTEMPTY` would replace whatever assertion
+ * failure the test was already reporting. A warning surfaces the leak instead;
+ * the OS temp reaper collects the directory.
  */
-async function removeClineSmokeTree(base: string): Promise<void> {
-  await stopClineHubDaemons(base);
+async function removeClineSmokeTree(
+  base: string,
+  options: RemoveClineSmokeTreeOptions = {},
+): Promise<void> {
+  const { warn = (message: string) => console.warn(message), ...terminateOptions } = options;
+  const outcomes = await stopClineHubDaemons(base, terminateOptions);
+  const survivors = [...outcomes]
+    .filter(([, outcome]) => outcome === "timed-out")
+    .map(([pid]) => pid);
+
+  if (survivors.length > 0) {
+    warn(
+      `[m5-smoke-cline] leaving ${base} on disk: Cline hub daemon(s) ${survivors.join(", ")} ` +
+        `survived SIGKILL and are still writing into .cline/data (see #259).`,
+    );
+    return;
+  }
+
   await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
+
+it("keeps the temp tree when a hub daemon cannot be reaped", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  const lockPath = join(base, CLINE_HUB_LOCK_PATHS[0]!);
+  await mkdir(dirname(lockPath), { recursive: true });
+  // A pid the injected clock keeps "alive" forever, so termination times out.
+  await writeFile(lockPath, JSON.stringify({ pid: 424_242, authToken: "test" }), "utf8");
+  const warnings: string[] = [];
+  let clock = 0;
+
+  try {
+    await removeClineSmokeTree(base, {
+      timeoutMs: 500,
+      escalateAfterMs: 100,
+      pollMs: 10,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      isAlive: () => true,
+      sendSignal: () => {},
+      warn: (message) => warnings.push(message),
+    });
+
+    // Deleting here would race the surviving writer and resurrect #259, and in
+    // a `finally` the resulting ENOTEMPTY would mask the real test failure.
+    await expect(stat(base)).resolves.toBeTruthy();
+    expect(warnings.join("\n")).toContain("424242");
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
 
 it("escalates to SIGKILL and keeps waiting when a hub daemon ignores SIGTERM", async () => {
   const signals: NodeJS.Signals[] = [];
