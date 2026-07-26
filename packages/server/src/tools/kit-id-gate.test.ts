@@ -37,7 +37,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createServer } from "../server.js";
-import { isSafeKitId } from "../store/kit-files.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 import { MANIFEST_PATH } from "../store/manifest.js";
 import { resolveKitDir as resolveGridKitDir } from "../ui/grid-resource.js";
 import { seedKit } from "../../test/helpers/seed-kit.js";
@@ -286,25 +286,75 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     ).toBeFalsy();
   });
 
-  it("still refuses containment-unsafe kitIds everywhere", async () => {
+  it("🔒 every kit-taking verb refuses a containment-unsafe kitId at its own gate", async () => {
     // Relaxing the SHAPE rule must not relax the CONTAINMENT rule. `""`, `.`,
     // `..` and any separator still escape the single-kit namespace and are
-    // still refused by every verb.
+    // still refused.
+    //
+    // Asserting only "it was refused" would lock nothing. Drop a verb's
+    // `.refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE)` and the id falls through to
+    // the store, which reports it as `ERR_KIT_NOT_FOUND` — still a rejection,
+    // so a bare `ok === false` stays green with the gate gone. That is the
+    // "passes for a different reason than its name claims" failure this file
+    // exists to prevent, so each verb is pinned to the LAYER meant to stop it:
+    //
+    //   schema — the verb's own `.refine()` is load-bearing. Nothing downstream
+    //            re-checks containment before a path is built:
+    //            `LocalFsKitStore.getKit` resolves through the UNGUARDED
+    //            `kitDir`, not `safeKitDir`, so a dropped refine reads
+    //            `<parent-of-kits-root>/.kit.json` before returning "not found".
+    //   tool   — `list_files` applies `isSafeKitId` in its handler and raises
+    //            its own `ERR_INVALID_KIT_ID`; `""` is stopped one step earlier
+    //            by that schema's `.min(1)`.
+    //   store  — `plan` deliberately funnels every refusal into ONE envelope so
+    //            a client branches on a single reason (#252/#263; see plan.ts).
+    const REFUSES_AT = {
+      mcp__genie__get_kit: "schema",
+      mcp__genie__preview: "schema",
+      mcp__genie__bind_kit: "schema",
+      mcp__genie__list_components: "schema",
+      mcp__genie__conjure_screen: "schema",
+      mcp__genie__list_files: "tool",
+      mcp__genie__plan: "store",
+    } as const;
+
+    const refusedAt = (layer: (typeof REFUSES_AT)[keyof typeof REFUSES_AT], text: string) =>
+      layer === "schema"
+        ? text.includes(KIT_ID_SAFETY_MESSAGE)
+        : layer === "tool"
+          ? text.includes("ERR_INVALID_KIT_ID") || text.includes("too_small")
+          : text.includes("kitNotFound");
+
+    const proj = await client.callTool({
+      name: "mcp__genie__create_project",
+      arguments: { name: "Gate Probe", kind: "workspace" },
+    });
+    const projectId = payload(proj).projectId as string;
+
     for (const bad of ["", "..", ".", "../escape", "a/b", "a\\b"]) {
-      for (const name of [
-        "mcp__genie__get_kit",
-        "mcp__genie__preview",
-        "mcp__genie__list_files",
-        "mcp__genie__plan",
-      ]) {
-        const args =
-          name === "mcp__genie__plan" ? { kitId: bad, writes: ["*.html"] } : { kitId: bad };
+      for (const [name, layer] of Object.entries(REFUSES_AT)) {
+        const args: Record<string, unknown> =
+          name === "mcp__genie__plan"
+            ? { kitId: bad, writes: ["*.html"] }
+            : name === "mcp__genie__bind_kit"
+              ? { projectId, kitId: bad }
+              : name === "mcp__genie__conjure_screen"
+                ? { projectId, kitId: bad, prompt: "A settings screen." }
+                : { kitId: bad };
+
+        // A schema failure can surface either as a thrown `McpError` or as an
+        // `isError` result depending on the path, so both are captured.
         const result = await client
           .callTool({ name, arguments: args })
-          .then((r) => ({ ok: !r.isError }))
-          .catch(() => ({ ok: false }));
+          .then((r) => ({ ok: !r.isError, text: JSON.stringify(r.content ?? r) }))
+          .catch((e: unknown) => ({ ok: false, text: String((e as Error)?.message ?? e) }));
 
         expect(result.ok, `${name} must refuse kitId ${JSON.stringify(bad)}`).toBe(false);
+        expect(
+          refusedAt(layer, result.text),
+          `${name} must refuse kitId ${JSON.stringify(bad)} at its ${layer} gate, ` +
+            `got: ${result.text.slice(0, 240)}`,
+        ).toBe(true);
       }
     }
   });
@@ -343,6 +393,14 @@ describe("kitId gate — the advertised input contract", () => {
     // the only ids this verb accepts" and can refuse to even attempt a call.
     // Locking the ADVERTISED schema covers `conjure` and `refine` too, whose
     // handlers need a live endpoint to reach.
+    //
+    // ⚠️ This lock is DIRECTIONAL, and deliberately so. `.refine()` emits no
+    // JSON Schema keyword, so a verb that gates correctly advertises no
+    // `pattern` at all — indistinguishable here from one that dropped its gate
+    // entirely. This test catches a verb RE-TIGHTENING onto the slug regex;
+    // only its behavioural counterpart above ("🔒 every kit-taking verb refuses
+    // a containment-unsafe kitId at its own gate") catches one dropping it.
+    // Neither is sufficient alone; both are required.
     const { tools } = await client.listTools();
     const offenders: string[] = [];
 
