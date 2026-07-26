@@ -498,12 +498,49 @@ describe("ProjectStore", () => {
       });
     });
 
-    it("AC6 — an invalid kitId raises ERR_KIT_NOT_FOUND", async () => {
+    // `assertKitExists` funnels three distinct failures onto the single
+    // ERR_KIT_NOT_FOUND code its `catch` names: ProjectNotFoundError (kit
+    // absent), WrongProjectTypeError (id resolves to a non-kit), and ZodError
+    // (id malformed). The three tests below cover one arm each, in that order.
+    //
+    // Named "absent", not "invalid": `"no-such-kit"` is a perfectly well-formed
+    // id — it just isn't there. The old name claimed malformed-id coverage this
+    // test never had, which is how the ZodError arm below went unwritten.
+    it("AC6 — an absent kitId raises ERR_KIT_NOT_FOUND (ProjectNotFoundError mapping)", async () => {
       const { store, projectId } = await setup();
 
       await expect(store.bindKit({ projectId, kitId: "no-such-kit" })).rejects.toMatchObject({
         code: "ERR_KIT_NOT_FOUND",
         kitId: "no-such-kit",
+      });
+    });
+
+    it("AC6 — a malformed kitId raises ERR_KIT_NOT_FOUND (ZodError mapping)", async () => {
+      // The third arm of `assertKitExists`'s catch, and the only one with no
+      // test until now. `getKit`'s schema rejects an id that fails
+      // `isSafeKitId`, raising ZodError inside `assertKitExists`, which maps it
+      // to ERR_KIT_NOT_FOUND like the other two.
+      //
+      // This must be a DIRECT store call. `bind_kit` the tool gates its own
+      // `kitId` with the same `isSafeKitId` predicate `getKit` uses, so via the
+      // tool this arm is unreachable — anything that would raise here is
+      // rejected one frame earlier by `bindKitArgsSchema.parse`. That was
+      // equally true before #276 (both gates were KIT_ID_PATTERN then), so the
+      // arm is defence-in-depth for direct `ProjectStore` consumers, and this
+      // is the only shape of caller that can exercise it.
+      const { store, projectId } = await setup();
+
+      await expect(store.bindKit({ projectId, kitId: ".." })).rejects.toMatchObject({
+        code: "ERR_KIT_NOT_FOUND",
+        kitId: "..",
+      });
+
+      // ...and nothing was bound. `assertKitExists` runs before
+      // `upsertKitBinding`/`writeManifest`, so a rejected id must leave the
+      // manifest untouched — a gate that rejects *and* writes nothing is a
+      // stronger lock than one that only checks the error code.
+      await expect(readProjectManifest(store.root, projectId)).resolves.toMatchObject({
+        kitBindings: [],
       });
     });
 

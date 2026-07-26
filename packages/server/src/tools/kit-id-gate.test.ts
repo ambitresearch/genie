@@ -40,6 +40,7 @@ import { createServer } from "../server.js";
 import { isSafeKitId } from "../store/kit-files.js";
 import { MANIFEST_PATH } from "../store/manifest.js";
 import { resolveKitDir as resolveGridKitDir } from "../ui/grid-resource.js";
+import { seedKit } from "../../test/helpers/seed-kit.js";
 import type { BootRequest, BootedViewer, ViewerBooter } from "./preview.js";
 import { InvalidKitIdError, resolveKitDir as resolvePreviewKitDir } from "./preview.js";
 
@@ -72,18 +73,13 @@ function stubBooter(url = "http://127.0.0.1:5173/"): ViewerBooter {
  * the id's charset.
  */
 async function seedImportedKit(kitsRoot: string, kitId: string): Promise<void> {
-  const kitDir = join(kitsRoot, kitId);
-  await mkdir(kitDir, { recursive: true });
-  await writeFile(
-    join(kitDir, ".kit.json"),
-    JSON.stringify({
-      id: kitId,
-      name: `Imported ${kitId}`,
-      type: "GENIE_KIT",
-      createdAt: new Date().toISOString(),
-    }),
-    "utf-8",
-  );
+  // `.kit.json` — the store's only publication point — comes from the shared
+  // helper. Hand-rolling it here duplicated `seedKit`'s body and hardcoded the
+  // `"GENIE_KIT"` type literal where a `KIT_TYPE` constant already existed,
+  // which is precisely the copy-instead-of-import drift this file exists to
+  // stop (`list_components` carried its own copy of KIT_ID_PATTERN for the
+  // same reason). The scaffold below is the genuine extra this suite needs.
+  const kitDir = await seedKit(kitsRoot, kitId, `Imported ${kitId}`);
 
   const compDir = join(kitDir, "components", "actions", "Button");
   await mkdir(compDir, { recursive: true });

@@ -154,7 +154,12 @@ describe("mcp__genie__bind_kit", () => {
     expect(payload.message).toContain("no-such-project");
   });
 
-  it("AC6 — an invalid kitId raises ERR_KIT_NOT_FOUND", async () => {
+  // Named "absent", not "invalid": `"no-such-kit"` passes every id rule genie
+  // has — it simply doesn't exist. Malformed ids never reach the store from
+  // here; they're rejected by this tool's own gate, covered above in
+  // `it("rejects malformed args before touching the store")`. The store-side
+  // mapping for a malformed id is pinned in `create_project.test.ts`.
+  it("AC6 — an absent kitId raises ERR_KIT_NOT_FOUND", async () => {
     const { store, projectId } = await fixture();
     const client = await connectClient(store);
 
