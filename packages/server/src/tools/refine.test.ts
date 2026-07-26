@@ -31,6 +31,7 @@ import {
 import type { ChatCompletionInput, ChatCompletionResult } from "../llm/client.js";
 import type { ChatCompletionFn } from "../llm/component-response.js";
 import type { ValidatedComponent } from "../llm/schema.js";
+import type { CardAssetBroker } from "../ui/card-asset-broker.js";
 import { gitBlobHash, loadRefineComponentSystemPrompt } from "../llm/prompts.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -920,3 +921,50 @@ function stderrLines(): Array<
       }
     });
 }
+
+describe("#257 — draft preview URL", () => {
+  function brokerStub(url: string) {
+    const registerDraft = vi.fn(() => ({
+      token: "t".repeat(32),
+      hostname: "127.0.0.1",
+      authority: "127.0.0.1:4173",
+      origin: "http://127.0.0.1:4173",
+      url,
+    }));
+    return { registerDraft } as unknown as CardAssetBroker;
+  }
+
+  it("publishes the refined card and returns its broker URL", async () => {
+    const broker = brokerStub("http://127.0.0.1:4173/d/feed01");
+
+    const res = await refine(deps({ getRunningCardAssetBroker: () => broker }), args());
+
+    expect(res.previewUrl).toBe("http://127.0.0.1:4173/d/feed01");
+    // The refined card, not the framework source that sits beside it.
+    const card = refinedComponent().files.find((file) =>
+      file.path.endsWith("/Button/Button.html"),
+    )!;
+    expect(card).toBeDefined();
+    expect(broker.registerDraft).toHaveBeenCalledExactlyOnceWith(card.content);
+  });
+
+  it("omits previewUrl when no broker is running", async () => {
+    const res = await refine(deps(), args());
+
+    expect(res.previewUrl).toBeUndefined();
+    expect(Object.keys(res)).not.toContain("previewUrl");
+  });
+
+  it("still returns the refined component when publishing throws", async () => {
+    const broker = {
+      registerDraft: vi.fn(() => {
+        throw new Error("Card asset broker is closed.");
+      }),
+    } as unknown as CardAssetBroker;
+
+    const res = await refine(deps({ getRunningCardAssetBroker: () => broker }), args());
+
+    expect(res.componentName).toBe("Button");
+    expect(res.previewUrl).toBeUndefined();
+  });
+});

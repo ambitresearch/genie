@@ -3652,3 +3652,106 @@ describe("F39 — a route change cannot strand the apply dialog", () => {
     );
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * #257 — broker-served draft preview                                  *
+ * ------------------------------------------------------------------ */
+
+describe("#257 — broker-served draft preview", () => {
+  /** The exact shape the card asset broker mints: loopback, `/d/`, 16-byte hex token. */
+  const DRAFT_URL = "http://127.0.0.1:51234/d/0123456789abcdef0123456789abcdef";
+
+  function frameOf(document: Document): HTMLIFrameElement {
+    return document.querySelector("#review-preview iframe") as HTMLIFrameElement;
+  }
+
+  function pinStyleHashes(document: Document): void {
+    const meta = document.createElement("meta");
+    meta.setAttribute("http-equiv", "Content-Security-Policy");
+    meta.setAttribute("content", "default-src 'none'; style-src 'sha256-abc123'");
+    document.head.append(meta);
+  }
+
+  it("points the frame at the broker draft URL instead of srcdoc", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
+    const frame = frameOf(document);
+    // A document FETCHED over http gets a fresh response-header CSP; `srcdoc` inherits the
+    // embedder's. Serving the draft is the whole point of #257, so `srcdoc` must be unset.
+    expect(frame.getAttribute("src")).toBe(DRAFT_URL);
+    expect(frame.hasAttribute("srcdoc")).toBe(false);
+  });
+
+  it("falls back to srcdoc when the server published no preview URL", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult(), { kitId: "k", kitLabel: "K" });
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("refuses a preview URL that is not on the loopback broker", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(
+      conjureResult({ previewUrl: "https://evil.example/d/0123456789abcdef0123456789abcdef" }),
+      { kitId: "k", kitLabel: "K" },
+    );
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("refuses a loopback URL outside the draft path", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult({ previewUrl: "http://127.0.0.1:51234/k/abc/Button.html" }), {
+      kitId: "k",
+      kitLabel: "K",
+    });
+    expect(frameOf(document).hasAttribute("src")).toBe(false);
+  });
+
+  it("refuses a foreign URL that merely embeds a broker-shaped one", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    // Added after mutation testing: dropping the `^` anchor left this shape accepted, which would
+    // aim the frame at an attacker origin that simply appends a valid-looking draft URL.
+    controller.addDraft(conjureResult({ previewUrl: `https://evil.example/go?to=${DRAFT_URL}` }), {
+      kitId: "k",
+      kitLabel: "K",
+    });
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("refuses a broker URL carrying anything past the token", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    // Added after mutation testing: dropping the `$` anchor left this accepted. The broker never
+    // mints it, so it would 404 into a blank frame instead of falling back to a working srcdoc.
+    controller.addDraft(conjureResult({ previewUrl: `${DRAFT_URL}/../../k/abc/Button.html` }), {
+      kitId: "k",
+      kitLabel: "K",
+    });
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("drops the inherited-policy warning once the draft is served over http", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    pinStyleHashes(document);
+    controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
+    // The warning is about INHERITED policy. A served draft carries its own, so repeating it
+    // would be untrue.
+    expect((document.getElementById("review-preview-note") as HTMLElement).hidden).toBe(true);
+  });
+
+  it("keeps the warning when a rejected preview URL forces the srcdoc fallback", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    pinStyleHashes(document);
+    controller.addDraft(conjureResult({ previewUrl: "https://evil.example/d/abc" }), {
+      kitId: "k",
+      kitLabel: "K",
+    });
+    expect((document.getElementById("review-preview-note") as HTMLElement).hidden).toBe(false);
+  });
+});

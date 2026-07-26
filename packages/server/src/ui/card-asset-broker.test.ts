@@ -21,7 +21,9 @@ import {
   CARD_ASSET_PORT_ENV,
   startCardAssetBroker,
   type CardAssetBroker,
+  type CardAssetDraft,
   type CardAssetKit,
+  MAX_LIVE_DRAFTS,
 } from "./card-asset-broker.js";
 
 interface HttpResult {
@@ -573,5 +575,176 @@ describe("card asset broker lifecycle", () => {
     await expect(broker.registerKit("swapped", lexicalRoot)).rejects.toThrow(/symlink|changed/i);
     expect(swapped).toBe(true);
     expect(broker.getKit("swapped")).toBeUndefined();
+  });
+});
+
+// ─── #257 — unwritten drafts get their own document, not an inherited policy ──
+//
+// A `srcdoc` frame inherits the embedder's CSP, so a draft's inline <style> can
+// never match a hash minted before the draft existed. These pin the escape:
+// the draft becomes a real HTTP document on the SAME broker origin the kit
+// cards already use, so its policy is computed from its own bytes at serve time
+// and `frameOrigins()` — hence the host's `frame-src` — does not move.
+describe("card asset draft serving", () => {
+  function fetchDraft(
+    broker: CardAssetBroker,
+    draft: CardAssetDraft,
+    options: { method?: string; authority?: string; path?: string } = {},
+  ): Promise<HttpResult> {
+    return new Promise((resolve, reject) => {
+      const req = request(
+        {
+          hostname: broker.address,
+          port: broker.port,
+          path: options.path ?? new URL(draft.url).pathname,
+          method: options.method ?? "GET",
+          headers: { host: options.authority ?? draft.authority },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.once("error", reject);
+          res.once("end", () => {
+            resolve({
+              status: res.statusCode ?? 0,
+              headers: res.headers,
+              body: Buffer.concat(chunks),
+            });
+          });
+        },
+      );
+      req.once("error", reject);
+      req.end();
+    });
+  }
+
+  it("hashes the draft's own inline style and script instead of inheriting a policy", async () => {
+    const style = ".draft { color: rgb(200, 124, 94); }";
+    const script = "globalThis.draftBooted = true;";
+    const html = `<!doctype html><html><head><style>${style}</style></head><body><script>${script}</script></body></html>`;
+    const broker = await start({ env: {} });
+    const draft = broker.registerDraft(html);
+
+    const response = await fetchDraft(broker, draft);
+    const policy = response.headers["content-security-policy"];
+
+    expect(response.status).toBe(200);
+    expect(policy).toBeTypeOf("string");
+    expect(policy).toContain(`style-src 'self' ${cspHash(style)}`);
+    expect(policy).toContain(`script-src 'self' ${cspHash(script)}`);
+  });
+
+  it("keeps the embedded tier's guarantees on a draft document", async () => {
+    const broker = await start({ env: {} });
+    const draft = broker.registerDraft('<style>.a{color:red}</style><p style="margin:0">x</p>');
+
+    const policy = String((await fetchDraft(broker, draft)).headers["content-security-policy"]);
+
+    expect(policy).toContain("default-src 'none'");
+    expect(policy).toContain("connect-src 'none'");
+    expect(policy).toContain("font-src 'none'");
+    expect(policy).toContain("object-src 'none'");
+    expect(policy).toContain("base-uri 'none'");
+    expect(policy).toContain("form-action 'none'");
+    expect(policy).not.toContain("'unsafe-inline'");
+  });
+
+  it("serves the draft bytes verbatim with an exact length and safe headers", async () => {
+    // G-5: the card that renders here must be byte-identical to the one that
+    // renders from `file://`. The broker is a transport, never a rewriter.
+    const html = "<!doctype html><html><body><p>caf\u00e9 \u2014 draft</p></body></html>";
+    const broker = await start({ env: {} });
+    const draft = broker.registerDraft(html);
+
+    const response = await fetchDraft(broker, draft);
+
+    expect(response.body.toString("utf8")).toBe(html);
+    expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(html, "utf8")));
+    expect(response.headers["content-type"]).toBe("text/html; charset=utf-8");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["referrer-policy"]).toBe("no-referrer");
+  });
+
+  it("answers HEAD with the GET headers and no body", async () => {
+    const html = "<p>head</p>";
+    const broker = await start({ env: {} });
+    const draft = broker.registerDraft(html);
+
+    const get = await fetchDraft(broker, draft);
+    const head = await fetchDraft(broker, draft, { method: "HEAD" });
+
+    expect(head.status).toBe(200);
+    expect(head.body.byteLength).toBe(0);
+    expect(head.headers["content-length"]).toBe(get.headers["content-length"]);
+    expect(head.headers["content-security-policy"]).toBe(get.headers["content-security-policy"]);
+  });
+
+  it("mints opaque, distinct draft routes that cannot be reached as kit routes", async () => {
+    const broker = await start({ env: {} });
+    const first = broker.registerDraft("<p>one</p>");
+    const second = broker.registerDraft("<p>two</p>");
+
+    expect(first.token).not.toBe(second.token);
+    expect(first.token).toMatch(/^[0-9a-f]{32}$/);
+    expect(new URL(first.url).pathname).toBe(`/d/${first.token}`);
+    // The draft store and the kit store are separate namespaces; a draft token
+    // presented on the kit route must not resolve to anything.
+    const asKit = await fetchDraft(broker, first, { path: `/k/${first.token}/index.html` });
+    expect(asKit.status).toBe(404);
+  });
+
+  it("does not widen the frame origins a host must authorize", async () => {
+    const broker = await start({ env: {} });
+    const before = broker.frameOrigins();
+    const draft = broker.registerDraft("<p>same origin</p>");
+
+    expect(broker.frameOrigins()).toEqual(before);
+    expect(new URL(draft.url).origin).toBe(before[0]);
+  });
+
+  it("rejects unknown draft tokens and mismatched Host authorities", async () => {
+    const broker = await start({ env: {} });
+    const draft = broker.registerDraft("<p>guarded</p>");
+
+    const unknown = await fetchDraft(broker, draft, { path: `/d/${"0".repeat(32)}` });
+    const wrongHost = await fetchDraft(broker, draft, { authority: "example.test" });
+
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.byteLength).toBe(0);
+    expect(wrongHost.status).toBe(421);
+  });
+
+  it("bounds the draft store and keeps the most recently served draft alive", async () => {
+    // A long review session must not grow the process without limit, but the
+    // draft the user is looking at must survive newer siblings being registered.
+    const broker = await start({ env: {} });
+    const drafts: CardAssetDraft[] = [];
+    for (let index = 0; index < MAX_LIVE_DRAFTS; index += 1) {
+      drafts.push(broker.registerDraft(`<p>draft ${index}</p>`));
+    }
+    const oldest = drafts[0]!;
+    expect((await fetchDraft(broker, oldest)).status).toBe(200);
+
+    // Touching the oldest above made the SECOND draft the least-recently-used,
+    // so one more registration must evict that one and spare the oldest.
+    const overflow = broker.registerDraft("<p>overflow</p>");
+
+    expect((await fetchDraft(broker, overflow)).status).toBe(200);
+    expect((await fetchDraft(broker, oldest)).status).toBe(200);
+    expect((await fetchDraft(broker, drafts[1]!)).status).toBe(404);
+  });
+
+  it("refuses to register a draft once the broker is closed", async () => {
+    const broker = await startCardAssetBroker({ env: {} });
+    await broker.close();
+
+    expect(() => broker.registerDraft("<p>late</p>")).toThrow("closed");
+  });
+
+  it("requires the draft body to be a non-empty string", async () => {
+    const broker = await start({ env: {} });
+
+    expect(() => broker.registerDraft("")).toThrow("non-empty");
   });
 });

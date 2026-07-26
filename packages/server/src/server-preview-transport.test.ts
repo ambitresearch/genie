@@ -44,8 +44,22 @@ const lifecycle = vi.hoisted(() => ({
   disposerResults: [] as Promise<PromiseSettledResult<void>>[],
 }));
 
+// #257 — `conjure`/`refine` receive a NON-starting accessor. Capturing what they
+// were handed is the only way to observe it, so intercept just the registrar and
+// leave the rest of each module intact.
+const conjure = vi.hoisted(() => ({ registerConjureTool: vi.fn() }));
+const refine = vi.hoisted(() => ({ registerRefineTool: vi.fn() }));
+
 vi.mock("./tools/preview.js", () => preview);
 vi.mock("./ui/grid-resource.js", () => grid);
+vi.mock("./tools/conjure.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./tools/conjure.js")>()),
+  registerConjureTool: conjure.registerConjureTool,
+}));
+vi.mock("./tools/refine.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./tools/refine.js")>()),
+  registerRefineTool: refine.registerRefineTool,
+}));
 vi.mock("./ui/card-asset-broker.js", () => ({
   startCardAssetBroker: cardAssets.startCardAssetBroker,
 }));
@@ -78,6 +92,37 @@ describe("createServer preview transport policy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     lifecycle.disposerResults.length = 0;
+  });
+
+  // #257 — generation must not acquire a listening socket (AC9). `conjure`/`refine`
+  // get a NON-starting accessor: undefined until the viewer's own broker is up, and
+  // the broker instance once it is. Calling the starting provider from `conjure`
+  // would bind a loopback port as a side effect of a verb documented as pure.
+  it("hands conjure and refine a broker accessor that cannot start the broker", async () => {
+    createServer({ transportKind: "stdio" });
+
+    const conjureDeps = conjure.registerConjureTool.mock.calls[0]?.[1] as {
+      getRunningCardAssetBroker?: () => typeof cardAssets.instance | undefined;
+    };
+    const refineDeps = refine.registerRefineTool.mock.calls[0]?.[1] as {
+      getRunningCardAssetBroker?: () => typeof cardAssets.instance | undefined;
+    };
+    expect(conjureDeps.getRunningCardAssetBroker).toBeTypeOf("function");
+    expect(refineDeps.getRunningCardAssetBroker).toBeTypeOf("function");
+
+    // Reading it is inert: no port is bound, and the caller simply sees "no broker".
+    expect(conjureDeps.getRunningCardAssetBroker!()).toBeUndefined();
+    expect(refineDeps.getRunningCardAssetBroker!()).toBeUndefined();
+    expect(cardAssets.startCardAssetBroker).not.toHaveBeenCalled();
+
+    // The viewer path starts it; only then does the accessor see an instance.
+    const gridOptions = grid.registerGridResource.mock.calls[0]?.[1] as {
+      getCardAssetBroker?: () => Promise<typeof cardAssets.instance>;
+    };
+    await gridOptions.getCardAssetBroker!();
+
+    expect(conjureDeps.getRunningCardAssetBroker!()).toBe(cardAssets.instance);
+    expect(refineDeps.getRunningCardAssetBroker!()).toBe(cardAssets.instance);
   });
 
   it("threads an embedded HTTP transport kind into preview registration", () => {

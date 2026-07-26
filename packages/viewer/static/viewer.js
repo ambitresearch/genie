@@ -150,6 +150,7 @@
   var URL_LEADING_SLASHES_RE = /^[/\\]{2}/;
   var ANY_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
   var SAFE_FRAME_SCHEME_RE = /^(?:https?|data):/i;
+  var DRAFT_PREVIEW_SRC_RE = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/d\/[0-9a-f]{32}$/;
 
   /**
    * Is an ALREADY-NORMALIZED URL safe to hand an iframe? Split out of `safeFrameSrc` and called in
@@ -164,6 +165,19 @@
     if (!url || URL_LEADING_SLASHES_RE.test(url)) return false;
     if (!ANY_URL_SCHEME_RE.test(url)) return true;
     return SAFE_FRAME_SCHEME_RE.test(url);
+  }
+
+  /**
+   * Is this exactly a card-asset-broker draft URL? Anchored end to end against the one shape the
+   * broker mints -- loopback host, `/d/`, a 16-byte hex token -- so a tool result can never aim
+   * the review frame anywhere else. Split out and called in guard position for the same reason as
+   * `isSafeFrameSrc`: static analysis clears taint at a guard, not at a transformer.
+   *
+   * @param {unknown} url
+   * @returns {boolean}
+   */
+  function isDraftPreviewSrc(url) {
+    return typeof url === "string" && DRAFT_PREVIEW_SRC_RE.test(url);
   }
 
   /**
@@ -2136,14 +2150,22 @@
         store.setRenderState("fail");
         render();
       });
-      frame.srcdoc = file.content;
+      // #257 -- when the server published a broker URL, FETCH the draft instead of inlining it.
+      // A fetched document gets the broker's own response-header CSP (sha256 hashes over the exact
+      // bytes it serves); `srcdoc` can only inherit the embedder's, which was minted before this
+      // draft existed. Guard in barrier position: a tool result must never aim this frame off-host.
+      var candidate = draft.result ? draft.result.previewUrl : null;
+      var served = isDraftPreviewSrc(candidate) ? candidate : null;
+      if (served) frame.src = served;
+      else frame.srcdoc = file.content;
       el.preview.append(frame);
       el.preview.hidden = false;
       // Copilot (round 7) — a `srcdoc` frame INHERITS the embedding document's CSP (no local
       // scheme escapes it). Where the host pins `style-src` to build-time sha256 hashes, an
       // unwritten draft's inline <style> cannot match one that was minted before it existed, so a
       // green render row would over-promise. Detect the policy itself rather than guess the tier.
-      if (el.previewNote) el.previewNote.hidden = !inheritsStyleHashPolicy();
+      // A served draft carries its own policy, so the warning would be untrue.
+      if (el.previewNote) el.previewNote.hidden = Boolean(served) || !inheritsStyleHashPolicy();
     }
 
     function inheritsStyleHashPolicy() {

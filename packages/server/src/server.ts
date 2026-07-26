@@ -214,6 +214,15 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     generator: new LocalScaffoldScreenGenerator(),
   });
 
+  // Set by the lazy card-asset-broker provider below, once startup succeeds.
+  // `conjure`/`refine` read it synchronously to publish a draft's card for
+  // faithful embedded-tier preview (#257) and MUST NOT be able to start the
+  // broker: generation is pure and must not acquire a listening socket. The
+  // viewer starts the broker when it reads the grid resource, which necessarily
+  // precedes any review, so by then this is populated.
+  let runningCardAssetBroker: CardAssetBroker | undefined;
+  const getRunningCardAssetBroker = (): CardAssetBroker | undefined => runningCardAssetBroker;
+
   // conjure (M2-03): genie's headline verb — real LLM component generation
   // against the caller's UI kit. Calls the configured OpenAI-compatible endpoint
   // (M2-01 client) with a COMPONENT_SCHEMA json_schema response_format (M2-02),
@@ -221,7 +230,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // generation: it does NOT write files (AC9) and takes no store — the default
   // `chat` seam lazily imports the LLM client only on first call, so registering
   // it here never requires GENIE_LLM_* to be set just to build the server.
-  registerConjureTool(server, options.conjureDeps);
+  registerConjureTool(server, { ...options.conjureDeps, getRunningCardAssetBroker });
 
   // refine (M2-04): iterate on an existing component. Loads the component's
   // current files from the kit (`kitStore.listFiles`/`readFile`), sends them plus
@@ -232,7 +241,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // dependency (M3-02's validator setup) via a lazy import that degrades
   // gracefully when absent, so registering it here never requires Playwright or
   // GENIE_LLM_* to be set just to build the server.
-  registerRefineTool(server, { kitStore });
+  registerRefineTool(server, { kitStore, getRunningCardAssetBroker });
 
   registerListKits(server, kitStore);
   registerListComponents(server, kitStore);
@@ -328,6 +337,12 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
         if (cardAssetBrokerPromise === undefined) {
           const startup = startCardAssetBroker();
           cardAssetBrokerPromise = startup;
+          void startup.then(
+            (broker) => {
+              if (cardAssetBrokerPromise === startup) runningCardAssetBroker = broker;
+            },
+            () => {},
+          );
           // Preserve single-flight startup while allowing a transient bind
           // failure to recover on the next preview/resource request.
           void startup.catch(() => {
@@ -340,6 +355,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   if (getCardAssetBroker !== undefined) {
     registerServerDisposer(server, async () => {
       cardAssetBrokerDisposed = true;
+      runningCardAssetBroker = undefined;
       const startup = cardAssetBrokerPromise;
       if (startup === undefined) return;
       const cardAssetBroker = await startup.catch(() => undefined);
