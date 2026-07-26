@@ -8,7 +8,7 @@
  * For GitHostStore: uses a mock HTTP server (msw or hand-rolled fetch mock).
  */
 
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -829,6 +829,27 @@ describe("LocalFsKitStore — adapter-specific", () => {
     for (const id of ids) {
       expect(isSafeKitId(id), `listed id must satisfy isSafeKitId: ${id}`).toBe(true);
     }
+  });
+
+  it("🔒 rejects a custom kitId isSafeKitId rejects, before writing anything", async () => {
+    // `createKit(name, kitId?)` is public on `KitStore`, so the optional id is
+    // caller-supplied — NOT server-minted, whatever the tool layer does. Without
+    // this guard `createKit` resolved it through the UNGATED `kitDir` and wrote
+    // a real directory, so a caller could create a kit the listing filter above
+    // then hides: a successful creation that is permanently undiscoverable.
+    // Worse, `join` does not contain `..`, so an unsafe id also placed that
+    // directory OUTSIDE the kits root.
+    //
+    // GitHost cannot reach this state — it POSTs the id as a repo NAME and a
+    // git host rejects `unsafe\kit` with a 4xx that `createKit` propagates — so
+    // this is the local adapter catching up to a rejection GitHost already had,
+    // the same divergence this PR fixes for the reported id.
+    await expect(store.createKit("Unsafe Kit", "unsafe\\kit")).rejects.toThrow(NotFoundError);
+
+    // Assert against the FILESYSTEM, not `listKits`. The listing filter hides an
+    // `unsafe\kit` directory whether or not this guard exists, so a listKits
+    // assertion here is green either way — it would pin nothing.
+    expect(await readdir(tmpDir)).not.toContain("unsafe\\kit");
   });
 
   it("AC7 — readFile throws FileTooLargeError for files > 256 KiB", async () => {

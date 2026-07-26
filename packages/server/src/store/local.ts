@@ -466,9 +466,13 @@ export class LocalFsKitStore implements KitStore {
    *
    * An unsafe id names no valid kit, so it surfaces as the SAME `NotFoundError`
    * a genuinely-missing kit would — this never leaks a sibling's bytes and adds
-   * no new error type to the `KitStore` contract (AC4). The write/plan verbs
-   * (`createKit`/`deleteFile`/`openPlan`) keep using `kitDir` directly: their
-   * ids are server-minted or already plan-gated, and their behavior is
+   * no new error type to the `KitStore` contract (AC4). `createKit` now applies
+   * the same rule inline rather than trusting `kitDir` (see the guard there):
+   * its `kitId?` parameter is caller-supplied, and unlike the verbs below it
+   * CREATES the container, so an unsafe id there writes a new directory at a
+   * caller-chosen path instead of merely failing to resolve one. The remaining
+   * write/plan verbs (`deleteFile`/`openPlan`) keep using `kitDir` directly:
+   * their ids are server-minted or already plan-gated, and their behavior is
    * unchanged.
    */
   private safeKitDir(kitId: KitId): string {
@@ -653,6 +657,21 @@ export class LocalFsKitStore implements KitStore {
 
   async createKit(name: string, kitId?: string): Promise<KitMeta> {
     const id = kitId ?? randomUUID();
+    // `createKit(name, kitId?)` is public on `KitStore`, so this id is
+    // caller-supplied — the "server-minted" assumption holds for the tool layer
+    // (`create_kit` mints via `buildKitId`) but not for the contract. Reject
+    // BEFORE the `kitDir` join below, which is the UNGATED helper. Two distinct
+    // consequences, both closed by the one guard: an unsafe id creates a real
+    // kit that `listKits` then filters out — a successful creation nothing can
+    // discover — and, since `join` NORMALIZES `..` rather than rejecting it, an
+    // id of `..` would resolve the new directory outside the kits root.
+    //
+    // Same `NotFoundError` the other three `isSafeKitId` rejections raise
+    // (`safeKitDir` here, `git-host.ts` twice): an unsafe id names no valid kit,
+    // and AC4 keeps new error types out of the `KitStore` contract. This is the
+    // local adapter catching up to GitHost, which POSTs the id as a repo NAME
+    // and already propagates the host's 4xx for one a git host will not accept.
+    if (!isSafeKitId(id)) throw new NotFoundError("Kit", id);
     const dir = this.kitDir(id);
 
     // Defensive check: fail fast if kit directory already exists
