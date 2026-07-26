@@ -26,7 +26,13 @@ const PLAN_TOOL_NAME = "mcp__genie__plan";
 // The kitId every plan in this suite is created against. The destination of a
 // write is the KIT (DRO-565 re-plumb) — `<kitsRoot>/<KIT_ID>/…` — while
 // `localDir` remains only the SOURCE base a `localPath` is read from.
-// Must satisfy `KIT_ID_PATTERN` now that `plan` validates the kit (#252).
+//
+// The wire-level tests route through the `plan` tool, which since #252 requires
+// the kit to RESOLVE in the store, so `makeWireHarness` seeds a kit under this
+// id. That is an existence requirement, not a shape one: `plan` gates on the
+// store's `isSafeKitId` (any non-empty, non-traversing id), deliberately NOT on
+// the narrower create_kit-shaped `KIT_ID_PATTERN`. The core-logic tests below
+// call `createPlan` directly, beneath the tool layer, so they are unaffected.
 const KIT_ID = "wf-kit";
 
 async function tempDir(prefix: string): Promise<string> {

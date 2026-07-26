@@ -383,14 +383,6 @@ function isEnoent(error: unknown): boolean {
   );
 }
 
-/** True for the errno codes that mean "this path does not exist". */
-function isMissingPath(error: unknown): boolean {
-  const code =
-    typeof error === "object" && error !== null ? (error as { code?: string }).code : undefined;
-  // ENOTDIR: a parent component is a regular file, so the target cannot exist.
-  return code === "ENOENT" || code === "ENOTDIR";
-}
-
 /**
  * Read and parse a JSON metadata file for a DIRECTLY NAMED resource.
  *
@@ -410,7 +402,7 @@ async function readMeta<T>(filePath: string): Promise<T | undefined> {
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw) as T;
   } catch (error) {
-    if (isMissingPath(error)) return undefined;
+    if (isMissingPathError(error)) return undefined;
     throw error;
   }
 }
