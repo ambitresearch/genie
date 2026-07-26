@@ -1135,6 +1135,7 @@ type ToolCall = { name: string; args: Record<string, unknown> };
 function loadWired(
   replies: Record<string, unknown | ((args: never) => unknown)> = {},
   prepare?: (win: DOMWindow) => void,
+  extraOpts: Record<string, unknown> = {},
 ) {
   const shell = loadShell();
   if (prepare) prepare(shell.window);
@@ -1153,6 +1154,7 @@ function loadWired(
   const controller = shell.hooks.initReviewController(shell.document, {
     getBridge: () => bridge,
     announce: (message: string) => announced.push(message),
+    ...extraOpts,
   });
   return { ...shell, controller, calls, announced };
 }
@@ -3678,16 +3680,20 @@ function fireUnload(win: DOMWindow) {
 }
 
 describe("unsaved-draft unload guard (#256)", () => {
-  function guarded(options: { embedded?: boolean } = {}) {
-    return loadWired(HAPPY_REPLIES, (win) => {
-      if (!options.embedded) return;
-      // The same tier predicate `initMcpApp` uses: a real host frame is the
-      // only way `win.parent` stops being `win`.
-      Object.defineProperty(win, "parent", {
-        configurable: true,
-        value: { postMessage() {} },
-      });
-    });
+  function guarded(options: { embedded?: boolean; onApplied?: () => unknown } = {}) {
+    return loadWired(
+      HAPPY_REPLIES,
+      (win) => {
+        if (!options.embedded) return;
+        // The same tier predicate `initMcpApp` uses: a real host frame is the
+        // only way `win.parent` stops being `win`.
+        Object.defineProperty(win, "parent", {
+          configurable: true,
+          value: { postMessage() {} },
+        });
+      },
+      options.onApplied ? { onApplied: options.onApplied } : {},
+    );
   }
 
   function addDraft(wired: ReturnType<typeof loadWired>, componentInKit = false) {
@@ -3757,6 +3763,26 @@ describe("unsaved-draft unload guard (#256)", () => {
     addDraft(wired);
     await driveApply(wired);
     expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("stops prompting the moment the bytes land, not when the kit refresh returns", async () => {
+    // Copilot round 3 — `syncUnloadGuard` runs only from `render()`, and `confirmApply` renders
+    // BELOW its `await` on the host's post-apply refresh. In the real boot path that callback
+    // awaits `browseController.openComponent()` and its `read_file`, so a slow or hung refresh
+    // used to leave the guard armed over bytes that were already on disk.
+    let releaseRefresh: () => void = () => {};
+    const refreshed = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const wired = guarded({ onApplied: () => refreshed });
+    addDraft(wired);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+    await driveApply(wired);
+    // The refresh is still in flight here — nothing has re-rendered since the write.
+    expect(wired.document.getElementById("review-status")?.textContent).toMatch(/Refreshing/i);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+    releaseRefresh();
+    await refreshed;
   });
 
   it("stops prompting even while rejected alternatives remain in the switcher", async () => {
@@ -3836,10 +3862,11 @@ describe("unsaved-draft unload guard (#256)", () => {
 });
 
 describe("unload guard survives in-app navigation (#256)", () => {
-  it("keeps the drafts and the guard across a route change", () => {
+  it("keeps the drafts and an armed guard across a route change", async () => {
     const shell = loadShell();
     const bridge = {
-      callTool: () => Promise.resolve({}),
+      callTool: (name: string) =>
+        Promise.resolve(name === "mcp__genie__refine" ? refineResult() : {}),
       destroy() {},
     };
     const shellController = shell.hooks.initProductShell(shell.document, bridge, {});
@@ -3851,9 +3878,21 @@ describe("unload guard survives in-app navigation (#256)", () => {
       source: CARD_SOURCE,
     });
     const { document, window } = shell;
+    expect(document.getElementById("draft-label")!.textContent).toMatch(/draft #1/i);
+
+    // Copilot round 3 — the Browse handoff alone seeds `componentInKit: true`, which leaves the
+    // guard DISARMED. Asserting "unchanged" against that baseline passes even if routing tears
+    // an armed listener off the window, so refine once first: the reply is proposed bytes that
+    // exist nowhere on disk, which is exactly what the guard is for.
+    const input = document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "make the card bigger";
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    (document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(document.getElementById("draft-label")!.textContent).toMatch(/draft #2/i);
+    });
     const before = document.getElementById("draft-label")!.textContent;
-    expect(before).toMatch(/draft #1/i);
-    const guardedBefore = fireUnload(window).defaultPrevented;
+    expect(fireUnload(window).defaultPrevented).toBe(true);
 
     document
       .querySelector<HTMLElement>('[data-route-link="browse"]')!
@@ -3866,7 +3905,7 @@ describe("unload guard survives in-app navigation (#256)", () => {
       .querySelector<HTMLElement>('[data-route-link="review"]')!
       .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     expect(document.getElementById("draft-label")!.textContent).toBe(before);
-    // Routing must not arm, disarm, or otherwise disturb the guard.
-    expect(fireUnload(window).defaultPrevented).toBe(guardedBefore);
+    // Routing must not disarm the guard over drafts that are still unsaved.
+    expect(fireUnload(window).defaultPrevented).toBe(true);
   });
 });

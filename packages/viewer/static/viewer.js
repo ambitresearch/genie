@@ -2728,6 +2728,12 @@
       var stuckDeletes = outcome.stuckDeletes || [];
       if (!stuckDeletes.length) store.markApplied(outcome.writtenPaths, draft.id);
       meta[draft.id].componentInKit = true;
+      // The bytes are on disk NOW, but `syncUnloadGuard` otherwise only runs from `render()` --
+      // which sits below the `await` on the host's kit refresh. A slow or hung refresh would
+      // leave the tab prompting about work that is already saved. Re-sync eagerly; this cannot
+      // over-disarm, because `hasUnsavedDrafts` reads the whole store and still returns true
+      // while any draft newer than the applied one holds bytes the kit does not have.
+      syncUnloadGuard(store.state());
 
       // AC13 — report success only once the refresh lands. AC14 — a failed refresh is a STALE VIEW,
       // not a failed apply: the bytes are on disk.

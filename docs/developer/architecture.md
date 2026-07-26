@@ -55,8 +55,11 @@ acknowledgements survive. A full reload, tab close, or host teardown destroys th
 session. Drafts are never persisted; Apply is the only durability boundary.
 
 Because that loss is unrecoverable, the standalone tier registers a `beforeunload` handler
-(`syncUnloadGuard`, re-evaluated on every `render`) so the browser shows its native "leave
-site?" prompt. It is deliberately narrow, and each condition removes a false positive:
+(`syncUnloadGuard`) so the browser shows its native "leave site?" prompt. It re-evaluates on
+every `render`, and additionally the instant Apply stamps a draft as written — Apply then awaits
+the host's kit refresh before it renders, and prompting about bytes that are already on disk
+would be a lie for as long as that refresh takes. It is deliberately narrow, and each condition
+removes a false positive:
 
 | Condition                                         | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
