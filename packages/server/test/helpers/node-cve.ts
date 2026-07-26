@@ -223,12 +223,14 @@ export function assertRangePatchesCve202527210(range: string, label: string): vo
  * Render a declared `engines.node` range as the prose the public docs must use.
  *
  * The prerequisites in `README.md`, `docs/user/installation.md` and
- * `docs/developer/contributing.md` are a **promise about installability**: npm
- * refuses to install a package whose `engines.node` the running Node fails. So a
- * doc that says "Node 22.19 or newer" while the manifest says
+ * `docs/developer/contributing.md` are the only thing standing between a reader
+ * and a runtime the packages were never tested on. `engines.node` does not stand
+ * there too: this repository sets no `engine-strict`, so npm treats the field as
+ * advisory and carries on after an `EBADENGINE` warning that never mentions the
+ * CVE. So a doc saying "Node 22.19 or newer" while the manifest says
  * `>=22.19.0 <23 || >=24.4.1` is not a cosmetic mismatch — it tells a user on
- * Node 23 or 24.2 that a command will work which cannot work, and the failure
- * they get (`EBADENGINE`) does not explain why.
+ * Node 23 or 24.2 that a command is supported, and nothing downstream corrects
+ * them.
  *
  * That mismatch is exactly what happened when the CVE-2025-27210 floors landed:
  * four prose claims across three files kept describing the pre-narrowing range.
@@ -276,9 +278,10 @@ export function renderNodeRequirement(range: string): string {
 /**
  * Every open-ended Node floor a doc claims, e.g. `≥22.19.0` or "22.19 or newer".
  *
- * Only floors attributed to Node on the same line count. The name always said
- * so; the patterns did not, and a caller that trusted the name would read a
- * contrast ratio as a runtime promise.
+ * Only floors attributed to Node on the same line count, and only clauses with
+ * no upper bound. The name always said both; the patterns said neither, so a
+ * caller that trusted the name would read a contrast ratio as a runtime promise
+ * and read `>=22.19.0 <23` as an open-ended one.
  *
  * Covers the plain, the typographic and the URL-encoded spellings, because the
  * README states its floor twice — once in prose and once inside a shields.io
@@ -286,19 +289,30 @@ export function renderNodeRequirement(range: string): string {
  * search for the prose form.
  */
 export function findOpenEndedNodeFloors(text: string): string[] {
-  // Each pattern must reach back to a `node` mention on the same line. Without
-  // that the function matched any `>=x.y` in the text and reported design
+  // Attribution is per line: a version counts only where Node is what is being
+  // versioned. Without that the function matched any `>=x.y` and reported design
   // tokens and unrelated tool floors as Node prerequisites, which is why the
   // documentation sweep could not simply scan the repository.
+  //
+  // Scanning the whole line, rather than a window running forward from the word
+  // `node`, also stops an early match from hiding a later one: in
+  // `>=22.19.0 <23 || >=24.4.1` the bounded arm consumed the line's only `node`
+  // mention, so the arm that actually is open-ended was never reached.
   const patterns = [
-    /node[^\n]{0,40}?(?:>=|≥|%E2%89%A5)\s*(\d+)\.(\d+)(?:\.(\d+))?/giu,
-    /node[^\n]{0,40}?(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/giu,
+    // A comparator followed by an upper bound is a bounded clause, not a floor:
+    // `>=22.19.0 <23` promises nothing whatsoever about 23.x.
+    /(?:>=|≥|%E2%89%A5)\s*(\d+)\.(\d+)(?:\.(\d+))?(\s*<)?/gu,
+    /(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/gu,
   ];
 
   const found: string[] = [];
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      found.push(`${match[1]}.${match[2]}.${match[3] ?? "0"}`);
+  for (const line of text.split("\n")) {
+    if (!/node/iu.test(line)) continue;
+    for (const pattern of patterns) {
+      for (const match of line.matchAll(pattern)) {
+        if (match[4] !== undefined) continue;
+        found.push(`${match[1]}.${match[2]}.${match[3] ?? "0"}`);
+      }
     }
   }
   return found;

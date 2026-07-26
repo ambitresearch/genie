@@ -65,7 +65,7 @@ const CHANGELOG = /(^|\/)CHANGELOG\.md$/u;
  */
 const isPrerequisiteDoc = (relative: string): boolean => !CHANGELOG.test(relative);
 
-const markdownFiles = async (): Promise<string[]> => {
+const repoFiles = async (matches: (relative: string) => boolean): Promise<string[]> => {
   const skip = new Set(["node_modules", "dist", ".git", "coverage", ".turbo"]);
   const found: string[] = [];
   const walk = async (relative: string): Promise<void> => {
@@ -74,7 +74,7 @@ const markdownFiles = async (): Promise<string[]> => {
       const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
       if (entry.isDirectory()) {
         if (!skip.has(entry.name)) await walk(child);
-      } else if (entry.name.endsWith(".md") && isPrerequisiteDoc(child)) {
+      } else if (matches(child)) {
         found.push(child);
       }
     }
@@ -82,6 +82,9 @@ const markdownFiles = async (): Promise<string[]> => {
   await walk("");
   return found.sort();
 };
+
+const markdownFiles = async (): Promise<string[]> =>
+  await repoFiles((file) => file.endsWith(".md") && isPrerequisiteDoc(file));
 
 /** The manifests whose `engines.node` those docs are promising. */
 const PUBLISHED_MANIFESTS = ["packages/server/package.json", "packages/viewer/package.json"];
@@ -166,5 +169,32 @@ describe("published Node requirement", () => {
     expect(findOpenEndedNodeFloors("node-%E2%89%A522.19.0-brightgreen.svg")).toContain("22.19.0");
     expect(findOpenEndedNodeFloors("Node.js 22.19 or newer")).toContain("22.19.0");
     expect(nodeFloorOverclaim("22.19.0", range)).toBe("23.0.0");
+  });
+  it("\u{1f512} is never described as something npm enforces", async () => {
+    // `engines.node` only refuses an install under `engine-strict`, which this
+    // repository does not set: npm warns `EBADENGINE` and installs anyway. A
+    // comment claiming npm blocks the install is not a harmless simplification
+    // \u2014 it states this file's whole reason backwards. If the field stopped a
+    // user reaching an unsupported runtime, the prose would not have to.
+    const npmrc = await read(".npmrc").catch(() => "");
+    if (/^\s*engine-strict\s*=\s*true/mu.test(npmrc)) return;
+
+    const enforcement =
+      /\b(?:refuses?|blocks?|prevents?|rejects?)\b[^.]{0,60}?\binstall[^.]{0,200}?\bengines\b/giu;
+
+    const offenders: string[] = [];
+    for (const file of await repoFiles((f) => f.endsWith(".md") || f.endsWith(".ts"))) {
+      // Collapse docblock leaders so a claim wrapped across several comment
+      // lines is read as the single sentence it is.
+      const prose = (await read(file)).replace(/\n\s*\*?\s*/gu, " ");
+      for (const [sentence] of prose.matchAll(enforcement)) {
+        offenders.push(`${file}: ${sentence.trim()}`);
+      }
+    }
+
+    expect(
+      offenders,
+      "engines.node is advisory here \u2014 npm warns EBADENGINE and installs anyway",
+    ).toEqual([]);
   });
 });
