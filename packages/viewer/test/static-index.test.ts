@@ -291,10 +291,11 @@ describe("scaffolded static assets stay servable", () => {
 
   /**
    * Headroom floor (#253). The cap alone is a cliff, not a budget: `viewer.js`
-   * sat at 261,788 B — 356 bytes clear — so any routine edit broke the build,
-   * and the file was only kept servable by relocating comment blocks out into
-   * `docs/developer/architecture.md`. Requiring real slack turns the silent
-   * cliff into an early, actionable signal.
+   * sat at 261,788 B — 356 bytes clear, still servable — so any routine edit
+   * would have broken the build, and the file was only kept under the cap by
+   * relocating comment blocks out into `docs/developer/architecture.md`.
+   * Requiring real slack turns the silent cliff into an early, actionable
+   * signal.
    *
    * The cap itself is *not* negotiable here: it is a DesignSync contract
    * constant (`server/src/tools/read_file.ts`) backing `read_file`'s

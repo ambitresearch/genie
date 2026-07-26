@@ -4617,10 +4617,11 @@
   }
 
   // ── Cross-script seam: Browse workbench (#253) ────
-  // `viewer.js` outgrew the 256 KiB store read cap, so the Browse workbench
-  // lives in `viewer-browse.js`, loaded as an ordered classic script BEFORE
-  // this one. Both directions resolve lazily at call time, so neither script
-  // depends on the other having finished evaluating.
+  // `viewer.js` had grown to within 356 B of the 256 KiB store read cap — still
+  // servable, but one edit from not being — so the Browse workbench lives in
+  // `viewer-browse.js`, loaded as an ordered classic script BEFORE this one.
+  // Both directions resolve lazily at call time, so neither script depends on
+  // the other having finished evaluating.
 
   /**
    * @returns {object} the Browse seam, or `{}` if that script was not loaded.

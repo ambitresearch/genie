@@ -1,11 +1,13 @@
 /**
  * genie viewer — Browse UI-kit workbench (M7-02 / #234).
  *
- * Split out of `viewer.js` (#253): that file reached 261,788 B against the
- * 256 KiB store read cap, so `create_kit` scaffolded a kit whose own viewer
- * the server could no longer serve over `read_file`. The cut follows the
- * product's own seam — CLAUDE.md describes two surfaces, the preview grid and
- * the UI-kit file browser — and this is the second one.
+ * Split out of `viewer.js` (#253): that file had grown to 261,788 B against the
+ * 256 KiB (262,144 B) store read cap, leaving only 356 B of headroom. Nothing
+ * was broken yet — the server could still serve it — but the next edit of any
+ * size would have tipped it over, at which point `create_kit` would scaffold a
+ * kit whose own viewer the server could not return over `read_file`. The cut
+ * follows the product's own seam — CLAUDE.md describes two surfaces, the
+ * preview grid and the UI-kit file browser — and this is the second one.
  *
  * Loaded as an ORDERED CLASSIC SCRIPT, never an ES module: a module script's
  * relative `src` is rejected under `file://` (opaque origin), and RFC G-5
