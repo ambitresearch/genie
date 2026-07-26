@@ -4,6 +4,7 @@ import {
   assertRangePatchesCve202527210,
   CVE_2025_27210_SUPPORTED,
   CVE_2025_27210_VULNERABLE,
+  isVulnerableVersion,
   satisfiesRange,
 } from "./node-cve.js";
 
@@ -72,6 +73,23 @@ describe("assertRangePatchesCve202527210", () => {
     expect(() => assertRangePatchesCve202527210(">=22.19.0 <23 || >=24.4.1", "demo")).not.toThrow();
   });
 
+  it("🔒 rejects a range that re-admits a vulnerable release the tables do not list", () => {
+    // Filtering a fixed set of representative releases cannot prove that a range
+    // misses the vulnerable *intervals*: this one admits exactly one vulnerable
+    // release, chosen precisely because it is not one of the sampled points.
+    expect(() =>
+      assertRangePatchesCve202527210("=22.16.0 || >=22.19.0 <23 || >=24.4.1", "demo"),
+    ).toThrow(/still admits Node .*22\.16\.0/u);
+  });
+
+  it("🔒 rejects a window carved out of a line that was never patched", () => {
+    // 23.x reached end-of-life without the fix, so *any* window inside it is
+    // vulnerable — not just the 23.11.1 that happens to be sampled.
+    expect(() =>
+      assertRangePatchesCve202527210(">=22.19.0 <23 || >=23.2.0 <23.3.0 || >=24.4.1", "demo"),
+    ).toThrow(/still admits Node 23\./u);
+  });
+
   it("keeps the vulnerable and supported tables disjoint", () => {
     // A version in both tables would make every assertion unsatisfiable, so the
     // fixtures themselves are pinned.
@@ -79,5 +97,38 @@ describe("assertRangePatchesCve202527210", () => {
       (CVE_2025_27210_VULNERABLE as readonly string[]).includes(v),
     );
     expect(overlap).toEqual([]);
+  });
+});
+
+/**
+ * The interval model is now the decision procedure, so it is pinned directly
+ * rather than only through the ranges that happen to be declared today.
+ */
+describe("isVulnerableVersion", () => {
+  it("agrees with both fixture tables", () => {
+    // Catches an interval typo that the range locks would not notice, because
+    // today's declared ranges exclude whole majors outright.
+    expect(CVE_2025_27210_VULNERABLE.filter((v) => !isVulnerableVersion(v))).toEqual([]);
+    expect(CVE_2025_27210_SUPPORTED.filter((v) => isVulnerableVersion(v))).toEqual([]);
+  });
+
+  it("flips at each of the three patch points and nowhere else", () => {
+    expect(isVulnerableVersion("20.19.3")).toBe(true);
+    expect(isVulnerableVersion("20.19.4")).toBe(false);
+    expect(isVulnerableVersion("22.17.0")).toBe(true);
+    expect(isVulnerableVersion("22.17.1")).toBe(false);
+    expect(isVulnerableVersion("24.4.0")).toBe(true);
+    expect(isVulnerableVersion("24.4.1")).toBe(false);
+  });
+
+  it("treats the odd-numbered lines as vulnerable for their whole life", () => {
+    // 21.x and 23.x reached end-of-life without ever receiving the fix, so there
+    // is no version of either that a published range may admit.
+    for (const v of ["21.0.0", "21.7.3", "23.0.0", "23.11.1"]) {
+      expect(isVulnerableVersion(v)).toBe(true);
+    }
+    // …while the patched tail of 20.x sits in the gap between the intervals.
+    expect(isVulnerableVersion("20.19.4")).toBe(false);
+    expect(isVulnerableVersion("20.99.0")).toBe(false);
   });
 });
