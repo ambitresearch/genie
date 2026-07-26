@@ -56,7 +56,7 @@ import { MANIFEST_PATH } from "../store/manifest.js";
 import { resolveKitDir as resolveGridKitDir } from "../ui/grid-resource.js";
 import { seedKit } from "../../test/helpers/seed-kit.js";
 import { ProjectNotFoundError, getKit } from "./get_kit.js";
-import { LIST_KITS_DESCRIPTION, listWritableKits } from "./list_kits.js";
+import { listWritableKits } from "./list_kits.js";
 import { registerPlan } from "./plan.js";
 import type { BootRequest, BootedViewer, ViewerBooter } from "./preview.js";
 import { InvalidKitIdError, resolveKitDir as resolvePreviewKitDir } from "./preview.js";
