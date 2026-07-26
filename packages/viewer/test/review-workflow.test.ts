@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { JSDOM } from "jsdom";
+import { JSDOM, type DOMWindow } from "jsdom";
 import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1132,8 +1132,13 @@ describe("untrusted content handling", () => {
 type ToolCall = { name: string; args: Record<string, unknown> };
 
 /** Boot the real controller against the real markup with a recording bridge. */
-function loadWired(replies: Record<string, unknown | ((args: never) => unknown)> = {}) {
+function loadWired(
+  replies: Record<string, unknown | ((args: never) => unknown)> = {},
+  prepare?: (win: DOMWindow) => void,
+  extraOpts: Record<string, unknown> = {},
+) {
   const shell = loadShell();
+  if (prepare) prepare(shell.window);
   const calls: ToolCall[] = [];
   const bridge = {
     callTool(name: string, args: Record<string, unknown>) {
@@ -1149,6 +1154,7 @@ function loadWired(replies: Record<string, unknown | ((args: never) => unknown)>
   const controller = shell.hooks.initReviewController(shell.document, {
     getBridge: () => bridge,
     announce: (message: string) => announced.push(message),
+    ...extraOpts,
   });
   return { ...shell, controller, calls, announced };
 }
@@ -1482,7 +1488,11 @@ const CARD_SOURCE = `${MARKER}\n<div class="card">Card from the kit</div>`;
 /** Wire Browse to a real product shell exactly the way the boot paths do. */
 function loadBrowseToReview(
   source: string | null,
-  opts: { onApplied?: (applied: Record<string, unknown>) => unknown } = {},
+  opts: {
+    onApplied?: (applied: Record<string, unknown>) => unknown;
+    /** One reply, or a queue consumed in order (the last one repeats). */
+    refineReply?: Record<string, unknown> | Record<string, unknown>[];
+  } = {},
   manifest: Record<string, unknown> = BROWSE_MANIFEST,
 ) {
   const shell = loadShell();
@@ -1494,6 +1504,11 @@ function loadBrowseToReview(
         return Promise.resolve(source === null ? {} : { content: source, encoding: "utf-8" });
       }
       if (name === "mcp__genie__list_kits") return Promise.resolve({ kits: [] });
+      if (name === "mcp__genie__refine" && opts.refineReply) {
+        const queued = opts.refineReply;
+        if (!Array.isArray(queued)) return Promise.resolve(queued);
+        return Promise.resolve(queued.length > 1 ? queued.shift()! : queued[0]);
+      }
       return Promise.resolve({});
     },
     destroy() {},
@@ -1897,8 +1912,20 @@ describe("PR #250 review findings", () => {
   // `componentInKit: true` onto the refined draft re-opens the Refine gate,
   // and the next call reloads the OLDER on-disk component — silently dropping
   // the first refinement.
+  //
+  // The fixture must DIVERGE from the parent for that hazard to exist at all.
+  // Bare `refineResult()` reuses `conjureResult()`'s files verbatim, so it would
+  // hand back the kit's own bytes and there would be no refinement to drop — see
+  // "unload guard ignores byte-identical derivatives (#256)".
   it("marks a refined draft as not yet in the kit", async () => {
-    const wired = loadWired({ ...HAPPY_REPLIES, mcp__genie__refine: refineResult() });
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__refine: refineResult({
+        files: [
+          fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Red</button>\n`),
+        ],
+      }),
+    });
     wired.controller.addDraft(conjureResult(), {
       kitId: "my-kit",
       kitLabel: "My Kit",
@@ -3650,5 +3677,931 @@ describe("F39 — a route change cannot strand the apply dialog", () => {
     expect((shell.document.querySelector(".app-header") as HTMLElement).hasAttribute("inert")).toBe(
       false,
     );
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * #256 — an unsaved draft must not vanish on reload or tab close.
+ *
+ * The review store is in-memory only, so a reload is unrecoverable. The guard
+ * is a `beforeunload` handler, and two things about it are deliberate:
+ *
+ *  - It is STANDALONE-ONLY. Inside a host iframe the prompt is hostile (the
+ *    user is closing the HOST, not us) and most hosts suppress it anyway, so
+ *    the embedded tier leaves teardown UX to its host.
+ *  - It counts only drafts whose bytes are NOT on disk (`componentInKit`).
+ *    A Browse -> Review handoff seeds draft #1 from the kit's own bytes, so
+ *    prompting there would warn about losing a file that already exists.
+ * ------------------------------------------------------------------------ */
+/** A cancellable `beforeunload`, exactly as a browser delivers it. */
+function fireUnload(win: DOMWindow) {
+  const event = new win.Event("beforeunload", { cancelable: true });
+  win.dispatchEvent(event);
+  return event;
+}
+
+describe("unsaved-draft unload guard (#256)", () => {
+  function guarded(options: { embedded?: boolean; onApplied?: () => unknown } = {}) {
+    return loadWired(
+      HAPPY_REPLIES,
+      (win) => {
+        if (!options.embedded) return;
+        // The same tier predicate `initMcpApp` uses: a real host frame is the
+        // only way `win.parent` stops being `win`.
+        Object.defineProperty(win, "parent", {
+          configurable: true,
+          value: { postMessage() {} },
+        });
+      },
+      options.onApplied ? { onApplied: options.onApplied } : {},
+    );
+  }
+
+  function addDraft(wired: ReturnType<typeof loadWired>, componentInKit = false) {
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "design-default",
+      componentInKit,
+    });
+  }
+
+  it("stays silent when there is nothing to lose", () => {
+    const wired = guarded();
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("prompts once an unapplied draft holds bytes that are not on disk", () => {
+    const wired = guarded();
+    addDraft(wired);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("registers exactly one listener however many times it re-renders", () => {
+    const wired = guarded();
+    const added: unknown[] = [];
+    const removed: unknown[] = [];
+    const realAdd = wired.window.addEventListener.bind(wired.window);
+    const realRemove = wired.window.removeEventListener.bind(wired.window);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (wired.window as any).addEventListener = (type: string, fn: unknown, opts?: unknown) => {
+      if (type === "beforeunload") added.push(fn);
+      return realAdd(type, fn as EventListener, opts as boolean);
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (wired.window as any).removeEventListener = (type: string, fn: unknown, opts?: unknown) => {
+      if (type === "beforeunload") removed.push(fn);
+      return realRemove(type, fn as EventListener, opts as boolean);
+    };
+    addDraft(wired);
+    // Every one of these re-renders; none may stack a second listener.
+    wired.controller.refresh();
+    wired.controller.refresh();
+    addDraft(wired);
+    wired.controller.refresh();
+    expect(added).toHaveLength(1);
+    expect(removed).toHaveLength(0);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  async function driveApply(wired: ReturnType<typeof loadWired>) {
+    const { document, controller, calls } = wired;
+    const click = (id: string) =>
+      document
+        .getElementById(id)!
+        .dispatchEvent(new document.defaultView!.Event("click", { bubbles: true }));
+    firePreviewLoad(document);
+    makeGreen(document, controller);
+    click("decision-approve");
+    click("apply-button");
+    click("apply-confirm-accept");
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    await vi.waitFor(() => expect(controller.state().appliedDraftId).not.toBeNull());
+  }
+
+  it("stops prompting once the draft has been applied to the kit", async () => {
+    const wired = guarded();
+    addDraft(wired);
+    await driveApply(wired);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("still stops prompting for the alternatives that lost to the applied draft", async () => {
+    // The floor's real job, pinned so the lineage fix below cannot over-correct:
+    // two takes on the SAME component are alternatives, and applying the second
+    // is the user choosing against the first. Nothing there is unsaved work.
+    const wired = guarded();
+    addDraft(wired);
+    addDraft(wired);
+    await driveApply(wired);
+    expect(wired.controller.state().appliedDraftId).toBe("draft-2");
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("keeps prompting for an earlier draft of a component the applied one never touched", async () => {
+    // Copilot (round 10, PR #270) — the applied-draft floor was a LINEAGE rule
+    // wearing a number's clothes. The review store never resets between
+    // components: Generate and a Browse handoff both append into one list, so a
+    // lower number can be independent unsaved work rather than a rejected
+    // alternative. Applying `Button` says nothing about an `Alpha` nobody wrote.
+    const wired = guarded();
+    wired.controller.addDraft(
+      conjureResult({
+        componentName: "Alpha",
+        files: [fileEntry("components/actions/Alpha/Alpha.html", `${MARKER}\n<b>Alpha</b>\n`)],
+      }),
+      { kitId: "my-kit", kitLabel: "My Kit", model: "design-default", componentInKit: false },
+    );
+    addDraft(wired);
+    await driveApply(wired);
+    expect(wired.controller.state().appliedDraftId).toBe("draft-2");
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("keeps prompting for an unapplied draft that belongs to another kit", async () => {
+    // Same component name, different kit: the applied bytes landed somewhere
+    // else entirely, so the earlier draft is still unwritten.
+    const wired = guarded();
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "other-kit",
+      kitLabel: "Other Kit",
+      model: "design-default",
+      componentInKit: false,
+    });
+    addDraft(wired);
+    await driveApply(wired);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("keeps prompting when neither draft can say which component it is", async () => {
+    // `controller.addDraft` is a public seam that takes the object as given -- the
+    // shape validators run on HOST replies, upstream of here. If two drafts both
+    // arrive without an identity they must not collapse into one lineage and
+    // cancel each other out; an unreadable identity matches nothing, on purpose.
+    const wired = guarded();
+    const nameless = () => {
+      const result = conjureResult() as Record<string, unknown>;
+      delete result.componentName;
+      return result as unknown as Parameters<typeof wired.controller.addDraft>[0];
+    };
+    const info = {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "design-default",
+      componentInKit: false,
+    };
+    wired.controller.addDraft(nameless(), info);
+    wired.controller.addDraft(nameless(), info);
+    await driveApply(wired);
+    expect(wired.controller.state().appliedDraftId).toBe("draft-2");
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("stops prompting the moment the bytes land, not when the kit refresh returns", async () => {
+    // Copilot round 3 — `syncUnloadGuard` runs only from `render()`, and `confirmApply` renders
+    // BELOW its `await` on the host's post-apply refresh. In the real boot path that callback
+    // awaits `browseController.openComponent()` and its `read_file`, so a slow or hung refresh
+    // used to leave the guard armed over bytes that were already on disk.
+    let releaseRefresh: () => void = () => {};
+    const refreshed = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const wired = guarded({ onApplied: () => refreshed });
+    addDraft(wired);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+    await driveApply(wired);
+    // The refresh is still in flight here — nothing has re-rendered since the write.
+    expect(wired.document.getElementById("review-status")?.textContent).toMatch(/Refreshing/i);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+    releaseRefresh();
+    await refreshed;
+  });
+
+  it("stops prompting even while rejected alternatives remain in the switcher", async () => {
+    const wired = guarded();
+    // Two candidates, neither on disk. Apply writes the selected one; the other
+    // is a rejected alternative, not unsaved work, so the tab is free to close.
+    addDraft(wired);
+    addDraft(wired);
+    expect(wired.controller.state().drafts).toHaveLength(2);
+    await driveApply(wired);
+    expect(
+      wired.controller
+        .state()
+        .drafts.every(
+          (draft: { id: string }) => draft.id !== wired.controller.state().appliedDraftId,
+        ),
+    ).toBe(false);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("prompts again for a draft created after the apply", async () => {
+    // Copilot round 1 on #270. `markApplied` stamps a SPECIFIC draft. Tweak and
+    // refine are frozen while `inFlight`, but they go live again the moment the
+    // apply settles, so a later draft can exist with `appliedDraftId` still set.
+    // That draft is new work nothing has written -- an earlier apply must not
+    // disarm the guard for it.
+    const wired = guarded();
+    addDraft(wired);
+    await driveApply(wired);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+    addDraft(wired);
+    expect(wired.controller.state().appliedDraftId).not.toBeNull();
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("prompts through both the modern and the legacy channel", () => {
+    const wired = guarded();
+    addDraft(wired);
+    const event = new wired.window.Event("beforeunload", { cancelable: true });
+    // A real BeforeUnloadEvent exposes `returnValue` as a plain string slot, so
+    // assigning it does NOT imply preventDefault() the way jsdom's generic Event
+    // does. Neutralise that coupling to prove each channel is driven on its own.
+    let legacy: unknown;
+    Object.defineProperty(event, "returnValue", {
+      configurable: true,
+      get: () => legacy,
+      set: (value) => {
+        legacy = value;
+      },
+    });
+    const prevented = vi.spyOn(event, "preventDefault");
+    wired.window.dispatchEvent(event);
+    expect(prevented).toHaveBeenCalled();
+    // Per HTML, the dialog shows when `defaultPrevented` OR `returnValue !== ""`.
+    // An empty string therefore contributes nothing on engines that honour only
+    // the legacy channel, so the value has to be non-empty to mean anything.
+    expect(legacy).toBeTruthy();
+    expect(legacy).not.toBe("");
+  });
+
+  it("never prompts in the embedded tier", () => {
+    const wired = guarded({ embedded: true });
+    addDraft(wired);
+    expect(wired.controller.state().drafts).toHaveLength(1);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("does not prompt for a Browse handoff until its bytes diverge from the kit", () => {
+    const wired = guarded();
+    // Draft #1 IS the kit's current bytes -- reloading loses nothing.
+    addDraft(wired, true);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+    // A refine/tweak reply is PROPOSED bytes that exist nowhere on disk.
+    addDraft(wired, false);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+});
+
+/**
+ * Copilot (round 4, PR #270) — `derivedInfo()` cleared `componentInKit`
+ * unconditionally, so ANY derive prompted on unload. But a derive that produces
+ * byte-identical output holds exactly the bytes already on disk, and reloading
+ * it loses nothing. The flag has to describe the bytes we hold, not the mere
+ * fact that a derive happened.
+ */
+describe("unload guard ignores byte-identical derivatives (#256)", () => {
+  const CHANGED = [
+    fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Different</button>\n`),
+  ];
+
+  async function refined(overrides: Record<string, unknown> = {}) {
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      // Two baselines are in play and they can disagree. The viewer's is the parent
+      // draft's files -- for a Browse handoff, a SNAPSHOT of the kit taken before
+      // Refine ran. The server's is `listFiles` + `readFile` at refine time, i.e. the
+      // file on disk NOW (`refine.ts:378`, `:416`, `:710-712`). While they agree,
+      // byte-identity and diff-silence agree too, because `buildUnifiedDiff` skips
+      // any path whose before === after (`refine.ts:566`). Once the kit moves under
+      // the snapshot they part company, and only the diff testifies about disk -- so
+      // every case below states its `diff` explicitly instead of inheriting one.
+      mcp__genie__refine: refineResult(overrides),
+    });
+    // Refine is gated on `componentInKit`, so its parent is always in the kit.
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+    });
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "leave it exactly as it is";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    (wired.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.controller.state().drafts).toHaveLength(2);
+    });
+    return wired;
+  }
+
+  it("stays silent when a refine hands back the kit's own bytes", async () => {
+    // The honest no-op: the model returned what was already on disk, so the server's
+    // diff is empty. Nothing is lost on reload and prompting would be a lie.
+    const wired = await refined({ diff: "" });
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("still prompts the moment those bytes actually diverge", async () => {
+    const wired = await refined({ files: CHANGED });
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("stays silent when the kit moved and the derive matches disk, not the snapshot", async () => {
+    // The mirror of the case above: the snapshot holds `A`, the kit has since moved to
+    // `B`, and the model hands back `B`. Bytes differ from the snapshot, but the server
+    // diffs against disk and finds nothing, which proves the draft is already saved.
+    const wired = await refined({ files: CHANGED, diff: "" });
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+    // The same flag gates Refine, so a false alarm here also locks the control.
+    expect(wired.document.getElementById("refine-status")?.textContent ?? "").not.toContain(
+      "Apply this draft first",
+    );
+  });
+
+  /*
+   * Copilot (round 12, PR #270). `refineResult()`'s stock fixture is precisely this
+   * shape -- files byte-identical to the parent, `diff` naming that very path -- and
+   * it is not self-contradictory after all. It is what a TRUTHFUL server emits once
+   * the kit moves after the Browse snapshot was taken: snapshot holds `A`, disk holds
+   * `B`, the model returns `A`, so the server honestly reports `B -> A`. Judged on
+   * bytes alone that reads "derives nothing", keeps `componentInKit`, disarms the
+   * guard, and a reload silently drops a draft that would have rewritten the kit.
+   * The snapshot cannot testify about disk; only the diff can.
+   */
+  it("prompts when the diff names a path the snapshot only appears to match", async () => {
+    const wired = await refined();
+    const drafts = wired.controller.state().drafts;
+    // Pin the fixture: the bytes really are identical, so only the diff can decide.
+    expect(drafts[1].result.files).toEqual(drafts[0].result.files);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  // The tweak path carries no `componentInKit` gate, so it is the only way to derive
+  // from a draft that was never on disk. Byte-identical to unsaved work is still unsaved
+  // work. The unload guard cannot see this on its own — it already prompts because of the
+  // PARENT — so the observable consequence is Refine, which must stay locked: it edits the
+  // kit's on-disk file, and there isn't one.
+  it("keeps refine locked for a no-op tweak whose parent was never in the kit", () => {
+    const wired = loadWired(HAPPY_REPLIES);
+    const parent = conjureResult({
+      files: [
+        fileEntry("components/actions/Button/Button.html", MARKER),
+        {
+          ...fileEntry("components/actions/Button/Button.css", ":root{--radius:8px;}"),
+          mimeType: "text/css",
+        },
+      ],
+    });
+    wired.controller.addDraft(parent, {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: false,
+    });
+    // Re-fire `change` without moving the slider: the rewritten declaration is identical
+    // to the one already there, so the tweak is a genuine no-op.
+    const slider = wired.document.getElementById("control-0") as HTMLInputElement;
+    expect(slider).toBeTruthy();
+    slider.dispatchEvent(new wired.window.Event("change", { bubbles: true }));
+
+    const drafts = wired.controller.state().drafts;
+    expect(drafts).toHaveLength(2);
+    // Pin the fixture itself: if this ever stops being a no-op the rest is meaningless.
+    expect(drafts[1].result.files).toEqual(parent.files);
+
+    const submit = wired.document.getElementById("refine-submit") as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    expect(wired.document.getElementById("refine-status")?.textContent).toContain(
+      "Apply this draft first",
+    );
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+});
+
+/**
+ * Copilot (round 6, PR #270) — byte equality decided the guard, but it was
+ * decided two ways that both looked at the wrong thing.
+ *
+ * 1. It compared the two file arrays BY POSITION. That holds for a tweak, which
+ *    rewrites entries in place, but a refine's files come back from the model and
+ *    nothing in `refineOutputShape` constrains their order — validation only
+ *    enforces unique paths. So a refine that returned the parent's exact bytes
+ *    in a different order read as divergent.
+ * 2. It looked only at files. A refine also carries a `diff`, and
+ *    `deletedPathsFromDiff` turns `+++ /dev/null` into a real `deletes` entry in
+ *    the apply plan. So a refine could hand back unchanged files while proposing
+ *    a deletion, and that deletion rode along completely unguarded.
+ */
+describe("unload guard weighs the whole derive, not file positions (#256)", () => {
+  const HTML = fileEntry(
+    "components/actions/Button/Button.html",
+    `${MARKER}\n<button>Go</button>\n`,
+  );
+  const CSS = {
+    ...fileEntry("components/actions/Button/Button.css", ":root{--radius:8px;}"),
+    mimeType: "text/css",
+  };
+
+  async function refinedFrom(parentFiles: unknown[], reply: Record<string, unknown>) {
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__refine: refineResult(reply),
+    });
+    wired.controller.addDraft(conjureResult({ files: parentFiles }), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+    });
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "leave it exactly as it is";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    (wired.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.controller.state().drafts).toHaveLength(2);
+    });
+    return wired;
+  }
+
+  it("stays silent when identical bytes come back in a different order", async () => {
+    // A reorder is a genuine no-op, so a real server reports no hunks at all: it skips
+    // every path whose before === after. State that explicitly, or the stock fixture's
+    // diff would smuggle in a disk-drift signal and decide the test for another reason.
+    const wired = await refinedFrom([HTML, CSS], { files: [CSS, HTML], diff: "" });
+    // Pin the fixture: these must really be the same set, only reordered.
+    const [parent, derived] = wired.controller.state().drafts;
+    expect([...derived.result.files].map((f: { path: string }) => f.path).sort()).toEqual(
+      [...parent.result.files].map((f: { path: string }) => f.path).sort(),
+    );
+    expect(derived.result.files).not.toEqual(parent.result.files);
+
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+    // Refine stays usable: the bytes we hold are the bytes on disk.
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "now change it";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    expect((wired.document.getElementById("refine-submit") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  // A draft's `files` are only what the model returned, which need not be everything the
+  // component has on disk. So a refine can hand back one unchanged file while its diff
+  // deletes a sibling it never carried -- and that sibling really does enter the apply plan.
+  it("prompts when unchanged files ride along with a proposed deletion", async () => {
+    const wired = await refinedFrom([HTML], {
+      files: [HTML],
+      diff: [
+        "diff --git a/components/actions/Button/Button.css b/components/actions/Button/Button.css",
+        "--- a/components/actions/Button/Button.css",
+        "+++ /dev/null",
+        "@@ -1 +0,0 @@",
+        "-:root{--radius:8px;}",
+        "",
+      ].join("\n"),
+    });
+    const derived = wired.controller.state().drafts[1];
+    // Pin the fixture: the files really are unchanged, and the diff really does
+    // produce a delete in the apply plan.
+    expect(derived.result.files).toEqual(wired.controller.state().drafts[0].result.files);
+
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("treats a /dev/null hunk for a path the derive rewrites as drift, not a deletion", async () => {
+    // Two separate claims live here, and after round 12 only one of them is the guard's.
+    //
+    // `effectiveDeletes` must NOT count this path: the draft rewrites it, so the plan
+    // writes it rather than deleting it. That is still true, and it is decided by
+    // `buildPlanArgs`, so assert it there.
+    const { buildPlanArgs } = loadHooks();
+    const diff = [
+      "diff --git a/components/actions/Button/Button.html b/components/actions/Button/Button.html",
+      "--- a/components/actions/Button/Button.html",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-gone",
+      "",
+    ].join("\n");
+    const planArgs = buildPlanArgs({ result: refineResult({ files: [HTML], diff }) }, "my-kit");
+    expect(planArgs.deletes).toBeUndefined();
+    expect(planArgs.writes).toEqual(["components/actions/Button/Button.html"]);
+
+    // The guard, though, must arm. A hunk exists for this path, and the server only
+    // emits one when disk differs from what it is returning -- yet the bytes coming
+    // back equal our baseline. So the baseline is stale, and a reload would drop a
+    // draft that still has the current kit to overwrite.
+    const wired = await refinedFrom([HTML], { files: [HTML], diff });
+    expect(wired.controller.state().drafts[1].result.files).toEqual([HTML]);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+});
+
+describe("unload guard survives in-app navigation (#256)", () => {
+  it("keeps the drafts and an armed guard across a route change", async () => {
+    const shell = loadShell();
+    const bridge = {
+      callTool: (name: string) =>
+        Promise.resolve(name === "mcp__genie__refine" ? refineResult() : {}),
+      destroy() {},
+    };
+    const shellController = shell.hooks.initProductShell(shell.document, bridge, {});
+    shellController.setRefineContext({
+      kitId: "kit-a",
+      componentName: "Card",
+      group: "actions",
+      path: "components/actions/Card/Card.html",
+      source: CARD_SOURCE,
+    });
+    const { document, window } = shell;
+    expect(document.getElementById("draft-label")!.textContent).toMatch(/draft #1/i);
+
+    // Copilot round 3 — the Browse handoff alone seeds `componentInKit: true`, which leaves the
+    // guard DISARMED. Asserting "unchanged" against that baseline passes even if routing tears
+    // an armed listener off the window, so refine once first: the reply is proposed bytes that
+    // exist nowhere on disk, which is exactly what the guard is for.
+    const input = document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "make the card bigger";
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    (document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(document.getElementById("draft-label")!.textContent).toMatch(/draft #2/i);
+    });
+    const before = document.getElementById("draft-label")!.textContent;
+    expect(fireUnload(window).defaultPrevented).toBe(true);
+
+    document
+      .querySelector<HTMLElement>('[data-route-link="browse"]')!
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+
+    // An in-app route change is a pushState -- it must never surface the
+    // browser's "leave site?" prompt, and it must never drop the drafts.
+    expect(document.getElementById("draft-label")!.textContent).toBe(before);
+    document
+      .querySelector<HTMLElement>('[data-route-link="review"]')!
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(document.getElementById("draft-label")!.textContent).toBe(before);
+    // Routing must not disarm the guard over drafts that are still unsaved.
+    expect(fireUnload(window).defaultPrevented).toBe(true);
+  });
+});
+
+/**
+ * Copilot (round 9, PR #270) — the byte comparison was measured against a
+ * baseline that cannot be complete.
+ *
+ * `setRefineContext` seeds the review draft with the ONE file Browse read, but
+ * `refine` loads the component's WHOLE directory server-side and returns every
+ * file in it. So for an HTML+CSS component, even a refine that changes nothing
+ * hands back MORE files than the baseline holds — and a set comparison read
+ * that as divergence, arming the unload prompt and locking Refine over bytes
+ * that were already on disk.
+ *
+ * The missing files are exactly the ones the viewer cannot testify about, and
+ * the reply's `diff` is the signal that covers them: the server computes it
+ * against the complete on-disk set (`refine.ts` — `buildUnifiedDiff(originalFiles, files)`),
+ * so a path with no hunk is a path that is byte-identical on disk. Bytes stay
+ * the evidence wherever the parent actually holds the file; the diff speaks
+ * only for the files it does not.
+ */
+describe("unload guard tolerates an incomplete Browse baseline (#256)", () => {
+  const CARD_PATH = "components/surfaces/Card/Card.html";
+  const SIBLING = "components/surfaces/Card/Card.css";
+  const CARD_CSS = ".card{padding:8px;}";
+  // `refine` replies must satisfy `hasMatchingHtmlPreview`, so the component on
+  // disk is the canonical `<Name>/<Name>.html` here rather than the
+  // `preview.html` form the other Browse fixtures use.
+  const CANONICAL_MANIFEST = {
+    ...BROWSE_MANIFEST,
+    components: [{ ...BROWSE_MANIFEST.components[0], path: CARD_PATH }],
+  };
+
+  /** A refine reply carrying the component's COMPLETE file set, as the server sends it. */
+  function wholeComponent(overrides: Record<string, unknown> = {}) {
+    return {
+      componentName: "Card",
+      group: "surfaces",
+      files: [
+        fileEntry(CARD_PATH, CARD_SOURCE),
+        { ...fileEntry(SIBLING, CARD_CSS), mimeType: "text/css" },
+      ],
+      manifestEntry: { viewport: { width: 480, height: 320 } },
+      usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+      // Empty: nothing in the component differs from what is on disk.
+      diff: "",
+      ...overrides,
+    };
+  }
+
+  /** Submit one refine through the real UI and wait for the draft it produces. */
+  async function submitRefine(shell: ReturnType<typeof loadBrowseToReview>, draftNo: number) {
+    const input = shell.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "leave it exactly as it is";
+    input.dispatchEvent(new shell.window.Event("input", { bubbles: true }));
+    (shell.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(shell.document.getElementById("draft-label")!.textContent).toMatch(
+        new RegExp(`draft #${draftNo}`, "i"),
+      );
+    });
+  }
+
+  async function refinedFromBrowse(reply: Record<string, unknown> | Record<string, unknown>[]) {
+    const shell = loadBrowseToReview(CARD_SOURCE, { refineReply: reply }, CANONICAL_MANIFEST);
+    await refineFromBrowse(shell);
+    // Pin the premise: the Browse handoff really does seed a SINGLE-file
+    // baseline, so the reply really is wider than anything the viewer holds.
+    const seeded = shell.document.getElementById("draft-label")!.textContent;
+    expect(seeded).toMatch(/draft #1/i);
+    await submitRefine(shell, 2);
+    return shell;
+  }
+
+  it("stays silent when a wider refine reply changes nothing on disk", async () => {
+    const shell = await refinedFromBrowse(wholeComponent());
+    expect(fireUnload(shell.window).defaultPrevented).toBe(false);
+    // ...and the consequence users actually feel: Refine stays usable, because
+    // the bytes we hold are still the bytes `refine` would reload from disk.
+    const input = shell.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "now change it";
+    input.dispatchEvent(new shell.window.Event("input", { bubbles: true }));
+    expect((shell.document.getElementById("refine-submit") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("still prompts when the sibling it alone carries actually changed", async () => {
+    // The one file the parent never held is the one the model rewrote. Nothing
+    // in the viewer's own bytes can see that, so the diff has to be believed.
+    const shell = await refinedFromBrowse(
+      wholeComponent({
+        files: [
+          fileEntry(CARD_PATH, CARD_SOURCE),
+          { ...fileEntry(SIBLING, ".card{padding:24px;}"), mimeType: "text/css" },
+        ],
+        diff: [
+          `diff --git a/${SIBLING} b/${SIBLING}`,
+          `--- a/${SIBLING}`,
+          `+++ b/${SIBLING}`,
+          "@@ -1 +1 @@",
+          `-${CARD_CSS}`,
+          "+.card{padding:24px;}",
+          "",
+        ].join("\n"),
+      }),
+    );
+    expect(fireUnload(shell.window).defaultPrevented).toBe(true);
+  });
+
+  it("still prompts when the reply introduces a file that is not on disk yet", async () => {
+    // A brand-new sibling is unsaved work by definition. The server marks it
+    // with a `--- /dev/null` add hunk, which is the only thing separating it
+    // from a file that was merely absent from the Browse baseline.
+    const shell = await refinedFromBrowse(
+      wholeComponent({
+        diff: [
+          `diff --git a/${SIBLING} b/${SIBLING}`,
+          "--- /dev/null",
+          `+++ b/${SIBLING}`,
+          "@@ -0,0 +1 @@",
+          `+${CARD_CSS}`,
+          "",
+        ].join("\n"),
+      }),
+    );
+    expect(fireUnload(shell.window).defaultPrevented).toBe(true);
+  });
+
+  it("still prompts when a later reply drops a file the parent had gained", async () => {
+    // Once the first reply widens the baseline to the whole component, that wider
+    // set is what the NEXT derive is judged against. A reply that silently omits
+    // one of those files is proposing its removal without saying so in the diff,
+    // and dropping a file is unsaved work exactly like rewriting one.
+    const shell = await refinedFromBrowse([
+      wholeComponent(),
+      wholeComponent({ files: [fileEntry(CARD_PATH, CARD_SOURCE)] }),
+    ]);
+    await submitRefine(shell, 3);
+    expect(fireUnload(shell.window).defaultPrevented).toBe(true);
+  });
+
+  it("stays silent when the file the parent holds moved on disk underneath it", async () => {
+    // Bytes the parent holds are a SNAPSHOT, and this one is stale: the reply differs
+    // from it, yet the server diffed against disk and found nothing. The only reading
+    // consistent with a union-walking `buildUnifiedDiff` is that the kit moved and the
+    // reply already matches it, so prompting -- and locking Refine -- would be a lie.
+    const shell = await refinedFromBrowse(
+      wholeComponent({
+        files: [
+          fileEntry(CARD_PATH, `${MARKER}\n<div class="card">Rewritten</div>`),
+          { ...fileEntry(SIBLING, CARD_CSS), mimeType: "text/css" },
+        ],
+      }),
+    );
+    expect(fireUnload(shell.window).defaultPrevented).toBe(false);
+    const input = shell.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "now change it";
+    input.dispatchEvent(new shell.window.Event("input", { bubbles: true }));
+    expect((shell.document.getElementById("refine-submit") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+});
+
+// Copilot round 5 (PR #270) — a partial apply stamps `componentInKit` unconditionally, so the
+// guard used to disarm over a deletion that never happened. The draft is deliberately NOT marked
+// applied (the Apply button has to stay live to retry), which means its in-memory record is the
+// ONLY thing that still knows a file is stranded on disk. Reloading loses that silently.
+describe("unload guard survives a stranded deletion (#256)", () => {
+  const STRANDED = "components/actions/Button/old.html";
+  const DELETE_DIFF = [
+    `diff --git a/${STRANDED} b/${STRANDED}`,
+    `--- a/${STRANDED}`,
+    "+++ /dev/null",
+    "@@ -1 +0,0 @@",
+    "-<div>gone</div>",
+  ].join("\n");
+
+  /**
+   * `delete_files` strands its path on the first `attempts` calls, then succeeds. Returning an
+   * empty `deletedPaths` (rather than throwing) is the harder case: the write DID land and the
+   * tool DID answer, so nothing but `stuckDeletes` marks the job unfinished.
+   */
+  function flakyDeletes(attempts: number) {
+    let seen = 0;
+    return () => {
+      seen += 1;
+      return seen <= attempts
+        ? { deletedPaths: [], notFoundPaths: [] }
+        : { deletedPaths: [STRANDED], notFoundPaths: [] };
+    };
+  }
+
+  function loadDeleting(deleteReply: unknown) {
+    return loadWired({ ...HAPPY_REPLIES, mcp__genie__delete_files: deleteReply });
+  }
+
+  function seed(wired: ReturnType<typeof loadWired>, diff: string | undefined, kitId = "my-kit") {
+    // `componentInKit: false` is the honest state for a draft whose renamed bytes are not on
+    // disk yet — and it is what arms the guard in the first place.
+    wired.controller.addDraft(diff === undefined ? conjureResult() : refineResult({ diff }), {
+      kitId,
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: false,
+      source: `${MARKER}\n<button>Old</button>\n`,
+    });
+  }
+
+  async function apply(wired: ReturnType<typeof loadWired>, expectCalls: number) {
+    const click = (id: string) =>
+      wired.document
+        .getElementById(id)!
+        .dispatchEvent(new wired.window.Event("click", { bubbles: true }));
+    firePreviewLoad(wired.document);
+    makeGreen(wired.document, wired.controller);
+    click("decision-approve");
+    click("apply-button");
+    click("apply-confirm-accept");
+    await vi.waitFor(() => expect(wired.calls).toHaveLength(expectCalls));
+    await vi.waitFor(() =>
+      expect(wired.document.getElementById("review-status")!.textContent).toMatch(/applied/i),
+    );
+  }
+
+  it("keeps prompting while a deletion is still stranded on disk", async () => {
+    const wired = loadDeleting(flakyDeletes(1));
+    seed(wired, DELETE_DIFF);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+    await apply(wired, 4);
+    // The writes landed, so the draft IS in the kit — but the removal is unfinished, and only
+    // this tab remembers which path it was.
+    expect(wired.document.getElementById("review-status")!.textContent).toMatch(/stale/i);
+    expect(wired.controller.state().appliedDraftId).toBeNull();
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("keeps a stranded delete armed when ANOTHER KIT removes the same path (#256 round 8)", async () => {
+    const wired = loadDeleting(flakyDeletes(1));
+    seed(wired, DELETE_DIFF); // kit "my-kit" — this delete strands
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    // A draft in a DIFFERENT kit removes the same relative path. That is a different file on
+    // disk; "my-kit" is still stale, and this is the only record of which path it was.
+    seed(wired, DELETE_DIFF, "other-kit");
+    await apply(wired, 8);
+
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("stops prompting once a newer draft WRITES the stranded path (#256 round 8)", async () => {
+    // Draft 1 fails to remove the old card; draft 2 then legitimately rewrites that same path
+    // (deletes are confined to the component folder, so only the same component can resurrect
+    // it). The user has chosen, in newer work, to have those bytes there — retrying draft 1
+    // would destroy them, the same hazard round 7 closed for the delete-delete case.
+    let writes = 0;
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__delete_files: { deletedPaths: [], notFoundPaths: [] },
+      mcp__genie__write_files: () => {
+        writes += 1;
+        return {
+          writtenPaths:
+            writes === 1
+              ? ["components/actions/Button/Button.html"]
+              : ["components/actions/Button/Button.html", STRANDED],
+        };
+      },
+    });
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    wired.controller.addDraft(
+      conjureResult({
+        files: [
+          fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Go</button>\n`),
+          fileEntry(STRANDED, `${MARKER}\n<button>Back</button>\n`),
+        ],
+      }),
+      { kitId: "my-kit", kitLabel: "My Kit", model: "m", componentInKit: false },
+    );
+    await apply(wired, 7);
+
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("stops prompting once the retry finally removes the file", async () => {
+    const wired = loadDeleting(flakyDeletes(1));
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    // Second pass: `delete_files` succeeds, so nothing is stranded any more.
+    wired.document
+      .getElementById("apply-button")!
+      .dispatchEvent(new wired.window.Event("click", { bubbles: true }));
+    wired.document
+      .getElementById("apply-confirm-accept")!
+      .dispatchEvent(new wired.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(wired.calls).toHaveLength(8));
+    await vi.waitFor(() => expect(wired.controller.state().appliedDraftId).not.toBeNull());
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("keeps prompting even after a NEWER draft applies cleanly", async () => {
+    // `hasUnsavedDrafts` skips drafts at or below the applied one, because the kit already holds
+    // their bytes. That reasoning does not extend to a deletion that never ran: draft 1's
+    // stranded path is not removed by applying draft 2.
+    const wired = loadDeleting(flakyDeletes(1));
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    // Draft 2 deletes nothing, so it applies cleanly and becomes `appliedDraftId`.
+    seed(wired, undefined);
+    await apply(wired, 7);
+    await vi.waitFor(() => expect(wired.controller.state().appliedDraftId).not.toBeNull());
+    expect(wired.controller.state().drafts).toHaveLength(2);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  // Copilot round 7 (PR #270) — the mirror image of the test above. There the newer draft deletes
+  // NOTHING, so draft 1's path is still on disk and the prompt is right. Here the newer draft
+  // removes that very path, so the unfinished work is finished — by someone else. A latching
+  // boolean cannot tell those apart and would prompt forever about a file that is already gone.
+  it("stops prompting once a NEWER draft removes the same stranded path", async () => {
+    const wired = loadDeleting(flakyDeletes(1));
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    // Draft 2 carries the same deletion, and this time `delete_files` reports it removed.
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 8);
+    await vi.waitFor(() => expect(wired.controller.state().appliedDraftId).not.toBeNull());
+    expect(wired.controller.state().drafts).toHaveLength(2);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  // A path the kit never had is `notFoundPaths`, not `deletedPaths` — and it is equally gone.
+  // Reconciling on "removed" alone would keep prompting about a file nothing can ever remove.
+  it("stops prompting when a later apply finds the stranded path already absent", async () => {
+    let seen = 0;
+    const wired = loadDeleting(() => {
+      seen += 1;
+      return seen === 1
+        ? { deletedPaths: [], notFoundPaths: [] }
+        : { deletedPaths: [], notFoundPaths: [STRANDED] };
+    });
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 8);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
   });
 });
