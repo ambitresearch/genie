@@ -62,11 +62,11 @@
  * dependencies, so CI never reaches the registry during the test and never
  * silently skips the harness leg.
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer as createNodeHttpServer, type Server as NodeHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
@@ -606,6 +606,337 @@ it("keeps the canonical extension auto-approval list aligned with registered rea
   }
 });
 
+/**
+ * Cline's CLI does not run entirely inside the process `execFileAsync` awaits.
+ * It starts a local hub as a *detached* daemon —
+ * `cline --cline-hub-daemon --cwd <dir> --host 127.0.0.1 --port <port>` — which
+ * is reparented to PID 1 and therefore outlives every `await` below. Because
+ * the real-CLI test points `HOME`/`USERPROFILE` at its temp tree, that daemon
+ * keeps `<base>/.cline/data/logs/hub-daemon.log`, `.../db/cron.db`,
+ * `cron.db-wal` and `cron.db-shm` open and rewrites them continuously:
+ *
+ *   cline 36186  cwd  DIR  .../T/genie-cline-cli-smoke-opOyyr
+ *   cline 36186  1w   REG  .../.cline/data/logs/hub-daemon.log
+ *   cline 36186  7u   REG  .../.cline/data/db/cron.db
+ *   cline 36186  8u   REG  .../.cline/data/db/cron.db-wal
+ *
+ * A bare `rm(base, { recursive: true })` races that daemon: it unlinks the
+ * directory contents, the daemon immediately recreates them, and the final
+ * `rmdir` throws `ENOTEMPTY: directory not empty, rmdir '<base>/.cline/data'`
+ * (#259). Retrying `rm` only widens the window it needs to win; the fix is to
+ * join the daemon — signal it and wait for the OS to actually reap it — before
+ * touching the tree.
+ */
+const CLINE_HUB_DAEMON_FLAG = "--cline-hub-daemon";
+
+/**
+ * Where the hub records the pid that currently owns the discovery lock. Both
+ * layouts are probed because the daemon's data root has moved between Cline
+ * releases (`<home>/.cline` vs `<home>/.cline/data`).
+ */
+const CLINE_HUB_LOCK_PATHS = [
+  join(".cline", "data", "locks", "hub", "production.json"),
+  join(".cline", "locks", "hub", "production.json"),
+];
+
+/**
+ * `process.kill(pid, 0)` only proves a pid is gone when it raises `ESRCH`.
+ * `EPERM` means the process is alive but owned by another user, so it must be
+ * treated as still running rather than as a successful reap.
+ */
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function readClineHubLockPids(base: string): Promise<number[]> {
+  const pids: number[] = [];
+  for (const relative of CLINE_HUB_LOCK_PATHS) {
+    let raw: string;
+    try {
+      raw = await readFile(join(base, relative), "utf8");
+    } catch {
+      continue;
+    }
+    try {
+      const { pid } = JSON.parse(raw) as { pid?: unknown };
+      if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) {
+        pids.push(pid);
+      }
+    } catch {
+      // A half-written lock file is not worth failing teardown over; the
+      // process scan below is the backstop.
+    }
+  }
+  return pids;
+}
+
+/**
+ * Finds hub daemons started by *this* test run. The match is scoped by the
+ * `mkdtemp` suffix rather than the full `--cwd` value because macOS reports the
+ * daemon's argv with `/private/var/folders/...` while `mkdtemp` returned
+ * `/var/folders/...`; the suffix is random per run, so it can never match a
+ * daemon belonging to another checkout.
+ */
+async function scanClineHubDaemonPids(base: string): Promise<number[]> {
+  if (process.platform === "win32") {
+    return [];
+  }
+  const marker = basename(base);
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync("ps", ["-Awwo", "pid=,command="], {
+      maxBuffer: 10_000_000,
+    }));
+  } catch {
+    return [];
+  }
+  const pids: number[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (!match) {
+      continue;
+    }
+    const command = match[2] ?? "";
+    if (!command.includes(CLINE_HUB_DAEMON_FLAG) || !command.includes(marker)) {
+      continue;
+    }
+    const pid = Number.parseInt(match[1] ?? "", 10);
+    if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
+      pids.push(pid);
+    }
+  }
+  return pids;
+}
+
+type ClineHubTermination = "already-exited" | "terminated" | "killed" | "timed-out";
+
+interface TerminateAndWaitOptions {
+  escalateAfterMs?: number;
+  timeoutMs?: number;
+  pollMs?: number;
+  isAlive?: (pid: number) => boolean;
+  sendSignal?: (pid: number, signal: NodeJS.Signals) => void;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Signals `pid` and waits for it to actually disappear, escalating `SIGTERM` to
+ * `SIGKILL` after `escalateAfterMs` and giving up after `timeoutMs`. Never
+ * throws: teardown must not mask the assertion failure that a test is already
+ * reporting.
+ */
+async function terminateAndWait(
+  pid: number,
+  options: TerminateAndWaitOptions = {},
+): Promise<ClineHubTermination> {
+  const {
+    escalateAfterMs = 2_000,
+    timeoutMs = 10_000,
+    pollMs = 25,
+    isAlive = processIsAlive,
+    now = () => Date.now(),
+    sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    sendSignal = (target: number, signal: NodeJS.Signals) => {
+      try {
+        process.kill(target, signal);
+      } catch {
+        // The daemon can exit between the liveness probe and the signal.
+      }
+    },
+  } = options;
+
+  if (!isAlive(pid)) {
+    return "already-exited";
+  }
+  const startedAt = now();
+  sendSignal(pid, "SIGTERM");
+  let escalated = false;
+  while (isAlive(pid)) {
+    const elapsed = now() - startedAt;
+    if (elapsed >= timeoutMs) {
+      return "timed-out";
+    }
+    if (!escalated && elapsed >= escalateAfterMs) {
+      escalated = true;
+      sendSignal(pid, "SIGKILL");
+    }
+    await sleep(pollMs);
+  }
+  return escalated ? "killed" : "terminated";
+}
+
+/**
+ * Joins every Cline hub daemon rooted in `base` so the temp tree can be removed
+ * without racing an active writer. Returns the outcome per pid for diagnostics.
+ */
+async function stopClineHubDaemons(
+  base: string,
+  options: TerminateAndWaitOptions = {},
+): Promise<Map<number, ClineHubTermination>> {
+  const pids = new Set([
+    ...(await readClineHubLockPids(base)),
+    ...(await scanClineHubDaemonPids(base)),
+  ]);
+  const outcomes = new Map<number, ClineHubTermination>();
+  for (const pid of pids) {
+    outcomes.set(pid, await terminateAndWait(pid, options));
+  }
+  return outcomes;
+}
+
+/**
+ * Removes a real-CLI temp tree the way #259 requires: join the detached hub
+ * daemons first, then delete. `maxRetries` is defence in depth for unrelated
+ * transient holders (a virus scanner, Spotlight), never the primary fix.
+ */
+async function removeClineSmokeTree(base: string): Promise<void> {
+  await stopClineHubDaemons(base);
+  await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
+it("escalates to SIGKILL and keeps waiting when a hub daemon ignores SIGTERM", async () => {
+  const signals: NodeJS.Signals[] = [];
+  let clock = 0;
+  // Alive until SIGKILL lands, which is exactly the daemon shape that made
+  // `kill()`-and-move-on lose the teardown race.
+  let alive = true;
+
+  const outcome = await terminateAndWait(4242, {
+    escalateAfterMs: 100,
+    timeoutMs: 5_000,
+    pollMs: 10,
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
+    },
+    isAlive: () => alive,
+    sendSignal: (_pid, signal) => {
+      signals.push(signal);
+      if (signal === "SIGKILL") {
+        alive = false;
+      }
+    },
+  });
+
+  expect(outcome).toBe("killed");
+  expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+});
+
+it("reports a timeout instead of throwing when a hub daemon never exits", async () => {
+  let clock = 0;
+
+  const outcome = await terminateAndWait(4243, {
+    escalateAfterMs: 100,
+    timeoutMs: 500,
+    pollMs: 10,
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
+    },
+    isAlive: () => true,
+    sendSignal: () => {},
+  });
+
+  expect(outcome).toBe("timed-out");
+});
+
+it("treats an already-reaped hub daemon as nothing to do", async () => {
+  expect(
+    await terminateAndWait(4244, {
+      isAlive: () => false,
+      sendSignal: () => {
+        throw new Error("must not signal a dead pid");
+      },
+    }),
+  ).toBe("already-exited");
+});
+
+it("joins a detached hub daemon before removing the temp tree (#259)", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  const dataDir = join(base, ".cline", "data");
+  const lockPath = join(base, CLINE_HUB_LOCK_PATHS[0]!);
+  let daemonPid: number | undefined;
+
+  // Stands in for `cline --cline-hub-daemon`: launched through a throwaway
+  // parent so it is reparented to PID 1 (no ChildProcess handle can join it),
+  // carrying the same argv markers the real daemon does, and rewriting
+  // `<base>/.cline/data/db` every 2ms so teardown is guaranteed to be mid-write.
+  const daemonSource = `
+    const { mkdirSync, writeFileSync } = require("node:fs");
+    const { dirname, join } = require("node:path");
+    const dataDir = process.env.GENIE_TEST_HUB_DATA_DIR;
+    const lockPath = process.env.GENIE_TEST_HUB_LOCK;
+    mkdirSync(join(dataDir, "db"), { recursive: true });
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, authToken: "test" }));
+    process.on("SIGTERM", () => setTimeout(() => process.exit(0), 50));
+    let n = 0;
+    setInterval(() => {
+      try {
+        writeFileSync(join(dataDir, "db", "cron.db-wal." + (n++ % 8)), "x".repeat(4096));
+      } catch {}
+    }, 2);
+  `;
+  const launcherSource = `
+    const { spawn } = require("node:child_process");
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        process.env.GENIE_TEST_HUB_SRC,
+        "--",
+        "${CLINE_HUB_DAEMON_FLAG}",
+        "--cwd",
+        process.env.GENIE_TEST_HUB_CWD,
+      ],
+      { detached: true, stdio: "ignore" },
+    );
+    child.unref();
+  `;
+
+  try {
+    await execFileAsync(process.execPath, ["-e", launcherSource], {
+      env: {
+        ...process.env,
+        GENIE_TEST_HUB_SRC: daemonSource,
+        GENIE_TEST_HUB_CWD: base,
+        GENIE_TEST_HUB_DATA_DIR: dataDir,
+        GENIE_TEST_HUB_LOCK: lockPath,
+      },
+    });
+
+    // The daemon publishes its pid to the discovery lock once it is writing.
+    const deadline = Date.now() + 10_000;
+    while (daemonPid === undefined && Date.now() < deadline) {
+      [daemonPid] = await readClineHubLockPids(base);
+      if (daemonPid === undefined) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    expect(daemonPid).toBeTypeOf("number");
+    expect(processIsAlive(daemonPid!)).toBe(true);
+    expect(await scanClineHubDaemonPids(base)).toContain(daemonPid);
+
+    await removeClineSmokeTree(base);
+
+    // Both halves of the fix: the daemon is genuinely reaped (not merely
+    // signalled), and only then does the tree come away without ENOTEMPTY.
+    expect(processIsAlive(daemonPid!)).toBe(false);
+    await expect(stat(base)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    if (daemonPid !== undefined && processIsAlive(daemonPid)) {
+      await terminateAndWait(daemonPid);
+    }
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}, 30_000);
+
 describe("M5-14 Cline harness smoke test — real CLI", () => {
   it("drives the four-verb chain through pinned Cline and surfaces preview text", async () => {
     const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
@@ -864,7 +1195,7 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
         new Promise<void>((resolveClose) => mcp?.close(() => resolveClose()) ?? resolveClose()),
         new Promise<void>((resolveClose) => model?.close(() => resolveClose()) ?? resolveClose()),
       ]);
-      await rm(base, { recursive: true, force: true });
+      await removeClineSmokeTree(base);
     }
   }, 120_000);
 });
