@@ -355,6 +355,207 @@ export async function startUiVehicle(fixture: ViewerFixture): Promise<UiVehicle>
   return { url, close: () => closeServer(server) };
 }
 
+// ── Vehicle (d): the embedded resource under a REAL MCP host (M7-02, #247) ──
+
+/**
+ * A booted embedded-tier host: the `ui://genie/grid` resource inside an iframe,
+ * parented by a page that speaks the MCP-Apps host half of the protocol and
+ * proxies every `tools/call` to a real `@ambitresearch/genie` MCP server over a
+ * real MCP `Client`.
+ */
+export interface McpHostVehicle {
+  /** The PARENT host page's URL — what a test navigates to. */
+  url: string;
+  /** The embedded resource's URL (the iframe `src`), for direct comparison. */
+  resourceUrl: string;
+  /** Tears down the http server, the MCP client and the MCP server. */
+  close: () => Promise<void>;
+}
+
+/** Options for {@link startMcpHostVehicle}. */
+export interface McpHostVehicleOptions {
+  /** Route the embedded resource boots into (default `"browse"`). */
+  route?: string;
+}
+
+/**
+ * The parent host page (M7-02, #247).
+ *
+ * `createStandaloneSourceBridge` means the localhost/`file://` tiers satisfy the
+ * source panel with a plain same-origin `fetch` — no host, no bridge, no
+ * `tools/call`. So the ONLY tier where `mcp__genie__read_file` actually travels
+ * the MCP-Apps postMessage bridge is the embedded one, and the only way to
+ * exercise that end to end is to BE the host. This page is that host:
+ *
+ *   1. it answers `ui/initialize` inside the viewer's 3 s `initializeTimer`,
+ *      advertising `hostCapabilities.serverTools` — the specific flag
+ *      `initMcpApp` gates `onReady`/`createHostBridge` on (viewer.js: a
+ *      handshake-only reply takes the `onUnavailable` path instead);
+ *   2. it proxies `tools/call` to `POST ./__mcp/call`, which the Node side
+ *      forwards to a genuine MCP `Client` → `InMemoryTransport` → the shipped
+ *      `createServer()`'s registered `mcp__genie__read_file` →
+ *      `LocalFsKitStore.readFile` → the actual bytes on disk; and
+ *   3. it replies with the tool result VERBATIM, so `structuredContent` reaches
+ *      `createHostBridge`'s resolver in its real shape rather than a
+ *      hand-rolled approximation of it.
+ *
+ * `__genieHostLog` records the protocol traffic in order so a test can assert
+ * the round trip HAPPENED, not merely that some source text appeared (which a
+ * cached or fabricated value would also satisfy).
+ */
+const MCP_HOST_PAGE = (resourceSrc: string): string =>
+  `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><title>genie E2E MCP host</title>
+<style>html,body{margin:0;height:100%}iframe{border:0;display:block;width:100%;height:100%}</style>
+</head><body>
+<iframe id="app" title="genie embedded viewer" src="${resourceSrc}"></iframe>
+<script>
+(function () {
+  var frame = document.getElementById("app");
+  window.__genieHostLog = [];
+  function post(message) {
+    if (frame.contentWindow) frame.contentWindow.postMessage(message, "*");
+  }
+  window.addEventListener("message", function (event) {
+    if (!event.data || typeof event.data !== "object") return;
+    if (event.source !== frame.contentWindow) return;
+    var msg = event.data;
+    if (msg.jsonrpc !== "2.0") return;
+    if (msg.id === undefined || msg.id === null) {
+      window.__genieHostLog.push("notification:" + msg.method);
+      return;
+    }
+    var label = msg.method;
+    if (msg.params && typeof msg.params.name === "string") label += ":" + msg.params.name;
+    window.__genieHostLog.push(label);
+    if (msg.method === "ui/initialize") {
+      post({
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: {
+          protocolVersion: (msg.params && msg.params.protocolVersion) || "2025-06-18",
+          hostCapabilities: { serverTools: { listChanged: false } },
+          hostInfo: { name: "genie-e2e-host", version: "1.0.0" }
+        }
+      });
+      return;
+    }
+    if (msg.method === "ping") {
+      post({ jsonrpc: "2.0", id: msg.id, result: {} });
+      return;
+    }
+    if (msg.method === "tools/call") {
+      fetch("./__mcp/call", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(msg.params || {})
+      })
+        .then(function (response) { return response.json(); })
+        .then(function (payload) {
+          if (payload && payload.error) {
+            window.__genieHostLog.push("tool-error:" + (msg.params && msg.params.name));
+            post({ jsonrpc: "2.0", id: msg.id, error: payload.error });
+            return;
+          }
+          window.__genieHostLog.push("tool-result:" + (msg.params && msg.params.name));
+          post({ jsonrpc: "2.0", id: msg.id, result: payload.result });
+        })
+        .catch(function (err) {
+          post({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: String(err) } });
+        });
+      return;
+    }
+    post({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "Method not found" } });
+  });
+})();
+</script>
+</body></html>
+`;
+
+/**
+ * Boot vehicle (d): the embedded grid resource under a real MCP host.
+ *
+ * The MCP server is the SHIPPED `createServer()` — not a bespoke `McpServer`
+ * with one tool bolted on — so this also pins that `mcp__genie__read_file` is
+ * still registered under exactly that name on the real server. Both roots are
+ * pinned inside the fixture's throwaway tree so nothing touches `process.cwd()`
+ * (`createServer` otherwise defaults `projectsRoot` to `<cwd>/.genie/projects`).
+ */
+export async function startMcpHostVehicle(
+  fixture: ViewerFixture,
+  options: McpHostVehicleOptions = {},
+): Promise<McpHostVehicle> {
+  const route = options.route ?? "browse";
+  const [{ createServer: createGenieServer }, { Client }, { InMemoryTransport }] =
+    await Promise.all([
+      import("../../../server/src/server.js"),
+      import("@modelcontextprotocol/sdk/client/index.js"),
+      import("@modelcontextprotocol/sdk/inMemory.js"),
+    ]);
+
+  const mcpServer = createGenieServer({
+    kitsRoot: fixture.kitsRoot,
+    projectsRoot: join(fixture.kitsRoot, ".genie-projects"),
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "genie-e2e-host", version: "1.0.0" });
+  await Promise.all([mcpServer.connect(serverTransport), client.connect(clientTransport)]);
+
+  const resourceHtml = await buildUiGridDocument(fixture);
+  const resourcePath = `/resource.html?route=${encodeURIComponent(route)}`;
+  const hostHtml = MCP_HOST_PAGE(`.${resourcePath}`);
+
+  const server = createHttpServer((req, res) => {
+    void (async () => {
+      const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+      if (req.method === "POST" && pathname === "/__mcp/call") {
+        let raw = "";
+        for await (const chunk of req) raw += String(chunk);
+        try {
+          const params = JSON.parse(raw) as { name?: string; arguments?: Record<string, unknown> };
+          if (typeof params.name !== "string") throw new Error("tools/call needs a tool name");
+          const result = await client.callTool({
+            name: params.name,
+            arguments: params.arguments ?? {},
+          });
+          res.writeHead(200, { "content-type": MIME[".json"] });
+          res.end(JSON.stringify({ result }));
+        } catch (err) {
+          // Surface the failure to the iframe as a JSON-RPC error rather than a
+          // dead socket, so the viewer renders its real read-failure copy.
+          res.writeHead(200, { "content-type": MIME[".json"] });
+          res.end(
+            JSON.stringify({
+              error: { code: -32603, message: err instanceof Error ? err.message : String(err) },
+            }),
+          );
+        }
+        return;
+      }
+      const body = pathname === "/resource.html" ? resourceHtml : hostHtml;
+      res.writeHead(200, { "content-type": MIME[".html"] });
+      res.end(body);
+    })();
+  });
+  const port = await new Promise<number>((resolvePort) => {
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      if (addr && typeof addr === "object") resolvePort(addr.port);
+    });
+  });
+
+  const base = `http://127.0.0.1:${port}`;
+  return {
+    url: `${base}/`,
+    resourceUrl: `${base}${resourcePath}`,
+    close: async () => {
+      await closeServer(server);
+      await client.close();
+      await mcpServer.close();
+    },
+  };
+}
+
 // ── A tiny static file server (localhost sanity / screenshots) ──────────────
 //
 // Not a delivery vehicle itself (vehicle b IS Vite) — used only where a test
