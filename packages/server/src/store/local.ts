@@ -49,6 +49,7 @@ import {
 import {
   buildIgnoreMatcher,
   classifyFileContent,
+  hasRequiredKitMetaFields,
   isSafeKitId,
   parseGenieignore,
   type IgnoreMatcher,
@@ -508,7 +509,20 @@ export class LocalFsKitStore implements KitStore {
       // alone would leave the shared contract passing vacuously there.
       if (!isSafeKitId(entry.name)) continue;
       const meta = await readMetaIfReadable<KitMetaFile>(this.kitMetaPath(entry.name));
-      if (meta?.type === KIT_TYPE) {
+      // Same publishing invariant as the id filter above, applied to the SHAPE
+      // rather than the name. `readMeta` is `JSON.parse(...) as KitMetaFile` —
+      // an erased cast — so a .kit.json that parses but omits `name` or
+      // `createdAt` yields `undefined` for a field `KitMeta` declares required,
+      // and this adapter has no other source for either. Publishing it makes
+      // `list_kits` emit a `structuredContent` the MCP SDK rejects against the
+      // tool's own outputSchema, which fails the WHOLE response: every healthy
+      // kit disappears too, and the error names an array index with no kit id.
+      //
+      // `readMetaIfReadable`'s tolerance only catches bytes that fail to PARSE.
+      // Valid JSON with missing fields sails through it — so the "one bad entry
+      // must not fail the whole listing" promise it documents was kept for the
+      // rarer fault and broken for the commoner one. This closes that gap.
+      if (meta?.type === KIT_TYPE && hasRequiredKitMetaFields(meta)) {
         kits.push({
           // The DIRECTORY name, not `meta.id`. The directory is what getKit
           // routes on, so reporting the embedded id here can hand out an id
@@ -526,7 +540,19 @@ export class LocalFsKitStore implements KitStore {
 
   async getKit(kitId: KitId): Promise<KitMeta> {
     const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId));
-    if (!meta || meta.type !== KIT_TYPE) throw new NotFoundError("Kit", kitId);
+    // `!hasRequiredKitMetaFields` is NOT redundant with the listKits filter:
+    // that one governs what this store PUBLISHES, this one governs what it
+    // SERVES, and a caller can reach getKit with an id listKits never emitted.
+    // Refusing here keeps visible ⟺ usable pointing both ways — a shape this
+    // adapter declines to list is also one it declines to serve.
+    //
+    // NotFoundError, not a shape-specific error: this adapter's only source for
+    // `name`/`createdAt` IS .kit.json, so an incomplete file means there is no
+    // kit here to describe. Contrast GitHostKitStore, which can fall back to
+    // host-authoritative repo metadata and therefore still serves the kit.
+    if (!meta || meta.type !== KIT_TYPE || !hasRequiredKitMetaFields(meta)) {
+      throw new NotFoundError("Kit", kitId);
+    }
     return {
       // The lookup key, not `meta.id` — see listKits. Returning the embedded
       // id here would make `getKit(x).id !== x` for a desynchronised kit, so a

@@ -232,6 +232,67 @@ describe("mcp__genie__list_kits tool", () => {
     ]);
   });
 
+  /**
+   * 🔒 REGRESSION LOCK — one malformed neighbour must not take out the whole listing.
+   *
+   * `readMetaIfReadable`'s docblock in `store/local.ts` promises exactly this:
+   * "one bad entry must not fail the whole listing". It keeps that promise ONLY
+   * for bytes that fail to PARSE. A `.kit.json` that is valid JSON but omits a
+   * field `KitMeta` declares REQUIRED sails straight through it — and `KitMeta`
+   * is enforced by a cast (`JSON.parse(raw) as T`), not a schema, so nothing
+   * downstream catches it either. The promise was kept for the rarer fault and
+   * broken for the commoner one.
+   *
+   * The blast radius is why this is pinned at the PROTOCOL layer and not only in
+   * the store contract. `listWritableKits` maps `updatedAt: kit.updatedAt ??
+   * kit.createdAt`, so an absent `createdAt` yields `undefined`; the MCP SDK then
+   * validates the result against `outputSchema`, where `updatedAt` is a required
+   * string, and rejects the ENTIRE response with -32602. Every healthy kit
+   * disappears with it, and the error names `kits[N].updatedAt` rather than the
+   * offending kit's id — so the user cannot tell which directory to repair.
+   *
+   * Both assertions are load-bearing and neither implies the other:
+   *   - `isError` falsy proves the response survived output validation at all
+   *   - the healthy kit being PRESENT proves that survival was not achieved by
+   *     returning an empty list
+   */
+  it("🔒 lists healthy kits when a neighbour's .kit.json omits a required field", async () => {
+    const createResult = await client.callTool({
+      name: "mcp__genie__create_kit",
+      arguments: { name: "Commerce Kit" },
+    });
+    const kitId = (
+      JSON.parse((createResult.content as { text: string }[])[0]?.text ?? "{}") as {
+        kitId: string;
+      }
+    ).kitId;
+
+    // Hand-written rather than seeded: the shared `test/helpers/seed-kit.ts`
+    // always writes a complete `createdAt`, so a malformed-meta fixture has to
+    // bypass it by construction. This is the same seeding shape as "filters
+    // metadata files whose stored type is not GENIE_KIT" above — the only
+    // difference is WHICH part of the declared shape is violated: a wrong `type`
+    // there, an absent `createdAt` here. That filter proves the kits root was
+    // always known to hold foreign `.kit.json` files; this is the sibling class
+    // it did not cover.
+    await mkdir(join(tempDir, "kits", "legacy-kit"), { recursive: true });
+    await writeFile(
+      join(tempDir, "kits", "legacy-kit", ".kit.json"),
+      JSON.stringify({ id: "legacy-kit", name: "Legacy Kit", type: KIT_TYPE }, null, 2),
+      "utf8",
+    );
+
+    const result = await client.callTool({
+      name: LIST_KITS_TOOL_NAME,
+      arguments: {},
+    });
+
+    expect(result.isError).toBeFalsy();
+
+    const { kits } = result.structuredContent as { kits: { id: string }[] };
+    expect(kits.map((kit) => kit.id)).toEqual([kitId]);
+  });
+
   it("rejects unexpected arguments because the schema has no inputs", async () => {
     const result = await client.callTool({
       name: LIST_KITS_TOOL_NAME,
