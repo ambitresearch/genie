@@ -383,11 +383,41 @@ function isEnoent(error: unknown): boolean {
   );
 }
 
-/** Read and parse a JSON metadata file, or return undefined. */
+/**
+ * Read and parse a JSON metadata file for a DIRECTLY NAMED resource.
+ *
+ * Returns `undefined` only when the file is genuinely absent. Every other fault
+ * — EACCES, EISDIR, EIO, an unparseable body — is re-thrown.
+ *
+ * That distinction matters because each direct-lookup caller below turns
+ * `undefined` into `NotFoundError`. The previous bare `catch` swallowed *every*
+ * error, so an unreadable kit was indistinguishable from a missing one: `plan`
+ * would report `kitNotFound` for a kit that exists but could not be read, and
+ * its narrowed `NotFoundError` catch could never see the real fault (#252).
+ *
+ * Scan loops want the opposite bias and use {@link readMetaIfReadable}.
+ */
 async function readMeta<T>(filePath: string): Promise<T | undefined> {
   try {
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw) as T;
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw error;
+  }
+}
+
+/**
+ * Read and parse a JSON metadata file while ENUMERATING a directory.
+ *
+ * Tolerates any unreadable entry. `listKits`/`listProjects` walk a root that may
+ * legitimately hold foreign, partially-written, or permission-restricted
+ * neighbours, and one bad entry must not fail the whole listing — so this keeps
+ * the historic swallow-everything behaviour exactly where it is wanted.
+ */
+async function readMetaIfReadable<T>(filePath: string): Promise<T | undefined> {
+  try {
+    return await readMeta<T>(filePath);
   } catch {
     return undefined;
   }
@@ -460,7 +490,7 @@ export class LocalFsKitStore implements KitStore {
     const kits: KitMeta[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const meta = await readMeta<KitMetaFile>(this.kitMetaPath(entry.name));
+      const meta = await readMetaIfReadable<KitMetaFile>(this.kitMetaPath(entry.name));
       if (meta?.type === KIT_TYPE) {
         kits.push({
           id: meta.id,
@@ -729,7 +759,7 @@ export class LocalFsProjectStore implements ProjectStore {
     const projects: ProjectMeta[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const meta = await readMeta<ProjectMetaFile>(this.metaPath(entry.name));
+      const meta = await readMetaIfReadable<ProjectMetaFile>(this.metaPath(entry.name));
       if (meta) {
         projects.push({
           id: meta.id,

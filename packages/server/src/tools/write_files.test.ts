@@ -26,7 +26,14 @@ const PLAN_TOOL_NAME = "mcp__genie__plan";
 // The kitId every plan in this suite is created against. The destination of a
 // write is the KIT (DRO-565 re-plumb) — `<kitsRoot>/<KIT_ID>/…` — while
 // `localDir` remains only the SOURCE base a `localPath` is read from.
-const KIT_ID = "k";
+//
+// The wire-level tests route through the `plan` tool, which since #252 requires
+// the kit to RESOLVE in the store, so `makeWireHarness` seeds a kit under this
+// id. That is an existence requirement, not a shape one: `plan` gates on the
+// store's `isSafeKitId` (any non-empty, non-traversing id), deliberately NOT on
+// the narrower create_kit-shaped `KIT_ID_PATTERN`. The core-logic tests below
+// call `createPlan` directly, beneath the tool layer, so they are unaffected.
+const KIT_ID = "wf-kit";
 
 async function tempDir(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), prefix));
@@ -518,8 +525,11 @@ async function makeWireHarness(): Promise<WireHarness> {
   const kitsRoot = await tempDir("genie-wf-wire-kits-");
   const kitDir = join(kitsRoot, KIT_ID);
   const kitStore = new LocalFsKitStore(kitsRoot);
+  // `plan` now resolves the kit before issuing a planId (#252), so the wire
+  // harness seeds a real kit in the same store the plan tool validates against.
+  await kitStore.createKit("Write Files Wire Kit", KIT_ID);
   const server = new McpServer({ name: "genie-test", version: "0" });
-  registerPlan(server);
+  registerPlan(server, kitStore);
   registerWriteFilesTool(server, kitStore);
 
   const client = new Client({ name: "test", version: "0" });

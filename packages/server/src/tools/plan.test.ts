@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { mkdtemp, rm, mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "../server.js";
+import { compileManifest } from "../manifest/compiler.js";
+import { registerPlan } from "./plan.js";
 import {
   createPlan,
   validateGlobPatterns,
@@ -330,6 +333,7 @@ describe("pruneExpiredPlans", () => {
 describe("plan tool (via MCP)", () => {
   let tempDir: string;
   let client: Client;
+  let kitId: string;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "genie-test-"));
@@ -342,6 +346,16 @@ describe("plan tool (via MCP)", () => {
 
     client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
     await client.connect(clientTransport);
+
+    // `plan` resolves the kit before issuing a planId (#252), so these cases —
+    // which are about writes/deletes/localDir, not kit identity — mint a real
+    // kit through the public verb rather than asserting against a literal id.
+    const created = await client.callTool({
+      name: "mcp__genie__create_kit",
+      arguments: { name: "Plan Test Kit" },
+    });
+    const createdText = (created.content as { type: string; text: string }[])[0]?.text ?? "";
+    kitId = (JSON.parse(createdText) as { kitId: string }).kitId;
   });
 
   afterEach(async () => {
@@ -353,7 +367,7 @@ describe("plan tool (via MCP)", () => {
   it("creates a plan and returns planId", async () => {
     const result = await client.callTool({
       name: "mcp__genie__plan",
-      arguments: { kitId: "kit-abc123", writes: ["*.js", "**/*.ts"] },
+      arguments: { kitId, writes: ["*.js", "**/*.ts"] },
     });
 
     expect(result.isError).toBeUndefined();
@@ -399,7 +413,7 @@ describe("plan tool (via MCP)", () => {
     try {
       const result = await client.callTool({
         name: "mcp__genie__plan",
-        arguments: { kitId: "kit-abc123", writes: ["*.js", "**/*.ts"], deletes: ["*.tmp"] },
+        arguments: { kitId, writes: ["*.js", "**/*.ts"], deletes: ["*.tmp"] },
       });
       const text = (result.content as { type: string; text: string }[])[0]?.text ?? "";
       const { planId } = JSON.parse(text) as { planId: string };
@@ -409,7 +423,7 @@ describe("plan tool (via MCP)", () => {
       const audit = JSON.parse(auditLine as string) as Record<string, unknown>;
       expect(audit).toMatchObject({
         event: "plan.created",
-        kitId: "kit-abc123",
+        kitId,
         planId,
         writeCount: 2,
         deleteCount: 1,
@@ -426,7 +440,7 @@ describe("plan tool (via MCP)", () => {
   it("accepts optional deletes parameter", async () => {
     const result = await client.callTool({
       name: "mcp__genie__plan",
-      arguments: { kitId: "kit-abc123", writes: ["*.js"], deletes: ["*.tmp"] },
+      arguments: { kitId, writes: ["*.js"], deletes: ["*.tmp"] },
     });
 
     expect(result.isError).toBeUndefined();
@@ -438,7 +452,7 @@ describe("plan tool (via MCP)", () => {
   it("defaults localDir to cwd when omitted", async () => {
     const result = await client.callTool({
       name: "mcp__genie__plan",
-      arguments: { kitId: "kit-abc123", writes: ["*.js"] },
+      arguments: { kitId, writes: ["*.js"] },
     });
 
     expect(result.isError).toBeUndefined();
@@ -455,7 +469,7 @@ describe("plan tool (via MCP)", () => {
 
     const result = await client.callTool({
       name: "mcp__genie__plan",
-      arguments: { kitId: "kit-abc123", writes: ["*.js"], localDir: customDir },
+      arguments: { kitId, writes: ["*.js"], localDir: customDir },
     });
 
     expect(result.isError).toBeUndefined();
@@ -469,7 +483,7 @@ describe("plan tool (via MCP)", () => {
   it("rejects non-existent localDir", async () => {
     const result = await client.callTool({
       name: "mcp__genie__plan",
-      arguments: { kitId: "kit-abc123", writes: ["*.js"], localDir: "/nonexistent/path" },
+      arguments: { kitId, writes: ["*.js"], localDir: "/nonexistent/path" },
     });
 
     expect(result.isError).toBe(true);
@@ -487,7 +501,7 @@ describe("plan tool (via MCP)", () => {
 
     const result = await client.callTool({
       name: "mcp__genie__plan",
-      arguments: { kitId: "kit-abc123", writes: ["*.js"], localDir: filePath },
+      arguments: { kitId, writes: ["*.js"], localDir: filePath },
     });
 
     expect(result.isError).toBe(true);
@@ -501,7 +515,7 @@ describe("plan tool (via MCP)", () => {
 
     const result = await client.callTool({
       name: "mcp__genie__plan",
-      arguments: { kitId: "kit-abc123", writes },
+      arguments: { kitId, writes },
     });
 
     expect(result.isError).toBe(true);
@@ -515,7 +529,7 @@ describe("plan tool (via MCP)", () => {
   it("rejects patterns with >3 wildcards", async () => {
     const result = await client.callTool({
       name: "mcp__genie__plan",
-      arguments: { kitId: "kit-abc123", writes: ["a/*/b/*/c/*/d/*.js"] },
+      arguments: { kitId, writes: ["a/*/b/*/c/*/d/*.js"] },
     });
 
     expect(result.isError).toBe(true);
@@ -528,12 +542,12 @@ describe("plan tool (via MCP)", () => {
   it("allows concurrent plans for the same kit", async () => {
     const result1 = await client.callTool({
       name: "mcp__genie__plan",
-      arguments: { kitId: "kit-abc123", writes: ["*.js"] },
+      arguments: { kitId, writes: ["*.js"] },
     });
 
     const result2 = await client.callTool({
       name: "mcp__genie__plan",
-      arguments: { kitId: "kit-abc123", writes: ["*.ts"] },
+      arguments: { kitId, writes: ["*.ts"] },
     });
 
     expect(result1.isError).toBeUndefined();
@@ -545,5 +559,347 @@ describe("plan tool (via MCP)", () => {
     const response2 = JSON.parse(text2) as { planId: string };
 
     expect(response1.planId).not.toBe(response2.planId);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// kitId validation (#252)
+// ────────────────────────────────────────────────────────────
+
+describe("plan tool — kitId validation (#252)", () => {
+  let tempDir: string;
+  let kitsRoot: string;
+  let client: Client;
+  let kitId: string;
+
+  const payload = (result: unknown): Record<string, unknown> => {
+    const content = (result as { content?: { type: string; text: string }[] }).content ?? [];
+    return JSON.parse(content[0]?.text ?? "{}") as Record<string, unknown>;
+  };
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "genie-test-"));
+    process.env.GENIE_HOME = tempDir;
+    kitsRoot = join(tempDir, "kits");
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createServer({ kitsRoot });
+    await server.connect(serverTransport);
+
+    client = new Client({ name: "test-client", version: "1.0.0" }, { capabilities: {} });
+    await client.connect(clientTransport);
+
+    // Mint a real kit so the happy paths below exercise a kit that genuinely
+    // resolves through the same store the server writes with.
+    const created = await client.callTool({
+      name: "mcp__genie__create_kit",
+      arguments: { name: "Plan Validation Kit" },
+    });
+    expect(created.isError, JSON.stringify(created)).toBeFalsy();
+    kitId = payload(created).kitId as string;
+    expect(kitId).toBeTruthy();
+  });
+
+  afterEach(async () => {
+    await client.close();
+    await rm(tempDir, { recursive: true, force: true });
+    delete process.env.GENIE_HOME;
+  });
+
+  it("rejects a well-formed kitId that names no existing kit", async () => {
+    // The reported bug: `plan` happily issued a planId for a kit that does not
+    // exist, and `write_files` then created the directory and wrote bytes into
+    // it. A plan is a scoped write authorization for a *specific* kit, and path
+    // containment is enforced relative to that kit — so an unresolvable kit
+    // weakens the containment guarantee itself, not just the error message.
+    const result = await client.callTool({
+      name: "mcp__genie__plan",
+      arguments: { kitId: "no-such-kit-000000", writes: ["*.html"] },
+    });
+
+    expect(result.isError).toBe(true);
+    // Same envelope as the plan-guard's planNotFound / pathOutsidePlan
+    // rejections, so a client can branch on code/data.reason uniformly.
+    expect(payload(result)).toMatchObject({
+      code: -32602,
+      data: { reason: "kitNotFound", kitId: "no-such-kit-000000" },
+    });
+  });
+
+  it("rejects containment-unsafe kitIds with the same typed error", async () => {
+    // `""`, `.`, `..`, and any id carrying a path separator escape the
+    // single-kit namespace, so they are refused by the shared `isSafeKitId`
+    // rule *before* the store is touched — which also keeps `getKit` (it
+    // resolves a path without re-checking id safety) from reading above
+    // kitsRoot. They surface as the same rejection a genuinely-missing kit
+    // would, mirroring the store's own precedent for unsafe ids.
+    //
+    // `""` is in this list deliberately: the input schema omits `.min(1)` so
+    // an empty id reaches the handler and gets this structured envelope, not a
+    // generic non-JSON "MCP error ..." protocol string. Re-adding that schema
+    // minimum fails this case.
+    for (const bad of ["", "..", ".", "../escape", "a/b", "a\\b"]) {
+      const result = await client.callTool({
+        name: "mcp__genie__plan",
+        arguments: { kitId: bad, writes: ["*.html"] },
+      });
+
+      expect(result.isError, `expected rejection for kitId ${JSON.stringify(bad)}`).toBe(true);
+      expect(payload(result)).toMatchObject({
+        code: -32602,
+        data: { reason: "kitNotFound", kitId: bad },
+      });
+    }
+  });
+
+  it("rejects safe-but-absent kitIds by lookup, with the same typed error", async () => {
+    // These are all containment-safe, so they reach the store and are refused
+    // because no such kit resolves — not because of their charset. Same
+    // envelope either way, so a client branches on one reason.
+    for (const bad of ["UPPER", "ab", "a".repeat(65), "My_Kit.2", "..kit"]) {
+      const result = await client.callTool({
+        name: "mcp__genie__plan",
+        arguments: { kitId: bad, writes: ["*.html"] },
+      });
+
+      expect(result.isError, `expected rejection for kitId ${JSON.stringify(bad)}`).toBe(true);
+      expect(payload(result)).toMatchObject({
+        code: -32602,
+        data: { reason: "kitNotFound", kitId: bad },
+      });
+    }
+  });
+
+  it("🔒 plans against a resolvable kit whose id is not create_kit-shaped", async () => {
+    // Regression lock for the review finding on #263: `KitId` is an opaque,
+    // adapter-assigned string. `KIT_ID_PATTERN` (/^[a-z0-9-]{3,64}$/) describes
+    // only ids MINTED by create_kit, while an imported or git-host kit may
+    // legitimately be named `My_Kit.2` or `a`. `read_file`/`list_files` already
+    // browse such kits through `isSafeKitId`, and `list_kits` promises the ids
+    // it returns are valid input to `plan` — so gating `plan` on the stricter
+    // pattern would make a resolvable, browsable kit unwritable.
+    for (const importedId of ["My_Kit.2", "a", "..kit"]) {
+      const kitDir = join(kitsRoot, importedId);
+      await mkdir(kitDir, { recursive: true });
+      await writeFile(
+        join(kitDir, ".kit.json"),
+        JSON.stringify({
+          id: importedId,
+          name: `Imported ${importedId}`,
+          type: "GENIE_KIT",
+          createdAt: new Date().toISOString(),
+        }),
+      );
+
+      const result = await client.callTool({
+        name: "mcp__genie__plan",
+        arguments: { kitId: importedId, writes: ["*.html"], localDir: tempDir },
+      });
+
+      expect(
+        result.isError,
+        `expected ${JSON.stringify(importedId)} to plan: ${JSON.stringify(result)}`,
+      ).toBeFalsy();
+      expect(payload(result).planId).toBeTruthy();
+    }
+  });
+
+  it("issues no plan when the kit is rejected", async () => {
+    // A rejected call must not leave a usable write authorization behind.
+    const before = await readdir(join(tempDir, "plans")).catch(() => [] as string[]);
+
+    await client.callTool({
+      name: "mcp__genie__plan",
+      arguments: { kitId: "no-such-kit-000000", writes: ["*.html"] },
+    });
+
+    const after = await readdir(join(tempDir, "plans")).catch(() => [] as string[]);
+    expect(after).toEqual(before);
+  });
+
+  it("emits a plan.rejected audit line to stderr, not stdout", async () => {
+    // Same constraint as plan.created: on the stdio transport stdout *is* the
+    // JSON-RPC stream, so a stray line there corrupts client framing.
+    const stderrLines: string[] = [];
+    const stdoutLines: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        stderrLines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      });
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        stdoutLines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      });
+
+    try {
+      await client.callTool({
+        name: "mcp__genie__plan",
+        arguments: { kitId: "no-such-kit-000000", writes: ["*.html"] },
+      });
+
+      const auditLine = stderrLines.find((l) => l.includes("plan.rejected"));
+      expect(auditLine).toBeTruthy();
+      expect(JSON.parse(auditLine as string)).toMatchObject({
+        event: "plan.rejected",
+        reason: "kitNotFound",
+        kitId: "no-such-kit-000000",
+      });
+      expect(stdoutLines.some((l) => l.includes("plan.rejected"))).toBe(false);
+    } finally {
+      stderrSpy.mockRestore();
+      stdoutSpy.mockRestore();
+    }
+  });
+
+  it("still plans and writes for a kit that exists", async () => {
+    const planResult = await client.callTool({
+      name: "mcp__genie__plan",
+      arguments: { kitId, writes: ["components/**/*.html"], localDir: tempDir },
+    });
+    expect(planResult.isError, JSON.stringify(planResult)).toBeFalsy();
+    const planId = payload(planResult).planId as string;
+    expect(planId).toBeTruthy();
+
+    const writeResult = await client.callTool({
+      name: "mcp__genie__write_files",
+      arguments: {
+        planId,
+        files: [{ path: "components/Button.html", data: "<button>Hi</button>" }],
+      },
+    });
+    expect(writeResult.isError, JSON.stringify(writeResult)).toBeFalsy();
+
+    const written = await stat(join(kitsRoot, kitId, "components", "Button.html"));
+    expect(written.isFile()).toBe(true);
+  });
+
+  it("accepts the manifest name the embedded Browse tier passes as kitId", async () => {
+    // Regression lock for the two kit-identity namespaces tracked in #254.
+    //
+    // In the embedded Browse → Review → Apply path the viewer seeds its
+    // `options.kitId` from the *compiled manifest name*, not from `kit.id`
+    // (viewer.js: `kitId: browseSeedManifest && browseSeedManifest.name`), and
+    // hands that value to `plan`. That works today only because the manifest
+    // name is `basename(projectRoot)` (manifest/compiler.ts) and the kit
+    // directory *is* the kit id (store/local.ts `kitDir = join(baseDir, kitId)`,
+    // reached via grid-resource's `resolveKitDir = join(kitsRoot, kitId)`).
+    //
+    // That equivalence is load-bearing: validating kitId at plan time is only
+    // safe for Browse while it holds. Assert it directly so a future change to
+    // the compiler's name derivation or to kit-dir layout fails loudly here
+    // instead of silently breaking Apply in the embedded tier.
+    const { manifest } = await compileManifest(join(kitsRoot, kitId));
+    expect(manifest.name).toBe(kitId);
+
+    const result = await client.callTool({
+      name: "mcp__genie__plan",
+      arguments: { kitId: manifest.name, writes: ["components/**/*.html"], localDir: tempDir },
+    });
+
+    expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    expect(payload(result).planId).toBeTruthy();
+  });
+
+  it("re-throws a store fault instead of reporting it as a missing kit", async () => {
+    // Fail-closed is not the same as fail-silent. A genuine "no such kit" is a
+    // `kitNotFound` rejection; an I/O or transport fault (EACCES, or a network
+    // error behind a git-host store) must surface as itself so an operator can
+    // tell a typo apart from a broken backend. Either way no plan is issued.
+    const boom = new Error("EACCES: permission denied, open '.kit.json'");
+    const failingStore = {
+      getKit: vi.fn(async () => {
+        throw boom;
+      }),
+    };
+
+    const server = new McpServer({ name: "genie-test", version: "0" });
+    registerPlan(server, failingStore);
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const stubClient = new Client({ name: "stub-client", version: "1.0.0" }, { capabilities: {} });
+    await stubClient.connect(clientTransport);
+
+    try {
+      const result = await stubClient.callTool({
+        name: "mcp__genie__plan",
+        arguments: { kitId: "some-real-kit", writes: ["*.html"], localDir: tempDir },
+      });
+
+      expect(failingStore.getKit).toHaveBeenCalledWith("some-real-kit");
+      expect(result.isError).toBe(true);
+
+      const text = ((result.content as { type: string; text: string }[]) ?? [])[0]?.text ?? "";
+      expect(text).toContain("EACCES");
+      // Crucially NOT mislabelled as a missing kit.
+      expect(text).not.toContain("kitNotFound");
+
+      // And still fail-closed: no plan was persisted.
+      let plans: string[] = [];
+      try {
+        plans = await readdir(join(tempDir, "plans"));
+      } catch {
+        plans = [];
+      }
+      expect(plans).toEqual([]);
+    } finally {
+      await stubClient.close();
+    }
+  });
+
+  it("🔒 re-throws a REAL LocalFsKitStore read fault, not just a stubbed one", async () => {
+    // Regression lock for the review finding on #263. The stub above proves the
+    // branch in plan.ts, but not the adapter: `readMeta` used to `catch {}`
+    // every error and return undefined, which `getKit` then turned into
+    // NotFoundError — so an unreadable kit reached plan.ts already disguised as
+    // a missing one and the narrowed catch could never fire. `readMeta` now
+    // swallows only genuine absence (ENOENT/ENOTDIR) and re-throws real faults.
+    //
+    // Forced with a DIRECTORY at the .kit.json path: `readFile` then fails
+    // EISDIR deterministically, on every platform and regardless of whether the
+    // suite runs as root (which would defeat a chmod-based test in CI).
+    const brokenId = "unreadable-kit";
+    await mkdir(join(kitsRoot, brokenId, ".kit.json"), { recursive: true });
+
+    const result = await client.callTool({
+      name: "mcp__genie__plan",
+      arguments: { kitId: brokenId, writes: ["*.html"], localDir: tempDir },
+    });
+
+    expect(result.isError, JSON.stringify(result)).toBe(true);
+    const text = ((result.content as { type: string; text: string }[]) ?? [])[0]?.text ?? "";
+    // The kit EXISTS but cannot be read — reporting "does not exist" would send
+    // an operator hunting a typo instead of a broken backend.
+    expect(text).not.toContain("kitNotFound");
+    expect(text).toMatch(/EISDIR|illegal operation on a directory/i);
+
+    // Still fail-closed: no plan authorization was issued.
+    let plans: string[];
+    try {
+      plans = await readdir(join(tempDir, "plans"));
+    } catch {
+      plans = [];
+    }
+    expect(plans).toEqual([]);
+  });
+
+  it("still lists kits when one neighbour's metadata is unreadable", async () => {
+    // The strictness above must NOT leak into enumeration: listKits walks a root
+    // that may hold foreign or half-written entries, and one bad neighbour must
+    // not fail the whole listing (hence readMetaIfReadable). Guards against a
+    // fix for the above regressing list_kits / the empty-state grid.
+    await mkdir(join(kitsRoot, "broken-neighbour", ".kit.json"), { recursive: true });
+
+    const result = await client.callTool({ name: "mcp__genie__list_kits", arguments: {} });
+
+    expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    const content = (result as { content?: { type: string; text: string }[] }).content ?? [];
+    const kits = JSON.parse(content[0]?.text ?? "[]") as { id: string }[];
+    expect(kits.map((k) => k.id)).toContain(kitId);
+    expect(kits.map((k) => k.id)).not.toContain("broken-neighbour");
   });
 });
