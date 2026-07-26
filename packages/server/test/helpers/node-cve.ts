@@ -224,9 +224,12 @@ export function assertRangePatchesCve202527210(range: string, label: string): vo
 /**
  * Render a declared `engines.node` range as the prose the public docs must use.
  *
- * The prerequisites in `README.md`, `docs/user/installation.md` and
- * `docs/developer/contributing.md` are the only thing standing between a reader
- * and a runtime the packages were never tested on. `engines.node` does not stand
+ * The prerequisite statements in the public entry points are the only thing
+ * standing between a reader and a runtime the packages were never tested on.
+ * Which files those are is decided by the derived scan in
+ * `docs-node-requirement.test.ts` and is deliberately NOT restated here: the
+ * hand-written copy of that list is what went stale last time, omitting the root
+ * `CONTRIBUTING.md`. `engines.node` does not stand
  * there too: this repository sets no `engine-strict`, so npm treats the field as
  * advisory and carries on after an `EBADENGINE` warning that never mentions the
  * CVE. So a doc saying "Node 22.19 or newer" while the manifest says
@@ -235,7 +238,8 @@ export function assertRangePatchesCve202527210(range: string, label: string): vo
  * them.
  *
  * That mismatch is exactly what happened when the CVE-2025-27210 floors landed:
- * four prose claims across three files kept describing the pre-narrowing range.
+ * every prose claim then in the tree kept describing the pre-narrowing range.
+ * The tally is left to the scan for the same reason as the file list.
  * Rather than fix four strings and hope, the docs are checked against this
  * rendering, so the range and its documentation cannot diverge again.
  *
