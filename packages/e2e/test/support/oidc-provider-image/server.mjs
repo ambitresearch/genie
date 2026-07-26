@@ -18,6 +18,7 @@
 // back to the host for the test's Playwright browser + genie server to hit.
 import { createServer } from "node:http";
 import Provider from "oidc-provider";
+import { isValidInteractionUid, renderLoginForm } from "./interaction-view.mjs";
 
 const PORT = 9944;
 
@@ -104,18 +105,17 @@ provider.proxy = true;
 const app = createServer(async (req, res) => {
   if (req.method === "GET" && req.url?.startsWith("/interaction/")) {
     const uid = req.url.split("/interaction/")[1].split("?")[0];
+    // The uid is reflected back into the login form, so refuse anything
+    // oidc-provider would never have issued before it reaches the provider.
+    if (!isValidInteractionUid(uid)) {
+      res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+      res.end("invalid interaction uid");
+      return;
+    }
     const { prompt, session } = await provider.interactionDetails(req, res);
     if (prompt.name === "login") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(`
-        <html><body>
-          <form method="POST" action="/interaction/${uid}/login">
-            <input name="username" />
-            <input name="password" type="password" />
-            <button type="submit">Sign in</button>
-          </form>
-        </body></html>
-      `);
+      res.end(renderLoginForm(uid));
       return;
     }
     if (prompt.name === "consent") {

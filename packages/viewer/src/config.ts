@@ -197,9 +197,21 @@ export function noStoreHtmlPlugin(): Plugin {
 
 const VITE_CLIENT_SCRIPT = /<script\b[^>]*\bsrc=(["'])\/@vite\/client\1[^>]*><\/script>\s*/gi;
 
-/** Remove Vite's injected full-reload client; genie owns card refreshes. */
+/**
+ * Remove Vite's injected full-reload client; genie owns card refreshes.
+ *
+ * Runs to a fixed point: a single pass cannot strip nested occurrences,
+ * because deleting an inner match splices the surrounding text into a fresh
+ * outer match the scan has already moved past.
+ */
 export function stripViteClientScript(html: string): string {
-  return html.replace(VITE_CLIENT_SCRIPT, "");
+  let out = html;
+  let previous: string;
+  do {
+    previous = out;
+    out = out.replace(VITE_CLIENT_SCRIPT, "");
+  } while (out !== previous);
+  return out;
 }
 
 /** Run after Vite's built-in HTML transform so the injected client is present. */
