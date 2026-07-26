@@ -91,22 +91,36 @@ The files the baseline is missing are exactly the ones its bytes cannot speak fo
 `refine` computes it server-side from the complete on-disk set it just read, and `refineOutputShape`
 requires it, so a path with no hunk in it is a path that is byte-identical on disk. A file that is
 genuinely new carries an add hunk (`--- /dev/null`), which is what separates unsaved work from a
-sibling that was merely absent from the baseline. A derive with no diff at all cannot vouch for an
-unknown path, so it counts as divergent.
+sibling that was merely absent from the baseline. A derive with no diff **at all** — the field
+absent, or present but not a string — vouches for nothing and counts as divergent. That is not the
+same as a diff that is present and names nothing, which is a positive statement about every path.
 
-Bytes remain evidence wherever the baseline does hold the file, but they are not sufficient there,
+Where the baseline does hold the file its bytes look like corroboration, but they are not evidence,
 because the baseline is a **snapshot** — for a Browse handoff, one taken before Refine ran — while
-the diff is measured against the file on disk at refine time. While the two agree, equal bytes and
-a silent diff say the same thing, since the server omits any path whose before and after match.
-Once the kit moves under the snapshot they part company: the snapshot holds `A`, disk holds `B`,
-the model returns `A`, and the server honestly reports `B` becoming `A` while a byte check against
-the snapshot sees no change at all. Reading that as "derives nothing" keeps `componentInKit`,
-disarms the prompt, and lets a reload drop a draft that still had the current kit to overwrite. So
-a path the diff names has diverged whether or not the baseline held it, and only a derive whose
-diff names nothing at all is a true no-op. A `+++ /dev/null` hunk for a path the derive also
-rewrites is still not a deletion — the plan writes that path rather than removing it — but it is a
-hunk, so it is drift like any other. A baseline path that disappears from the derive is divergence
-too, since the deletion of a sibling is real proposed work.
+the diff is measured against the file on disk at refine time. While the two agree they say the same
+thing, since the server omits any path whose before and after match. Once the kit moves under the
+snapshot they part company, and they part company in both directions. The snapshot holds `A`, disk
+holds `B`, and the model returns `A`: the server honestly reports `B` becoming `A` while a byte
+check against the snapshot sees no change at all, so believing the bytes would disarm a prompt a
+real draft needed. Have the model return `B` and the mirror happens: the bytes differ from the
+snapshot, the diff is silent because the reply already matches disk, and believing the bytes raises
+a prompt nobody earned and locks Refine behind an Apply that would write nothing.
+
+So the derive is judged on its diff alone, and equal bytes buy it nothing. A path the diff names has
+diverged whether or not the baseline held it; a diff that names no path is a true no-op, because
+`buildUnifiedDiff` walks the **union** of the on-disk and returned paths and skips only those whose
+before and after match, so silence there is a statement about every path on either side. A
+`+++ /dev/null` hunk for a path the derive also rewrites is still not a deletion — the plan writes
+that path rather than removing it — but it is a hunk, so it is drift like any other. The baseline
+keeps exactly one job the diff cannot do: a baseline path that disappears from the derive is
+divergence, since the deletion of a sibling is real proposed work.
+
+Deterministic tweaks reuse that rule against a different origin, and the two must not be conflated.
+A refine reply's diff is **disk-baselined** — computed server-side from the directory `refine` had
+just read — so a silent one means the reply is already saved and the draft inherits `componentInKit`
+honestly. A tweak never reaches the server, so `applyDeterministicTweak` recomputes its diff locally
+as parent-versus-tweaked, making it **parent-baselined**; a silent one there means the tweak moved
+nothing its parent did not already carry, which is the same no-op verdict for a different reason.
 The narrower alternative, having the handoff rebuild a full baseline with `list_files` plus a
 `read_file` per sibling, was rejected: it spends N+1 extra round trips re-reading precisely what
 `refine` returns for free moments later, and adds a partial-read failure mode of its own.

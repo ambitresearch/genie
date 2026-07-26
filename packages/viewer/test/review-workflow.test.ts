@@ -4007,6 +4007,18 @@ describe("unload guard ignores byte-identical derivatives (#256)", () => {
     expect(fireUnload(wired.window).defaultPrevented).toBe(true);
   });
 
+  it("stays silent when the kit moved and the derive matches disk, not the snapshot", async () => {
+    // The mirror of the case above: the snapshot holds `A`, the kit has since moved to
+    // `B`, and the model hands back `B`. Bytes differ from the snapshot, but the server
+    // diffs against disk and finds nothing, which proves the draft is already saved.
+    const wired = await refined({ files: CHANGED, diff: "" });
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+    // The same flag gates Refine, so a false alarm here also locks the control.
+    expect(wired.document.getElementById("refine-status")?.textContent ?? "").not.toContain(
+      "Apply this draft first",
+    );
+  });
+
   /*
    * Copilot (round 12, PR #270). `refineResult()`'s stock fixture is precisely this
    * shape -- files byte-identical to the parent, `diff` naming that very path -- and
@@ -4374,9 +4386,11 @@ describe("unload guard tolerates an incomplete Browse baseline (#256)", () => {
     expect(fireUnload(shell.window).defaultPrevented).toBe(true);
   });
 
-  it("still prompts when the file the parent DOES hold diverges", async () => {
-    // The diff is not a licence to stop reading bytes: where the parent holds
-    // the file, its bytes remain the evidence even if the diff says nothing.
+  it("stays silent when the file the parent holds moved on disk underneath it", async () => {
+    // Bytes the parent holds are a SNAPSHOT, and this one is stale: the reply differs
+    // from it, yet the server diffed against disk and found nothing. The only reading
+    // consistent with a union-walking `buildUnifiedDiff` is that the kit moved and the
+    // reply already matches it, so prompting -- and locking Refine -- would be a lie.
     const shell = await refinedFromBrowse(
       wholeComponent({
         files: [
@@ -4385,7 +4399,13 @@ describe("unload guard tolerates an incomplete Browse baseline (#256)", () => {
         ],
       }),
     );
-    expect(fireUnload(shell.window).defaultPrevented).toBe(true);
+    expect(fireUnload(shell.window).defaultPrevented).toBe(false);
+    const input = shell.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "now change it";
+    input.dispatchEvent(new shell.window.Event("input", { bubbles: true }));
+    expect((shell.document.getElementById("refine-submit") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
   });
 });
 

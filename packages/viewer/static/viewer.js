@@ -2279,11 +2279,15 @@
      * @param {Array<Record<string, string>>} a parent draft files (the baseline)
      * @param {Array<Record<string, string>>} b derived draft files
      * @param {unknown} diff the derive's server-computed unified diff, if it has one
-     * @returns {boolean} true when every baseline path is still present and byte-identical, and
-     *   `diff` names no path at all
+     * @returns {boolean} true when every baseline path survives into the derive and `diff` names
+     *   none of the derive's paths. Bytes are deliberately NOT compared
      */
     function sameFileSet(a, b, diff) {
       if (!Array.isArray(a) || !Array.isArray(b)) return false;
+      // The diff, not the baseline, is what testifies about disk: `buildUnifiedDiff` walks the
+      // union of the on-disk and returned paths, so a diff that names nothing says the derive
+      // already IS the kit -- even where a stale baseline disagrees. The baseline keeps the one
+      // job the diff cannot do, counting what survived. Copilot (round 12, PR #270).
       var byPath = Object.create(null);
       // Keying is safe because `hasReviewableCore` runs `hasUniquePaths` on every payload before it
       // can become a draft, so neither side can repeat a path and mask a vanished sibling.
@@ -2291,22 +2295,11 @@
       var seen = 0;
       var touched = null;
       for (var j = 0; j < b.length; j += 1) {
-        var mate = byPath[b[j].path];
-        if (mate) {
-          if (
-            mate.content !== b[j].content ||
-            mate.mimeType !== b[j].mimeType ||
-            mate.encoding !== b[j].encoding
-          ) {
-            return false;
-          }
-          seen += 1;
-        }
-        // Matching the BASELINE is not matching DISK, so bytes alone cannot finish the job: the
-        // baseline is a snapshot, while the diff is measured against disk at refine time. Once the
-        // kit moves under the snapshot they part company (snapshot `A`, disk `B`, reply `A`: equal
-        // bytes here, an honest `B -> A` there), and only the diff testifies about disk. So a path
-        // the diff names has diverged, mate or not. Same architecture.md section.
+        if (byPath[b[j].path]) seen += 1;
+        // A path the diff names has diverged, whether or not the baseline holds it, and equal
+        // bytes prove nothing: the baseline is a snapshot, the diff is measured against disk at
+        // refine time, and once the kit moves under the snapshot they part company (snapshot `A`,
+        // disk `B`, reply `A`). Same architecture.md section.
         if (typeof diff !== "string") return false;
         if (touched === null) touched = parseUnifiedDiff(diff).files;
         if (touched.indexOf(b[j].path) !== -1) return false;
