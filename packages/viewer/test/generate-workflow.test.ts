@@ -1501,7 +1501,7 @@ describe("MCP host bridge — text-only tool results (#251)", () => {
     ).rejects.toThrow("malformed");
   });
 
-  it("rejects an array structuredContent instead of falling back to text", async () => {
+  it("ignores an array structuredContent and falls back to the text payload", async () => {
     const { hooks, window } = loadHooks();
     await expect(
       callWithResult(hooks, window, {

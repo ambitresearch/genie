@@ -3012,6 +3012,13 @@
     return "The tool returned an error.";
   }
 
+  function isPayloadObject(value) {
+    // MCP models `structuredContent` as a JSON object/map, and constrains
+    // `outputSchema` to an object root. An array passes `typeof === "object"`
+    // but hands field-based callers the same unusable shape a primitive would.
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+
   /**
    * Payload of the first `content[]` entry whose text parses to a JSON object.
    *
@@ -3027,13 +3034,6 @@
    * @param {object|undefined} result Raw `tools/call` result from the host.
    * @returns {object|undefined} Parsed payload, or `undefined` when none applies.
    */
-  function isPayloadObject(value) {
-    // MCP models `structuredContent` as a JSON object/map, and constrains
-    // `outputSchema` to an object root. An array passes `typeof === "object"`
-    // but hands field-based callers the same unusable shape a primitive would.
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-  }
-
   function textResultPayload(result) {
     var content = result && result.content;
     if (!Array.isArray(content)) return undefined;
