@@ -241,17 +241,22 @@ export class KitNotFoundError extends Error {
  * locally, so clock skew would intermittently false-reject legitimate writes — a
  * worse failure mode than the narrow gap it would close.
  *
- * Do NOT "sharpen" this for `LocalFsKitStore` alone. Local mints `createdAt` via
- * `new Date().toISOString()` (`store/local.ts`) off the SAME HOST CLOCK that
- * stamps `PlanState.createdAt`, so the skew objection above genuinely does not
- * apply there — which is exactly what makes a local-only identity check look
- * free. It is not: `assertKitLive` takes the `KitStore` INTERFACE, so it has no
- * way to tell which adapter it holds. A local-only rule would mean importing a
- * concrete adapter into a store-agnostic helper purely to narrow on it,
- * inverting the dependency direction the store abstraction exists to hold — and
- * both callers (step 9 below, `sync/orchestrator.ts` step 1) would inherit
- * plan-validity semantics that differ by backend. The uniformity is structural,
- * not a policy preference, and holds independently of the clock argument above.
+ * Do NOT "sharpen" this for `LocalFsKitStore` alone. The tempting premise — that
+ * local mints `createdAt` off the SAME HOST CLOCK that stamps
+ * `PlanState.createdAt`, so there is no skew to fear — holds only for kits this
+ * host minted via `createKit`. `listKits` discovers kits by walking the kits root
+ * and filtering on the `.kit.json` marker, and `getKit` returns that file's
+ * `createdAt` verbatim, so an imported or cloned kit directory carries whatever
+ * clock wrote it. The skew objection above therefore applies to LocalFs too.
+ *
+ * Independently of the clock argument, the check stays uniform on structural
+ * grounds: `assertKitLive` takes the `KitStore` INTERFACE and has no way to tell
+ * which adapter it holds. A local-only rule would mean importing a concrete
+ * adapter into a store-agnostic helper purely to narrow on it, inverting the
+ * dependency direction the store abstraction exists to hold — and both callers
+ * (step 9 below, `sync/orchestrator.ts` step 1) would inherit plan-validity
+ * semantics that differ by backend.
+ *
  * (`test/store-conformance.test.ts` is NOT the authority here: it pins the
  * `KitStore` method contract, not `PlanState`, which is a tool-layer record the
  * store interface never sees.)
