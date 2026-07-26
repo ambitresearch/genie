@@ -33,14 +33,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createServer } from "../server.js";
 import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 import { MANIFEST_PATH } from "../store/manifest.js";
 import { resolveKitDir as resolveGridKitDir } from "../ui/grid-resource.js";
 import { seedKit } from "../../test/helpers/seed-kit.js";
+import { registerPlan } from "./plan.js";
 import type { BootRequest, BootedViewer, ViewerBooter } from "./preview.js";
 import { InvalidKitIdError, resolveKitDir as resolvePreviewKitDir } from "./preview.js";
 
@@ -308,12 +310,24 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     //            by that schema's `.min(1)`.
     //   store  — `plan` deliberately funnels every refusal into ONE envelope so
     //            a client branches on a single reason (#252/#263; see plan.ts).
+    //            That single envelope is why `plan` ALSO needs the dedicated
+    //            test below: this row cannot tell its two branches apart.
+    //
+    // `conjure` and `refine` are in here despite calling a live model endpoint.
+    // They are safe to exercise because the MCP SDK validates `inputSchema`
+    // BEFORE dispatching to the handler, so a containment-unsafe kitId is
+    // refused at the protocol boundary and no generation is ever attempted —
+    // the same reason their handlers' `catch` blocks never see a schema
+    // failure. Omitting them would leave both gates deletable in silence,
+    // since the advertised-schema lock below cannot see a `.refine()` at all.
     const REFUSES_AT = {
       mcp__genie__get_kit: "schema",
       mcp__genie__preview: "schema",
       mcp__genie__bind_kit: "schema",
       mcp__genie__list_components: "schema",
       mcp__genie__conjure_screen: "schema",
+      mcp__genie__conjure: "schema",
+      mcp__genie__refine: "schema",
       mcp__genie__list_files: "tool",
       mcp__genie__plan: "store",
     } as const;
@@ -333,14 +347,16 @@ describe("kitId gate — an imported kit is usable end to end", () => {
 
     for (const bad of ["", "..", ".", "../escape", "a/b", "a\\b"]) {
       for (const [name, layer] of Object.entries(REFUSES_AT)) {
-        const args: Record<string, unknown> =
-          name === "mcp__genie__plan"
-            ? { kitId: bad, writes: ["*.html"] }
-            : name === "mcp__genie__bind_kit"
-              ? { projectId, kitId: bad }
-              : name === "mcp__genie__conjure_screen"
-                ? { projectId, kitId: bad, prompt: "A settings screen." }
-                : { kitId: bad };
+        // Every verb's OTHER required fields are valid, so the only thing that
+        // can be refused is the kitId.
+        const extraArgs: Record<string, Record<string, unknown>> = {
+          mcp__genie__plan: { writes: ["*.html"] },
+          mcp__genie__bind_kit: { projectId },
+          mcp__genie__conjure_screen: { projectId, prompt: "A settings screen." },
+          mcp__genie__conjure: { kit: "A small kit.", prompt: "A primary button." },
+          mcp__genie__refine: { componentName: "Button", instruction: "Make it wider." },
+        };
+        const args: Record<string, unknown> = { kitId: bad, ...(extraArgs[name] ?? {}) };
 
         // A schema failure can surface either as a thrown `McpError` or as an
         // `isError` result depending on the path, so both are captured.
@@ -356,6 +372,60 @@ describe("kitId gate — an imported kit is usable end to end", () => {
             `got: ${result.text.slice(0, 240)}`,
         ).toBe(true);
       }
+    }
+  });
+
+  it("🔒 plan refuses a containment-unsafe kitId BEFORE it consults the store", async () => {
+    // The row above cannot lock `plan`'s own gate, and the reason is worth
+    // stating: `plan` returns a byte-identical `kitNotFound` envelope from BOTH
+    // of its refusal branches — the `isSafeKitId` check (plan.ts) and the
+    // `NotFoundError` it catches from `getKit`. Against the real store, `".."`
+    // is refused by the gate; delete that gate and `getKit("..")` reads an
+    // absent parent `.kit.json`, throws `NotFoundError`, and `plan` emits the
+    // SAME text. The assertion stays green with the gate gone — precisely the
+    // "passes for a different reason than its name claims" defect this file
+    // exists to prevent, reproduced one layer down.
+    //
+    // The single envelope is deliberate (#252/#263) and must not change, so the
+    // fix is to remove the ambiguity from the FIXTURE instead: inject a store
+    // whose `getKit` RESOLVES for every id. Now only the containment gate can
+    // produce a refusal, and the decisive assertion is that `getKit` is never
+    // reached — which pins the ORDER plan.ts claims ("Containment first"),
+    // not merely the outcome. Drop the gate and this test fails twice over:
+    // the call succeeds, and `getKit` is called.
+    const resolvingStore = { getKit: vi.fn(async () => ({ id: "anything", type: "kit" })) };
+
+    const server = new McpServer({ name: "genie-gate-test", version: "0" });
+    registerPlan(server, resolvingStore);
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const stubClient = new Client({ name: "gate-stub", version: "1.0.0" }, { capabilities: {} });
+    await stubClient.connect(clientTransport);
+
+    try {
+      for (const bad of ["", "..", ".", "../escape", "a/b", "a\\b"]) {
+        resolvingStore.getKit.mockClear();
+
+        const result = await stubClient
+          .callTool({
+            name: "mcp__genie__plan",
+            arguments: { kitId: bad, writes: ["*.html"], localDir: tempDir },
+          })
+          .then((r) => ({ ok: !r.isError, text: JSON.stringify(r.content ?? r) }))
+          .catch((e: unknown) => ({ ok: false, text: String((e as Error)?.message ?? e) }));
+
+        expect(result.ok, `plan must refuse kitId ${JSON.stringify(bad)}`).toBe(false);
+        expect(result.text).toContain("kitNotFound");
+        expect(
+          resolvingStore.getKit,
+          `plan must reject kitId ${JSON.stringify(bad)} at its own containment ` +
+            `gate, without consulting the store`,
+        ).not.toHaveBeenCalled();
+      }
+    } finally {
+      await stubClient.close();
+      await server.close();
     }
   });
 });
