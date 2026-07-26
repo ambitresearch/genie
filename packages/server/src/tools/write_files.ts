@@ -241,6 +241,15 @@ export class KitNotFoundError extends Error {
  * locally, so clock skew would intermittently false-reject legitimate writes — a
  * worse failure mode than the narrow gap it would close.
  *
+ * Do NOT "sharpen" this for `LocalFsKitStore` alone. Local mints `createdAt` via
+ * `new Date().toISOString()` (`store/local.ts`) off the SAME HOST CLOCK that
+ * stamps `PlanState.createdAt`, so the skew objection above genuinely does not
+ * apply there — which is exactly what makes a local-only identity check look
+ * free. It is not: `test/store-conformance.test.ts` (AC5) holds both adapters to
+ * ONE contract, so a plan that survives delete-and-recreate on local but not on
+ * GitHost is divergent store semantics, not a sharper guard. This check stays
+ * uniform on store-parity grounds, independently of the clock argument above.
+ *
  * Shared with `sync/orchestrator.ts` step 1 rather than duplicated: the sync
  * sequence fences the tree with a RECURSIVE mkdir before any store call, so it
  * needs the identical invariant a beat earlier. One implementation, no drift.
