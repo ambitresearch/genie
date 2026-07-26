@@ -7,8 +7,12 @@
  * both manifests to `>=22.19.0 <23 || >=24.4.1`, that set stopped being a floor —
  * it acquired a hole covering all of 23.x and 24.0–24.4.0. Four prose claims
  * across three files went on describing the old floor, which told a user on Node
- * 23 that a documented command would work when npm would refuse it with an
- * `EBADENGINE` error that never mentions the CVE.
+ * 23 that a documented command would work on a runtime the package does not
+ * support. `engines.node` is the supported-runtime contract, not an install
+ * lock: npm treats it as advisory and only warns `EBADENGINE` unless the
+ * consumer has set `engine-strict`. The doc is therefore the ONLY thing
+ * standing between a reader and an unsupported, unpatched runtime, which is
+ * precisely why it has to state the range and not a floor.
  *
  * These are derived checks on purpose. This PR exists because one rule restated
  * at eight call sites drifted, and the same drift then recurred in this PR's own
@@ -35,8 +39,10 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 /**
  * Every file that states the Node prerequisite to a reader.
  *
- * `.nvmrc` is deliberately absent: it pins the single version CI builds on, not
- * the range users may install with, and narrowing it would be a different change.
+ * `.nvmrc` is deliberately absent: it is a local development baseline — no
+ * workflow reads it, and CI builds a `node: [22, 24]` matrix of bare majors —
+ * so it states one convenient version rather than the range users may install
+ * with. Narrowing it would be a different change.
  */
 const DOCS_STATING_THE_PREREQUISITE = [
   "README.md",
@@ -93,8 +99,8 @@ describe("published Node requirement", () => {
         const counterexample = nodeFloorOverclaim(floor, range);
         expect(
           counterexample,
-          `${doc} promises "${floor} or newer", but ${String(counterexample)} is refused by ` +
-            `engines.node "${range}" — npm would fail that install with EBADENGINE.`,
+          `${doc} promises "${floor} or newer", but ${String(counterexample)} is outside ` +
+            `engines.node "${range}" — an unsupported runtime npm would only warn about.`,
         ).toBeNull();
       }
     }
