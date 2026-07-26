@@ -510,10 +510,49 @@ function parseClineJson(stdout: string): ClineJsonEvent[] {
     .map((line) => JSON.parse(line) as ClineJsonEvent);
 }
 
-function requireCompleteClineToolCalls(events: ClineJsonEvent[]): ClineJsonEvent[] {
+/**
+ * What the stubbed model should do for one completion request.
+ *
+ * `tools-missing` is the case #268 was filed for: the run asked for a turn that
+ * must call an MCP tool, but the request carried no tool whose name ends in the
+ * expected suffix. Cline always offers its ~25 built-in tools (`read_files`,
+ * `editor`, `team_*`, ...), so the tool list is never empty — the signal is the
+ * absence of a genie tool specifically, which means the MCP server had not
+ * attached yet. It is NOT the same as `final`, which is the legitimate text turn
+ * after the last verb, and collapsing the two is what let an infrastructure
+ * failure masquerade as a completed run.
+ */
+type ClineStubTurn =
+  | { kind: "tool"; suffix: string; toolName: string }
+  | { kind: "final" }
+  | { kind: "tools-missing"; suffix: string; offered: string[] };
+
+function decideClineStubTurn(
+  turn: number,
+  suffixes: readonly string[],
+  offered: readonly string[],
+): ClineStubTurn {
+  const suffix = suffixes[turn];
+  if (suffix === undefined) return { kind: "final" };
+  const toolName = offered.find((name) => name.endsWith(suffix));
+  if (toolName === undefined) return { kind: "tools-missing", suffix, offered: [...offered] };
+  return { kind: "tool", suffix, toolName };
+}
+
+function requireCompleteClineToolCalls(
+  events: ClineJsonEvent[],
+  rawStdout?: string,
+): ClineJsonEvent[] {
   const toolEvents = events.filter(
     (event) => event.type === "agent_event" && event.event?.contentType === "tool",
   );
+  if (toolEvents.length === 0) {
+    throw new Error(
+      "Cline invoked no MCP tools at all — the CLI returned without calling a single tool, " +
+        "so the genie MCP server was never reached. Raw stdout:\n" +
+        (rawStdout ?? "<not captured>"),
+    );
+  }
   const starts = toolEvents
     .filter((event) => event.event?.type === "content_start")
     .map((event) => event.event?.toolName);
@@ -575,6 +614,35 @@ it("rejects a Cline transcript with a started tool call that never completes", (
       { type: "agent_event", event: { type: "content_start", contentType: "tool", toolName: "b" } },
     ]),
   ).toThrow(/started.*a, b.*completed.*a/s);
+});
+
+it("reports a Cline run that invoked no tools at all (#268)", () => {
+  expect(() => requireCompleteClineToolCalls([], "RAW-STDOUT-MARKER")).toThrow(
+    /invoked no MCP tools[\s\S]*RAW-STDOUT-MARKER/,
+  );
+});
+
+it("distinguishes a missing MCP tool list from the final text turn (#268)", () => {
+  const suffixes = ["conjure", "plan", "write_files", "preview"];
+  expect(decideClineStubTurn(0, suffixes, [])).toEqual({
+    kind: "tools-missing",
+    suffix: "conjure",
+    offered: [],
+  });
+  // A non-empty but wrong tool list is just as broken as an empty one.
+  expect(decideClineStubTurn(0, suffixes, ["read_file"])).toEqual({
+    kind: "tools-missing",
+    suffix: "conjure",
+    offered: ["read_file"],
+  });
+  // Past the last verb there is no expected tool, so a text turn is correct.
+  expect(decideClineStubTurn(4, suffixes, [])).toEqual({ kind: "final" });
+});
+
+it("matches an offered MCP tool by suffix (#268)", () => {
+  expect(
+    decideClineStubTurn(1, ["conjure", "plan"], ["mcp__genie__conjure", "mcp__genie__plan"]),
+  ).toEqual({ kind: "tool", suffix: "plan", toolName: "mcp__genie__plan" });
 });
 
 it("keeps the canonical extension auto-approval list aligned with registered read tools", async () => {
@@ -1687,6 +1755,10 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
 
       let turn = 0;
       const suffixes = ["conjure", "plan", "write_files", "preview"];
+      // #268: every turn where Cline offered no usable genie tool. Asserted
+      // before the transcript so a missing MCP connection reports itself
+      // instead of surfacing as "expected [] to deeply equal [...]".
+      const missingToolTurns: Array<{ turn: number; suffix: string; offered: string[] }> = [];
       model = createNodeHttpServer((req, res) => {
         const chunks: Buffer[] = [];
         req.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -1697,8 +1769,34 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
           };
           const names =
             body.tools?.flatMap((tool) => (tool.function?.name ? [tool.function.name] : [])) ?? [];
-          const suffix = suffixes[turn];
-          const toolName = suffix && names.find((name) => name.endsWith(suffix));
+          const decision = decideClineStubTurn(turn, suffixes, names);
+          if (decision.kind === "tools-missing") {
+            missingToolTurns.push({
+              turn,
+              suffix: decision.suffix,
+              offered: decision.offered,
+            });
+            // Fail the completion instead of answering with text. Answering
+            // would end the run with finish_reason "stop" and a transcript
+            // holding zero tool calls, which is exactly the confusing failure
+            // #268 describes. Measured against cline 3.0.42: a 503 is retried
+            // (3 completion requests for one turn), so an MCP connection that
+            // is still attaching gets another chance; if every retry still
+            // lacks the tool, cline exits non-zero with finishReason "error"
+            // and surfaces this message verbatim in run_result.text.
+            res.writeHead(503, { "content-type": "application/json" });
+            res.end(
+              JSON.stringify({
+                error: {
+                  message: `genie MCP tools were not attached: expected a tool ending in "${decision.suffix}", offered [${decision.offered.join(", ")}]`,
+                  type: "server_error",
+                },
+              }),
+            );
+            return;
+          }
+          const toolName = decision.kind === "tool" ? decision.toolName : undefined;
+          const suffix = decision.kind === "tool" ? decision.suffix : undefined;
           let args: Record<string, unknown> | undefined;
           if (suffix === "conjure") args = { kitId, kit: "minimal", prompt: "button" };
           if (suffix === "plan") {
@@ -1829,7 +1927,12 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
         { cwd: base, env, timeout: 90_000, maxBuffer: 10_000_000 },
       );
       const events = parseClineJson(result.stdout);
-      const toolEvents = requireCompleteClineToolCalls(events);
+      // #268: report the infrastructure failure before the transcript shape.
+      expect(
+        missingToolTurns,
+        `Cline requested a completion without the genie MCP tools attached: ${JSON.stringify(missingToolTurns)}`,
+      ).toEqual([]);
+      const toolEvents = requireCompleteClineToolCalls(events, result.stdout);
       const starts = toolEvents
         .filter((event) => event.event?.type === "content_start")
         .map((event) => event.event?.toolName);
