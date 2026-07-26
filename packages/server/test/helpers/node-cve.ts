@@ -276,15 +276,23 @@ export function renderNodeRequirement(range: string): string {
 /**
  * Every open-ended Node floor a doc claims, e.g. `≥22.19.0` or "22.19 or newer".
  *
+ * Only floors attributed to Node on the same line count. The name always said
+ * so; the patterns did not, and a caller that trusted the name would read a
+ * contrast ratio as a runtime promise.
+ *
  * Covers the plain, the typographic and the URL-encoded spellings, because the
  * README states its floor twice — once in prose and once inside a shields.io
  * badge URL, where `≥` is percent-encoded and would otherwise be invisible to a
  * search for the prose form.
  */
 export function findOpenEndedNodeFloors(text: string): string[] {
+  // Each pattern must reach back to a `node` mention on the same line. Without
+  // that the function matched any `>=x.y` in the text and reported design
+  // tokens and unrelated tool floors as Node prerequisites, which is why the
+  // documentation sweep could not simply scan the repository.
   const patterns = [
-    /(?:>=|≥|%E2%89%A5)\s*(\d+)\.(\d+)(?:\.(\d+))?/gu,
-    /(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/gu,
+    /node[^\n]{0,40}?(?:>=|≥|%E2%89%A5)\s*(\d+)\.(\d+)(?:\.(\d+))?/giu,
+    /node[^\n]{0,40}?(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/giu,
   ];
 
   const found: string[] = [];

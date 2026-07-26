@@ -34,7 +34,9 @@ pnpm dev                       # boots the MCP server on stdio
 pnpm test                      # run the suite
 ```
 
-Requires Node ≥ 22.19.0 (CI tests 22/24). `.nvmrc` pins 22.19.0.
+Requires Node.js 22.19.0–22.x, or 24.4.1 or newer — the 23.x and 24.0–24.4.0 lines
+are excluded because CVE-2025-27210 was never fixed there. CI builds a `node: [22, 24]`
+matrix; `.nvmrc` pins 22.19.0 as a local convenience and no workflow reads it.
 
 ### Useful scripts
 

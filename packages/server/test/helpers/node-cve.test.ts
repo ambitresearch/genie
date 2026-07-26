@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertRangePatchesCve202527210,
+  findOpenEndedNodeFloors,
   CVE_2025_27210_SUPPORTED,
   CVE_2025_27210_VULNERABLE,
   isVulnerableVersion,
@@ -183,5 +184,28 @@ describe("satisfiesRange — empty comparator sets are wildcards", () => {
     expect(() =>
       assertRangePatchesCve202527210(">=22.19.0 <23 || >=24.4.1", "published"),
     ).not.toThrow();
+  });
+
+  it("🔒 attributes a floor to Node before reporting it", () => {
+    // The function is named for Node but matched any `>=x.y` in the text, so a
+    // documentation sweep built on it reported design tokens and unrelated tool
+    // versions as Node prerequisites. That is why the doc check carried a
+    // hand-written file list instead of scanning: the scan was unusable. The
+    // list then omitted the root CONTRIBUTING.md, and the lock passed while a
+    // linked public guide advertised an unsupported runtime.
+    expect(findOpenEndedNodeFloors("contrast ratio >= 4.5.0 against the surface")).toEqual([]);
+    expect(findOpenEndedNodeFloors("requires pnpm 10.34.4 or newer")).toEqual([]);
+
+    // Everything genuinely attributed to Node still resolves, in all three
+    // spellings the README and the guides use between them.
+    expect(findOpenEndedNodeFloors("Requires Node \u2265 22.19.0 (CI tests 22/24).")).toEqual([
+      "22.19.0",
+    ]);
+    expect(findOpenEndedNodeFloors("Node.js 22.19.0\u201322.x, or 24.4.1 or newer")).toEqual([
+      "24.4.1",
+    ]);
+    expect(
+      findOpenEndedNodeFloors("node-22.19%E2%80%9322.x%20or%20%E2%89%A524.4.1-brightgreen.svg"),
+    ).toEqual(["24.4.1"]);
   });
 });

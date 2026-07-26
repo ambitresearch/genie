@@ -24,7 +24,7 @@
  * the manifest's own clause endpoints.
  */
 
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,18 +39,49 @@ import {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 /**
- * Every file that states the Node prerequisite to a reader.
+ * Every file that states the Node prerequisite to a reader, discovered rather
+ * than listed.
  *
- * `.nvmrc` is deliberately absent: it is a local development baseline — no
- * workflow reads it, and CI builds a `node: [22, 24]` matrix of bare majors —
- * so it states one convenient version rather than the range users may install
- * with. Narrowing it would be a different change.
+ * The previous hand-written list omitted the root `CONTRIBUTING.md` — linked
+ * from `README.md` and from `docs/developer/contributing.md` — which went on
+ * promising `Node >= 22.19.0` while this lock reported green. A lock whose
+ * coverage is retyped by hand fails exactly the way the eight kitId gates this
+ * PR unifies failed, so the coverage is now derived: any markdown that states
+ * an open-ended Node floor is in scope automatically, including files that do
+ * not exist yet.
+ *
+ * `.nvmrc` is out of scope by construction rather than by omission: it holds a
+ * bare version with no floor spelling, so it states one convenient local
+ * version rather than a promise about the supported range. No workflow reads
+ * it, and CI builds a `node: [22, 24]` matrix of bare majors.
  */
-const DOCS_STATING_THE_PREREQUISITE = [
-  "README.md",
-  "docs/user/installation.md",
-  "docs/developer/contributing.md",
-];
+const CHANGELOG = /(^|\/)CHANGELOG\.md$/u;
+
+/**
+ * Changelogs are excluded because they are a record, not a promise. Their Node
+ * mentions describe what a past release required — the 18-to-22 migration, and
+ * the floors pnpm and Vitest imposed at the time. Editing them to match today's
+ * range would falsify history to satisfy a lint.
+ */
+const isPrerequisiteDoc = (relative: string): boolean => !CHANGELOG.test(relative);
+
+const markdownFiles = async (): Promise<string[]> => {
+  const skip = new Set(["node_modules", "dist", ".git", "coverage", ".turbo"]);
+  const found: string[] = [];
+  const walk = async (relative: string): Promise<void> => {
+    const entries = await readdir(path.join(REPO_ROOT, relative), { withFileTypes: true });
+    for (const entry of entries) {
+      const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!skip.has(entry.name)) await walk(child);
+      } else if (entry.name.endsWith(".md") && isPrerequisiteDoc(child)) {
+        found.push(child);
+      }
+    }
+  };
+  await walk("");
+  return found.sort();
+};
 
 /** The manifests whose `engines.node` those docs are promising. */
 const PUBLISHED_MANIFESTS = ["packages/server/package.json", "packages/viewer/package.json"];
@@ -79,7 +110,24 @@ describe("published Node requirement", () => {
   it("🔒 is stated by the public prerequisites in the form the manifest implies", async () => {
     const expected = renderNodeRequirement(await enginesNode(PUBLISHED_MANIFESTS[0]));
 
-    for (const doc of DOCS_STATING_THE_PREREQUISITE) {
+    const stating: string[] = [];
+    for (const doc of await markdownFiles()) {
+      if (findOpenEndedNodeFloors(await read(doc)).length > 0) stating.push(doc);
+    }
+
+    // Guards the sweep against passing because it found nothing to check. The
+    // floor is the four public entry points a reader can arrive through; a new
+    // one raises this naturally, and losing one fails here rather than silently.
+    expect(stating).toEqual(
+      expect.arrayContaining([
+        "CONTRIBUTING.md",
+        "README.md",
+        "docs/developer/contributing.md",
+        "docs/user/installation.md",
+      ]),
+    );
+
+    for (const doc of stating) {
       expect(await read(doc), `${doc} must state the requirement as "${expected}"`).toContain(
         expected,
       );
@@ -93,7 +141,7 @@ describe("published Node requirement", () => {
     // the wording; this one catches a floor stated ANYWHERE in these files —
     // including inside the README's shields.io badge URL, where `≥` is
     // percent-encoded and no search for the prose form would ever see it.
-    for (const doc of DOCS_STATING_THE_PREREQUISITE) {
+    for (const doc of await markdownFiles()) {
       const text = await read(doc);
       const floors = findOpenEndedNodeFloors(text);
 
