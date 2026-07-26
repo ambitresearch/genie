@@ -809,11 +809,46 @@ describe("write_files re-checks the kit at commit time (#269)", () => {
     // consumer"; write_files had NO equivalent. It must run before the existence
     // check, because LocalFsKitStore.getKit resolves via `kitDir`, not
     // `safeKitDir` — so `getKit("..")` would itself read above the kits root.
+    //
+    // Asserting only the rejection would NOT test what this name claims: if the
+    // two stages were reordered, `getKit("..")` would resolve above the kits
+    // root, fail, and raise the very same KitNotFoundError — a green test over a
+    // reopened traversal. Spying on getKit is what actually pins the ordering.
+    const getKitSpy = vi.spyOn(store, "getKit");
     const plan = await createPlan("..", ["**"], [], localDir);
 
     await expect(
       writeFiles(store, { planId: plan.planId, files: [{ path: "a.html", data: "x" }] }),
     ).rejects.toMatchObject({ code: "KitNotFoundError", kitId: ".." });
+
+    expect(getKitSpy).not.toHaveBeenCalled();
+    getKitSpy.mockRestore();
+  });
+
+  it("re-throws a store fault instead of reporting it as a missing kit", async () => {
+    // Fail-closed is not fail-silent. A genuine "no such kit" is a kitNotFound
+    // rejection; an I/O or transport fault (EACCES, or a network error behind a
+    // git-host store) must surface as ITSELF, so an operator can tell a deleted
+    // kit apart from an unreadable disk. Widening the catch in step 9b to a bare
+    // `catch` would silently tell users their kit was gone when the backend was
+    // merely unreachable. Mirrors the plan-time lock in plan.test.ts.
+    const boom = new Error("EACCES: permission denied, open '.kit.json'");
+    const writeFilesSpy = vi.fn();
+    const failingStore = {
+      getKit: vi.fn(async () => {
+        throw boom;
+      }),
+      writeFiles: writeFilesSpy,
+    } as unknown as KitStore;
+
+    const plan = await createPlan(TOCTOU_KIT_ID, ["**"], [], localDir);
+
+    await expect(
+      writeFiles(failingStore, { planId: plan.planId, files: [{ path: "a.html", data: "x" }] }),
+    ).rejects.toBe(boom);
+
+    // Crucially NOT mislabelled, and nothing committed.
+    expect(writeFilesSpy).not.toHaveBeenCalled();
   });
 
   it("🔒 accepts a kit deleted and re-created under the same id (existence-only, by design)", async () => {
