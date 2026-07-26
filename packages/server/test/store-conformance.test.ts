@@ -886,56 +886,18 @@ describe("LocalFsKitStore — adapter-specific", () => {
 });
 
 // ─── Adapter-specific tests: GitHostKitStore ─────────────────────────────────
+//
+// NB: the "treats the repo name as authoritative when .kit.json embeds a
+// divergent id" pin (PR #90) used to live here. It moved into the shared
+// kitStoreContract, because its rationale was never GitHost-specific and
+// pinning it here let LocalFs violate it against a green suite. Don't move
+// it back.
 
 describe("GitHostKitStore — adapter-specific", () => {
   let originalFetch: typeof globalThis.fetch;
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-  });
-
-  it("treats the repo name as authoritative when .kit.json embeds a divergent id", async () => {
-    // Reviewer concern (PR #90): readKitMeta must not trust the `id` field
-    // inside .kit.json. If that file is hand-edited or corrupted so its `id`
-    // diverges from the repository name, getKit/listKits must still return the
-    // repo name — the path every subsequent API call routes through — not the
-    // stale embedded id that would resolve to no repo.
-    const mockFetch = createMockGitHostFactory();
-    originalFetch = globalThis.fetch;
-    globalThis.fetch = mockFetch as typeof fetch;
-
-    const store = new GitHostKitStore({
-      baseUrl: "https://mock-git-host.test/api/v1",
-      owner: "test-org",
-      token: "mock-token",
-    });
-
-    // Create a kit, then overwrite its .kit.json with a divergent embedded id.
-    const kit = await store.createKit("Corrupt Meta Kit", "corrupt-kit-abc123");
-    await mockFetch(
-      `https://mock-git-host.test/api/v1/repos/test-org/${kit.id}/contents/.kit.json`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          content: Buffer.from(
-            JSON.stringify({
-              id: "some-other-id-999999",
-              name: "Corrupt Meta Kit",
-              type: "GENIE_KIT",
-              createdAt: "2026-01-01T00:00:00.000Z",
-            }),
-          ).toString("base64"),
-        }),
-      },
-    );
-
-    const fetched = await store.getKit(kit.id);
-    expect(fetched.id).toBe("corrupt-kit-abc123");
-    expect(fetched.name).toBe("Corrupt Meta Kit");
-
-    const listed = await store.listKits();
-    expect(listed.map((k) => k.id)).toContain("corrupt-kit-abc123");
-    expect(listed.map((k) => k.id)).not.toContain("some-other-id-999999");
   });
 
   it("deleteFile on a directory target throws EISDIR, not a silent no-op (DRO-568)", async () => {
