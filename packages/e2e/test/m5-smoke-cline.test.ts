@@ -641,15 +641,18 @@ const CLINE_HUB_LOCK_PATHS = [
 
 /**
  * `process.kill(pid, 0)` only proves a pid is gone when it raises `ESRCH`.
- * `EPERM` means the process is alive but owned by another user, so it must be
- * treated as still running rather than as a successful reap.
+ * Every other failure is a failure to *ask*, not an answer: `EPERM` means the
+ * process is alive under another uid, and an out-of-range pid recovered from a
+ * corrupted lock is rejected by Node before the OS ever sees it. Reporting any
+ * of those as "dead" would let teardown delete under an owner it never checked,
+ * so only `ESRCH` is allowed to mean gone.
  */
 function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 
@@ -726,6 +729,16 @@ async function readClineHubLockPids(
   return { pids, indeterminate };
 }
 
+interface ClineHubProcessScan {
+  pids: number[];
+  /**
+   * Set when the process table could not be read at all. A scan that never ran
+   * cannot report "no daemon", and on a machine with no lock file the scan is
+   * the only discovery channel there is.
+   */
+  indeterminate: string[];
+}
+
 interface ScanClineHubDaemonPidsOptions {
   platform?: NodeJS.Platform;
   listProcesses?: () => Promise<string> | string;
@@ -744,7 +757,7 @@ interface ScanClineHubDaemonPidsOptions {
 async function scanClineHubDaemonPids(
   base: string,
   options: ScanClineHubDaemonPidsOptions = {},
-): Promise<number[]> {
+): Promise<ClineHubProcessScan> {
   const {
     platform = process.platform,
     listProcesses = async () => {
@@ -755,15 +768,19 @@ async function scanClineHubDaemonPids(
     },
   } = options;
 
+  // Windows genuinely has no process table to read, and the discovery lock is
+  // the documented fallback there, so this is a real absence rather than a
+  // failed lookup. Reporting it as indeterminate would leak every temp tree.
   if (platform === "win32") {
-    return [];
+    return { pids: [], indeterminate: [] };
   }
   const marker = basename(base);
   let stdout: string;
   try {
     stdout = await listProcesses();
-  } catch {
-    return [];
+  } catch (error) {
+    const reason = (error as NodeJS.ErrnoException).code ?? (error as Error).message;
+    return { pids: [], indeterminate: [`process scan (${reason})`] };
   }
   const pids: number[] = [];
   for (const line of stdout.split(/\r?\n/)) {
@@ -780,7 +797,7 @@ async function scanClineHubDaemonPids(
       pids.push(pid);
     }
   }
-  return pids;
+  return { pids, indeterminate: [] };
 }
 
 type ClineHubTermination =
@@ -956,15 +973,16 @@ async function stopClineHubDaemons(
 ): Promise<ClineHubDaemonSweep> {
   const outcomes = new Map<number, ClineHubTermination>();
   const lock = await readClineHubLockPids(base, options);
-  // A lock we could not read may still name a live daemon, so it blocks
-  // deletion just as an unverifiable pid does.
-  const unverified: string[] = [...lock.indeterminate];
+  const scan = await scanClineHubDaemonPids(base, options);
+  // A lock we could not read, or a scan we could not run, may still be hiding a
+  // live daemon, so either blocks deletion just as an unverifiable pid does.
+  const unverified: string[] = [...lock.indeterminate, ...scan.indeterminate];
 
   // Both the `ps` table and the discovery lock are snapshots, and this sweep
   // awaits each daemon's exit before moving to the next, so either source can
   // go stale mid-loop and hand us a recycled pid. Every candidate therefore
   // re-proves itself immediately before it is signalled, however it was found.
-  const candidates = new Set([...(await scanClineHubDaemonPids(base, options)), ...lock.pids]);
+  const candidates = new Set([...scan.pids, ...lock.pids]);
 
   for (const pid of candidates) {
     const verdict = await verifyClineHubDaemonPid(pid, base, options);
@@ -1063,6 +1081,89 @@ it("keeps the temp tree when a hub daemon cannot be reaped", async () => {
   } finally {
     await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
+});
+
+it("only treats ESRCH as proof that a pid is gone", () => {
+  // The pid this worker is running under is obviously alive.
+  expect(processIsAlive(process.pid)).toBe(true);
+
+  // A valid but impossibly high pid raises ESRCH: nothing owns it, so it is
+  // genuinely reaped and teardown is free to proceed.
+  expect(processIsAlive(2_147_483_647)).toBe(false);
+
+  // A corrupted lock can carry an integer that is too large to be a pid at all
+  // -- `Number.isInteger(1e30)` is true and it is positive, so it survives the
+  // lock's shape check. `process.kill` rejects it before the OS ever sees it,
+  // which says nothing about whether a daemon is running. Reading that as a
+  // successful reap would let teardown delete under an owner it never checked.
+  expect(processIsAlive(Number.MAX_SAFE_INTEGER)).toBe(true);
+});
+
+it("leaves the temp tree when a lock pid is too large to be inspected", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  const lockPath = join(base, CLINE_HUB_LOCK_PATHS[0]!);
+  await mkdir(dirname(lockPath), { recursive: true });
+  await writeFile(lockPath, JSON.stringify({ pid: 1e30, authToken: "test" }), "utf8");
+  const warnings: string[] = [];
+
+  try {
+    await removeClineSmokeTree(base, {
+      platform: "linux",
+      listProcesses: () => "",
+      describeProcess: () => {
+        throw new Error("ps: invalid pid");
+      },
+      warn: (message) => warnings.push(message),
+    });
+
+    // The lock is corrupt, so the daemon it names can neither be confirmed nor
+    // ruled out. Deleting on that guess is the #259 race.
+    await expect(stat(base)).resolves.toBeTruthy();
+    expect(warnings.join("\n")).toContain("1e+30");
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+it("leaves the temp tree when the process scan cannot be run", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  await writeFile(join(base, "marker.txt"), "x", "utf8");
+  const warnings: string[] = [];
+
+  try {
+    await removeClineSmokeTree(base, {
+      platform: "linux",
+      // No lock was ever written, so the scan is the only discovery channel --
+      // exactly the fallback it exists to provide. Swallowing the failure would
+      // report "no daemon" for a machine that simply could not be asked.
+      listProcesses: () => {
+        throw Object.assign(new Error("fork failed"), { code: "EAGAIN" });
+      },
+      warn: (message) => warnings.push(message),
+    });
+
+    await expect(stat(base)).resolves.toBeTruthy();
+    expect(warnings.join("\n")).toContain("process scan");
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+it("still deletes when the process scan runs and finds no daemon", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  await writeFile(join(base, "marker.txt"), "x", "utf8");
+  const warnings: string[] = [];
+
+  // A scan that ran and saw nothing is a definitive "no daemon". Treating that
+  // as unverified would leak every temp tree this suite creates.
+  await removeClineSmokeTree(base, {
+    platform: "linux",
+    listProcesses: () => "  111 some-unrelated-process --flag",
+    warn: (message) => warnings.push(message),
+  });
+
+  await expect(stat(base)).rejects.toThrow();
+  expect(warnings).toEqual([]);
 });
 
 it("leaves the temp tree when the discovery lock cannot be read", async () => {
@@ -1344,7 +1445,8 @@ it("never shells out to `ps` on Windows, where teardown relies on the lock alone
   });
 
   expect(scanned).toBe(false);
-  expect(pids).toEqual([]);
+  expect(pids.pids).toEqual([]);
+  expect(pids.indeterminate).toEqual([]);
 });
 
 it("scopes the process scan to this run's mkdtemp suffix", async () => {
@@ -1366,7 +1468,7 @@ it("scopes the process scan to this run's mkdtemp suffix", async () => {
       ].join("\n"),
   });
 
-  expect(pids).toEqual([111]);
+  expect(pids.pids).toEqual([111]);
 });
 
 it("escalates to SIGKILL and keeps waiting when a hub daemon ignores SIGTERM", async () => {
@@ -1451,6 +1553,9 @@ it.skipIf(process.platform === "win32")(
     mkdirSync(dirname(lockPath), { recursive: true });
     writeFileSync(lockPath, JSON.stringify({ pid: process.pid, authToken: "test" }));
     process.on("SIGTERM", () => setTimeout(() => process.exit(0), 50));
+    // Belt and braces: teardown deliberately leaves a daemon it cannot verify
+    // alive, so cap this stub's lifetime rather than risk an immortal writer.
+    setTimeout(() => process.exit(0), 60000);
     let n = 0;
     setInterval(() => {
       try {
@@ -1499,7 +1604,7 @@ it.skipIf(process.platform === "win32")(
       // The `ps` scan is a no-op on Windows, where the discovery lock above is
       // the only discovery channel; asserting on it there would always fail.
       if (process.platform !== "win32") {
-        expect(await scanClineHubDaemonPids(base)).toContain(daemonPid);
+        expect((await scanClineHubDaemonPids(base)).pids).toContain(daemonPid);
       }
 
       await removeClineSmokeTree(base);
@@ -1509,10 +1614,11 @@ it.skipIf(process.platform === "win32")(
       expect(processIsAlive(daemonPid!)).toBe(false);
       await expect(stat(base)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      if (daemonPid !== undefined && processIsAlive(daemonPid)) {
-        await terminateAndWait(daemonPid);
-      }
-      await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      // Reuse the helper under test rather than an ad-hoc teardown: signalling
+      // `daemonPid` directly would trust a pid the OS may have recycled, and an
+      // unconditional `rm` would race a survivor and mask the real assertion.
+      // It is idempotent, so running it again after the happy path is a no-op.
+      await removeClineSmokeTree(base);
     }
   },
   30_000,
