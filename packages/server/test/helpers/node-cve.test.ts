@@ -333,3 +333,39 @@ describe("statesNodeRequirement — discovery independent of the claim's shape",
     expect(statesNodeRequirement("Install Node 22 (pnpm >=10.34.4 is required)")).toBe(false);
   });
 });
+
+describe("statesNodeRequirement — soft-wrapped claims", () => {
+  // Markdown hard-wraps prose. `docs/user/installation.md` already wraps its
+  // prerequisite across two physical lines; the subject and the version only
+  // share a line by luck, and one inserted word would separate them. Reading
+  // PHYSICAL lines makes the detector silently blind to that doc — and the old
+  // floor sweep is blind to it too, so nothing else would notice.
+  it("🔒 discovers a requirement whose subject and version are on different lines", () => {
+    for (const doc of [
+      "Requires Node\n22.19.0 or newer",
+      "This project requires Node\n>=22.19.0 to build",
+      "- Node.js\n  22.19.0 or newer is required",
+      "genie requires a recent Node\nruntime: 22.19.0 or newer.",
+    ]) {
+      expect(statesNodeRequirement(doc), doc).toBe(true);
+    }
+  });
+
+  it("🔒 reads a wrapped floor as a floor, so the over-claim sweep still sees it", () => {
+    expect(findOpenEndedNodeFloors("Requires Node\n>=22.19.0")).toEqual(["22.19.0"]);
+  });
+
+  // The join must not run across BLOCK boundaries. Consecutive table rows and
+  // consecutive list items are separate claims, and welding them together
+  // would attribute one row's version to another row's subject — exactly the
+  // cross-subject leak the per-clause attribution exists to prevent.
+  it("🔒 does not weld one block's subject onto the next block's version", () => {
+    for (const doc of [
+      "| `actions/setup-node` | pinned |\n| `actions/checkout` | 4.4.0 |",
+      "- Uses actions/setup-node\n- Bundler 4.4.0 is required",
+      "# Node\n\n256 columns wide",
+    ]) {
+      expect(statesNodeRequirement(doc), doc).toBe(false);
+    }
+  });
+});

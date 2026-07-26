@@ -26,6 +26,7 @@
  * the manifest's own clause endpoints.
  */
 
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,8 +90,29 @@ const repoFiles = async (matches: (relative: string) => boolean): Promise<string
 const markdownFiles = async (): Promise<string[]> =>
   await repoFiles((file) => file.endsWith(".md") && isPrerequisiteDoc(file));
 
-/** The manifests whose `engines.node` those docs are promising. */
-const PUBLISHED_MANIFESTS = ["packages/server/package.json", "packages/viewer/package.json"];
+/**
+ * The manifests whose `engines.node` those docs are promising — DERIVED, not listed.
+ *
+ * A hand-maintained list here recreates the exact drift this suite exists to catch:
+ * a newly publishable package would be silently exempt from both the range-equality
+ * check and the documentation contract, and nothing would say so. `packages/*` with
+ * `private !== true` is the same derivation `kit-files.test.ts` already uses for the
+ * published-runtime scan, so the two cannot disagree about what "published" means.
+ */
+const publishedManifests = (): string[] =>
+  readdirSync(path.join(REPO_ROOT, "packages"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => `packages/${entry.name}/package.json`)
+    .filter((relative) => existsSync(path.join(REPO_ROOT, relative)))
+    .filter((relative) => {
+      const manifest = JSON.parse(readFileSync(path.join(REPO_ROOT, relative), "utf8")) as {
+        private?: boolean;
+      };
+      return manifest.private !== true;
+    })
+    .sort();
+
+const PUBLISHED_MANIFESTS = publishedManifests();
 
 const read = async (relative: string): Promise<string> =>
   await readFile(path.join(REPO_ROOT, relative), "utf8");
@@ -105,6 +127,21 @@ const enginesNode = async (relative: string): Promise<string> => {
 };
 
 describe("published Node requirement", () => {
+  // Anti-vacuity for the derivation above. Every assertion in this suite loops
+  // over PUBLISHED_MANIFESTS, so a derivation that silently returned [] would
+  // turn the whole file green while checking nothing. This pins the floor
+  // (both packages the repo publishes today) without re-listing it as the
+  // contract: a third published package raises the count and is then required
+  // to satisfy every check, which is the entire point of deriving it.
+  it("🔒 derives the published manifests rather than listing them", () => {
+    expect(PUBLISHED_MANIFESTS).toEqual(
+      expect.arrayContaining(["packages/server/package.json", "packages/viewer/package.json"]),
+    );
+    // `packages/e2e` is inside the scan but excluded by `private: true`; it is
+    // the discriminator proving the filter runs at all rather than globbing.
+    expect(PUBLISHED_MANIFESTS).not.toContain("packages/e2e/package.json");
+  });
+
   it("🔒 is the same range in every published manifest", async () => {
     const ranges = await Promise.all(PUBLISHED_MANIFESTS.map(enginesNode));
 

@@ -282,6 +282,48 @@ export function renderNodeRequirement(range: string): string {
 }
 
 /**
+ * Markdown's soft line breaks, rejoined — the unit a claim is actually written in.
+ *
+ * Prose here is hard-wrapped by hand. `docs/user/installation.md` already spans
+ * its prerequisite across two physical lines, and the subject and the version
+ * share a line only by luck: one inserted word before `Node.js 22.19.0` would
+ * push the version onto the next line, and a PHYSICAL-line reader would stop
+ * seeing that doc entirely. The floor sweep would go blind at the same moment,
+ * so nothing else in this suite would notice.
+ *
+ * Joining is limited to LAZY CONTINUATION — a line that merely continues the
+ * paragraph above it. A line that opens a new block does not continue anything,
+ * and welding it to the previous one would attribute one block's subject to
+ * another block's version. That is not hypothetical: consecutive rows of the
+ * `actions/setup-node` pin table are adjacent non-blank lines, and joining them
+ * would hand a Node-named row the next row's version number. Blank lines,
+ * headings, fences, quotes, list markers and table rows therefore all break the
+ * join, which is exactly CommonMark's own paragraph rule.
+ */
+function logicalLines(text: string): string[] {
+  // `>` opens a blockquote, but `>=` opens a version comparator — a wrapped
+  // `Requires Node\n>=22.19.0` must keep joining, so the quote marker excludes it.
+  const OPENS_BLOCK = /^\s*(?:[-*+]\s|\d+[.)]\s|#{1,6}\s|>(?!=)|\||```|~~~)/u;
+  const joined: string[] = [];
+  let fenced = false;
+
+  for (const raw of text.split("\n")) {
+    if (/^\s*(?:```|~~~)/u.test(raw)) fenced = !fenced;
+    const previous = joined.at(-1);
+    const continues =
+      !fenced &&
+      previous !== undefined &&
+      raw.trim() !== "" &&
+      previous.trim() !== "" &&
+      !OPENS_BLOCK.test(raw);
+    if (continues) joined[joined.length - 1] = `${previous} ${raw.trim()}`;
+    else joined.push(raw);
+  }
+
+  return joined;
+}
+
+/**
  * Visit every clause in `text` whose subject is Node, with the version it pins.
  *
  * Both the floor sweep and the discovery predicate read prose the same way, so
@@ -333,7 +375,7 @@ function eachNodeClause(text: string, visit: (clause: string, line: string) => v
     "x",
   ]);
 
-  for (const line of text.split("\n")) {
+  for (const line of logicalLines(text)) {
     if (!/node/iu.test(line)) continue;
     let subjectIsNode = false;
     for (const clause of line.split(/[,;()]|\s+and\s+/u)) {
