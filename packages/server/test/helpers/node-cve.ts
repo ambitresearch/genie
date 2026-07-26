@@ -67,7 +67,10 @@ function parseVersion(value: string): Version {
 
 function compare(a: Version, b: Version): number {
   for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    // `Version` is a 3-tuple, but `noUncheckedIndexedAccess` widens a numeric
+    // index to `| undefined`; the coalesce is a type narrowing, not a default.
+    const [left, right] = [a[i] ?? 0, b[i] ?? 0];
+    if (left !== right) return left < right ? -1 : 1;
   }
   return 0;
 }
@@ -101,7 +104,7 @@ export function satisfiesRange(version: string, range: string): boolean {
           .filter((token) => token.length > 0)
           .every((token) => {
             const m = /^(>=|<=|>|<|=)?\s*v?(.+)$/u.exec(token);
-            if (!m) throw new Error(`unparseable comparator: ${JSON.stringify(token)}`);
+            if (!m?.[2]) throw new Error(`unparseable comparator: ${JSON.stringify(token)}`);
             const cmp = compare(v, parseVersion(m[2]));
             switch (m[1] ?? "=") {
               case ">=":
@@ -319,7 +322,10 @@ export function nodeFloorOverclaim(floor: string, range: string): string | null 
   const above = (a: string, b: string): boolean => {
     const [x, y] = [order(a), order(b)];
     for (let i = 0; i < 3; i += 1) {
-      if (x[i] !== y[i]) return x[i] > y[i];
+      // `order` always yields three components for the `major.minor.patch`
+      // endpoints built above, but `noUncheckedIndexedAccess` cannot know that.
+      const [left, right] = [x[i] ?? 0, y[i] ?? 0];
+      if (left !== right) return left > right;
     }
     return false;
   };
