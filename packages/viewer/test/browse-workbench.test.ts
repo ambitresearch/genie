@@ -24,7 +24,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { JSDOM } from "jsdom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VIEWER_JS = readFileSync(resolve(HERE, "../static/viewer.js"), "utf8");
@@ -419,12 +419,72 @@ describe("Refine handoff context", () => {
     const { hooks } = loadHooks();
     const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
     const context = hooks.buildRefineContext("kit-a", component, "default");
+    // M7-03 widened this contract: Review needs the component's bytes and the
+    // path they were actually read from to seed a real, checkable draft.
+    //
+    // Copilot #2 (PR #250): `path` is the manifest's OWN path, never a
+    // canonical one synthesised from the display name. The fixture is the
+    // proof — `components/actions/Button/preview.html` is what exists on disk,
+    // while the old derivation produced
+    // `components/actions/Primary buttons/Primary buttons.html`, a path with a
+    // space in it that no kit has ever contained. Planning a write against
+    // that path would have created a second, phantom component.
+    //
+    // Copilot (round 2): `componentName` is the component DIRECTORY, because
+    // that is what the server's `parseComponentPath` matches on (path segment
+    // 3). The manifest `name` is only the preview file's basename, so sending
+    // "Primary buttons" would have produced `ERR_COMPONENT_NOT_FOUND` against
+    // a component that is plainly there. The display name survives separately
+    // so the UI can still call it what the user calls it.
     expect(context).toEqual({
       kitId: "kit-a",
       group: "actions",
-      componentName: "Primary buttons",
+      componentName: "Button",
+      displayName: "Primary buttons",
       variant: "default",
+      source: null,
+      path: "components/actions/Button/preview.html",
     });
+  });
+
+  it("carries the component's real bytes and kit path so Review can review them", () => {
+    const { hooks } = loadHooks();
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    const context = hooks.buildRefineContext("kit-a", component, "default", "<div>hi</div>");
+    expect(context.source).toBe("<div>hi</div>");
+    expect(context.path).toBe("components/actions/Button/preview.html");
+  });
+
+  it("never fabricates a path the kit does not contain", () => {
+    const { hooks } = loadHooks();
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    // The display name is human prose; the path is a filesystem fact. They are
+    // not interchangeable, and deriving one from the other silently redirects
+    // an apply to a component that does not exist.
+    expect(hooks.buildRefineContext("kit-a", component, "default").path).not.toContain(
+      "Primary buttons",
+    );
+  });
+
+  it("prefers the source path over an iframe transport URL", () => {
+    const { hooks } = loadHooks();
+    // Embedded manifests rewrite `path` to a blob/transport URL for the
+    // preview frame and keep the kit-relative original on `sourcePath`.
+    const component = {
+      ...MANIFEST.components[0],
+      componentName: MANIFEST.components[0].name,
+      sourcePath: "components/actions/Button/preview.html",
+      path: "blob:https://host/9f2c",
+    };
+    expect(hooks.buildRefineContext("kit-a", component, "default").path).toBe(
+      "components/actions/Button/preview.html",
+    );
+  });
+
+  it("treats an empty source as no source at all, never as reviewable bytes", () => {
+    const { hooks } = loadHooks();
+    const component = { ...MANIFEST.components[0], componentName: MANIFEST.components[0].name };
+    expect(hooks.buildRefineContext("kit-a", component, "default", "").source).toBeNull();
   });
 });
 
@@ -1002,7 +1062,7 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     controller.teardown();
   });
 
-  it("passes the Refine context through to onRefine and routes to Review (Copilot #5)", () => {
+  it("passes the Refine context through to onRefine and routes to Review (Copilot #5)", async () => {
     const { hooks, document, window } = loadShell();
     let received: unknown = null;
     const controller = hooks.initBrowseController(document, {
@@ -1028,13 +1088,18 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     const refineButton = document.querySelector<HTMLButtonElement>("[data-refine-action]");
     refineButton!.click();
 
+    // The handoff is DEFERRED while the component's `read_file` is in flight
+    // (PR #250 round 5): clicking Refine on first paint used to hand Review a
+    // null baseline for a component the host could read. The route change is
+    // the same, it just lands after the pending read settles.
+    await vi.waitFor(() => expect(received).not.toBeNull());
     expect(received).toMatchObject({ kitId: "kit-a", group: "surfaces", componentName: "Card" });
     expect(new window.URL(window.location.href).searchParams.get("route")).toBe("review");
 
     controller.teardown();
   });
 
-  it("actually routes to (renders/focuses) Review on Refine when wired to a real product shell, not just the URL (Copilot review, PR #248)", () => {
+  it("actually routes to (renders/focuses) Review on Refine when wired to a real product shell, not just the URL (Copilot review, PR #248)", async () => {
     // Regression for a bug where the Browse `onRefine` handoff only called
     // `writeRoute` — updating `?route=review` in the address bar — without
     // ever calling the shell's `renderRoute`/`navigate`, so the Browse view
@@ -1063,7 +1128,13 @@ describe("initBrowseController — HMR selection-removal + focus (AC3/AC15)", ()
     const refineButton = document.querySelector<HTMLButtonElement>("[data-refine-action]");
     refineButton!.click();
 
-    expect(new window.URL(window.location.href).searchParams.get("route")).toBe("review");
+    // The handoff is DEFERRED while the component's `read_file` is in flight
+    // (PR #250 round 5): clicking Refine on first paint used to hand Review a
+    // null baseline for a component the host could read. The route change is
+    // the same, it just lands after the pending read settles.
+    await vi.waitFor(() =>
+      expect(new window.URL(window.location.href).searchParams.get("route")).toBe("review"),
+    );
     const browseView = document.querySelector<HTMLElement>('[data-route-view="browse"]');
     const reviewView = document.querySelector<HTMLElement>('[data-route-view="review"]');
     expect(browseView?.hidden).toBe(true);

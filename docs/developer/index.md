@@ -4,9 +4,9 @@ Use this guide to understand, change, test, and release genie.
 
 ## Read in this order
 
-1. [Architecture](architecture.md)
+1. [Architecture](architecture.md), including the Review/Apply state machine.
 2. [Local development and contribution](contributing.md)
-3. [Security model](security.md)
+3. [Security model](security.md), including plan-guarded writes.
 4. [Release and supply-chain verification](releases.md)
 5. [Warm Instrument design system](design-system.md)
 

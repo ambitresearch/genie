@@ -248,3 +248,32 @@ describe("static/viewer.css (AC7)", () => {
     expect(normalized).toMatch(/:root:not\(\[data-scheme=["']light["']\]\)/);
   });
 });
+
+// ── Scaffolding size budget (M7-03 / #235) ──────────────────────────────────
+
+/**
+ * `create_kit` copies these three files verbatim into every new kit
+ * (`server/src/store/viewer-assets.ts`), and the stores refuse to read back any
+ * file over `MAX_FILE_BYTES` (`server/src/store/interface.ts`). An asset that
+ * outgrows the cap is therefore scaffolded but unservable, which surfaces far
+ * from here as a `FileTooLargeError` in the server's store-conformance suite.
+ * Assert the budget locally so the breach is reported where it is caused.
+ */
+describe("scaffolded static assets stay servable", () => {
+  // Mirrors server/src/store/interface.ts. Duplicated rather than imported:
+  // @ambitresearch/genie is not a dependency of the viewer package.
+  const MAX_FILE_BYTES = 262_144;
+
+  for (const name of ["index.html", "viewer.js", "viewer.css"]) {
+    it(`${name} is under the store's ${MAX_FILE_BYTES}-byte read cap`, () => {
+      const bytes = Buffer.byteLength(readStatic(name), "utf8");
+      expect(
+        bytes,
+        `static/${name} is ${bytes} bytes, over the ${MAX_FILE_BYTES}-byte ` +
+          `store cap. create_kit scaffolds it into every new kit, so the kit ` +
+          `would be created with a file the server cannot serve over ` +
+          `read_file. Reduce the file or raise MAX_FILE_BYTES deliberately.`,
+      ).toBeLessThanOrEqual(MAX_FILE_BYTES);
+    });
+  }
+});

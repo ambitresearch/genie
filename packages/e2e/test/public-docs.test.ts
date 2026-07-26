@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(import.meta.dirname, "../../..");
@@ -172,5 +172,60 @@ describe("public documentation surface", () => {
     const releases = readRootFile("docs/developer/releases.md");
     expect(releases).toContain("GitHub component tags already exist at this point");
     expect(releases).toContain("without a tag-promotion phase");
+  });
+});
+
+// VitePress compiles every routed markdown file through the Vue SFC compiler, so a bare
+// `{{ ... }}` in prose is parsed as a Vue interpolation expression -- not literal text. A JSDoc
+// type like `@param {{callTool(name:string):Promise<object>}}` pasted into prose therefore fails
+// the site build with "Did not expect a type annotation here", and ONLY the slow `docs:build`
+// job catches it. This pins it in the fast unit gate instead (regression: PR #250 relocated
+// three JSDoc blocks into architecture.md and broke the Pages build).
+const markdownFilesUnder = (dir: string): string[] => {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    if (entry.startsWith(".") || entry === "node_modules") continue;
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) out.push(...markdownFilesUnder(full));
+    else if (entry.endsWith(".md")) out.push(full);
+  }
+  return out;
+};
+
+// Vue does not interpolate inside fenced blocks, inline code spans, or any element carrying
+// `v-pre` -- the repo's established escape hatch for showing literal `${{ secrets.X }}` syntax.
+// Drop all three before looking for a live interpolation. Fences may be indented (inside a list).
+//
+// `v-pre` is exempted by LINE rather than by matching the element, deliberately. Every use in
+// `docs/` is single-line, a line-scoped filter cannot be defeated by nesting the way a
+// tag-stripping regex can, and a hypothetical multi-line `v-pre` block would only exempt its
+// opening line -- i.e. it fails toward a noisy guard rather than a silent one.
+const stripCode = (markdown: string): string =>
+  markdown
+    .replace(/^[ \t]*(`{3,}|~{3,})[\s\S]*?^[ \t]*\1/gm, "")
+    .replace(/`[^`\n]*`/g, "")
+    .split("\n")
+    .filter((line) => !line.includes("v-pre"))
+    .join("\n");
+
+describe("VitePress compilation safety", () => {
+  it("keeps Vue interpolation syntax out of published markdown prose", () => {
+    const docsRoot = resolve(ROOT, "docs");
+    const offenders: string[] = [];
+    for (const file of markdownFilesUnder(docsRoot)) {
+      const body = stripCode(readFileSync(file, "utf8"));
+      if (/\{\{/.test(body)) offenders.push(relative(ROOT, file));
+    }
+    expect(offenders, `Vue interpolation "{{" found in prose`).toEqual([]);
+  });
+
+  it("keeps raw JSDoc tags out of published markdown prose", () => {
+    const docsRoot = resolve(ROOT, "docs");
+    const offenders: string[] = [];
+    for (const file of markdownFilesUnder(docsRoot)) {
+      const body = stripCode(readFileSync(file, "utf8"));
+      if (/^@(param|returns|typedef)\b/m.test(body)) offenders.push(relative(ROOT, file));
+    }
+    expect(offenders, "raw JSDoc tags leaked into prose").toEqual([]);
   });
 });

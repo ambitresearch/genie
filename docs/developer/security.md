@@ -10,6 +10,42 @@
 - Secrets are loaded from environment variables or an owner-only mounted file and are
   redacted from structured logs.
 
+## Plan-guarded writes
+
+Review treats generated and refined files as untrusted proposals until a user explicitly
+confirms Apply. Generate, Refine, Approve, Request Changes, deterministic controls, and
+navigation must never invoke persistence. Apply is the only Review path that may create a
+plan and write.
+
+The plan is a scoped, expiring write authorization. It names the exact write/delete path
+scope for the selected UI kit, and the plan guard rejects missing or expired plans and any
+requested path outside that scope. The approved payload is then written atomically through
+`write_files`; a returned `writtenPaths` is the authoritative signal that the write
+succeeded. Post-write kit validation is advisory only: it may fail or be unavailable without
+turning a successful write into a reported failure, so a validation problem never forces
+a second write of bytes already on disk — the write is instead reported to the user as
+unverified, never silently folded into a fully confirmed success. Manifest and preview
+refresh gate only the
+claim that Browse shows the new bytes; a refresh failure is reported as written but
+possibly stale, never as a failed Apply.
+
+Writes are contained to the selected UI kit under the normalized kit store root. A draft
+cannot expand its own write scope by returning new paths, absolute paths, parent-directory
+segments, or tool text that looks like a command. Retry after a failed or expired Apply
+requires a fresh confirmation and a fresh plan.
+
+## Rendering untrusted Review data
+
+Diffs, source, model messages, tool errors, and diagnostics are rendered as data, not as
+markup. User-visible diagnostics redact bearer tokens and `api-key`, `token`, or `secret`
+assignments before display, then cap the message at 500 characters. Filesystem paths surfaced
+by host errors are shown as-is.
+
+Embedded Review keeps the same CSP posture as other embedded cards: `default-src 'none'`
+and `connect-src 'none'`. It uses only the host MCP bridge for Refine and Apply; the
+browser does not receive model credentials, direct filesystem access, or a direct model
+endpoint.
+
 ## HTTP authentication
 
 Local stdio uses the harness-owned process boundary. HTTP can require static Bearer

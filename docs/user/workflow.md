@@ -24,6 +24,97 @@ the registered genie MCP server in your coding host to Conjure.
 same generation/validation path, and returns updated files plus a diff. It also does not
 persist them.
 
+## Review drafts before writing
+
+Review is the safe handoff between a proposed component and your UI kit. A generated or
+refined result is a **draft held only in the viewer session**. It is not on disk, and it
+does not survive a page reload. Each accepted refine or deterministic tweak creates a new
+immutable `draft #N`; earlier drafts stay available during the session, including when a
+later refine fails.
+
+The Review workspace has three areas:
+
+- a session rail for generation/refine history and notes;
+- a live preview stage for the current draft;
+- a **Review & Refine** panel for the real change summary, validation checklist,
+  deterministic controls when the component exposes them safely, refine input, decision
+  controls, and Apply.
+
+The change summary is derived from the proposed files and real diff. The validation
+checklist distinguishes automated checks, pending checks, failed checks, and manual
+acknowledgements; a partial run never appears fully green.
+
+Automated pre-Apply checks include:
+
+- `@genie` as the first-line marker on the preview file;
+- a self-consistent `<Name>/<Name>.html` preview;
+- proposed paths contained in the selected UI kit under `components/<group>/<Name>/`;
+- structured output matching the expected schema;
+- embedded-tier CSP safety: no remote subresources, no web fonts, and no inline script;
+- the sandboxed preview frame parsed the document, not that the component painted correctly.
+
+Kit-wide validation is intentionally pending before Apply. genie's `validate` tool scans
+the UI kit on disk, so it can only run after the draft has been written, and its result is
+advisory rather than a gate: it can fail or be unavailable without turning a successful
+write into a reported failure, and a non-zero result from scanning the whole kit does not
+by itself mean the component you just applied is broken. Manual checks, such as visual
+match to intent and an accessibility spot-check, require explicit acknowledgement.
+
+### Refine from Review or Browse
+
+Refine edits a component that already exists in your UI kit. The `refine` tool reads the
+component's current source from the kit, so a brand-new generated draft cannot be refined
+until it has been applied. In that state, Review disables Refine and explains: apply this
+draft first, then refine it. Once the component is in the kit, you can refine it from
+Review or from Browse.
+
+Accepted refine results become new drafts and invalidate any previous approval. Failed
+refines keep the last good draft selected and show the real reason, such as invalid model
+output, a missing component, or a render failure.
+
+### Approve and Request Changes
+
+**Approve** records your decision for the exact current draft. It writes nothing.
+**Request Changes** writes nothing, keeps the draft, and returns focus to the refine
+input. Any new draft, deterministic tweak, or selection change clears the approval; review
+and approve the new current draft before applying it.
+
+### Apply to the UI kit
+
+Apply is the only Review action that writes. It becomes available only when all of these
+are true:
+
+- the current draft is approved;
+- required automated checks are green;
+- required manual checks are acknowledged;
+- the host has MCP write capability.
+
+Apply first asks for confirmation. After confirmation, the host creates a scoped, expiring
+plan naming exactly which paths may be written and writes the approved files atomically
+with that plan. Once the write returns its written paths, Apply is reported as successful —
+that write is the authoritative signal, not a later step. The host then runs kit validation
+and refreshes the manifest and preview, but neither step can turn that success into a
+failure. Generate, Refine, Approve, Request Changes, deterministic tweaks, and navigation
+never call `plan` or `write_files`.
+
+If Apply is unavailable, Review names every blocker. If the plan or the write itself fails
+or the plan expires, the last good draft stays open and applicable, the real reason is
+shown, and no success is reported; retry requires a fresh confirmation and a fresh plan.
+Kit validation after a successful write is advisory: it can fail, be unavailable, or flag
+findings, but none of that turns an already-completed write into a failed Apply. When that
+happens, Review still reports the write as done but marks it unverified — for example, "The
+post-write check could not run, so this write is unverified." Re-run validation, or inspect
+the component, for real confirmation; re-applying only risks writing the same files a second
+time. If the manifest or preview refresh fails,
+Review reports the write as done but the view as possibly stale, and asks you to reload —
+never as a failed Apply.
+
+### Standalone Review is read-only
+
+In the standalone `file://` vehicle, Review can display supplied draft, diff, and check
+data, but Refine and Apply are read-only. Use a registered genie MCP server inside an
+MCP-capable coding host when you need to refine through the model or write to a UI kit.
+
 ## Plan, then write
 
 1. Call `plan` with the intended write and delete paths.

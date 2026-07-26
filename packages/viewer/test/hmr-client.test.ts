@@ -1249,6 +1249,34 @@ describe("initHmr — postMessage bridge (embedded ui:// tier)", () => {
 
     expect(iframeFor(grid, BUTTON_PATH).getAttribute("src")).toBe(freshSrc);
   });
+
+  it("ignores a fresh embedded source that is not a base64 data document", () => {
+    const manifest = twoCardManifest();
+    const button = (manifest.components as Array<Record<string, unknown>>)[0]!;
+    button.sourcePath = BUTTON_PATH;
+    button.path = "data:text/html;base64,b2xk";
+    const { hooks, window, document, grid } = setup(manifest);
+    hooks.initHmr(document, {
+      win: window,
+      location: null,
+      parentOrigin: "https://host.example",
+    });
+
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        data: { type: "refresh", path: BUTTON_PATH, src: "https://evil.example/steal" },
+        source: window.parent,
+        origin: "https://host.example",
+      }),
+    );
+
+    // A host that is compromised (or simply wrong) cannot steer the frame at another origin: the
+    // embedded refresh channel only carries `data:text/html;base64,` documents, so anything else
+    // falls through to the ordinary reload path and the stale data URL is left in place.
+    const src = iframeFor(grid, BUTTON_PATH).getAttribute("src");
+    expect(src).not.toContain("evil.example");
+    expect(src).toBe("data:text/html;base64,b2xk");
+  });
 });
 
 describe("initHmr — polling fallback (AC4)", () => {

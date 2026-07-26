@@ -26,6 +26,35 @@ browser fallback. Set `GENIE_PREVIEW_NO_OPEN=1` to disable that behavior. For HT
 configure a client-reachable preview origin with `GENIE_PREVIEWS_BASE_URL` when inline
 card assets cannot use the server-local broker.
 
+## My reviewed component was not saved
+
+Review drafts are session-only until Apply completes. Generate, Refine, Approve, Request
+Changes, deterministic tweaks, and navigation do not write to disk. Return to the
+MCP-capable host, approve the current draft, acknowledge required manual checks, and use
+Apply to write it to the selected UI kit.
+
+## Refine or Apply is disabled in Review
+
+Review names each blocker in the panel. Common causes are:
+
+- the current draft is not approved;
+- an automated validation check failed or is still pending;
+- a manual check has not been acknowledged;
+- the selected component is a brand-new generated draft that must be applied before
+  Refine can read it from the UI kit;
+- the standalone `file://` viewer is read-only and has no MCP tool bridge.
+
+## Apply failed
+
+Keep the Review tab open. The last good draft is retained, and the UI reports the real
+failure reason, such as an expired plan, rejected path, write failure, or disconnected
+host. Retry only after reading the blocker; genie creates a fresh plan after a fresh Apply
+confirmation. A note that the post-write check could not run, or that it flagged findings,
+means this write is unverified — not that Apply failed. The write already succeeded; re-run
+validation, or inspect the component in your UI kit, rather than retrying Apply. If the
+manifest or preview refresh failed instead, the write also succeeded; reload the view rather
+than retrying Apply.
+
 ## Report a security issue
 
 Do not open a public issue. Use GitHub's private **Security → Report a vulnerability**

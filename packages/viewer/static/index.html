@@ -187,29 +187,193 @@
         </div>
       </section>
 
+      <!--
+        M7-03 (#235) — the review workspace: conversation rail, preview stage
+        and review panel. The panel is where a draft becomes a decision; no
+        markup here writes anything, and Apply ships disabled so a draft can
+        never reach the kit without an explicit, gated confirmation.
+      -->
       <section id="review-view" class="route-view review-view" data-route-view="review" hidden>
-        <p class="eyebrow">Review</p>
-        <div id="review-empty" class="review-empty">
-          <h1 id="review-empty-heading" tabindex="-1">No draft to review</h1>
-          <p id="review-empty-detail">
-            Conjure a component first. Review and Apply arrive in the next workflow milestone.
-          </p>
-          <!--
-            M7-02 (#234) AC11 — Refine's exact {kitId, group, componentName,
-            variant} handoff context, rendered here once Browse's Refine
-            action routes to Review (see `initProductShell`'s
-            `setRefineContext`). Full refine/apply is M7-03; this view is
-            only the receiving state for the transferred context.
-          -->
-          <dl id="review-refine-context" class="review-refine-context" hidden></dl>
-          <a href="?route=generate" data-route-link="generate">Go to Generate</a>
+        <div id="review-segmented" class="review-segmented" role="tablist" aria-label="Review pane">
+          <button
+            type="button"
+            id="review-segment-preview"
+            class="review-segmented__option"
+            role="tab"
+            aria-selected="true"
+            aria-controls="review-stage"
+            data-review-pane="preview"
+          >
+            Preview
+          </button>
+          <button
+            type="button"
+            id="review-segment-review"
+            class="review-segmented__option"
+            role="tab"
+            aria-selected="false"
+            aria-controls="review-panel"
+            data-review-pane="review"
+          >
+            Review
+          </button>
         </div>
-        <article id="draft-review" class="draft-review" hidden>
-          <p id="draft-label" class="draft-label"></p>
-          <h1 id="draft-name" tabindex="-1"></h1>
-          <p>This validated draft is held only in this viewer session. Nothing has been written.</p>
-          <dl id="draft-summary"></dl>
-        </article>
+
+        <div id="review-layout" class="review-layout">
+          <button
+            type="button"
+            id="review-rail-toggle"
+            class="review-rail-toggle"
+            aria-controls="review-conversation"
+            aria-expanded="false"
+          >
+            Conversation
+          </button>
+
+          <aside
+            id="review-conversation"
+            class="review-conversation"
+            aria-label="Generation conversation"
+          >
+            <p class="eyebrow">Review</p>
+            <ol id="review-conversation-log" class="review-conversation__log"></ol>
+          </aside>
+
+          <section
+            id="review-stage"
+            class="review-stage"
+            role="tabpanel"
+            tabindex="0"
+            aria-label="Draft preview"
+          >
+            <p id="review-stage-label" class="review-stage__label">Nothing to preview yet</p>
+
+            <div id="review-empty" class="review-empty">
+              <h1 id="review-empty-heading" tabindex="-1">No draft to review</h1>
+              <p id="review-empty-detail">
+                Conjure a component first. A draft is held only in this viewer session until you
+                approve and apply it.
+              </p>
+              <!--
+                M7-02 (#234) AC11 — Refine's exact {kitId, group,
+                componentName, variant} handoff context, passed from Browse.
+              -->
+              <dl id="review-refine-context" class="review-refine-context" hidden></dl>
+              <a href="?route=generate" data-route-link="generate">Go to Generate</a>
+            </div>
+
+            <p id="review-preview-note" class="review-preview-note" hidden>
+              This host pins <code>style-src</code> to hashes of files already in the kit, and the
+              preview frame inherits that policy. An unwritten draft&rsquo;s inline style cannot
+              match one of those hashes, so this preview may render unstyled here even though the
+              card is correct. Apply it, or open it standalone, to judge the styling.
+            </p>
+            <div id="review-preview" class="review-preview" hidden></div>
+          </section>
+
+          <aside
+            id="review-panel"
+            class="review-panel"
+            role="tabpanel"
+            tabindex="0"
+            aria-label="Draft review and decision"
+          >
+            <article id="draft-review" class="draft-review" hidden>
+              <div id="review-draft-header" class="review-draft-header">
+                <p id="draft-label" class="draft-label"></p>
+                <h1 id="draft-name" tabindex="-1"></h1>
+                <p id="draft-persistence-note" class="review-draft-header__note"></p>
+                <div
+                  id="review-draft-switcher"
+                  class="review-draft-switcher"
+                  role="group"
+                  aria-label="Draft history"
+                  hidden
+                ></div>
+                <dl id="draft-summary"></dl>
+              </div>
+
+              <section
+                id="review-diff"
+                class="review-diff"
+                aria-label="Changes in this draft"
+                hidden
+              >
+                <p id="review-diff-stats" class="review-diff__stats"></p>
+                <ul id="review-diff-files" class="review-diff__files"></ul>
+              </section>
+
+              <section aria-label="Review checklist">
+                <ul id="review-checklist" class="review-checklist"></ul>
+              </section>
+
+              <section
+                id="review-controls"
+                class="review-controls"
+                aria-label="Adjustments"
+                hidden
+              ></section>
+            </article>
+
+            <section id="review-refine" class="refine-section" aria-label="Refine this component">
+              <label class="refine-section__label" for="refine-input">Refine</label>
+              <textarea
+                id="refine-input"
+                class="refine-input"
+                rows="3"
+                placeholder="Describe the change you want…"
+              ></textarea>
+              <button type="button" id="refine-submit" class="btn btn-clay" disabled>Refine</button>
+              <p id="refine-status" class="refine-status"></p>
+            </section>
+
+            <section id="review-decision" class="review-decision" aria-label="Decision">
+              <button type="button" id="decision-approve" class="btn btn-ink" disabled>
+                Approve
+              </button>
+              <button type="button" id="decision-request-changes" class="btn btn-neutral" disabled>
+                Request changes
+              </button>
+            </section>
+
+            <section id="review-apply" class="review-apply" aria-label="Apply to kit">
+              <button type="button" id="apply-button" class="btn btn-clay" disabled>
+                Apply to kit
+              </button>
+              <ul id="apply-blockers" class="apply-blockers"></ul>
+            </section>
+
+            <p id="review-status" class="review-status" role="status"></p>
+          </aside>
+        </div>
+
+        <div id="apply-confirm" class="review-dialog" hidden>
+          <div class="review-dialog__backdrop"></div>
+          <div
+            class="review-dialog__panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="apply-confirm-heading"
+            aria-describedby="apply-confirm-detail"
+          >
+            <h2 id="apply-confirm-heading" tabindex="-1">Apply this draft to your kit?</h2>
+            <p id="apply-confirm-detail">
+              These files will be written to your UI kit on disk. This is the first time anything
+              leaves this viewer session.
+            </p>
+            <ul id="apply-confirm-files" class="review-dialog__files"></ul>
+            <div class="review-dialog__actions">
+              <button type="button" id="apply-confirm-cancel" class="btn btn-neutral">
+                Cancel
+              </button>
+              <button type="button" id="apply-confirm-accept" class="btn btn-clay">
+                Write files
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <p id="review-live" class="visually-hidden" role="status" aria-live="polite"></p>
       </section>
     </main>
 
