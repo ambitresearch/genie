@@ -1263,3 +1263,93 @@ describe("GitHostStore — credential check (AC6)", () => {
     }
   });
 });
+
+// ─── Adapter-specific: GitHostProjectStore must not report transport failures ──
+// ─── as data (see git-host.ts — "Surface transient API/auth failures rather   ──
+// ─── than silently skipping", stated at two other catch sites in that file)   ──
+
+describe("GitHostProjectStore — transport failures are not data", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /**
+   * Build a stub git host that succeeds at everything except the calls matched
+   * by `failOn`, which return `status`. `ensureMetaRepo`'s probe always
+   * succeeds so the failure under test is the one being asserted, not an
+   * incidental setup failure.
+   *
+   * `served` counts the injected failures so each test can GUARD THE GUARD: a
+   * stub that silently stopped matching would otherwise let these tests pass
+   * for the wrong reason.
+   */
+  function stubHost(failOn: (url: string) => boolean, status = 500) {
+    const state = { served: 0 };
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (failOn(url)) {
+        state.served += 1;
+        return new Response("upstream exploded", {
+          status,
+          statusText: "Internal Server Error",
+        });
+      }
+      if (!url.includes("/contents/")) {
+        // meta-repo existence probe (ensureMetaRepo)
+        return new Response(JSON.stringify({ name: "genie-meta" }), { status: 200 });
+      }
+      if (url.endsWith("/contents/projects")) {
+        return new Response(
+          JSON.stringify([{ type: "file", name: "p1.json", path: "projects/p1.json" }]),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+    }) as typeof fetch;
+    return state;
+  }
+
+  const newStore = () =>
+    new GitHostProjectStore({
+      baseUrl: "https://mock-git-host.test/api/v1",
+      owner: "test-org",
+      token: "mock-token",
+    });
+
+  it("🔒 listProjects propagates a 5xx on the directory listing instead of returning []", async () => {
+    const guard = stubHost((url) => url.endsWith("/contents/projects"));
+    await expect(newStore().listProjects()).rejects.toMatchObject({
+      name: "GitHostApiError",
+      status: 500,
+    });
+    expect(guard.served).toBeGreaterThan(0);
+  });
+
+  it("🔒 listProjects propagates a 5xx on a project file instead of silently dropping it", async () => {
+    const guard = stubHost((url) => url.endsWith("/contents/projects/p1.json"));
+    await expect(newStore().listProjects()).rejects.toMatchObject({
+      name: "GitHostApiError",
+      status: 500,
+    });
+    expect(guard.served).toBeGreaterThan(0);
+  });
+
+  it("🔒 getProject reports a 5xx as a transport failure, not as NotFoundError", async () => {
+    const guard = stubHost((url) => url.endsWith("/contents/projects/proj-1.json"));
+    await expect(newStore().getProject("proj-1")).rejects.toMatchObject({
+      name: "GitHostApiError",
+      status: 500,
+    });
+    expect(guard.served).toBeGreaterThan(0);
+  });
+
+  it("🔒 deleteProject reports a 5xx as a transport failure, not as NotFoundError", async () => {
+    const guard = stubHost((url) => url.endsWith("/contents/projects/proj-1.json"));
+    await expect(newStore().deleteProject("proj-1")).rejects.toMatchObject({
+      name: "GitHostApiError",
+      status: 500,
+    });
+    expect(guard.served).toBeGreaterThan(0);
+  });
+});
