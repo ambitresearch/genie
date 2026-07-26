@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { JSDOM } from "jsdom";
+import { JSDOM, type DOMWindow } from "jsdom";
 import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1132,8 +1132,12 @@ describe("untrusted content handling", () => {
 type ToolCall = { name: string; args: Record<string, unknown> };
 
 /** Boot the real controller against the real markup with a recording bridge. */
-function loadWired(replies: Record<string, unknown | ((args: never) => unknown)> = {}) {
+function loadWired(
+  replies: Record<string, unknown | ((args: never) => unknown)> = {},
+  prepare?: (win: DOMWindow) => void,
+) {
   const shell = loadShell();
+  if (prepare) prepare(shell.window);
   const calls: ToolCall[] = [];
   const bridge = {
     callTool(name: string, args: Record<string, unknown>) {
@@ -3650,5 +3654,200 @@ describe("F39 — a route change cannot strand the apply dialog", () => {
     expect((shell.document.querySelector(".app-header") as HTMLElement).hasAttribute("inert")).toBe(
       false,
     );
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * #256 — an unsaved draft must not vanish on reload or tab close.
+ *
+ * The review store is in-memory only, so a reload is unrecoverable. The guard
+ * is a `beforeunload` handler, and two things about it are deliberate:
+ *
+ *  - It is STANDALONE-ONLY. Inside a host iframe the prompt is hostile (the
+ *    user is closing the HOST, not us) and most hosts suppress it anyway, so
+ *    the embedded tier leaves teardown UX to its host.
+ *  - It counts only drafts whose bytes are NOT on disk (`componentInKit`).
+ *    A Browse -> Review handoff seeds draft #1 from the kit's own bytes, so
+ *    prompting there would warn about losing a file that already exists.
+ * ------------------------------------------------------------------------ */
+/** A cancellable `beforeunload`, exactly as a browser delivers it. */
+function fireUnload(win: DOMWindow) {
+  const event = new win.Event("beforeunload", { cancelable: true });
+  win.dispatchEvent(event);
+  return event;
+}
+
+describe("unsaved-draft unload guard (#256)", () => {
+  function guarded(options: { embedded?: boolean } = {}) {
+    return loadWired(HAPPY_REPLIES, (win) => {
+      if (!options.embedded) return;
+      // The same tier predicate `initMcpApp` uses: a real host frame is the
+      // only way `win.parent` stops being `win`.
+      Object.defineProperty(win, "parent", {
+        configurable: true,
+        value: { postMessage() {} },
+      });
+    });
+  }
+
+  function addDraft(wired: ReturnType<typeof loadWired>, componentInKit = false) {
+    wired.controller.addDraft(conjureResult(), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "design-default",
+      componentInKit,
+    });
+  }
+
+  it("stays silent when there is nothing to lose", () => {
+    const wired = guarded();
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("prompts once an unapplied draft holds bytes that are not on disk", () => {
+    const wired = guarded();
+    addDraft(wired);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("registers exactly one listener however many times it re-renders", () => {
+    const wired = guarded();
+    const added: unknown[] = [];
+    const removed: unknown[] = [];
+    const realAdd = wired.window.addEventListener.bind(wired.window);
+    const realRemove = wired.window.removeEventListener.bind(wired.window);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (wired.window as any).addEventListener = (type: string, fn: unknown, opts?: unknown) => {
+      if (type === "beforeunload") added.push(fn);
+      return realAdd(type, fn as EventListener, opts as boolean);
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (wired.window as any).removeEventListener = (type: string, fn: unknown, opts?: unknown) => {
+      if (type === "beforeunload") removed.push(fn);
+      return realRemove(type, fn as EventListener, opts as boolean);
+    };
+    addDraft(wired);
+    // Every one of these re-renders; none may stack a second listener.
+    wired.controller.refresh();
+    wired.controller.refresh();
+    addDraft(wired);
+    wired.controller.refresh();
+    expect(added).toHaveLength(1);
+    expect(removed).toHaveLength(0);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  async function driveApply(wired: ReturnType<typeof loadWired>) {
+    const { document, controller, calls } = wired;
+    const click = (id: string) =>
+      document
+        .getElementById(id)!
+        .dispatchEvent(new document.defaultView!.Event("click", { bubbles: true }));
+    firePreviewLoad(document);
+    makeGreen(document, controller);
+    click("decision-approve");
+    click("apply-button");
+    click("apply-confirm-accept");
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    await vi.waitFor(() => expect(controller.state().appliedDraftId).not.toBeNull());
+  }
+
+  it("stops prompting once the draft has been applied to the kit", async () => {
+    const wired = guarded();
+    addDraft(wired);
+    await driveApply(wired);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("stops prompting even while rejected alternatives remain in the switcher", async () => {
+    const wired = guarded();
+    // Two candidates, neither on disk. Apply writes the selected one; the other
+    // is a rejected alternative, not unsaved work, so the tab is free to close.
+    addDraft(wired);
+    addDraft(wired);
+    expect(wired.controller.state().drafts).toHaveLength(2);
+    await driveApply(wired);
+    expect(
+      wired.controller
+        .state()
+        .drafts.every(
+          (draft: { id: string }) => draft.id !== wired.controller.state().appliedDraftId,
+        ),
+    ).toBe(false);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("prompts through both the modern and the legacy channel", () => {
+    const wired = guarded();
+    addDraft(wired);
+    const event = new wired.window.Event("beforeunload", { cancelable: true });
+    // A real BeforeUnloadEvent exposes `returnValue` as a plain string slot, so
+    // assigning it does NOT imply preventDefault() the way jsdom's generic Event
+    // does. Neutralise that coupling to prove each channel is driven on its own.
+    let legacy: unknown;
+    Object.defineProperty(event, "returnValue", {
+      configurable: true,
+      get: () => legacy,
+      set: (value) => {
+        legacy = value;
+      },
+    });
+    const prevented = vi.spyOn(event, "preventDefault");
+    wired.window.dispatchEvent(event);
+    expect(prevented).toHaveBeenCalled();
+    expect(legacy).toBe("");
+  });
+
+  it("never prompts in the embedded tier", () => {
+    const wired = guarded({ embedded: true });
+    addDraft(wired);
+    expect(wired.controller.state().drafts).toHaveLength(1);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("does not prompt for a Browse handoff until its bytes diverge from the kit", () => {
+    const wired = guarded();
+    // Draft #1 IS the kit's current bytes -- reloading loses nothing.
+    addDraft(wired, true);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+    // A refine/tweak reply is PROPOSED bytes that exist nowhere on disk.
+    addDraft(wired, false);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+});
+
+describe("unload guard survives in-app navigation (#256)", () => {
+  it("keeps the drafts and the guard across a route change", () => {
+    const shell = loadShell();
+    const bridge = {
+      callTool: () => Promise.resolve({}),
+      destroy() {},
+    };
+    const shellController = shell.hooks.initProductShell(shell.document, bridge, {});
+    shellController.setRefineContext({
+      kitId: "kit-a",
+      componentName: "Card",
+      group: "actions",
+      path: "components/actions/Card/Card.html",
+      source: CARD_SOURCE,
+    });
+    const { document, window } = shell;
+    const before = document.getElementById("draft-label")!.textContent;
+    expect(before).toMatch(/draft #1/i);
+    const guardedBefore = fireUnload(window).defaultPrevented;
+
+    document
+      .querySelector<HTMLElement>('[data-route-link="browse"]')!
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+
+    // An in-app route change is a pushState -- it must never surface the
+    // browser's "leave site?" prompt, and it must never drop the drafts.
+    expect(document.getElementById("draft-label")!.textContent).toBe(before);
+    document
+      .querySelector<HTMLElement>('[data-route-link="review"]')!
+      .dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    expect(document.getElementById("draft-label")!.textContent).toBe(before);
+    // Routing must not arm, disarm, or otherwise disturb the guard.
+    expect(fireUnload(window).defaultPrevented).toBe(guardedBefore);
   });
 });

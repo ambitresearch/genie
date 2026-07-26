@@ -43,7 +43,8 @@ baseline
        ├─ Approve + gates green → approved draft
        │    └─ Confirm Apply → plan → write_files → [delete_files] → applied
        │       (kit validation advisory; refresh gates only the "live in Browse" claim)
-       └─ in-app route change → reversible; draft state remains in memory
+       ├─ in-app route change → reversible; draft state remains in memory
+       └─ reload / tab close → browser prompt (standalone tier, unsaved bytes only)
 
 Any failure → remain on the last good draft; never report a false applied state.
 ```
@@ -51,9 +52,22 @@ Any failure → remain on the last good draft; never report a false applied stat
 In-app route changes — a route link, or browser Back/Forward between genie's own routes — are
 reversible: the Review store stays alive, so drafts, selection, approval state, and
 acknowledgements survive. A full reload, tab close, or host teardown destroys that in-memory
-session without warning. There is deliberately no `beforeunload` handler: a confirmation prompt
-in the embedded tier would fire inside the host's own frame, and no M7-03 acceptance criterion
-calls for one. Drafts are never persisted; Apply is the only durability boundary.
+session. Drafts are never persisted; Apply is the only durability boundary.
+
+Because that loss is unrecoverable, the standalone tier registers a `beforeunload` handler
+(`syncUnloadGuard`, re-evaluated on every `render`) so the browser shows its native "leave
+site?" prompt. It is deliberately narrow, and each condition removes a false positive:
+
+| Condition                                         | Why                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Standalone tier only (`win.parent === win`)       | Embedded, the user is closing the **host**, not genie. The prompt is hostile there and several hosts suppress it anyway, so teardown UX stays the host's call.                                                                                                      |
+| Nothing applied yet                               | After Apply the bytes are on disk. Drafts still in the switcher are rejected alternatives, not unsaved work.                                                                                                                                                        |
+| At least one draft whose bytes are not in the kit | A Browse → Review handoff seeds draft #1 from the kit's own file, so reloading there loses nothing. `derivedInfo()` clears `componentInKit` as soon as a refine or tweak makes the bytes diverge, which makes the flag exactly "would reloading lose these bytes?". |
+
+The handler drives both channels — `preventDefault()` for the current spec and
+`returnValue = ""` for older engines — because a real `BeforeUnloadEvent` exposes
+`returnValue` as a plain string slot where assignment does _not_ imply `preventDefault()`.
+In-app route changes never reach it: they are `pushState`, not an unload.
 
 ### Partial apply is not an apply
 

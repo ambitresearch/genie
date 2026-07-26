@@ -2306,11 +2306,60 @@
       announce(value ? "Checked off " + id + "." : "Cleared " + id + ".");
     }
 
+    // #256 -- the review store lives in memory only, so a reload or tab close
+    // destroys work irrecoverably. Warn about exactly the drafts that would be
+    // lost, and nothing else:
+    //
+    //   - Nothing applied. After Apply the bytes are on disk; whatever else is
+    //     still in the switcher is a rejected alternative, not unsaved work.
+    //   - Only drafts whose bytes are NOT already in the kit. A Browse -> Review
+    //     handoff seeds draft #1 from the kit's own file, and derivedInfo() clears
+    //     componentInKit the moment a refine or tweak makes the bytes diverge, so
+    //     this flag is exactly "would reloading lose these bytes?".
+    var unloadGuard = null;
+
+    function hasUnsavedDrafts(state) {
+      if (state.appliedDraftId) return false;
+      for (var i = 0; i < state.drafts.length; i += 1) {
+        var info = meta[state.drafts[i].id];
+        if (!info || !info.componentInKit) return true;
+      }
+      return false;
+    }
+
+    // Standalone only. Embedded, the user is closing the HOST rather than us, so
+    // the prompt is both hostile and widely suppressed -- teardown UX is the
+    // host's call. Same parent-identity test initMcpApp uses to pick its tier.
+    function syncUnloadGuard(state) {
+      var win = doc.defaultView;
+      var standalone = Boolean(
+        win && win.parent === win && typeof win.addEventListener === "function",
+      );
+      var wanted = standalone && hasUnsavedDrafts(state);
+      if (wanted === Boolean(unloadGuard)) return;
+      if (wanted) {
+        unloadGuard = function (event) {
+          event.preventDefault();
+          // Legacy engines read the assigned string rather than preventDefault().
+          event.returnValue = "";
+          return "";
+        };
+        win.addEventListener("beforeunload", unloadGuard);
+        return;
+      }
+      if (win && typeof win.removeEventListener === "function") {
+        win.removeEventListener("beforeunload", unloadGuard);
+      }
+      unloadGuard = null;
+    }
+
     function render() {
       var draft = store.current();
       var state = store.state();
       var bridge = opts.getBridge();
       var hostAvailable = Boolean(bridge);
+
+      syncUnloadGuard(state);
 
       if (!draft) {
         if (el.empty) el.empty.hidden = false;
@@ -2803,6 +2852,9 @@
       },
       refresh: render,
       state: store.state,
+      teardown: function () {
+        syncUnloadGuard({ appliedDraftId: null, drafts: [] });
+      },
     };
   }
 
