@@ -141,7 +141,12 @@ export function buildResourceUri(params: ResourceUriParams): string {
 
 // ─── kitId → kit dir (path safety) ───────────────────────────────────────────
 
-/** A `kitId` that fails the shared `isSafeKitId` rule (containment + identity). */
+/**
+ * A `kitId` the shared `isSafeKitId` rule refuses. Deliberately unglossed: the
+ * categories are rendered from `KIT_ID_SAFETY_CATEGORIES` by the constructor
+ * below, and the short summary that used to sit here named two of them long
+ * after the predicate grew a third.
+ */
 export class InvalidKitIdError extends Error {
   readonly code = "InvalidKitIdError";
   constructor(readonly kitId: string) {

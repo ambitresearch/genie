@@ -259,7 +259,8 @@ export function isSafeKitId(kitId: string): boolean {
  * plain string, so this module still needs no `zod` dependency.
  */
 export const KIT_ID_SAFETY_MESSAGE =
-  "kitId must name a single kit: it cannot be empty, `.`, `..`, end in a dot or a space, " +
+  "kitId must be one kit's name rather than a path: it cannot be empty, `.`, `..`, " +
+  "end in a dot or a space, " +
   "or contain a path separator or a NUL byte.";
 
 /**

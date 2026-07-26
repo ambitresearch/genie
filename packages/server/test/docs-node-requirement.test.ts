@@ -12,7 +12,8 @@
  * `>=22.19.0 <23 || >=24.4.1`. The supported set stopped being a floor and
  * acquired a hole covering all of 23.x — an EOL line that reached end of life
  * without ever receiving the fix — and 24.0–24.4.0, the vulnerable prefix of a
- * still-supported line that was patched at 24.4.1. Four prose claims across three files went on
+ * still-supported line that was patched at 24.4.1. Every public prerequisite in
+ * the tree went on
  * describing the old floor, telling a user on Node 23 that a documented command
  * was supported when it lands them on an unpatched runtime with only a warning
  * that never mentions the CVE. Hence a range, never a floor.
@@ -171,6 +172,51 @@ describe("published Node requirement", () => {
     expect(findOpenEndedNodeFloors("Node.js 22.19 or newer")).toContain("22.19.0");
     expect(nodeFloorOverclaim("22.19.0", range)).toBe("23.0.0");
   });
+  it("\u{1f512} never restates how many claims or files the scan covers", async () => {
+    // The scan below OWNS the inventory. Two docblocks nevertheless hard-coded
+    // both halves of it — how many claims, and how many files they live in — as
+    // literals, and the pair was already wrong when written, because the file
+    // set had grown to include the root `CONTRIBUTING.md`. One copy has been
+    // deleted; this catches the next one.
+    //
+    // The pattern deliberately has no exemption for this file: a lock allowed
+    // to quote the shape it forbids is a lock that stops being able to read
+    // itself, which is how the npm-enforcement lock came to certify the exact
+    // drift it existed to stop.
+    //
+    // The fix for a hit is always deletion, never a fresh number: a restated
+    // tally has no way to notice the scan moving under it, which is the whole
+    // reason the scan is derived.
+    // Only the claim-count arm. A bare "N files" also appears in fixture prose
+    // ("seed two files onto the host"), so matching it reported a passing test
+    // file as drift; the count of CLAIMS is the distinctive half, and the
+    // sentence that carried the defect ("... claims across three files") cannot
+    // survive its removal anyway.
+    const tally =
+      /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:prose\s+)?claims?\b/giu;
+    // Discovered, not listed: a hand-written file list is the same defect one
+    // level up, and would have to be edited by whoever adds the next copy.
+    const scanned: string[] = [];
+    const pending = [path.join(REPO_ROOT, "packages/server/test")];
+    while (pending.length > 0) {
+      const dir = pending.pop()!;
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        if (entry.name === "node_modules") continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) pending.push(full);
+        else if (entry.name.endsWith(".ts")) scanned.push(full);
+      }
+    }
+    expect(scanned.length).toBeGreaterThan(5);
+    const offenders: string[] = [];
+    for (const file of scanned) {
+      const text = await readFile(file, "utf8");
+      for (const match of text.matchAll(tally))
+        offenders.push(`${path.basename(file)}: ${match[0]}`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("\u{1f512} is never described as something npm enforces", async () => {
     // An install is halted over that field only under `engine-strict`, which this
     // repository does not set: npm warns `EBADENGINE` and installs anyway. A

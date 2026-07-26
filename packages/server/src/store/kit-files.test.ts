@@ -107,6 +107,44 @@ describe("isSafeKitId", () => {
     }
   });
 
+  it("\u{1F512} is never glossed with a shorter list of categories than it has", () => {
+    // The count lock above pins ONE docblock. `preview.ts` then spent a release
+    // summarising the same rule as "(containment + identity)" — an enumeration
+    // of TWO categories, one line above the constructor that had already been
+    // rewired to render all three from KIT_ID_SAFETY_CATEGORIES. Pinning the
+    // authority does not stop a caller writing its own shorter list, so this is
+    // a DISCOVERY lock over every source file rather than a check on a known
+    // one.
+    //
+    // It fires on the enumerating SHAPE, not on a vocabulary: a parenthetical
+    // gloss attached to the rule that joins its items with `+` or `and`. The
+    // terminating fix is never to re-count such a gloss — the count moves — but
+    // to delete it and let the rendered rationale speak.
+    const roots = [path.join(import.meta.dirname, "..")];
+    const files: string[] = [];
+    while (roots.length > 0) {
+      const dir = roots.pop()!;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) roots.push(full);
+        else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) files.push(full);
+      }
+    }
+    expect(files.length).toBeGreaterThan(20);
+
+    const gloss = /isSafeKitId`?\s+rule\s+\(([^)]*)\)/gu;
+    const offenders: string[] = [];
+    for (const file of files) {
+      const text = readFileSync(file, "utf8");
+      for (const match of text.matchAll(gloss)) {
+        const items = match[1]!.split(/\s*(?:\+|,|\band\b)\s*/u).filter(Boolean);
+        if (items.length > 1 && items.length < KIT_ID_SAFETY_CATEGORIES.length)
+          offenders.push(`${path.basename(file)}: (${match[1]!})`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("🔒 rejects an id no filesystem call could ever accept", () => {
     // A NUL byte is a third category, distinct from the traversal and Win32
     // name-normalization rules above. It does not reach a DIFFERENT kit — it

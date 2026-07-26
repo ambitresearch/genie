@@ -40,7 +40,9 @@ type ListableKitMeta = KitMeta & {
  *
  *   - `type === KIT_TYPE` drops non-genie records an interop adapter may share
  *     the same store with.
- *   - `isSafeKitId` drops ids no kit-taking verb would accept. Both SHIPPED
+ *   - `isSafeKitId` drops ids the verbs that apply that gate would refuse.
+ *     Not every kit verb does — `validate` applies none, and `create_project`
+ *     is gated only transitively through `get_kit`. Both SHIPPED
  *     adapters already skip such ids at the source (#282 added the same guard to
  *     `LocalFsKitStore.listKits` and `GitHostKitStore.listKits`), so this filter
  *     is defence-in-depth: `KitStore` is a public interface and this function
