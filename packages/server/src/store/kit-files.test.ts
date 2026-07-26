@@ -1,7 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+
+import { assertRangePatchesCve202527210 } from "../../test/helpers/node-cve.js";
 
 import { isSafeKitId, sriSha256 } from "./kit-files.js";
 
@@ -168,30 +170,55 @@ it("🔒 no accepted kitId can carry the CVE-2025-27210 device-name shape", () =
 // The rationale above argues the kitId GATE is unaffected by CVE-2025-27210.
 // The other half of that answer is packaging: `writeFiles`/`readFile` take a
 // `path` that legitimately DOES contain separators, so a consumer installing
-// this server on an unpatched Node 22 is exposed on that surface no matter what
-// the kitId rule does. The workspace already tests on a patched floor; this
-// pins the PUBLISHED floor to a patched release too, so the two cannot drift.
-it.each([
-  ["@ambitresearch/genie", "../../package.json"],
-  ["@ambitresearch/genie-viewer", "../../../viewer/package.json"],
-])("🔒 %s declares a Node floor that patches CVE-2025-27210", (_name, rel) => {
-  // Both published packages call `node:path` on caller-supplied strings, so both
-  // need a patched floor. Checking them together is deliberate: a floor raised on
-  // one package and not the other is the same two-contracts drift this PR fixes.
-  const manifest = JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf-8")) as {
-    engines?: { node?: string };
-  };
-  const range = manifest.engines?.node ?? "";
-  const m = /^>=\s*(\d+)\.(\d+)\.(\d+)/u.exec(range);
-  expect(m, `engines.node must pin an explicit patch floor, got ${JSON.stringify(range)}`).not.toBe(
-    null,
-  );
-  const [major, minor, patch] = m!.slice(1).map(Number) as [number, number, number];
-  // Patched releases: 20.19.4, 22.17.1, 24.4.1. Both packages require Node 22+.
-  expect(major).toBeGreaterThanOrEqual(22);
-  const atLeast22_17_1 = major > 22 || minor > 17 || (major === 22 && minor === 17 && patch >= 1);
-  expect(atLeast22_17_1, `${range} predates the CVE-2025-27210 fix (22.17.1)`).toBe(true);
+// this server on an unpatched Node is exposed on that surface no matter what the
+// kitId rule does. The workspace already tests on a patched runtime; this pins
+// the PUBLISHED runtime to a patched release too, so the two cannot drift.
+//
+// The package list is DISCOVERED, not hand-written. A literal list is how the
+// viewer came to sit at `>=22` while its sibling was raised — the same "one rule,
+// restated per site, then drifted" defect this whole PR is about. Scope is stated
+// as a rule instead: every publishable workspace package under `packages/`.
+// `@ambitresearch/genie-e2e` is inside that scan but excluded by `private: true`,
+// because nobody installs it, so its `engines` describes only the dev environment
+// CI already pins; the monorepo root sits outside the scan and is private too.
+const publishablePackages = readdirSync(new URL("../../../", import.meta.url), {
+  withFileTypes: true,
+})
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => new URL(`../../../${entry.name}/package.json`, import.meta.url))
+  .filter((url) => existsSync(url))
+  .map((url) => ({
+    url,
+    manifest: JSON.parse(readFileSync(url, "utf-8")) as {
+      name?: string;
+      private?: boolean;
+      engines?: { node?: string };
+    },
+  }))
+  .filter(({ manifest }) => manifest.private !== true)
+  .map(({ url, manifest }) => [manifest.name ?? String(url), manifest] as const);
+
+it("🔒 the publishable-package scan actually finds both published packages", () => {
+  // Guards the discovery above: a glob that silently matches nothing would make
+  // every assertion below pass vacuously.
+  expect(publishablePackages.map(([name]) => name).sort()).toEqual([
+    "@ambitresearch/genie",
+    "@ambitresearch/genie-viewer",
+  ]);
 });
+
+it.each(publishablePackages)(
+  "🔒 %s declares a Node range with no vulnerable release in it",
+  (name, manifest) => {
+    // Membership-based, not floor-based. CVE-2025-27210 was fixed per release
+    // line (20.19.4 / 22.17.1 / 24.4.1), so a lower endpoint above one patch
+    // point says nothing about the lines above it — `>=22.19.0` reads as patched
+    // but is satisfied by an unpatched 24.2.0.
+    const range = manifest.engines?.node ?? "";
+    expect(range, `${name} must declare engines.node`).not.toBe("");
+    assertRangePatchesCve202527210(range, name);
+  },
+);
 
 /**
  * `sriSha256` is the full-buffer reference the streamed LocalFs walk
