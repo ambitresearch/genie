@@ -2,17 +2,19 @@
  * The public prerequisites must describe the runtime the published packages
  * actually accept.
  *
- * `engines.node` is enforced by the package manager, so a prerequisite line is a
- * promise about whether `npm install` will succeed. Once CVE-2025-27210 narrowed
- * both manifests to `>=22.19.0 <23 || >=24.4.1`, that set stopped being a floor —
- * it acquired a hole covering all of 23.x and 24.0–24.4.0. Four prose claims
- * across three files went on describing the old floor, which told a user on Node
- * 23 that a documented command would work on a runtime the package does not
- * support. `engines.node` is the supported-runtime contract, not an install
- * lock: npm treats it as advisory and only warns `EBADENGINE` unless the
- * consumer has set `engine-strict`. The doc is therefore the ONLY thing
- * standing between a reader and an unsupported, unpatched runtime, which is
- * precisely why it has to state the range and not a floor.
+ * `engines.node` is the supported-runtime contract, not an install lock. This
+ * repository sets no `engine-strict`, so npm treats the field as advisory: it
+ * warns `EBADENGINE` and installs anyway. Nothing therefore stops a reader from
+ * running the published packages on a runtime they were never tested against —
+ * the prerequisite line in the docs is the only thing that can.
+ *
+ * That matters more since CVE-2025-27210 narrowed both manifests to
+ * `>=22.19.0 <23 || >=24.4.1`. The supported set stopped being a floor and
+ * acquired a hole covering all of 23.x and 24.0–24.4.0, both EOL lines that
+ * never received the fix. Four prose claims across three files went on
+ * describing the old floor, telling a user on Node 23 that a documented command
+ * was supported when it lands them on an unpatched runtime with only a warning
+ * that never mentions the CVE. Hence a range, never a floor.
  *
  * These are derived checks on purpose. This PR exists because one rule restated
  * at eight call sites drifted, and the same drift then recurred in this PR's own
