@@ -398,9 +398,23 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     //     satisfy `isSafeKitId` and are refused by `KIT_ID_PATTERN` — i.e.
     //     squarely in the band this PR's subject widens into.
     //     The tell that it is an oversight rather than a trust decision:
-    //     `escapeHtml` is defined in that same file (`:545`) and applied to
-    //     `title` on the line ADJACENT to each sink (`:506`, `:509`, `:521`);
-    //     `note` is the one interpolation it skips.
+    //     that file carries TWO escape helpers and applies the
+    //     framework-appropriate one to `title` on the line ADJACENT to
+    //     every sink, while skipping `note` at all three —
+    //       - html  `:501` note RAW │ `escapeHtml` `:506`, `:509`
+    //       - vue   `:518` note RAW │ `escapeHtml` `:521`
+    //       - react `:531` note RAW │ `escapeJsx`  `:535`
+    //     (`escapeHtml` defined `:545`, `escapeJsx` `:555`.) So `title` is
+    //     escaped at 4 of 4 interpolations and `note` at 0 of 3. The author
+    //     demonstrably reasoned about per-framework escaping — JSX needs
+    //     `{`/`}` handling that HTML does not — and still missed `note`,
+    //     which is a sharper tell than mere proximity would be.
+    //     An earlier revision of this comment cited only `:506`/`:509`/`:521`
+    //     and claimed an escape adjacent to "each sink". Those are the three
+    //     `escapeHtml` calls, i.e. html+vue only: keying the sweep on one
+    //     helper name silently dropped the react sink — the very one whose
+    //     break-out is the bare NEWLINE. Same defeat mode as this cycle's
+    //     literal censuses, in the evidence for a security finding.
     //   · attribution, stated against my own interest: for `default`/`sole`
     //     this is PRE-EXISTING — those ids come from bindings that were never
     //     gated on either rule. For the `explicit` branch it is NOT: at
