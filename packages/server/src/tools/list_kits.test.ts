@@ -137,6 +137,15 @@ describe("listWritableKits", () => {
     expect(LIST_KITS_DESCRIPTION).not.toMatch(/guarantees? +every +id/iu);
     expect(LIST_KITS_DESCRIPTION).not.toMatch(/accepted by the other kit verbs/iu);
     expect(LIST_KITS_DESCRIPTION).toMatch(/safety gate|shared safety|safety rule/iu);
+    // …and pin the caveat POSITIVELY, not just the two over-claims negatively.
+    // Without this the description could re-acquire the promise in wording these
+    // `not.toMatch`es do not cover ("every id returned is safe AND resolves"),
+    // and the only thing standing between a caller and that misreading — the
+    // sentence telling them to still handle a later not-found — could be
+    // deleted silently. Safety is decided at list time; existence is not
+    // decidable at list time by anything this function can see.
+    expect(LIST_KITS_DESCRIPTION).toMatch(/not a promise|no longer fetches/iu);
+    expect(LIST_KITS_DESCRIPTION).toMatch(/not-found from a later verb/iu);
   });
 
   it("🔒 the disclosed filter is the one listWritableKits actually applies", async () => {
