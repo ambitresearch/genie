@@ -19,7 +19,7 @@
  *
  * This file closes that gap: real Chromium, real `static/` shell, real
  * cascade, `getComputedStyle` — then the same WCAG maths and the same
- * AA_BODY/AA_UI thresholds as `contrast-check.mjs`, applied to the exact
+ * AA_BODY threshold as `contrast-check.mjs`, applied to the exact
  * selectors #247 names (`.browse-*`, `.variant-tab`, `.btn-clay`) in BOTH
  * colour schemes.
  *
@@ -39,11 +39,13 @@
  * which is styled with `opacity: 0.6`).
  *
  * ── Gating policy ───────────────────────────────────────────────────────────
- * Thresholds mirror `contrast-check.mjs`: AA_BODY 4.5 for text, AA_UI 3.0 for
- * UI affordances. Pairs on genuinely disabled controls are recorded in the
- * ledger but left ungated (`target: null`) — WCAG 1.4.3 exempts inactive
- * controls, and the existing token ledger already uses `null` the same way for
- * its ink-3-on-paper-2/paper-3 rows.
+ * Threshold mirrors `contrast-check.mjs`: AA_BODY 4.5 for text. Every pin here
+ * is a text pair (a label against the surface behind it), so 1.4.3 governs
+ * throughout and the 3:1 non-text threshold of 1.4.11 never applies — see the
+ * note on the clear-filter pin. Pairs on genuinely disabled controls are
+ * recorded in the ledger but left ungated (`target: null`) — WCAG 1.4.3 exempts
+ * inactive controls, and the existing token ledger already uses `null` the same
+ * way for its ink-3-on-paper-2/paper-3 rows.
  */
 import { describe, it, beforeAll, afterAll, expect } from "vitest";
 import { chromium } from "playwright";
@@ -107,7 +109,6 @@ function contrastRatio(
 }
 
 const AA_BODY = 4.5;
-const AA_UI = 3.0;
 
 // ── The pin ledger ──────────────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ interface Pin {
   selector: string;
   /** Which Browse state must be driven before reading. */
   state: PinState;
-  /** AA_BODY / AA_UI, or `null` to record without gating (disabled controls). */
+  /** AA_BODY, or `null` to record without gating (disabled controls). */
   target: number | null;
   /** Hover the element before reading (pins `:hover` rules). */
   hover?: boolean;
@@ -261,13 +262,13 @@ const PINS: readonly Pin[] = [
     label: ".browse-tree__no-match [data-clear-filter] (recovery affordance)",
     selector: "#browse-tree-nav .browse-tree__no-match [data-clear-filter]",
     state: "no-match",
-    // AA_BODY, not AA_UI. This is a button, but the pair being pinned is its
-    // visible "Clear filter" *text*, and the button inherits `--text-sm`
-    // (0.875rem = 14px) from `.browse-tree__no-match` without overriding it.
-    // 14px is under WCAG's large-text floor (18pt/24px, or 14pt/18.66px bold),
-    // so 1.4.3 governs at 4.5:1 — the 3:1 of 1.4.11 applies to non-text
-    // component boundaries, not to a label. Gating at AA_UI would let a
-    // regression into the 3:1–4.49:1 band pass this dedicated check.
+    // Gated at AA_BODY (4.5), not the 3:1 non-text threshold. This is a button,
+    // but the pair being pinned is its visible "Clear filter" *text*, and the
+    // button inherits `--text-sm` (0.875rem = 14px) from `.browse-tree__no-match`
+    // without overriding it. 14px is under WCAG's large-text floor (18pt/24px,
+    // or 14pt/18.66px bold), so 1.4.3 governs at 4.5:1 — the 3:1 of 1.4.11
+    // applies to non-text component boundaries, not to a label. Gating at 3:1
+    // would let a regression into the 3:1–4.49:1 band pass this dedicated check.
     target: AA_BODY,
   },
 ];
