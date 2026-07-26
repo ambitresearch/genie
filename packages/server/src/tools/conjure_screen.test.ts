@@ -7,6 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectStore } from "./create_project.js";
 import { LocalFsKitStore } from "../store/local.js";
+import { isSafeKitId } from "../store/kit-files.js";
 import {
   CONJURE_SCREEN_TOOL_NAME,
   LocalScaffoldScreenGenerator,
@@ -496,6 +497,99 @@ describe("LocalScaffoldScreenGenerator", () => {
     expect(vue.files[0]?.content).toContain("<template>");
     const react = await generator.generate(request({ framework: "react" }));
     expect(react.files[0]?.content).toContain("export default function Screen()");
+  });
+
+  // ── 🔒 provenance-note injection (the header comment is a sink) ─────────────
+  //
+  // `renderScaffold` escapes `title` at all four of its sinks (`escapeHtml` ×3,
+  // `escapeJsx` ×1) but embedded `note` raw at all three. `note` carries
+  // `kitId`, and `isSafeKitId` is a *containment* rule about path segments — it
+  // deliberately permits `>` and newlines, neither of which can escape a
+  // directory. So a listable kit can carry a comment-terminator into generated
+  // source.
+  //
+  // Attribution, precisely: `KIT_ID_PATTERN` banned these characters *by
+  // accident*, as a side effect of being a narrow slug allowlist. #276 widened
+  // the gate — correctly — and removed that incidental cover without replacing
+  // it. Pre-existing for the `default`/`sole` arms (which `resolveKit` returns
+  // raw from persisted bindings, and `create_project`'s `kitBindingShape` gates
+  // only with `z.string().min(1)`); a partial #276 regression for `explicit`.
+  //
+  // The remedy is to escape at the SINK, not to re-narrow the id rule —
+  // re-narrowing would re-create the visible-but-unusable defect the whole
+  // #276/#279/#281/#283/#286 cycle existed to remove.
+  describe("🔒 the provenance note cannot escape its comment", () => {
+    // Pinned mechanically rather than asserted in prose: if a future change to
+    // `isSafeKitId` were to start rejecting these, THIS is the line that should
+    // fail, so the reachability claim above can never quietly go stale.
+    const HTML_BREAKOUT = "evil--><img src=x onerror=alert(1)><!--";
+    // ECMAScript LineTerminator :: <LF> <CR> <LS> <PS>. All four end a `//`
+    // comment — verified by executing each through Node, not read off the spec.
+    const JS_LINE_TERMINATORS = ["\n", "\r", "\u2028", "\u2029"];
+    const lineBreakout = (term: string) => `evil${term}alert(1)`;
+
+    it("the payloads really are listable kitIds (reachability, not hypothesis)", () => {
+      expect(isSafeKitId(HTML_BREAKOUT)).toBe(true);
+      for (const term of JS_LINE_TERMINATORS) {
+        expect(isSafeKitId(lineBreakout(term))).toBe(true);
+      }
+    });
+
+    // `<!-- … -->` can only be closed by a sequence ending in `>`, so "the note
+    // contributes no `>`" is a *provable* containment property, not a blocklist.
+    it.each(["html", "vue"] as const)("%s — a kitId cannot terminate the comment", async (fw) => {
+      const result = await generator.generate(
+        request({
+          framework: fw,
+          entryPath: fw === "html" ? "s/index.html" : "s/index.vue",
+          kit: { kitId: HTML_BREAKOUT, via: "explicit" },
+        }),
+      );
+      const content = result.files[0]?.content ?? "";
+      const header = content.split("\n").find((l) => l.includes("genie conjure_screen")) ?? "";
+      expect(header).not.toBe("");
+      // Exactly one terminator, and it is the one we appended.
+      expect(header.split("-->").length - 1).toBe(1);
+      expect(header.trimEnd().endsWith("-->")).toBe(true);
+      // The live markup the payload was trying to smuggle never materialises.
+      expect(content).not.toContain("<img src=x onerror=alert(1)>");
+    });
+
+    // A `//` comment runs to the end of the line, so a line terminator inside the
+    // note puts attacker text on a live code line.
+    //
+    // Splitting on the FULL terminator class — not just "\n" — is load-bearing.
+    // A "\n"-only split leaves a U+2028 breakout sitting on the same apparent
+    // line, so the assertion passes while the scaffold is escapable. That is the
+    // shape of false-green this file exists to prevent.
+    it.each(JS_LINE_TERMINATORS)(
+      "react — a kitId cannot break out of the `//` line comment (terminator %j)",
+      async (term) => {
+        const result = await generator.generate(
+          request({ framework: "react", kit: { kitId: lineBreakout(term), via: "explicit" } }),
+        );
+        const content = result.files[0]?.content ?? "";
+        const lines = content.split(/[\r\n\u2028\u2029]/);
+        const headerIdx = lines.findIndex((l) => l.includes("genie conjure_screen"));
+        expect(headerIdx).toBeGreaterThanOrEqual(0);
+        // The whole note stays on the commented line — nothing spills past it.
+        expect(lines[headerIdx]).toContain("alert(1)");
+        // No line carries the payload as executable source.
+        const uncommented = lines.filter((l) => !l.trimStart().startsWith("//"));
+        expect(uncommented.some((l) => l.includes("alert(1)"))).toBe(false);
+      },
+    );
+
+    it("ordinary kit names stay human-readable (the fix must not entity-noise them)", async () => {
+      const result = await generator.generate(
+        request({
+          framework: "html",
+          entryPath: "s/index.html",
+          kit: { kitId: "acme-ui", via: "default" },
+        }),
+      );
+      expect(result.files[0]?.content).toContain('targeting kit "acme-ui"');
+    });
   });
 });
 

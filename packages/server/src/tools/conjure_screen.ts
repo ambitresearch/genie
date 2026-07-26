@@ -144,8 +144,19 @@ export interface ConjureScreenProjectStore {
 export interface ConjureScreenDeps {
   projectStore: ConjureScreenProjectStore;
   /** Used only to validate an *explicit* `kitId` resolves to a real kit before
-   * generating against it — default/sole kits came from bindings already
-   * validated at bind time. */
+   * generating against it.
+   *
+   * ⚠️ An earlier revision of this comment added "— default/sole kits came from
+   * bindings already validated at bind time". That is TRUE for bindings created
+   * via `bind_kit` (whose `ProjectStore.bindKit` calls `assertKitExists`) and
+   * FALSE for bindings created via `create_project`, whose `kitBindingShape.kitId`
+   * is a bare `z.string().min(1)` persisted straight into the manifest —
+   * `assertKitExists`'s only production call site is in `bindKit`.
+   *
+   * That mattered: `resolveKit` returns `default`/`sole` ids RAW, so the false
+   * symmetry was load-bearing cover for un-escaped ids reaching `renderScaffold`'s
+   * comment sinks. The escaping there does not rely on this claim — see
+   * `provenanceNote` — but the claim itself must not be restored. */
   kitStore: KitStore;
   generator: ScreenGenerator;
 }
@@ -477,7 +488,14 @@ export class LocalScaffoldScreenGenerator implements ScreenGenerator {
   }
 }
 
-/** A one-line, honest provenance note for the scaffold header comment. */
+/** A one-line, honest provenance note for the scaffold header comment.
+ *
+ * ⚠️ Returns RAW, UNESCAPED text. It interpolates `kitId`, which is gated by
+ * `isSafeKitId` — a *containment* rule about path segments that deliberately
+ * permits `>` and newlines (neither can escape a directory). Every sink must
+ * therefore escape this with the helper appropriate to the comment syntax it is
+ * embedding into: `escapeHtmlComment` for `<!-- … -->`, `escapeLineComment` for
+ * `//`. Adding a fourth sink without one re-opens the injection. */
 function provenanceNote(request: ScreenGenerationRequest): string {
   const parts: string[] = [];
   if (request.kit) {
@@ -498,7 +516,7 @@ function renderScaffold(request: ScreenGenerationRequest): string {
     case "html":
       return [
         "<!doctype html>",
-        `<!-- genie conjure_screen (M1): ${note} -->`,
+        `<!-- genie conjure_screen (M1): ${escapeHtmlComment(note)} -->`,
         '<html lang="en">',
         "  <head>",
         '    <meta charset="utf-8" />',
@@ -515,7 +533,7 @@ function renderScaffold(request: ScreenGenerationRequest): string {
       ].join("\n");
     case "vue":
       return [
-        `<!-- genie conjure_screen (M1): ${note} -->`,
+        `<!-- genie conjure_screen (M1): ${escapeHtmlComment(note)} -->`,
         "<template>",
         '  <main class="screen">',
         `    <h1>${escapeHtml(title)}</h1>`,
@@ -528,7 +546,7 @@ function renderScaffold(request: ScreenGenerationRequest): string {
       ].join("\n");
     case "react":
       return [
-        `// genie conjure_screen (M1): ${note}`,
+        `// genie conjure_screen (M1): ${escapeLineComment(note)}`,
         "export default function Screen() {",
         "  return (",
         '    <main className="screen">',
@@ -540,6 +558,38 @@ function renderScaffold(request: ScreenGenerationRequest): string {
         "",
       ].join("\n");
   }
+}
+
+/** Collapse every line terminator to a single space.
+ *
+ * Load-bearing for the `//` sink, whose *only* escape is a line terminator.
+ * U+2028 and U+2029 are included deliberately: they are JavaScript line
+ * terminators as well as `\r\n`, so omitting them would leave `react`
+ * escapable while looking correct. */
+function toSingleLine(value: string): string {
+  return value.replace(/[\r\n\u2028\u2029]+/g, " ");
+}
+
+/** Escape a value destined for the inside of an `<!-- … -->` comment.
+ *
+ * An HTML comment can only be closed by a sequence ending in `>` (`-->`, and
+ * the `--!>` variant browsers also honour), so "contributes no `>`" is a
+ * *provable* containment property rather than a blocklist of terminator
+ * spellings — the reason this is not `replaceAll("--", "- -")`, which `---->`
+ * defeats.
+ *
+ * Deliberately NOT `escapeHtml`: that also rewrites `"` to `&quot;`, which
+ * would turn the quotes around every ordinary kit name into entity noise for
+ * no security gain. Comment text is not parsed as markup, so `<`, `&` and `"`
+ * are inert here — only `>` is load-bearing. */
+function escapeHtmlComment(value: string): string {
+  return toSingleLine(value).replace(/>/g, "&gt;");
+}
+
+/** Escape a value destined for the tail of a `//` line comment, which runs to
+ * the end of the line and so can only be escaped by ending the line. */
+function escapeLineComment(value: string): string {
+  return toSingleLine(value);
 }
 
 function escapeHtml(value: string): string {
