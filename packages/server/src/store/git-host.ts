@@ -975,8 +975,12 @@ export class GitHostProjectStore implements ProjectStore {
         "GET",
         `/repos/${encodeURIComponent(this.owner)}/${this.metaRepo}/contents/projects`,
       );
-    } catch {
-      return [];
+    } catch (e) {
+      // The `projects/` tree does not exist until the first project is created,
+      // so a 404 is the legitimate empty state. Anything else — auth, rate
+      // limit, 5xx — must NOT be reported as "you have no projects".
+      if (e instanceof NotFoundError) return [];
+      throw e;
     }
     const projects: ProjectMeta[] = [];
     for (const entry of entries) {
@@ -992,8 +996,13 @@ export class GitHostProjectStore implements ProjectStore {
           ) as ProjectMeta;
           projects.push(data);
         }
-      } catch {
-        // Skip malformed entries
+      } catch (e) {
+        // Skip genuinely unreadable entries: a 404 means the record vanished
+        // between listing and read (benign race), and a JSON parse failure is
+        // the malformed-content case. A transport or auth failure is NEITHER,
+        // and swallowing it here would return a plausible-looking list that is
+        // silently missing a project the caller does own.
+        if (!(e instanceof NotFoundError) && !(e instanceof SyntaxError)) throw e;
       }
     }
     return projects;
@@ -1009,8 +1018,12 @@ export class GitHostProjectStore implements ProjectStore {
       if (file.content && file.encoding === "base64") {
         return JSON.parse(Buffer.from(file.content, "base64").toString("utf-8")) as ProjectMeta;
       }
-    } catch {
-      // fall through to NotFoundError
+    } catch (e) {
+      // Fall through to NotFoundError only for a genuine absence (404) or
+      // unreadable content (JSON parse failure). A transport or auth failure
+      // is not absence: reporting it as NotFoundError tells the caller the
+      // project was deleted when it may be perfectly intact.
+      if (!(e instanceof NotFoundError) && !(e instanceof SyntaxError)) throw e;
     }
     throw new NotFoundError("Project", projectId);
   }
@@ -1041,8 +1054,12 @@ export class GitHostProjectStore implements ProjectStore {
         `/repos/${encodeURIComponent(this.owner)}/${this.metaRepo}/contents/${this.projectPath(projectId)}`,
       );
       sha = (file as unknown as { sha: string }).sha;
-    } catch {
-      throw new NotFoundError("Project", projectId);
+    } catch (e) {
+      // Only a genuine 404 means there is nothing to delete. A transport or
+      // auth failure must not be reported as an already-absent project, which
+      // would read as a successful no-op precondition.
+      if (e instanceof NotFoundError) throw new NotFoundError("Project", projectId);
+      throw e;
     }
     await this.api<void>(
       "DELETE",
