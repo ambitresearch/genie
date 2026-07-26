@@ -474,15 +474,24 @@ export class LocalFsKitStore implements KitStore {
    * verbs (`deleteFile`/`openPlan`) keep using `kitDir` directly: their ids are
    * server-minted or already plan-gated, and their behavior is unchanged.
    *
-   * NOT every read verb routes through here, and the omission is deliberate:
-   * `getKit` resolves via `kitDir`, and `listComponents` inherits its
-   * containment by calling `getKit` before touching the manifest. The decision
-   * is recorded at `listKits` — the invariant is about what this store
-   * PUBLISHES, and a caller that constructs an unsafe id is stopped at the tool
-   * boundary. Read that comment before "fixing" this. The short form: the
+   * NOT every read verb routes through here, and the omission is deliberate.
+   * `getKit` and `listComponents` both resolve through the UNCHECKED `kitDir`,
+   * so neither is contained at this layer: `getKit` validates EXISTENCE and
+   * TYPE at whatever location it resolves (a `.kit.json` parsing as `KIT_TYPE`),
+   * never that the location is inside the kits root. `listComponents` resolves
+   * through that SAME `kitDir(kitId)` (its manifest sits under it), so it
+   * reaches no location `getKit` did not already admit — an absence of
+   * INDEPENDENT exposure, not containment. The invariant is the shared
+   * `kitDir` argument, NOT the `getKit` call that happens to precede it.
+   *
+   * The decision is recorded at `listKits`: the invariant is about what this
+   * store PUBLISHES, and a caller that constructs an unsafe id is stopped at
+   * the tool boundary, where `get_kit` and `list_components` both refine on
+   * `isSafeKitId`. Read that comment before "fixing" this. The short form: the
    * danger this guard exists for is `""` turning a caller-supplied `path` into
-   * a SIBLING kit's bytes, and `getKit` takes no `path` — it reaches one fixed
-   * filename that must still parse as `KIT_TYPE` meta, or it throws.
+   * a SIBLING kit's bytes, and neither verb takes a `path` — `getKit` reaches
+   * one fixed filename that must parse as `KIT_TYPE` meta or it throws, and
+   * `listComponents` reaches a second fixed path under that same directory.
    */
   private safeKitDir(kitId: KitId): string {
     if (!isSafeKitId(kitId)) throw new NotFoundError("Kit", kitId);
