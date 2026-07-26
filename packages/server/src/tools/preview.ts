@@ -145,8 +145,11 @@ export function buildResourceUri(params: ResourceUriParams): string {
 export class InvalidKitIdError extends Error {
   readonly code = "InvalidKitIdError";
   constructor(readonly kitId: string) {
+    // Reuse the centralised wording rather than restating it: this message had
+    // drifted from `KIT_ID_SAFETY_MESSAGE` and so silently under-described the
+    // rule once the Win32 dots-and-spaces aliases were closed.
     super(
-      `Invalid kitId "${kitId}": it cannot be empty, ".", ".." or contain a path separator. ` +
+      `Invalid kitId "${kitId}": ${KIT_ID_SAFETY_MESSAGE} ` +
         "This guards against path traversal into the kits root.",
     );
     this.name = "InvalidKitIdError";

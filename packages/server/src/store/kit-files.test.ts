@@ -30,6 +30,36 @@ describe("isSafeKitId", () => {
       expect(isSafeKitId(id)).toBe(false);
     }
   });
+
+  it("🔒 rejects the Win32 trailing-space/dot aliases of the names above", () => {
+    // Win32 strips trailing spaces AND trailing dots from a path component at
+    // the syscall boundary, so on Windows each of these is a live alias for a
+    // name this rule already refuses:
+    //
+    //   `join(root, " ")`   → `root\ `   → Win32 → `root`        (alias for "")
+    //   `join(root, ". ")`  → `root\. `  → Win32 → `root`        (alias for ".")
+    //   `join(root, ".. ")` → `root\.. ` → Win32 → PARENT of root (alias for "..")
+    //
+    // Node's `path` module does NOT perform this trimming (verified: it returns
+    // `C:\kits\.. ` verbatim), so a `join`-based containment check sees a
+    // contained path while the OS resolves it outside the kits root. The old
+    // per-tool slug gate `/^[a-z0-9-]{3,64}$/` refused these incidentally by
+    // banning spaces and dots; once the tool layer moved onto this predicate,
+    // that incidental cover disappeared and the hole became reachable.
+    for (const id of [" ", "  ", ". ", " .", ".. ", "...", ". .", ".. .", " . "]) {
+      expect(isSafeKitId(id), `expected ${JSON.stringify(id)} to be refused`).toBe(false);
+    }
+  });
+
+  it("🔒 still accepts ids whose trailing dots/spaces are merely cosmetic", () => {
+    // The alias rule must close the escape WITHOUT re-tightening the shape.
+    // `kit..` and `my..kit` are named in `isSafeKitId`'s docblock as
+    // deliberately allowed; they trim to a non-empty literal child of the root
+    // and cannot escape it.
+    for (const id of ["kit..", "my..kit", "..kit", "My_Kit.2", "a.", "a ", "kit. "]) {
+      expect(isSafeKitId(id), `expected ${JSON.stringify(id)} to be allowed`).toBe(true);
+    }
+  });
 });
 
 /**

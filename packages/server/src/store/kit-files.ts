@@ -137,14 +137,25 @@ export function sriSha256(bytes: Buffer | string): string {
  *   - `.` or `..` exactly — the traversal aliases for "this dir" / "the parent",
  *     which also resolve to the root or above it;
  *   - any id containing a path separator (`/` or `\`), which could introduce a
- *     nested or absolute path.
+ *     nested or absolute path;
+ *   - any id made up ENTIRELY of dots and spaces (`" "`, `". "`, `".. "`,
+ *     `"..."`). Win32 strips trailing spaces and dots from a path component at
+ *     the syscall boundary, so `join(root, ".. ")` — which Node's `path` module
+ *     reports verbatim as the contained `root\.. ` — reaches the filesystem as
+ *     `root\..`, the PARENT of the kits root. `" "` and `". "` likewise alias
+ *     the root itself. These are live Windows aliases for the three names above
+ *     and are refused with them; a `join`-based containment check cannot see
+ *     them, so the rule must.
  *
  * Ids that merely EMBED dots (`my..kit`, `..kit`, `kit..`) stay a literal child
  * of the root and are allowed — they simply resolve to a not-found kit if
- * absent. This is deliberately looser than the pre-unification `read_file`
- * guard (`kitId.includes("..")`), which over-rejected `my..kit` yet — crucially
- * — MISSED both `""` and `.` (neither contains `..`), the exact holes that
- * enabled the cross-kit read this rule closes.
+ * absent. Trailing dots or spaces are likewise fine as long as something
+ * survives the Win32 trim (`kit..` → `kit`); only a wholly-dots-and-spaces id
+ * trims away to nothing and escapes. This is deliberately looser than the
+ * pre-unification `read_file` guard (`kitId.includes("..")`), which
+ * over-rejected `my..kit` yet — crucially — MISSED both `""` and `.` (neither
+ * contains `..`), the exact holes that enabled the cross-kit read this rule
+ * closes.
  *
  * A predicate (not a throwing helper) on purpose: each caller raises its own
  * error type/code (`ListFilesError` / `McpError` / `NotFoundError`) — only the
@@ -154,6 +165,9 @@ export function isSafeKitId(kitId: string): boolean {
   if (kitId.length === 0) return false;
   if (kitId === "." || kitId === "..") return false;
   if (kitId.includes("/") || kitId.includes("\\")) return false;
+  // Win32 trims trailing spaces and dots per path component, so anything that
+  // trims away to nothing is an alias for one of the three names above.
+  if (kitId.replace(/[ .]+$/u, "").length === 0) return false;
   return true;
 }
 
@@ -166,7 +180,8 @@ export function isSafeKitId(kitId: string): boolean {
  * plain string, so this module still needs no `zod` dependency.
  */
 export const KIT_ID_SAFETY_MESSAGE =
-  "kitId must name a single kit: it cannot be empty, `.`, `..`, or contain a path separator.";
+  "kitId must name a single kit: it cannot be empty, `.`, `..`, made up only of dots and " +
+  "spaces, or contain a path separator.";
 
 // ─── Default + .genieignore exclusion ────────────────────────────────────────
 

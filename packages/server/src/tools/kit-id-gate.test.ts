@@ -292,7 +292,21 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     // Relaxing the SHAPE rule must not relax the CONTAINMENT rule. `""`, `.`,
     // `..` and any separator still escape the single-kit namespace and are
     // still refused by every verb.
-    for (const bad of ["", "..", ".", "../escape", "a/b", "a\\b"]) {
+    //
+    // The trailing-space/dot entries are the Win32 aliases of those same three
+    // names: Windows trims trailing spaces and dots from a path component at
+    // the syscall boundary, so `".. "` reaches the filesystem as `".."`. The
+    // old per-tool slug gate banned spaces and dots and so refused them by
+    // accident; this list makes the refusal deliberate and cross-gate.
+    //
+    // NOTE this loop is deliberately NON-discriminating: `assertKitLive` maps a
+    // gate rejection AND a genuine miss to the same `KitNotFoundError`, so that
+    // the tool boundary never leaks whether a kit exists. It therefore proves
+    // these ids are refused, not WHICH rule refused them — and it passed for
+    // `" "` even before the Win32 aliases were closed. The discriminating locks
+    // are `isSafeKitId`'s own unit tests (store/kit-files.test.ts) and the two
+    // `resolveKitDir` tests below, which observe the containment decision itself.
+    for (const bad of ["", "..", ".", "../escape", "a/b", "a\\b", " ", ". ", ".. ", "..."]) {
       for (const name of [
         "mcp__genie__get_kit",
         "mcp__genie__preview",
@@ -377,7 +391,7 @@ describe("kitId gate — resolveKitDir containment", () => {
   });
 
   it("preview.resolveKitDir still rejects escapes", () => {
-    for (const bad of ["", ".", "..", "../escape", "a/b", "a\\b"]) {
+    for (const bad of ["", ".", "..", "../escape", "a/b", "a\\b", " ", ". ", ".. ", "..."]) {
       expect(
         () => resolvePreviewKitDir("/kits", bad),
         `expected ${JSON.stringify(bad)} to be refused`,
@@ -392,7 +406,7 @@ describe("kitId gate — resolveKitDir containment", () => {
   });
 
   it("grid-resource.resolveKitDir still rejects escapes", () => {
-    for (const bad of ["", ".", "..", "../escape", "a/b", "a\\b"]) {
+    for (const bad of ["", ".", "..", "../escape", "a/b", "a\\b", " ", ". ", ".. ", "..."]) {
       expect(resolveGridKitDir("/kits", bad), `expected ${JSON.stringify(bad)} null`).toBeNull();
     }
   });
