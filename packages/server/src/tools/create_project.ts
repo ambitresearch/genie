@@ -161,6 +161,21 @@ export interface RecordScreenInput {
   title: string;
 }
 
+/**
+ * The project store the MCP project tools actually bind (`create_project`,
+ * `get_project`, `bind_kit`, `conjure_screen`).
+ *
+ * ⚠️ NAME COLLISION — a second, unrelated `ProjectStore` is exported from
+ * `src/store/interface.ts`. That one is an *interface* whose `bindKit` takes
+ * two positional args, returns `void`, and documents that it does NOT validate
+ * kit existence. This class takes a single `BindKitArgs`, returns a
+ * `ProjectSummary`, and DOES validate the kit (`assertKitExists`). They are not
+ * structurally assignable and neither implements the other.
+ *
+ * So: `bind_kit` needs no extra kit-existence guard at the tool layer — this
+ * class already performs it. The interface's "not validated" note is correct
+ * about itself and is not stale.
+ */
 export class ProjectStore {
   /**
    * `kitStore` is optional so every existing single-arg `new ProjectStore(root)`

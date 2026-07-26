@@ -346,6 +346,22 @@ export interface KitStore {
  * AC2 — ProjectStore defines:
  *   listProjects, getProject, createProject, deleteProject,
  *   bindKit, recordScreen.
+ *
+ * ⚠️ NAME COLLISION — this is NOT the `ProjectStore` the `bind_kit` tool binds.
+ * A second, unrelated `ProjectStore` (a *class*) is exported from
+ * `src/tools/create_project.ts`, and that is the one wired into the server and
+ * used by every project tool. The two are not structurally assignable:
+ *
+ *   |            | this interface                | tools/create_project.ts    |
+ *   |------------|-------------------------------|----------------------------|
+ *   | kind       | interface                     | class                      |
+ *   | bindKit    | (projectId, kitId) => void    | (args) => ProjectSummary   |
+ *   | checks kit | no (see bindKit note below)   | yes (`assertKitExists`)    |
+ *   | callers    | store conformance tests       | the `bind_kit` tool        |
+ *
+ * The `bindKit` note below is accurate *for this interface* — do not "correct"
+ * it by reading the class's behaviour. Reading one declaration and attributing
+ * its behaviour to the other has produced wrong conclusions more than once.
  */
 export interface ProjectStore {
   /** List all projects. */
