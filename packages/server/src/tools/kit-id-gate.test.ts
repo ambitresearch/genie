@@ -300,25 +300,32 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     // "passes for a different reason than its name claims" failure this file
     // exists to prevent, so each verb is pinned to the LAYER meant to stop it:
     //
-    //   schema — the verb's own `.refine()` is the gate under test. For every
-    //            verb here EXCEPT `preview`, it is also the ONLY containment
-    //            check on the way to a path: they resolve the kit through
+    //   schema — the verb's own `.refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE)`
+    //            is the gate under test. This row pins the PROTOCOL boundary:
+    //            drop the refine and the refusal changes LAYER, which is what
+    //            fails the assertion.
+    //            It deliberately says NOTHING about what each verb does further
+    //            downstream, because that genuinely varies: `preview` repeats
+    //            `isSafeKitId` in its own `resolveKitDir`; `refine` reaches the
+    //            store's GUARDED `listFiles` (`safeKitDir`); `conjure` never
+    //            resolves a kit path at all; the rest reach
     //            `LocalFsKitStore.getKit`, which builds its path with the
-    //            UNGUARDED `kitDir` — not `safeKitDir` — so a dropped refine
-    //            reads `<parent-of-kits-root>/.kit.json` before returning
-    //            "not found".
-    //            `preview` is the exception and must not be described that way:
-    //            `runPreview` calls `preview.ts`'s own `resolveKitDir`, which
-    //            repeats `isSafeKitId` and throws `InvalidKitIdError` before
-    //            anything touches the filesystem. Its row still earns its place
-    //            — it pins the PROTOCOL boundary, and without it the schema
-    //            gate could be dropped in silence — but it is defence in depth
-    //            there, not the last line of it. (Same shape as `get_kit`,
-    //            which carries the refine twice: once on `getKitArgsSchema`,
-    //            once on the MCP `inputSchema`.)
-    //   tool   — `list_files` applies `isSafeKitId` in its handler and raises
-    //            its own `ERR_INVALID_KIT_ID`; `""` is stopped one step earlier
-    //            by that schema's `.min(1)`.
+    //            UNGUARDED `kitDir`. Two earlier revisions of this comment
+    //            tried to state that uniformly and were wrong both times.
+    //            An over-broad comment asserting a symmetry the code does not
+    //            have is the exact mechanism that let the original gate drift
+    //            survive review — `ui/grid-resource.ts` once claimed its guard
+    //            was "the same guard `preview`/`read_file` apply" when the
+    //            three applied two different rules. So this file states only
+    //            the invariant it actually asserts.
+    //   tool   — `list_files` and `read_file` apply `isSafeKitId` in their
+    //            handlers, raising `ERR_INVALID_KIT_ID` and `InvalidPathError:
+    //            invalid kit identifier` respectively; for both, `""` is
+    //            stopped one step earlier by that schema's `.min(1)`.
+    //            `read_file` belongs in this loop because this same file
+    //            asserts above that it ACCEPTS `My_Kit.2`. Pinning a verb in
+    //            the positive direction only is precisely the asymmetry this
+    //            file exists to close.
     //   store  — `plan` deliberately funnels every refusal into ONE envelope so
     //            a client branches on a single reason (#252/#263; see plan.ts).
     //            That single envelope is why `plan` ALSO needs the dedicated
@@ -340,6 +347,7 @@ describe("kitId gate — an imported kit is usable end to end", () => {
       mcp__genie__conjure: "schema",
       mcp__genie__refine: "schema",
       mcp__genie__list_files: "tool",
+      mcp__genie__read_file: "tool",
       mcp__genie__plan: "store",
     } as const;
 
@@ -347,7 +355,13 @@ describe("kitId gate — an imported kit is usable end to end", () => {
       layer === "schema"
         ? text.includes(KIT_ID_SAFETY_MESSAGE)
         : layer === "tool"
-          ? text.includes("ERR_INVALID_KIT_ID") || text.includes("too_small")
+          ? // `read_file` phrases its kitId refusal as `InvalidPathError`, so
+            // match its kitId-specific wording rather than the bare error name
+            // — `assertSafeRelativePath` raises the same error type for a bad
+            // `path`, and every call below passes a VALID one.
+            text.includes("ERR_INVALID_KIT_ID") ||
+            text.includes("invalid kit identifier") ||
+            text.includes("too_small")
           : text.includes("kitNotFound");
 
     const proj = await client.callTool({
@@ -366,6 +380,7 @@ describe("kitId gate — an imported kit is usable end to end", () => {
           mcp__genie__conjure_screen: { projectId, prompt: "A settings screen." },
           mcp__genie__conjure: { kit: "A small kit.", prompt: "A primary button." },
           mcp__genie__refine: { componentName: "Button", instruction: "Make it wider." },
+          mcp__genie__read_file: { path: "components/actions/Button/preview.html" },
         };
         const args: Record<string, unknown> = { kitId: bad, ...(extraArgs[name] ?? {}) };
 
