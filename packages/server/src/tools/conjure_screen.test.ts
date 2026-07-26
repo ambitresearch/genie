@@ -525,12 +525,22 @@ describe("LocalScaffoldScreenGenerator", () => {
     const HTML_BREAKOUT = "evil--><img src=x onerror=alert(1)><!--";
     // ECMAScript LineTerminator :: <LF> <CR> <LS> <PS>. All four end a `//`
     // comment — verified by executing each through Node, not read off the spec.
-    const JS_LINE_TERMINATORS = ["\n", "\r", "\u2028", "\u2029"];
+    //
+    // Named, rather than interpolated with %j: `JSON.stringify` leaves U+2028 and
+    // U+2029 as literal (invisible) characters, so those two cases would render
+    // identically in the reporter. When a mutation reds exactly two of these four,
+    // "which two" is the whole finding — the names have to carry it.
+    const JS_LINE_TERMINATORS = [
+      ["LF U+000A", "\n"],
+      ["CR U+000D", "\r"],
+      ["LS U+2028", "\u2028"],
+      ["PS U+2029", "\u2029"],
+    ] as const;
     const lineBreakout = (term: string) => `evil${term}alert(1)`;
 
     it("the payloads really are listable kitIds (reachability, not hypothesis)", () => {
       expect(isSafeKitId(HTML_BREAKOUT)).toBe(true);
-      for (const term of JS_LINE_TERMINATORS) {
+      for (const [, term] of JS_LINE_TERMINATORS) {
         expect(isSafeKitId(lineBreakout(term))).toBe(true);
       }
     });
@@ -563,8 +573,8 @@ describe("LocalScaffoldScreenGenerator", () => {
     // line, so the assertion passes while the scaffold is escapable. That is the
     // shape of false-green this file exists to prevent.
     it.each(JS_LINE_TERMINATORS)(
-      "react — a kitId cannot break out of the `//` line comment (terminator %j)",
-      async (term) => {
+      "react — a kitId cannot break out of the `//` line comment (terminator %s)",
+      async (_name, term) => {
         const result = await generator.generate(
           request({ framework: "react", kit: { kitId: lineBreakout(term), via: "explicit" } }),
         );
