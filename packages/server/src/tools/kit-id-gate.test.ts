@@ -45,6 +45,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createServer } from "../server.js";
+import { KIT_TYPE } from "../store/interface.js";
+import type { KitStore } from "../store/interface.js";
 import { isSafeKitId } from "../store/kit-files.js";
 import { LocalFsKitStore } from "../store/local.js";
 import { MANIFEST_PATH } from "../store/manifest.js";
@@ -563,47 +565,59 @@ describe("kitId gate — shape is relaxed, existence is not", () => {
   });
 });
 
-// ─── The hole left in `list_kits`' promise, which is NOT a gate defect ────────
+// ─── `list_kits`' promise survives a `.kit.json` that disagrees ──────────────
 
 /**
- * Surfaced by the review round on #277, the superseded parallel take on this
- * same asymmetry. Recorded here because it directly qualifies the promise the
- * first suite in this file asserts — "list_kits returns the imported kit — this
- * is the promise every verb below must honour". That promise has a hole, and it
- * is NOT the one this file fixes.
+ * This suite began as a PIN on a defect and is now a LOCK on its fix. The
+ * history matters, because the assertions below are inverted from what they
+ * originally asserted and a reader who assumes otherwise will misread them.
  *
- * The two `KitStore` adapters disagree about what a LocalFs kit's identity IS:
+ * The first suite in this file asserts a promise: "list_kits returns the
+ * imported kit — this is the promise every verb below must honour". That
+ * promise used to have a hole, and it was never a gate defect. The two
+ * `KitStore` adapters disagreed about what a LocalFs kit's identity IS:
  *
- *   - `GitHostKitStore` — `listKits` returns `id: repo.name` and `readKitMeta`
- *     returns `id: kitId`, deliberately DISCARDING any `id` inside `.kit.json`
+ *   - `GitHostKitStore` — `listKits` returned `id: repo.name` and `readKitMeta`
+ *     returned `id: kitId`, deliberately DISCARDING any `id` inside `.kit.json`
  *     ("the repository name is authoritative for the kit's identity"). List and
- *     get therefore route through the same value and cannot diverge.
- *   - `LocalFsKitStore` — `listKits` returns `id: meta.id`, read out of each
- *     `<dir>/.kit.json`, but `getKit` resolves `kitMetaPath(kitId)` =
- *     `join(baseDir, kitId, ".kit.json")`, i.e. it treats the id as a DIRECTORY
- *     NAME. When a hand-imported or restored-from-backup kit's `.kit.json`
- *     declares an `id` that is not its directory name, `list_kits` advertises an
- *     id `get_kit` cannot resolve.
+ *     get therefore routed through the same value and could not diverge.
+ *   - `LocalFsKitStore` — `listKits` returned `id: meta.id`, read out of each
+ *     `<dir>/.kit.json`, while `getKit` resolved `kitMetaPath(kitId)` =
+ *     `join(baseDir, kitId, ".kit.json")`, i.e. it treated the id as a DIRECTORY
+ *     NAME. A hand-imported or restored-from-backup kit whose `.kit.json`
+ *     declared an id that was not its directory name therefore got advertised
+ *     under an id `get_kit` could not resolve.
+ *
+ * #282 closed that: LocalFs now reports the DIRECTORY name from `listKits` and
+ * the LOOKUP KEY from `getKit`, matching GitHost. The `.kit.json` `id` field is
+ * no longer authoritative for routing on either adapter.
+ *
+ * What is left to test here is the part #282's own suite does not reach. That
+ * suite (`test/store-conformance.test.ts`, "reports the routing key as the id
+ * when .kit.json embeds a divergent one") drives the STORE objects directly.
+ * These tests drive the MCP tools over a real client — `list_kits` then
+ * `get_kit` — because the promise this file asserts is made by the TOOLS, and a
+ * store-layer alignment only honours it if the tool layer passes the value
+ * through unmodified. That is a separate claim about a separate layer.
  *
  * Every other fixture in this file (and `test/helpers/seed-kit.ts`) writes
- * `id: kitId` into `<kitsRoot>/<kitId>/`, forcing dirname === id, so no existing
- * test can reach this. The narrow `KIT_ID_PATTERN` gate masked it for ids like
- * `My_Kit.2` by refusing them earlier, for the wrong reason.
- *
- * This is pinned, not fixed. Deciding whether `meta.id` or the directory name is
- * authoritative for LocalFs kit identity is a store-semantics change covered by
- * the adapter conformance suites, not a tool-layer gate change. The assertions
- * below fail the moment anyone changes that behaviour, so the decision cannot be
- * made silently.
+ * `id: kitId` into `<kitsRoot>/<kitId>/`, forcing dirname === id, so no other
+ * test in this file can reach the divergent case at all. The narrow
+ * `KIT_ID_PATTERN` gate used to mask it for ids like `My_Kit.2` by refusing them
+ * earlier, for the wrong reason.
  */
-describe("kitId gate — the hole in list_kits' promise is a STORE defect", () => {
+describe("kitId gate — list_kits' promise holds when .kit.json disagrees", () => {
   let tempDir: string;
   let kitsRoot: string;
   let client: Client;
 
-  /** The id `.kit.json` declares. */
+  /**
+   * The id `.kit.json` declares. Deliberately NOT the directory name, and
+   * deliberately containment-safe: if the gate refused it, these tests could
+   * pass for the wrong reason.
+   */
   const DECLARED_ID = "My_Kit.2";
-  /** The directory that actually holds the kit. */
+  /** The directory that actually holds the kit — the routing key. */
   const DIR_NAME = "physical-name";
 
   beforeEach(async () => {
@@ -644,38 +658,61 @@ describe("kitId gate — the hole in list_kits' promise is a STORE defect", () =
     delete process.env.GENIE_HOME;
   });
 
-  it("🔒 pins LocalFs listing by meta.id while resolving by directory name", async () => {
+  it("🔒 the routing key is the id on both sides of the store (#282)", async () => {
     const store = new LocalFsKitStore(kitsRoot);
 
-    // `list_kits` advertises the id `.kit.json` declares...
-    expect((await store.listKits()).map((kit) => kit.id)).toEqual([DECLARED_ID]);
-
-    // ...and the containment gate admits it, so the gate is not what fails...
+    // The gate admits the declared id, so nothing below can be explained by the
+    // containment rule refusing it. This line is what makes the test a store
+    // identity test rather than a gate test.
     expect(isSafeKitId(DECLARED_ID)).toBe(true);
 
-    // ...yet `getKit` routes by directory name, so the advertised id 404s while
-    // the never-advertised directory name resolves. Neither line moves if the
-    // gate is widened or narrowed: this is store identity semantics.
+    // `listKits` reports the DIRECTORY, not `.kit.json`'s `id`...
+    expect((await store.listKits()).map((kit) => kit.id)).toEqual([DIR_NAME]);
+
+    // ...`getKit` echoes the LOOKUP KEY it was given, so a caller can round-trip
+    // a listed id without it changing under them...
+    expect((await getKit(store, { kitId: DIR_NAME })).id).toBe(DIR_NAME);
+
+    // ...and the never-routable declared id resolves to nothing. Keeping this
+    // assertion is what stops the test passing on a fixture that merely forgot
+    // to diverge: `.kit.json` really does say something else.
     await expect(getKit(store, { kitId: DECLARED_ID })).rejects.toBeInstanceOf(
       ProjectNotFoundError,
     );
-    expect((await getKit(store, { kitId: DIR_NAME })).id).toBe(DECLARED_ID);
   });
 
-  it("the divergence is user-visible: list_kits offers an id get_kit refuses", async () => {
+  it("🔒 the promise holds over MCP: every id list_kits offers, get_kit resolves", async () => {
     const listed = await client.callTool({ name: "mcp__genie__list_kits", arguments: {} });
     expect(listed.isError, JSON.stringify(listed)).toBeFalsy();
-    const kits = payload(listed) as unknown as { id: string }[];
-    expect(kits.map((k) => k.id)).toContain(DECLARED_ID);
+    const ids = (payload(listed) as unknown as { id: string }[]).map((k) => k.id);
 
-    const got = await client.callTool({
+    // Non-vacuity: the divergent fixture is the ONLY kit here, so an empty or
+    // filtered listing cannot satisfy the loop below by having nothing to check.
+    expect(ids).toEqual([DIR_NAME]);
+
+    for (const kitId of ids) {
+      const got = await client.callTool({ name: "mcp__genie__get_kit", arguments: { kitId } });
+      // `isError` is OMITTED on success rather than set to `false`, so the
+      // assertion has to be falsy-shaped (as the `list_kits` call above already
+      // is). The `id` echo on the next line is what makes this discriminating:
+      // an error result carries a text blob, not a kit, so it cannot pass.
+      expect(
+        got.isError,
+        `advertised but unresolvable: ${kitId} — ${JSON.stringify(got)}`,
+      ).toBeFalsy();
+      expect((payload(got) as unknown as { id: string }).id).toBe(kitId);
+    }
+
+    // And the id `.kit.json` declares is NOT what the tools traffic in, so a
+    // caller who reads the file by hand and passes that id gets a clean 404
+    // rather than a silently different kit.
+    const stale = await client.callTool({
       name: "mcp__genie__get_kit",
       arguments: { kitId: DECLARED_ID },
     });
-
-    // Refused by the STORE (kit not found), not by the gate — `DECLARED_ID` is
-    // containment-safe and clears the schema. Documented, not endorsed.
-    expect(got.isError, `expected the advertised id to 404: ${JSON.stringify(got)}`).toBe(true);
+    expect(stale.isError, `expected the non-routing id to 404: ${JSON.stringify(stale)}`).toBe(
+      true,
+    );
   });
 });
 
@@ -689,11 +726,11 @@ describe("kitId gate — the hole in list_kits' promise is a STORE defect", () =
 // Consequence: `victim.` and `victim ` are refused everywhere — including POSIX,
 // where they are legitimate, DISTINCT directory names that `mkdir` accepts.
 //
-// `LocalFsKitStore.listKits` applies no predicate at all, so tightening the gate
-// without touching the listing put `list_kits` straight back into the position
-// this whole file exists to fix — advertising an id every kit-taking verb
-// refuses. Part A asserts that promise; this part stops a safety fix from
-// quietly falsifying it.
+// At the time of that round `LocalFsKitStore.listKits` applied no predicate at
+// all, so tightening the gate without touching the listing put `list_kits`
+// straight back into the position this whole file exists to fix — advertising an
+// id every kit-taking verb refuses. Part A asserts that promise; this part stops
+// a safety fix from quietly falsifying it.
 //
 // The fix belongs at the LISTING, not the gate. Relaxing the gate per-platform
 // would be strictly worse: it would make an id that is merely unusable on Linux
@@ -703,10 +740,21 @@ describe("kitId gate — the hole in list_kits' promise is a STORE defect", () =
 // `listWritableKits` is the single choke point the `list_kits` tool renders, so
 // one filter there restores the promise for every store adapter at once.
 //
-// Distinct from Part G: that pin is about WHICH FIELD is authoritative for a
-// LocalFs kit's identity (`meta.id` vs the directory name) — its `My_Kit.2`
-// fixture clears `isSafeKitId`, so it is untouched by this filter and stays
-// pinned-not-fixed.
+// Distinct from Part G: that suite locks WHICH FIELD is authoritative for a
+// LocalFs kit's identity (the routing key, not `.kit.json`'s `id`) — its
+// `My_Kit.2` fixture clears `isSafeKitId`, so it is untouched by this filter.
+//
+// #282 subsequently added the same predicate to BOTH shipped adapters'
+// `listKits`, which is why this suite drives a hand-written store instead of
+// `LocalFsKitStore`. That is not a workaround for the test going green — it is
+// the only honest way to test a defence-in-depth layer. With a real adapter the
+// tool-layer filter is unreachable, so a passing test would prove the ADAPTER
+// filters and say nothing about `listWritableKits`. `KitStore` is a public
+// interface; an adapter that does not implement the invariant is exactly the
+// case this layer exists for, and it is the case a real adapter cannot produce.
+// The shipped adapters are covered separately in `test/store-conformance.test.ts`
+// ("omits a directory whose name isSafeKitId rejects" / "omits a listed
+// repository whose name isSafeKitId rejects").
 describe("kitId gate — list_kits never advertises an id the gate refuses", () => {
   let tempDir: string;
   let kitsRoot: string;
@@ -715,6 +763,38 @@ describe("kitId gate — list_kits never advertises an id the gate refuses", () 
   const ALIAS_ID = "victim.";
   /** An ordinary kit, so an empty listing cannot pass these tests by accident. */
   const SAFE_ID = "My_Kit.2";
+
+  /**
+   * A `KitStore` that does NOT honour the listing invariant. Only the two
+   * methods this suite exercises are implemented; the rest of the surface
+   * throws, so a future test that strays past `listKits`/`getKit` fails loudly
+   * instead of silently reading `undefined`.
+   *
+   * `listKits` reports the alias, which is precisely what the shipped adapters
+   * no longer do — that is the point. `getKit` resolves anything it was handed,
+   * modelling an adapter with no containment logic of its own, so the ONLY
+   * thing standing between the alias and a caller is `listWritableKits`.
+   */
+  function nonConformingStore(ids: string[]): KitStore {
+    const meta = (id: string) => ({
+      id,
+      name: `Imported ${id}`,
+      type: KIT_TYPE,
+      createdAt: new Date().toISOString(),
+    });
+    return new Proxy(
+      {
+        listKits: async () => ids.map(meta),
+        getKit: async (kitId: string) => meta(kitId),
+      },
+      {
+        get(target, prop, receiver) {
+          if (prop in target) return Reflect.get(target, prop, receiver);
+          throw new Error(`nonConformingStore: unexpected KitStore call ${String(prop)}`);
+        },
+      },
+    ) as unknown as KitStore;
+  }
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "genie-kitid-listing-"));
@@ -727,45 +807,50 @@ describe("kitId gate — list_kits never advertises an id the gate refuses", () 
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  // Skipped on Windows because the fixture cannot be built there: `mkdir`
-  // applies the same trailing-[ .] trim, so `victim.` would silently become a
-  // second handle on `victim`. That impossibility is exactly why the id is
-  // refused; it is also why this hole only exists on POSIX.
-  it.skipIf(process.platform === "win32")(
-    "🔒 an id the shared gate refuses is not advertised by list_kits",
-    async () => {
-      await seedImportedKit(kitsRoot, ALIAS_ID);
-      const store = new LocalFsKitStore(kitsRoot);
+  it("🔒 an id the shared gate refuses is not advertised by list_kits", async () => {
+    const store = nonConformingStore([SAFE_ID, ALIAS_ID]);
 
-      // Precondition: the store really does surface it, so the filter below is
-      // load-bearing rather than vacuous.
-      expect((await store.listKits()).map((kit) => kit.id)).toContain(ALIAS_ID);
-      expect(isSafeKitId(ALIAS_ID)).toBe(false);
+    // Precondition: the store really does surface it, so the filter below is
+    // load-bearing rather than vacuous. Asserted against the injected store,
+    // because no shipped adapter can be made to produce this input any more.
+    expect((await store.listKits()).map((kit) => kit.id)).toContain(ALIAS_ID);
+    expect(isSafeKitId(ALIAS_ID)).toBe(false);
 
-      const listed = await listWritableKits(store);
-      const ids = listed.map((kit) => kit.id);
+    const ids = (await listWritableKits(store)).map((kit) => kit.id);
 
-      expect(ids).not.toContain(ALIAS_ID);
-      expect(ids).toContain(SAFE_ID);
-    },
-  );
+    expect(ids).not.toContain(ALIAS_ID);
+    expect(ids).toContain(SAFE_ID);
+  });
 
-  it.skipIf(process.platform === "win32")(
-    "🔒 every id list_kits advertises round-trips through get_kit",
-    async () => {
-      await seedImportedKit(kitsRoot, ALIAS_ID);
-      const store = new LocalFsKitStore(kitsRoot);
+  it("🔒 every id list_kits advertises clears the gate", async () => {
+    const store = nonConformingStore([SAFE_ID, ALIAS_ID, "..", "a/b", ""]);
 
-      const listed = await listWritableKits(store);
-      expect(listed.length).toBeGreaterThan(0);
+    const listed = await listWritableKits(store);
+    expect(listed.length).toBeGreaterThan(0);
 
-      // The promise, stated as a property rather than a case list: anything
-      // `list_kits` offers must clear the gate AND resolve. A future tightening
-      // of `isSafeKitId` that forgets the listing fails here.
-      for (const kit of listed) {
-        expect(isSafeKitId(kit.id), `advertised but gate-refused: ${kit.id}`).toBe(true);
-        await expect(getKit(store, { kitId: kit.id })).resolves.toMatchObject({ id: kit.id });
-      }
-    },
-  );
+    // The promise, stated as a property rather than a case list: anything
+    // `list_kits` offers must clear the gate. A future tightening of
+    // `isSafeKitId` that forgets the listing fails here without needing a new
+    // case added alongside it.
+    for (const kit of listed) {
+      expect(isSafeKitId(kit.id), `advertised but gate-refused: ${kit.id}`).toBe(true);
+    }
+    expect(listed.map((kit) => kit.id)).toEqual([SAFE_ID]);
+  });
+
+  // The end-to-end half of the same promise, on a real adapter: what survives
+  // the filter must also RESOLVE. Split from the property test above because
+  // `nonConformingStore.getKit` resolves anything by construction, so pairing
+  // the two against it would assert nothing about resolution.
+  it("🔒 every id list_kits advertises round-trips through get_kit", async () => {
+    const store = new LocalFsKitStore(kitsRoot);
+
+    const listed = await listWritableKits(store);
+    expect(listed.map((kit) => kit.id)).toEqual([SAFE_ID]);
+
+    for (const kit of listed) {
+      expect(isSafeKitId(kit.id), `advertised but gate-refused: ${kit.id}`).toBe(true);
+      await expect(getKit(store, { kitId: kit.id })).resolves.toMatchObject({ id: kit.id });
+    }
+  });
 });

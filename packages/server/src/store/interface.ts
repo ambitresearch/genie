@@ -229,10 +229,41 @@ export const MAX_FILE_BYTES = 262_144;
  * verbs onto the git host, not just the metadata verbs.
  */
 export interface KitStore {
-  /** List all available kits. */
+  /**
+   * List all available kits.
+   *
+   * ### Identity contract (implemented by #282, documented here)
+   *
+   * Two invariants hold over the returned ids, and every adapter owes both:
+   *
+   * 1. **Routing key, not declared id.** `id` is the key `getKit`/`listFiles`/
+   *    `readFile` route through — the directory name on LocalFs, the repository
+   *    name on a git host — never an `id` embedded in `.kit.json`, which the
+   *    adapters deliberately discard. A caller can therefore round-trip a listed
+   *    id through any other kit verb without it changing under them.
+   * 2. **Every returned id satisfies `isSafeKitId`.** A kit whose routing key the
+   *    shared gate refuses is OMITTED rather than advertised, so `list_kits`
+   *    never offers an id the kit-taking verbs would universally reject.
+   *
+   * Locked adapter-neutrally by `store-conformance.test.ts` →
+   * `🔒 reports the routing key as the id when .kit.json embeds a divergent one`,
+   * `🔒 omits a directory whose name isSafeKitId rejects` (LocalFs) and
+   * `🔒 omits a listed repository whose name isSafeKitId rejects` (GitHost).
+   *
+   * Invariant 2 is re-applied at the tool layer by `listWritableKits`
+   * (`tools/list_kits.ts`). That is defence in depth, not redundancy: `KitStore`
+   * is a public injection point, so a third-party adapter that does not honour
+   * this clause must still not be able to falsify the promise `list_kits` makes
+   * to its callers.
+   */
   listKits(): Promise<KitMeta[]>;
 
-  /** Get metadata for a single kit. Throws NotFoundError if missing. */
+  /**
+   * Get metadata for a single kit. Throws NotFoundError if missing.
+   *
+   * `KitMeta.id` echoes the `kitId` that was looked up — the same routing key
+   * `listKits` reports — so the two sides of the store agree on identity.
+   */
   getKit(kitId: KitId): Promise<KitMeta>;
 
   /**
