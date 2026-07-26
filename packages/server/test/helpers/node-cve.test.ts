@@ -6,6 +6,8 @@ import {
   CVE_2025_27210_SUPPORTED,
   CVE_2025_27210_VULNERABLE,
   isVulnerableVersion,
+  nodeFloorOverclaim,
+  renderNodeRequirement,
   satisfiesRange,
 } from "./node-cve.js";
 
@@ -215,5 +217,46 @@ describe("satisfiesRange — empty comparator sets are wildcards", () => {
     expect(findOpenEndedNodeFloors("`engines.node` is `>=22.19.0 <23 || >=24.4.1`")).toEqual([
       "24.4.1",
     ]);
+  });
+});
+
+// `renderNodeRequirement` is deliberately partial and throws on any clause shape
+// it cannot express, because a silent wrong rendering is the failure mode this
+// whole helper exists to remove. That promise was never asserted: both throw
+// branches were reachable only through the happy-path manifest, so a refactor
+// could have turned either into a wrong string and the suite would have stayed
+// green. These pin the loud failure itself.
+describe("renderNodeRequirement — the clauses it refuses to guess at", () => {
+  it("🔒 refuses a bounded clause spanning more than one major line", () => {
+    expect(() => renderNodeRequirement(">=22.19.0 <24")).toThrow(/spans more than one major/u);
+  });
+
+  it("🔒 refuses a clause shape it has no prose form for", () => {
+    for (const range of ["^22.19.0", "22.x", ">22.19.0", "*"]) {
+      expect(() => renderNodeRequirement(range), range).toThrow(/unsupported clause/u);
+    }
+  });
+});
+
+// `nodeFloorOverclaim` answers "does this doc promise a runtime the range
+// refuses?". It only ever looked ABOVE the claimed floor, and built its own
+// endpoint list from a regex that knew `>=` and `<` but not `>`, `<=` or `=`.
+// Both gaps return `null` — the "no overclaim" answer — for a doc that is
+// actually wrong, which is the silent-wrong-answer mode again.
+describe("nodeFloorOverclaim — the overclaims it used to answer null for", () => {
+  it("🔒 flags a floor the range refuses outright, not only versions above it", () => {
+    // 23.0.0 is inside the CVE hole. A doc promising "23.0.0 or newer" is wrong
+    // at its own floor; every endpoint ABOVE it (24.4.1) is supported.
+    expect(nodeFloorOverclaim("23.0.0", ">=22.19.0 <23 || >=24.4.1")).toBe("23.0.0");
+  });
+
+  it("🔒 sees the gap opened by an inclusive upper bound", () => {
+    // `<=22.20.0` refuses 22.20.1, but the old endpoint regex could not read a
+    // `<=` comparator at all, so that whole clause contributed no endpoint.
+    expect(nodeFloorOverclaim("22.19.0", ">=22.19.0 <=22.20.0 || >=24.4.1")).toBe("22.20.1");
+  });
+
+  it("🔒 still answers null when the floor is honest", () => {
+    expect(nodeFloorOverclaim("24.4.1", ">=22.19.0 <23 || >=24.4.1")).toBeNull();
   });
 });

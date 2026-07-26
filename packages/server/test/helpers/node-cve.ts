@@ -50,7 +50,9 @@ export const CVE_2025_27210_VULNERABLE = [
 /**
  * Patched releases this workspace actually runs on. Asserting these DO satisfy the
  * range keeps the security check non-vacuous: `>=999.0.0` would exclude every
- * vulnerable release while making the packages uninstallable.
+ * vulnerable release while declaring a supported set no consumer can be on.
+ * (Not "uninstallable": this repository sets no `engine-strict`, so npm warns and
+ * installs regardless — see `renderNodeRequirement` below.)
  *
  * `22.19.0` is the `.nvmrc` pin; `24.4.1` is the first patched 24.x, which the CI
  * matrix reaches via a bare `node: 24`.
@@ -333,29 +335,26 @@ export function findOpenEndedNodeFloors(text: string): string[] {
  * miss a narrow hole; the endpoints cannot.
  */
 export function nodeFloorOverclaim(floor: string, range: string): string | null {
-  const endpoints = new Set<string>();
-  for (const clause of range.split("||")) {
-    for (const match of clause.matchAll(/(?:>=|<)\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?/gu)) {
-      endpoints.add(`${match[1]}.${match[2] ?? "0"}.${match[3] ?? "0"}`);
-    }
-  }
+  // The floor is itself a claim — "this release and everything after it works" —
+  // so it has to be tested, not just used as a lower cutoff. Checking only
+  // versions ABOVE it answered `null` for a doc whose floor the range refuses
+  // outright: `23.0.0` against `>=22.19.0 <23 || >=24.4.1` sits in the CVE hole,
+  // while the only endpoint above it (24.4.1) is supported.
+  //
+  // The candidates come from `criticalVersions`, the same sweep the security
+  // assertion uses, rather than a second bespoke endpoint regex. That regex read
+  // `>=` and `<` and silently ignored `>`, `<=` and `=`, so an inclusive upper
+  // bound contributed no endpoint at all and the version it rejects — `22.20.1`
+  // for `<=22.20.0` — was never considered. `criticalVersions` takes every
+  // numeric literal in the range AND each one's successor, which covers every
+  // comparator by construction and needs no update when a new one appears.
+  const parsedFloor = parseVersion(floor);
+  const candidates = [floor, ...criticalVersions(range)]
+    .filter((candidate) => compare(parseVersion(candidate), parsedFloor) >= 0)
+    .sort((a, b) => compare(parseVersion(a), parseVersion(b)));
 
-  const order = (version: string): number[] => version.split(".").map(Number);
-  const above = (a: string, b: string): boolean => {
-    const [x, y] = [order(a), order(b)];
-    for (let i = 0; i < 3; i += 1) {
-      // `order` always yields three components for the `major.minor.patch`
-      // endpoints built above, but `noUncheckedIndexedAccess` cannot know that.
-      const [left, right] = [x[i] ?? 0, y[i] ?? 0];
-      if (left !== right) return left > right;
-    }
-    return false;
-  };
-
-  for (const endpoint of [...endpoints].sort((a, b) => (above(a, b) ? 1 : -1))) {
-    if (above(endpoint, floor) && !satisfiesRange(endpoint, range)) {
-      return endpoint;
-    }
+  for (const candidate of candidates) {
+    if (!satisfiesRange(candidate, range)) return candidate;
   }
   return null;
 }
