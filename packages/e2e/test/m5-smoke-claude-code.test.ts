@@ -45,7 +45,7 @@
  * dollars or fails on an unconfigured machine; it skips (with a breadcrumb)
  * rather than throwing when unset.
  */
-import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer as createNodeHttpServer, type Server as NodeHttpServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -65,6 +65,7 @@ import { PREVIEW_TOOL_NAME, type ViewerBooter } from "../../server/src/tools/pre
 import { WRITE_FILES_TOOL_NAME } from "../../server/src/tools/write_files.js";
 import { createViewerConfig } from "../../viewer/src/config.js";
 import { isDockerAvailable as isTestcontainersDockerAvailable } from "./support/gitea-fixture.js";
+import { removeTempDir } from "./support/temp-dir.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_KEY_HELPER = join(HERE, "../../../docs/harness/scripts/anthropic-api-key-helper.sh");
@@ -1006,7 +1007,7 @@ describe.skipIf(!hasClaudeCli)("Claude Code accepts the documented default helpe
         mcpHttp.closeAllConnections();
         apiHttp.closeAllConnections();
         await Promise.all([closeHttpServer(mcpHttp), closeHttpServer(apiHttp)]);
-        await rm(base, { recursive: true, force: true });
+        await removeTempDir(base);
       }
     }
   }, 30_000);
@@ -1042,7 +1043,7 @@ async function runApiKeyHelper(options: {
       },
     });
   } finally {
-    await rm(binDir, { recursive: true, force: true });
+    await removeTempDir(binDir);
   }
 }
 
@@ -1185,7 +1186,7 @@ it("returns a reachable viewer URL for explicit local preview over HTTP", async 
     await client.close().catch(() => {});
     if (mcpHttp !== undefined) await closeHttpServer(mcpHttp);
     await closeViewer();
-    await rm(base, { recursive: true, force: true });
+    await removeTempDir(base);
   }
 });
 
@@ -1215,7 +1216,7 @@ describe.skipIf(!hasLlmConfig)(
 
     afterAll(async () => {
       await close?.();
-      await rm(base, { recursive: true, force: true });
+      await removeTempDir(base);
     });
 
     it("advertises the four documented verbs under their mcp__genie__ names (AC5 precondition)", async () => {

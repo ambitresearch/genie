@@ -62,7 +62,7 @@
  * dependencies, so CI never reaches the registry during the test and never
  * silently skips the harness leg.
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer as createNodeHttpServer, type Server as NodeHttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -84,6 +84,7 @@ import type { ChatCompletionFn } from "../../server/src/tools/conjure.js";
 import { DEFAULT_VIEWER_PORT, type ViewerBooter } from "../../server/src/tools/preview.js";
 import { createStreamableHttpRequestHandler } from "../../server/src/transport.js";
 import { bootViewer } from "../../viewer/src/index.js";
+import { removeTempDir } from "./support/temp-dir.js";
 
 const execFileAsync = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -315,8 +316,8 @@ describe("M5-14 Cline harness smoke test", () => {
     else process.env["GENIE_LLM_BASE_URL"] = previousLlmBaseUrl;
     if (previousLlmApiKey === undefined) delete process.env["GENIE_LLM_API_KEY"];
     else process.env["GENIE_LLM_API_KEY"] = previousLlmApiKey;
-    await rm(genieHome, { recursive: true, force: true });
-    await rm(kitsRoot, { recursive: true, force: true });
+    await removeTempDir(genieHome);
+    await removeTempDir(kitsRoot);
   });
 
   it("runs the documented conjure -> plan -> write_files -> preview chain over Bearer-authed HTTP with a tools-only client, and rejects missing auth", async () => {
@@ -864,7 +865,7 @@ describe("M5-14 Cline harness smoke test — real CLI", () => {
         new Promise<void>((resolveClose) => mcp?.close(() => resolveClose()) ?? resolveClose()),
         new Promise<void>((resolveClose) => model?.close(() => resolveClose()) ?? resolveClose()),
       ]);
-      await rm(base, { recursive: true, force: true });
+      await removeTempDir(base);
     }
   }, 120_000);
 });

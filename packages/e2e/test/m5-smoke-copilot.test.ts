@@ -61,7 +61,7 @@
  *   AC7 — viewer/file fallback assertion (plus retained `_meta.ui.resourceUri`)
  *         for the non-MCP-Apps client shape.                               ✅
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -71,6 +71,7 @@ import { createServer } from "../../server/src/server.js";
 import { MCP_APP_MIME, UI_EXTENSION_ID } from "../../server/src/tools/preview.js";
 import type { ChatCompletionFn, ConjureDeps } from "../../server/src/tools/conjure.js";
 import type { ChatCompletionResult } from "../../server/src/llm/client.js";
+import { removeTempDir } from "./support/temp-dir.js";
 
 interface ToolResult {
   isError?: boolean;
@@ -122,7 +123,7 @@ async function newHarness(
     call: (name, args) => client.callTool({ name, arguments: args }) as Promise<ToolResult>,
     close: async () => {
       await client.close();
-      await rm(base, { recursive: true, force: true });
+      await removeTempDir(base);
     },
   };
 }

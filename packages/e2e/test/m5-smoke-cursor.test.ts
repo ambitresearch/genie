@@ -43,7 +43,7 @@
  * have no executable surface: Cursor's OAuth exchange happens in Cursor's own
  * process, not genie's, so there is nothing here to drive live.
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,6 +51,7 @@ import { spawnSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { removeTempDir } from "./support/temp-dir.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
@@ -113,7 +114,7 @@ describe.skipIf(!hasBuiltServer)(
 
     afterAll(async () => {
       await client?.close();
-      await rm(kitsRoot, { recursive: true, force: true });
+      await removeTempDir(kitsRoot);
     });
 
     describe("AC3 — Cursor's four-verb chain is reachable and preview emits ui://genie/grid", () => {
@@ -319,7 +320,7 @@ describe.skipIf(!hasBuiltServer)(
           expect(tools.length).toBeGreaterThan(40);
         } finally {
           await probeClient.close();
-          await rm(base, { recursive: true, force: true });
+          await removeTempDir(base);
         }
       });
     });

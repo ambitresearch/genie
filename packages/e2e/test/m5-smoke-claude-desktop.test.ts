@@ -8,7 +8,7 @@
  * validated Desktop bundle launches.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ import { spawnSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { removeTempDir } from "./support/temp-dir.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
@@ -218,7 +219,7 @@ describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", ()
 
   afterAll(async () => {
     await client?.close();
-    await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+    await Promise.all(tempDirs.map((dir) => removeTempDir(dir)));
   });
 
   it.each([

@@ -18,13 +18,14 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import yaml from "yaml";
+import { removeTempDir } from "./support/temp-dir.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
@@ -560,7 +561,7 @@ describe.skipIf(!hasBuiltServer || !hasContinueCli)(
     afterAll(async () => {
       if (modelServer) await close(modelServer);
       if (tempRoot) {
-        await rm(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+        await removeTempDir(tempRoot, { maxRetries: 10, retryDelay: 100 });
       }
     });
 
