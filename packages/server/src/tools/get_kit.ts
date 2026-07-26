@@ -3,17 +3,26 @@ import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { KitMeta, KitStore } from "../store/interface.js";
 import { NotFoundError, KIT_TYPE } from "../store/interface.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 
 export const GET_KIT_TOOL_NAME = "mcp__genie__get_kit";
 
 /** Shape every `kitId` produced by `buildKitId` (create_kit.ts) satisfies: a
- * lowercase slug plus a 6-char hex suffix. Exported so other tools (e.g.
- * `bind_kit`) validate against the exact same pattern instead of redeclaring it. */
+ * lowercase slug plus a 6-char hex suffix.
+ *
+ * This describes what `create_kit` MINTS. It is deliberately NOT an input gate:
+ * `KitId` is an opaque, adapter-assigned string, and `list_kits` promises the
+ * ids it returns are valid input to every kit-taking verb. A git-host kit maps
+ * its id to a repo name (uppercase, `_`, `.` and single chars are all legal
+ * there) and an imported kit directory is listable under any containment-safe
+ * name, so `My_Kit.2` is a legitimate kitId this pattern would reject. Gate
+ * INPUT on `isSafeKitId` — the containment rule both store adapters enforce —
+ * and leave this to assert the shape of ids we generate ourselves. */
 export const KIT_ID_PATTERN = /^[a-z0-9-]{3,64}$/;
 
 const getKitArgsSchema = z
   .object({
-    kitId: z.string().regex(KIT_ID_PATTERN),
+    kitId: z.string().refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE),
   })
   .strict();
 
@@ -55,7 +64,7 @@ export function registerGetKitTool(server: McpServer, store: KitStore): void {
         "Useful to confirm a kitId (e.g. from list_kits) is valid and writable before " +
         "generating or binding against it.",
       inputSchema: {
-        kitId: z.string().regex(KIT_ID_PATTERN),
+        kitId: z.string().refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE),
       },
       outputSchema: {
         id: z.string(),

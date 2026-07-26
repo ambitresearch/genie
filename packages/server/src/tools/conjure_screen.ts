@@ -24,7 +24,8 @@
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { KIT_ID_PATTERN, ProjectNotFoundError, WrongProjectTypeError, getKit } from "./get_kit.js";
+import { ProjectNotFoundError, WrongProjectTypeError, getKit } from "./get_kit.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 import { PROJECT_ID_PATTERN, ProjectStoreError } from "./create_project.js";
 import type { ProjectDetail, ProjectScreen, RecordScreenInput } from "./create_project.js";
 import type { KitStore } from "../store/interface.js";
@@ -42,12 +43,7 @@ const projectIdSchema = z
     "projectId must be a 3-64 character slug containing only lowercase letters, numbers, and hyphens.",
   );
 
-const kitIdSchema = z
-  .string()
-  .regex(
-    KIT_ID_PATTERN,
-    "kitId must be a 3-64 character slug containing only lowercase letters, numbers, and hyphens.",
-  );
+const kitIdSchema = z.string().refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE);
 
 const blueprintIdSchema = z
   .string()

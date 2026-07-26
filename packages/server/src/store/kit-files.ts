@@ -115,11 +115,17 @@ export function sriSha256(bytes: Buffer | string): string {
 // ─── kitId traversal safety ──────────────────────────────────────────────────
 
 /**
- * The ONE kitId-safety rule shared by the `list_files` and `read_file` tools
- * AND both `KitStore` adapters, so their traversal defenses cannot silently
- * drift apart (DRO-509 / DRO-581 unification). Lives here — not in a tool
- * module — because the store layer (post-#114) also needs it, and `store/*`
- * must not import from `tools/*`.
+ * The ONE kitId-safety rule shared by EVERY kit-taking tool AND both `KitStore`
+ * adapters, so their traversal defenses cannot silently drift apart (DRO-509 /
+ * DRO-581 unification). Lives here — not in a tool module — because the store
+ * layer (post-#114) also needs it, and `store/*` must not import from `tools/*`.
+ *
+ * This is the *containment* rule and it is the correct INPUT gate. It is not
+ * `KIT_ID_PATTERN` (`tools/get_kit.ts`), which is a *shape* rule describing the
+ * ids `create_kit` mints; `KitId` is an opaque, adapter-assigned string and
+ * `list_kits` promises what it returns is valid input everywhere, so gating
+ * input on the mint shape makes an imported kit like `My_Kit.2` visible but
+ * unusable.
  *
  * A `kitId` names a single directory (LocalFs) or repo (git host) directly
  * under the store's kits root. `isSafeKitId` returns false for exactly the ids
@@ -150,6 +156,17 @@ export function isSafeKitId(kitId: string): boolean {
   if (kitId.includes("/") || kitId.includes("\\")) return false;
   return true;
 }
+
+/**
+ * The user-facing wording for an `isSafeKitId` rejection, co-located with the
+ * rule so the two cannot drift. Callers that surface the rule through a Zod
+ * schema pass this as the `.refine()` message; callers that raise their own
+ * error type still choose their own code and class (see the note above — only
+ * the RULE and its WORDING are centralised here, never the error shape). A
+ * plain string, so this module still needs no `zod` dependency.
+ */
+export const KIT_ID_SAFETY_MESSAGE =
+  "kitId must name a single kit: it cannot be empty, `.`, `..`, or contain a path separator.";
 
 // ─── Default + .genieignore exclusion ────────────────────────────────────────
 

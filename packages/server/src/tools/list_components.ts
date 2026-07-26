@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ComponentEntry, KitStore } from "../store/interface.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 import { compareComponents } from "../store/manifest.js";
 
 export const LIST_COMPONENTS_TOOL_NAME = "mcp__genie__list_components";
@@ -125,9 +126,13 @@ export function registerListComponents(server: McpServer, store: KitStore): void
       description: LIST_COMPONENTS_DESCRIPTION,
       inputSchema: z
         .object({
+          // Containment, not create_kit shape. This verb previously carried its
+          // own inline copy of `/^[a-z0-9-]{3,64}$/`, which made it invisible to
+          // a `KIT_ID_PATTERN` grep and left this read verb stricter than its
+          // siblings `list_files` and `read_file`.
           kitId: z
             .string()
-            .regex(/^[a-z0-9-]{3,64}$/)
+            .refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE)
             .describe("The ID of the kit to list components from"),
           group: z
             .string()

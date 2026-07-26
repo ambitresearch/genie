@@ -47,7 +47,7 @@ import {
   type PreviewReader,
 } from "../ui/grid-resource.js";
 
-import { KIT_ID_PATTERN } from "./get_kit.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 
 export const PREVIEW_TOOL_NAME = "mcp__genie__preview";
 
@@ -141,12 +141,12 @@ export function buildResourceUri(params: ResourceUriParams): string {
 
 // ─── kitId → kit dir (path safety) ───────────────────────────────────────────
 
-/** A `kitId` that fails the shared `KIT_ID_PATTERN` shape (traversal guard). */
+/** A `kitId` that fails the shared `isSafeKitId` containment rule. */
 export class InvalidKitIdError extends Error {
   readonly code = "InvalidKitIdError";
   constructor(readonly kitId: string) {
     super(
-      `Invalid kitId "${kitId}": must be a 3-64 char lowercase slug ([a-z0-9-]). ` +
+      `Invalid kitId "${kitId}": it cannot be empty, ".", ".." or contain a path separator. ` +
         "This guards against path traversal into the kits root.",
     );
     this.name = "InvalidKitIdError";
@@ -164,14 +164,22 @@ export class KitNotFoundError extends Error {
 
 /**
  * Resolve a `kitId` to its on-disk kit directory under `kitsRoot`, rejecting
- * any id that isn't a well-formed slug BEFORE the `join` — an unvalidated id
- * like `../../etc` would otherwise escape the kits root (RFC §10 T-13, the same
- * traversal class `write_files`/`read_file` guard). Only shape is checked here;
- * Existence is checked by {@link runPreview} before compilation so a missing
- * slug cannot create a phantom kit through manifest persistence.
+ * any id that could escape that root BEFORE the `join` — an unvalidated id like
+ * `../../etc` would otherwise climb out (RFC §10 T-13, the same traversal class
+ * `write_files`/`read_file` guard). Only containment is checked here; existence
+ * is checked by {@link runPreview} before compilation so a missing kit cannot
+ * create a phantom one through manifest persistence.
+ *
+ * The rule is `isSafeKitId`, NOT the create_kit slug shape. `isSafeKitId` is a
+ * COMPLETE containment rule for `join(root, id)`: it refuses exactly the ids
+ * that escape — `""` (resolves to the root itself), `.`/`..` (aliases for the
+ * root and its parent), and anything carrying a separator. Every other id,
+ * `My_Kit.2` and `UPPER` included, resolves to a literal child of the root and
+ * so is safe. Using the slug shape here made preview reject imported and
+ * git-host kits that `list_kits` had just advertised as usable.
  */
 export function resolveKitDir(kitsRoot: string, kitId: string): string {
-  if (!KIT_ID_PATTERN.test(kitId)) {
+  if (!isSafeKitId(kitId)) {
     throw new InvalidKitIdError(kitId);
   }
   return join(kitsRoot, kitId);
@@ -784,8 +792,8 @@ export async function runPreview(
 const previewInputSchema = {
   kitId: z
     .string()
-    .regex(KIT_ID_PATTERN)
-    .describe("The kit to preview (a genie kitId — lowercase slug)."),
+    .refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE)
+    .describe("The kit to preview (any kitId list_kits returns)."),
   componentName: z
     .string()
     .min(1)

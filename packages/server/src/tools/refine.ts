@@ -88,7 +88,7 @@ import {
   validateGeneratedBinaryContent,
   type GeneratedFileWithEncoding,
 } from "../llm/generated-files.js";
-import { KIT_ID_PATTERN } from "./get_kit.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 import type { CardAssetBroker } from "../ui/card-asset-broker.js";
 import { publishDraftPreview } from "../ui/draft-preview.js";
 
@@ -125,12 +125,7 @@ const regionSchema = z
 export type Region = z.infer<typeof regionSchema>;
 
 const refineInputShape = {
-  kitId: z
-    .string()
-    .regex(
-      KIT_ID_PATTERN,
-      "kitId must be a 3-64 character slug of lowercase letters, numbers, and hyphens.",
-    ),
+  kitId: z.string().refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE),
   componentName: z
     .string()
     .regex(COMPONENT_NAME_PATTERN, "componentName must be PascalCase, 2-64 chars (e.g. Button)."),
