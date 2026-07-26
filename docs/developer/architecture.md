@@ -309,8 +309,9 @@ kit-relative path, no `..` segments, no scheme, no leading slash.
 
 Testing the raw string is not enough, because the browser's URL parser does not treat a
 literal `..` and a literal leading `/` as the only escape hatches. It reads backslashes as
-forward slashes for http(s) URLs, so `\evil.example/x` resolves like the protocol-relative
-`//evil.example/x` — off-origin — without ever holding a `/` at index 0. And a percent-encoded
+forward slashes for http(s) URLs: `\evil.example/x` resolves to the absolute path
+`/evil.example/x`, escaping the kit root, and `\\evil.example/x` resolves to the protocol-relative
+`//evil.example/x` — off-origin entirely. Neither ever holds a `/` at index 0. And a percent-encoded
 segment (`%2e%2e`, `%2E%2e`) holds no literal `..` before decoding, yet normalizes to `..` once
 the real `fetch` parses it. So the check decodes first, then rejects backslashes, any leading
 separator, and any decoded `.` or `..` segment.

@@ -3968,10 +3968,13 @@ describe("unload guard ignores byte-identical derivatives (#256)", () => {
   async function refined(files?: ReturnType<typeof fileEntry>[]) {
     const wired = loadWired({
       ...HAPPY_REPLIES,
-      // `refineResult()` reuses `conjureResult()`'s files verbatim, so by
-      // default the reply is byte-identical to the parent while still carrying
-      // a NON-EMPTY `diff` string. That gap is exactly the point: the model's
-      // diff is a claim, the bytes it returned are the evidence.
+      // `refineResult()` reuses `conjureResult()`'s files verbatim but hardcodes
+      // a diff describing an added `<span>`, so the fixture is deliberately
+      // self-inconsistent: byte-identical files, non-empty `diff`. The real
+      // server never emits that pair -- `refine.ts` builds the diff FROM the file
+      // sets it is about to return, so a truthful reply's diff and bytes always
+      // agree. Forcing them apart is what proves the guard compares bytes rather
+      // than short-circuiting on a non-empty `diff`.
       mcp__genie__refine: refineResult(files ? { files } : {}),
     });
     // Refine is gated on `componentInKit`, so its parent is always in the kit.
