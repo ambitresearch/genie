@@ -1132,11 +1132,7 @@ describe("buildKitContext (genie#239 / Copilot review on #246)", () => {
     const { bridge, calls } = bridgeWith({
       mcp__genie__list_files: () =>
         Promise.resolve({
-          files: [
-            { path: "tokens/colors.css" },
-            { path: "styles.css" },
-            { path: "README.md" },
-          ],
+          files: [{ path: "tokens/colors.css" }, { path: "styles.css" }, { path: "README.md" }],
         }),
       mcp__genie__list_components: () => Promise.resolve({ components: [] }),
       mcp__genie__read_file: (args: { path: string }) => {
@@ -1158,9 +1154,9 @@ describe("buildKitContext (genie#239 / Copilot review on #246)", () => {
     expect(context).toContain("styles.css");
     expect(context).toContain("@import './tokens/colors.css';");
     // README.md is neither tokens/** nor root styles.css — never read.
-    expect(calls.some((c) => c.name === "mcp__genie__read_file" && c.args.path === "README.md")).toBe(
-      false,
-    );
+    expect(
+      calls.some((c) => c.name === "mcp__genie__read_file" && c.args.path === "README.md"),
+    ).toBe(false);
   });
 
   it("reads a bounded sample of existing component file contents, not just group/name metadata", async () => {
@@ -1247,7 +1243,8 @@ describe("buildKitContext (genie#239 / Copilot review on #246)", () => {
       mcp__genie__list_files: () => Promise.resolve({ files: [{ path: "styles.css" }] }),
       mcp__genie__list_components: () => Promise.resolve({ components: manyComponents }),
       mcp__genie__read_file: (args: { path: string }) => {
-        if (args.path === "styles.css") return Promise.resolve({ content: bigChunk, encoding: "utf-8" });
+        if (args.path === "styles.css")
+          return Promise.resolve({ content: bigChunk, encoding: "utf-8" });
         return Promise.reject(new Error("unexpected read"));
       },
     });
@@ -1405,5 +1402,109 @@ describe("MCP-App handshake capability gate", () => {
 
     expect(onUnavailable).not.toHaveBeenCalled();
     expect(onReady).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MCP host bridge — text-only tool results (#251)", () => {
+  /**
+   * Post a `tools/call` and reply with `result`, returning the pending promise.
+   * Keeps each case to the one line that actually varies: the result shape.
+   */
+  function callWithResult(
+    hooks: Hooks,
+    window: JSDOM["window"],
+    result: unknown,
+  ): Promise<unknown> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const posted: any[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const host = { postMessage: (message: any) => posted.push(message) };
+    const bridge = hooks.createHostBridge(window, host);
+    const pending = bridge.callTool("mcp__genie__validate", {}) as Promise<unknown>;
+    window.dispatchEvent(
+      new window.MessageEvent("message", {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        source: host as any,
+        data: { jsonrpc: "2.0", id: posted.at(-1).id, result },
+      }),
+    );
+    // The listener is synchronous, so the promise has already settled; tearing the
+    // bridge down here cannot reject an already-settled request.
+    bridge.destroy();
+    return pending;
+  }
+
+  it("resolves a text-only result — the live kit-wide validate payload from #251", async () => {
+    // Verbatim from the issue's live stdio capture: `hasStructured:false`, the
+    // real payload sitting unreachable in `content[0].text`. Tools that declare
+    // no `outputSchema` are spec-correct in omitting `structuredContent`, so the
+    // bridge — not the server — is what has to give.
+    const payload = {
+      markerMissing: ["index.html"],
+      thin: ["kits/acme/components/StatusPill.html"],
+      total: 2,
+      bad: 2,
+    };
+    const { hooks, window } = loadHooks();
+    await expect(
+      callWithResult(hooks, window, {
+        content: [{ type: "text", text: JSON.stringify(payload) }],
+      }),
+    ).resolves.toEqual(payload);
+  });
+
+  it("prefers structuredContent when a result carries both", async () => {
+    const { hooks, window } = loadHooks();
+    await expect(
+      callWithResult(hooks, window, {
+        structuredContent: { from: "structured" },
+        content: [{ type: "text", text: JSON.stringify({ from: "text" }) }],
+      }),
+    ).resolves.toEqual({ from: "structured" });
+  });
+
+  it("skips non-text, unparseable, and primitive entries and takes the first usable object", async () => {
+    const { hooks, window } = loadHooks();
+    await expect(
+      callWithResult(hooks, window, {
+        content: [
+          { type: "image", data: "…" },
+          { type: "text", text: "not json at all" },
+          // Valid JSON, but a primitive — scanning must continue past it rather
+          // than surface a number as the payload.
+          { type: "text", text: "42" },
+          { type: "text", text: JSON.stringify({ ok: true }) },
+          { type: "text", text: JSON.stringify({ later: true }) },
+        ],
+      }),
+    ).resolves.toEqual({ ok: true });
+  });
+
+  it("rejects when the only text parses to a primitive rather than a payload", async () => {
+    // `42` is valid JSON but no tool payload; resolving it would hand callers a
+    // number where they destructure fields.
+    const { hooks, window } = loadHooks();
+    await expect(
+      callWithResult(hooks, window, { content: [{ type: "text", text: "42" }] }),
+    ).rejects.toThrow("malformed");
+  });
+
+  it("rejects when no content entry yields JSON", async () => {
+    const { hooks, window } = loadHooks();
+    await expect(
+      callWithResult(hooks, window, { content: [{ type: "text", text: "Kit written." }] }),
+    ).rejects.toThrow("malformed");
+  });
+
+  it("still rejects an isError result whose text parses cleanly", async () => {
+    // The fallback runs after the error branch, so a well-formed error payload
+    // must not be resurrected into a success.
+    const { hooks, window } = loadHooks();
+    await expect(
+      callWithResult(hooks, window, {
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify({ message: "Kit not found" }) }],
+      }),
+    ).rejects.toThrow("Kit not found");
   });
 });
