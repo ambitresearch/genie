@@ -245,10 +245,16 @@ export class KitNotFoundError extends Error {
  * `new Date().toISOString()` (`store/local.ts`) off the SAME HOST CLOCK that
  * stamps `PlanState.createdAt`, so the skew objection above genuinely does not
  * apply there — which is exactly what makes a local-only identity check look
- * free. It is not: `test/store-conformance.test.ts` (AC5) holds both adapters to
- * ONE contract, so a plan that survives delete-and-recreate on local but not on
- * GitHost is divergent store semantics, not a sharper guard. This check stays
- * uniform on store-parity grounds, independently of the clock argument above.
+ * free. It is not: `assertKitLive` takes the `KitStore` INTERFACE, so it has no
+ * way to tell which adapter it holds. A local-only rule would mean importing a
+ * concrete adapter into a store-agnostic helper purely to narrow on it,
+ * inverting the dependency direction the store abstraction exists to hold — and
+ * both callers (step 9 below, `sync/orchestrator.ts` step 1) would inherit
+ * plan-validity semantics that differ by backend. The uniformity is structural,
+ * not a policy preference, and holds independently of the clock argument above.
+ * (`test/store-conformance.test.ts` is NOT the authority here: it pins the
+ * `KitStore` method contract, not `PlanState`, which is a tool-layer record the
+ * store interface never sees.)
  *
  * Shared with `sync/orchestrator.ts` step 1 rather than duplicated: the sync
  * sequence fences the tree with a RECURSIVE mkdir before any store call, so it
