@@ -59,13 +59,13 @@
  */
 import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
+import { removeTempDir } from "./support/temp-dir.js";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { removeTempDir } from "./support/temp-dir.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
@@ -96,19 +96,13 @@ function codexAvailable(): boolean {
 }
 
 const hasCodex = codexAvailable();
-const hasBuiltServer =
-  spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`])
-    .status === 0;
+const hasBuiltServer = spawnSync("node", ["-e", `require("node:fs").accessSync(${JSON.stringify(SERVER_CLI)})`]).status === 0;
 
 describe("codex-smoke CI contract", () => {
   it("keeps PR checks secret-free and reserves the live endpoint for trusted pushes", async () => {
     const workflow = await readFile(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
-    const smokeMatch = workflow.match(
-      /\n {2}codex-smoke:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/,
-    );
-    const liveMatch = workflow.match(
-      /\n {2}codex-live:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/,
-    );
+    const smokeMatch = workflow.match(/\n {2}codex-smoke:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/);
+    const liveMatch = workflow.match(/\n {2}codex-live:\n([\s\S]*?)(?=\n {2}[a-z0-9][a-z0-9-]*:\n|$)/);
     expect(smokeMatch, "expected ci.yml to define the codex-smoke job").not.toBeNull();
     expect(liveMatch, "expected ci.yml to define the codex-live job").not.toBeNull();
 
@@ -247,9 +241,7 @@ describe.skipIf(!hasCodex)("AC1/AC2/AC4 — codex mcp accepts the canonical geni
 // drives conjure → plan → write_files → preview over the MCP SDK's stdio
 // CLIENT transport (the harness side of the same wire protocol Codex speaks).
 
-const hasLlmEnv = Boolean(
-  process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim(),
-);
+const hasLlmEnv = Boolean(process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim());
 const smokeModel = process.env.GENIE_SMOKE_LLM_MODEL?.trim() || "gpt-5.6-sol";
 
 if (!hasLlmEnv) {
@@ -266,153 +258,128 @@ if (!hasLlmEnv && process.env.GENIE_REQUIRE_LLM === "1") {
   );
 }
 
-describe.skipIf(!hasBuiltServer)(
-  "AC6 — four-verb chain over real stdio (Codex's own transport)",
-  () => {
-    let client: Client;
-    let kitsRoot: string;
+describe.skipIf(!hasBuiltServer)("AC6 — four-verb chain over real stdio (Codex's own transport)", () => {
+  let client: Client;
+  let kitsRoot: string;
 
-    beforeAll(async () => {
-      kitsRoot = await mkdtemp(join(tmpdir(), "genie-codex-smoke-kits-"));
-      const transport = new StdioClientTransport({
-        command: "node",
-        args: [SERVER_CLI, "--transport", "stdio"],
-        env: {
-          ...(process.env as Record<string, string>),
-          GENIE_KITS_ROOT: kitsRoot,
-          GENIE_HOME: kitsRoot,
-          // Required secret validation (packages/server/src/config/secrets.ts) —
-          // unrelated to the MCP surface this smoke test exercises; throwaway
-          // values (≥16 chars, per MIN_SECRET_LENGTH) satisfy the boot-time
-          // check for this ephemeral test server. `GENIE_LLM_API_KEY` became a
-          // *required* secret in DRO-275 (M5-03) after this test was first
-          // written, which left CI's stdio-boot leg failing with "Secret
-          // validation failed: GENIE_LLM_API_KEY is required but not set" —
-          // only `hasLlmEnv`'s real `GENIE_LLM_API_KEY` (when configured) is
-          // actually used for a live model call, in the separate `conjure`
-          // test below; the other stdio tests never reach the LLM client, so
-          // a non-secret placeholder is sufficient to pass boot validation.
-          OAUTH_HS256_KEY: "codex-smoke-test-not-a-real-secret",
-          GENIE_LLM_API_KEY: process.env.GENIE_LLM_API_KEY ?? "codex-smoke-test-not-a-real-key",
-        },
-      });
-      client = new Client({ name: "codex-smoke", version: "0" });
-      await client.connect(transport);
-    }, 30_000);
-
-    afterAll(async () => {
-      await client?.close();
-      await removeTempDir(kitsRoot);
+  beforeAll(async () => {
+    kitsRoot = await mkdtemp(join(tmpdir(), "genie-codex-smoke-kits-"));
+    const transport = new StdioClientTransport({
+      command: "node",
+      args: [SERVER_CLI, "--transport", "stdio"],
+      env: {
+        ...(process.env as Record<string, string>),
+        GENIE_KITS_ROOT: kitsRoot,
+        GENIE_HOME: kitsRoot,
+        // Required secret validation (packages/server/src/config/secrets.ts) —
+        // unrelated to the MCP surface this smoke test exercises; throwaway
+        // values (≥16 chars, per MIN_SECRET_LENGTH) satisfy the boot-time
+        // check for this ephemeral test server. `GENIE_LLM_API_KEY` became a
+        // *required* secret in DRO-275 (M5-03) after this test was first
+        // written, which left CI's stdio-boot leg failing with "Secret
+        // validation failed: GENIE_LLM_API_KEY is required but not set" —
+        // only `hasLlmEnv`'s real `GENIE_LLM_API_KEY` (when configured) is
+        // actually used for a live model call, in the separate `conjure`
+        // test below; the other stdio tests never reach the LLM client, so
+        // a non-secret placeholder is sufficient to pass boot validation.
+        OAUTH_HS256_KEY: "codex-smoke-test-not-a-real-secret",
+        GENIE_LLM_API_KEY: process.env.GENIE_LLM_API_KEY ?? "codex-smoke-test-not-a-real-key",
+      },
     });
+    client = new Client({ name: "codex-smoke", version: "0" });
+    await client.connect(transport);
+  }, 30_000);
 
-    it("advertises the four chain verbs over real stdio", async () => {
-      const { tools } = await client.listTools();
-      const names = new Set(tools.map((t) => t.name));
-      for (const verb of [
-        "mcp__genie__conjure",
-        "mcp__genie__plan",
-        "mcp__genie__write_files",
-        "mcp__genie__preview",
-      ]) {
-        expect(names, `expected ${verb} to be registered over stdio`).toContain(verb);
-      }
-    });
+  afterAll(async () => {
+    await client?.close();
+    await removeTempDir(kitsRoot);
+  });
 
-    /** First text content part, parsed as JSON (tools without structuredContent). */
-    function parseText(result: { content?: { type: string; text: string }[] }): unknown {
-      const text = result.content?.[0]?.text ?? "";
-      return text ? JSON.parse(text) : undefined;
+  it("advertises the four chain verbs over real stdio", async () => {
+    const { tools } = await client.listTools();
+    const names = new Set(tools.map((t) => t.name));
+    for (const verb of [
+      "mcp__genie__conjure",
+      "mcp__genie__plan",
+      "mcp__genie__write_files",
+      "mcp__genie__preview",
+    ]) {
+      expect(names, `expected ${verb} to be registered over stdio`).toContain(verb);
     }
+  });
 
-    /** structuredContent when present, else the parsed text payload. */
-    function payload(result: {
-      structuredContent?: unknown;
-      content?: { type: string; text: string }[];
-    }): unknown {
-      return result.structuredContent ?? parseText(result);
-    }
+  /** First text content part, parsed as JSON (tools without structuredContent). */
+  function parseText(result: { content?: { type: string; text: string }[] }): unknown {
+    const text = result.content?.[0]?.text ?? "";
+    return text ? JSON.parse(text) : undefined;
+  }
 
-    it("plan → write_files → preview round-trips over real stdio (the write+show half of the chain)", async () => {
+  /** structuredContent when present, else the parsed text payload. */
+  function payload(result: { structuredContent?: unknown; content?: { type: string; text: string }[] }): unknown {
+    return result.structuredContent ?? parseText(result);
+  }
+
+  it("plan → write_files → preview round-trips over real stdio (the write+show half of the chain)", async () => {
+    const create = (await client.callTool({
+      name: "mcp__genie__create_kit",
+      arguments: { name: "Codex Smoke Kit" },
+    })) as { isError?: boolean; content?: { type: string; text: string }[]; structuredContent?: unknown };
+    expect(create.isError, JSON.stringify(create)).toBeFalsy();
+    const { kitId } = payload(create) as { kitId: string };
+    expect(kitId).toMatch(/^codex-smoke-kit-[0-9a-f]{6}$/);
+
+    const kitDir = join(kitsRoot, kitId);
+    const plan = (await client.callTool({
+      name: "mcp__genie__plan",
+      arguments: { kitId, writes: ["components/**/*.html"], localDir: kitDir },
+    })) as { isError?: boolean; content?: { type: string; text: string }[]; structuredContent?: unknown };
+    expect(plan.isError, JSON.stringify(plan)).toBeFalsy();
+    const { planId } = payload(plan) as { planId: string };
+
+    const write = (await client.callTool({
+      name: "mcp__genie__write_files",
+      arguments: {
+        planId,
+        files: [{ path: "components/Button.html", data: "<button>Codex smoke</button>" }],
+      },
+    })) as { isError?: boolean; content?: { type: string; text: string }[]; structuredContent?: unknown };
+    expect(write.isError, JSON.stringify(write)).toBeFalsy();
+    expect(payload(write)).toMatchObject({ writtenPaths: ["components/Button.html"] });
+
+    const preview = (await client.callTool({
+      name: "mcp__genie__preview",
+      arguments: { kitId },
+    })) as { isError?: boolean; structuredContent?: unknown };
+    expect(preview.isError, JSON.stringify(preview)).toBeFalsy();
+  });
+
+  it.skipIf(!hasLlmEnv)(
+    "conjure generates a component over real stdio when an LLM endpoint is configured (full chain incl. generation)",
+    async () => {
       const create = (await client.callTool({
         name: "mcp__genie__create_kit",
-        arguments: { name: "Codex Smoke Kit" },
-      })) as {
-        isError?: boolean;
-        content?: { type: string; text: string }[];
-        structuredContent?: unknown;
-      };
+        arguments: { name: "Codex Smoke Conjure Kit" },
+      })) as { isError?: boolean; content?: { type: string; text: string }[]; structuredContent?: unknown };
       expect(create.isError, JSON.stringify(create)).toBeFalsy();
       const { kitId } = payload(create) as { kitId: string };
-      expect(kitId).toMatch(/^codex-smoke-kit-[0-9a-f]{6}$/);
 
-      const kitDir = join(kitsRoot, kitId);
-      const plan = (await client.callTool({
-        name: "mcp__genie__plan",
-        arguments: { kitId, writes: ["components/**/*.html"], localDir: kitDir },
-      })) as {
-        isError?: boolean;
-        content?: { type: string; text: string }[];
-        structuredContent?: unknown;
-      };
-      expect(plan.isError, JSON.stringify(plan)).toBeFalsy();
-      const { planId } = payload(plan) as { planId: string };
-
-      const write = (await client.callTool({
-        name: "mcp__genie__write_files",
+      const conjure = (await client.callTool({
+        name: "mcp__genie__conjure",
         arguments: {
-          planId,
-          files: [{ path: "components/Button.html", data: "<button>Codex smoke</button>" }],
+          kitId,
+          kit: "<!-- empty kit context for smoke test -->",
+          prompt: "A small rounded primary button that says Continue.",
+          // Keep the direct conjure call on the same explicit route Codex
+          // uses as its driving model below.
+          model: smokeModel,
         },
-      })) as {
-        isError?: boolean;
-        content?: { type: string; text: string }[];
-        structuredContent?: unknown;
-      };
-      expect(write.isError, JSON.stringify(write)).toBeFalsy();
-      expect(payload(write)).toMatchObject({ writtenPaths: ["components/Button.html"] });
+      })) as { isError?: boolean; content?: { type: string; text: string }[]; structuredContent?: unknown };
+      expect(conjure.isError, JSON.stringify(conjure)).toBeFalsy();
+    },
+    60_000,
+  );
 
-      const preview = (await client.callTool({
-        name: "mcp__genie__preview",
-        arguments: { kitId },
-      })) as { isError?: boolean; structuredContent?: unknown };
-      expect(preview.isError, JSON.stringify(preview)).toBeFalsy();
-    });
-
-    it.skipIf(!hasLlmEnv)(
-      "conjure generates a component over real stdio when an LLM endpoint is configured (full chain incl. generation)",
-      async () => {
-        const create = (await client.callTool({
-          name: "mcp__genie__create_kit",
-          arguments: { name: "Codex Smoke Conjure Kit" },
-        })) as {
-          isError?: boolean;
-          content?: { type: string; text: string }[];
-          structuredContent?: unknown;
-        };
-        expect(create.isError, JSON.stringify(create)).toBeFalsy();
-        const { kitId } = payload(create) as { kitId: string };
-
-        const conjure = (await client.callTool({
-          name: "mcp__genie__conjure",
-          arguments: {
-            kitId,
-            kit: "<!-- empty kit context for smoke test -->",
-            prompt: "A small rounded primary button that says Continue.",
-            // Keep the direct conjure call on the same explicit route Codex
-            // uses as its driving model below.
-            model: smokeModel,
-          },
-        })) as {
-          isError?: boolean;
-          content?: { type: string; text: string }[];
-          structuredContent?: unknown;
-        };
-        expect(conjure.isError, JSON.stringify(conjure)).toBeFalsy();
-      },
-      60_000,
-    );
-  },
-);
+});
 
 // ── 3. AC6's REPL leg: drive the real `codex exec` REPL, capture transcript ──
 //
@@ -521,148 +488,156 @@ describe.skipIf(!hasCodex || !hasLlmEnv || !hasBuiltServer)(
       expect(config).toContain('default_tools_approval_mode = "approve"');
     });
 
-    it("codex exec drives create_kit -> conjure -> plan -> write_files -> preview via genie's real MCP tools, transcript captured to reports/", async () => {
-      // `localDir` must already exist on disk before `plan` is called
-      // (the server rejects a missing directory with `InvalidLocalDir`);
-      // reuse `kitsRoot`, which `beforeAll` already created, rather than
-      // asking the model to invent+create a fresh temp directory itself.
-      // Keep conjure on the same explicit route as Codex's driving model.
-      const conjureModel = smokeModel;
-      const prompt = [
-        "Using the genie MCP server's tools (mcp__genie__create_kit,",
-        "mcp__genie__conjure, mcp__genie__plan, mcp__genie__write_files,",
-        "mcp__genie__preview), in this exact order:",
-        "1) call create_kit with name 'Codex Repl Smoke'",
-        `2) call conjure for that kit with model '${conjureModel}' and a prompt`,
-        "   asking for a small primary button that says Continue",
-        `3) call plan for that kit with writes ['components/**/*.html'] and`,
-        `   localDir set to the EXISTING directory '${kitsRoot}' (do not`,
-        "   create or use any other directory)",
-        "4) call write_files with the conjured file(s) via the plan's planId",
-        "5) call preview for that kit",
-        "Call the genie MCP tools directly for each step — do not shell out,",
-        "do not explore the filesystem first.",
-      ].join(" ");
+    it(
+      "codex exec drives create_kit -> conjure -> plan -> write_files -> preview via genie's real MCP tools, transcript captured to reports/",
+      async () => {
+        // `localDir` must already exist on disk before `plan` is called
+        // (the server rejects a missing directory with `InvalidLocalDir`);
+        // reuse `kitsRoot`, which `beforeAll` already created, rather than
+        // asking the model to invent+create a fresh temp directory itself.
+        // Keep conjure on the same explicit route as Codex's driving model.
+        const conjureModel = smokeModel;
+        const prompt = [
+          "Using the genie MCP server's tools (mcp__genie__create_kit,",
+          "mcp__genie__conjure, mcp__genie__plan, mcp__genie__write_files,",
+          "mcp__genie__preview), in this exact order:",
+          "1) call create_kit with name 'Codex Repl Smoke'",
+          `2) call conjure for that kit with model '${conjureModel}' and a prompt`,
+          "   asking for a small primary button that says Continue",
+          `3) call plan for that kit with writes ['components/**/*.html'] and`,
+          `   localDir set to the EXISTING directory '${kitsRoot}' (do not`,
+          "   create or use any other directory)",
+          "4) call write_files with the conjured file(s) via the plan's planId",
+          "5) call preview for that kit",
+          "Call the genie MCP tools directly for each step — do not shell out,",
+          "do not explore the filesystem first.",
+        ].join(" ");
 
-      const result = spawnSync("codex", [...CODEX_EXEC_ARGS, prompt], {
-        cwd: REPO_ROOT,
-        env: {
-          ...process.env,
-          CODEX_HOME: codexHome,
-          GENIE_SMOKE_CODEX_KEY: process.env.GENIE_LLM_API_KEY ?? "",
-        },
-        input: "",
-        encoding: "utf8",
-        timeout: 170_000,
-        maxBuffer: 64 * 1024 * 1024,
-      });
+        const result = spawnSync(
+          "codex",
+          [...CODEX_EXEC_ARGS, prompt],
+          {
+            cwd: REPO_ROOT,
+            env: {
+              ...process.env,
+              CODEX_HOME: codexHome,
+              GENIE_SMOKE_CODEX_KEY: process.env.GENIE_LLM_API_KEY ?? "",
+            },
+            input: "",
+            encoding: "utf8",
+            timeout: 170_000,
+            maxBuffer: 64 * 1024 * 1024,
+          },
+        );
 
-      const reportsDir = join(REPO_ROOT, "reports");
-      await mkdir(reportsDir, { recursive: true });
-      const stdout = result.stdout ?? "";
-      await writeFile(join(reportsDir, "codex-repl-transcript.jsonl"), stdout);
-      await writeFile(join(reportsDir, "codex-repl-stderr.log"), result.stderr ?? "");
+        const reportsDir = join(REPO_ROOT, "reports");
+        await mkdir(reportsDir, { recursive: true });
+        const stdout = result.stdout ?? "";
+        await writeFile(join(reportsDir, "codex-repl-transcript.jsonl"), stdout);
+        await writeFile(join(reportsDir, "codex-repl-stderr.log"), result.stderr ?? "");
 
-      const events = stdout
-        .split("\n")
-        .filter((line) => line.trim())
-        .map((line) => {
-          try {
-            return JSON.parse(line) as { type?: string; item?: Record<string, unknown> };
-          } catch {
-            return null;
-          }
-        });
-      expect(events, "Codex --json output must remain valid JSONL").not.toContain(null);
-      const parsedEvents = events.filter(
-        (e): e is { type?: string; item?: Record<string, unknown> } => e !== null,
-      );
+        const events = stdout
+          .split("\n")
+          .filter((line) => line.trim())
+          .map((line) => {
+            try {
+              return JSON.parse(line) as { type?: string; item?: Record<string, unknown> };
+            } catch {
+              return null;
+            }
+          });
+        expect(events, "Codex --json output must remain valid JSONL").not.toContain(null);
+        const parsedEvents = events.filter(
+          (e): e is { type?: string; item?: Record<string, unknown> } => e !== null,
+        );
 
-      // `item.completed` mcp_tool_call events against the genie server,
-      // in the order Codex actually completed them (dedupe against the
-      // `item.started` copy of the same item id — only the terminal
-      // `item.completed` record carries `status`/`result`).
-      const genieToolCallsCompleted = parsedEvents.filter(
-        (e) =>
-          e.type === "item.completed" &&
-          e.item?.type === "mcp_tool_call" &&
-          e.item?.server === "genie",
-      );
+        // `item.completed` mcp_tool_call events against the genie server,
+        // in the order Codex actually completed them (dedupe against the
+        // `item.started` copy of the same item id — only the terminal
+        // `item.completed` record carries `status`/`result`).
+        const genieToolCallsCompleted = parsedEvents.filter(
+          (e) =>
+            e.type === "item.completed" &&
+            e.item?.type === "mcp_tool_call" &&
+            e.item?.server === "genie",
+        );
 
-      const terminalFailure = parsedEvents.find(
-        (e) => e.type === "turn.failed" || (e.type === "error" && typeof e.item === "undefined"),
-      );
-      expect(
-        genieToolCallsCompleted.length,
-        "expected Codex's configured driving-model endpoint to reach at least one genie " +
-          `tool call; terminal failure: ${JSON.stringify(terminalFailure)} — ` +
-          "see reports/codex-repl-transcript.jsonl",
-      ).toBeGreaterThan(0);
-
-      // AC6 asks for the FULL four-verb chain, not "at least one genie
-      // tool call succeeded" — a single successful create_kit call would
-      // satisfy the old `.toBeGreaterThan(0)` assertion while conjure,
-      // plan, write_files, and preview never ran. Assert each expected
-      // verb was called, completed successfully (no per-call `error`,
-      // `status: "completed"` not `"failed"`), and appeared in the
-      // documented order — then assert the whole Codex turn itself
-      // finished as `turn.completed` (not `turn.failed`/aborted).
-      // Codex's transcript records the tool name exactly as advertised by
-      // the MCP server — genie's tools are namespaced `mcp__genie__<verb>`
-      // (see the `listTools()` assertion earlier in this file), not the
-      // bare verb name.
-      const EXPECTED_VERB_ORDER = [
-        "mcp__genie__create_kit",
-        "mcp__genie__conjure",
-        "mcp__genie__plan",
-        "mcp__genie__write_files",
-        "mcp__genie__preview",
-      ];
-
-      const calledVerbsInOrder = genieToolCallsCompleted.map((e) => e.item?.tool);
-      const failedCalls = genieToolCallsCompleted.filter(
-        (e) => e.item?.status !== "completed" || e.item?.error,
-      );
-
-      const transcriptHint = "see reports/codex-repl-transcript.jsonl";
-
-      expect(
-        failedCalls,
-        `expected every genie mcp_tool_call to complete successfully (no per-call errors), ` +
-          `got failures: ${JSON.stringify(failedCalls)} — ${transcriptHint}`,
-      ).toHaveLength(0);
-
-      for (const verb of EXPECTED_VERB_ORDER) {
+        const terminalFailure = parsedEvents.find(
+          (e) => e.type === "turn.failed" || (e.type === "error" && typeof e.item === "undefined"),
+        );
         expect(
-          calledVerbsInOrder,
-          `expected genie tool "${verb}" to be called during the chain — ${transcriptHint}. ` +
-            `actual call order: ${JSON.stringify(calledVerbsInOrder)}`,
-        ).toContain(verb);
-      }
+          genieToolCallsCompleted.length,
+          "expected Codex's configured driving-model endpoint to reach at least one genie " +
+            `tool call; terminal failure: ${JSON.stringify(terminalFailure)} — ` +
+            "see reports/codex-repl-transcript.jsonl",
+        ).toBeGreaterThan(0);
 
-      // Order matters: each verb in EXPECTED_VERB_ORDER must appear no
-      // earlier than the previous one (duplicate/retry calls of the same
-      // verb are fine; out-of-order verbs are not).
-      let cursor = -1;
-      for (const verb of EXPECTED_VERB_ORDER) {
-        const idx = calledVerbsInOrder.indexOf(verb, cursor + 1);
+        // AC6 asks for the FULL four-verb chain, not "at least one genie
+        // tool call succeeded" — a single successful create_kit call would
+        // satisfy the old `.toBeGreaterThan(0)` assertion while conjure,
+        // plan, write_files, and preview never ran. Assert each expected
+        // verb was called, completed successfully (no per-call `error`,
+        // `status: "completed"` not `"failed"`), and appeared in the
+        // documented order — then assert the whole Codex turn itself
+        // finished as `turn.completed` (not `turn.failed`/aborted).
+        // Codex's transcript records the tool name exactly as advertised by
+        // the MCP server — genie's tools are namespaced `mcp__genie__<verb>`
+        // (see the `listTools()` assertion earlier in this file), not the
+        // bare verb name.
+        const EXPECTED_VERB_ORDER = [
+          "mcp__genie__create_kit",
+          "mcp__genie__conjure",
+          "mcp__genie__plan",
+          "mcp__genie__write_files",
+          "mcp__genie__preview",
+        ];
+
+        const calledVerbsInOrder = genieToolCallsCompleted.map((e) => e.item?.tool);
+        const failedCalls = genieToolCallsCompleted.filter(
+          (e) => e.item?.status !== "completed" || e.item?.error,
+        );
+
+        const transcriptHint = "see reports/codex-repl-transcript.jsonl";
+
         expect(
-          idx,
-          `expected "${verb}" to be called after the preceding chain verbs — ` +
-            `actual call order: ${JSON.stringify(calledVerbsInOrder)} — ${transcriptHint}`,
-        ).toBeGreaterThan(cursor);
-        cursor = idx;
-      }
+          failedCalls,
+          `expected every genie mcp_tool_call to complete successfully (no per-call errors), ` +
+            `got failures: ${JSON.stringify(failedCalls)} — ${transcriptHint}`,
+        ).toHaveLength(0);
 
-      // The transcript is the CI evidence (reports/codex-repl-transcript.jsonl);
-      // this assertion proves Codex's own turn actually finished — not
-      // merely that the process exited zero while the model gave up
-      // partway through the chain.
-      const turnCompleted = parsedEvents.some((e) => e.type === "turn.completed");
-      expect(
-        turnCompleted,
-        `expected a turn.completed event (Codex's own turn must finish, not abort/fail) — ${transcriptHint}`,
-      ).toBe(true);
-    }, 180_000);
+        for (const verb of EXPECTED_VERB_ORDER) {
+          expect(
+            calledVerbsInOrder,
+            `expected genie tool "${verb}" to be called during the chain — ${transcriptHint}. ` +
+              `actual call order: ${JSON.stringify(calledVerbsInOrder)}`,
+          ).toContain(verb);
+        }
+
+        // Order matters: each verb in EXPECTED_VERB_ORDER must appear no
+        // earlier than the previous one (duplicate/retry calls of the same
+        // verb are fine; out-of-order verbs are not).
+        let cursor = -1;
+        for (const verb of EXPECTED_VERB_ORDER) {
+          const idx = calledVerbsInOrder.indexOf(verb, cursor + 1);
+          expect(
+            idx,
+            `expected "${verb}" to be called after the preceding chain verbs — ` +
+              `actual call order: ${JSON.stringify(calledVerbsInOrder)} — ${transcriptHint}`,
+          ).toBeGreaterThan(cursor);
+          cursor = idx;
+        }
+
+        // The transcript is the CI evidence (reports/codex-repl-transcript.jsonl);
+        // this assertion proves Codex's own turn actually finished — not
+        // merely that the process exited zero while the model gave up
+        // partway through the chain.
+        const turnCompleted = parsedEvents.some((e) => e.type === "turn.completed");
+        expect(
+          turnCompleted,
+          `expected a turn.completed event (Codex's own turn must finish, not abort/fail) — ${transcriptHint}`,
+        ).toBe(true);
+      },
+      180_000,
+    );
   },
 );
