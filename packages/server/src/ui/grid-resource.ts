@@ -169,6 +169,24 @@ export interface GridResourceOptions {
  * the exact URI `preview` emits. Gating on the shape meant an imported kit like
  * `My_Kit.2` silently rendered an EMPTY grid — the same visible-but-unusable
  * defect one layer below the tool boundary.
+ *
+ * ⚠️ NAME COLLISION — a second, unrelated `resolveKitDir` is exported from
+ * `src/tools/preview.ts`. Both apply the SAME rule (`isSafeKitId`), so they
+ * always agree on *which* ids are safe; they differ in what happens when one
+ * is not:
+ *
+ *   |             | this function (ui)            | tools/preview.ts           |
+ *   |-------------|-------------------------------|----------------------------|
+ *   | kitId param | `string \| undefined`         | `string`                   |
+ *   | returns     | `string \| null`              | `string`                   |
+ *   | unsafe id   | returns `null`                | throws `InvalidKitIdError` |
+ *   | rationale   | degrade to an EMPTY grid      | surface a typed error      |
+ *   | caller      | `ui://genie/grid` resource    | `runPreview`               |
+ *
+ * `create_kit.test.ts` imports THIS one. Grepping the bare name and landing on
+ * `preview.ts` mispredicts that test's failure mode — assume neither
+ * declaration's behaviour from the other; `kit-id-gate.test.ts` imports both
+ * under aliases for exactly this reason.
  */
 export function resolveKitDir(kitsRoot: string, kitId: string | undefined): string | null {
   if (kitId === undefined || !isSafeKitId(kitId)) return null;
