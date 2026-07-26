@@ -666,11 +666,18 @@ export class LocalFsKitStore implements KitStore {
     // discover — and, since `join` NORMALIZES `..` rather than rejecting it, an
     // id of `..` would resolve the new directory outside the kits root.
     //
-    // Same `NotFoundError` the other three `isSafeKitId` rejections raise
-    // (`safeKitDir` here, `git-host.ts` twice): an unsafe id names no valid kit,
-    // and AC4 keeps new error types out of the `KitStore` contract. This is the
-    // local adapter catching up to GitHost, which POSTs the id as a repo NAME
-    // and already propagates the host's 4xx for one a git host will not accept.
+    // Same `NotFoundError` every other `isSafeKitId` rejection raises, in BOTH
+    // adapters: an unsafe id names no valid kit, and AC4 keeps new error types
+    // out of the `KitStore` contract. Deliberately no site count here — an
+    // earlier version said "`git-host.ts` twice" and this PR then added a third.
+    //
+    // Both adapters apply the predicate BEFORE creating anything, and neither
+    // guard is redundant. Do NOT justify one by the other's backend: an earlier
+    // version claimed GitHost "already propagates the host's 4xx" for such a
+    // name. It does not — the host ACCEPTED `unsafe\kit`, the POST succeeded,
+    // and only the subsequent `.kit.json` write 404'd, leaving an orphan repo.
+    // `git-host.ts` needs its own up-front guard for exactly the reason this
+    // one exists. Error contract pinned in `test/store-conformance.test.ts`.
     if (!isSafeKitId(id)) throw new NotFoundError("Kit", id);
     const dir = this.kitDir(id);
 
