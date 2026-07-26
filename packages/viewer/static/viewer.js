@@ -2817,13 +2817,24 @@
       // so a later draft deleting that very path left the tab prompting forever about a file
       // already gone, steering the user into retrying draft 1 and overwriting the newer bytes.
       // Reconcile EVERY draft (this one included, so a partial retry narrows its own set).
-      var confirmed = outcome.resolvedDeletes || outcome.deletedPaths || [];
-      if (confirmed.length) {
+      // Copilot round 8 — a WRITE resolves the path too. Deletes are confined to the component
+      // folder, so only the same component can resurrect one; when it does, the user has newer
+      // bytes there and retrying the old draft would destroy them. Leaving the entry latched
+      // prompts forever about a removal that must no longer happen.
+      var resolved = (outcome.resolvedDeletes || outcome.deletedPaths || []).concat(
+        outcome.writtenPaths || [],
+      );
+      // Copilot round 8 — scoped to the applying KIT. The same relative path in another kit is a
+      // different file; clearing it there disarms the only guard over work still on disk.
+      var appliedKit = (meta[draft.id] && meta[draft.id].kitId) || "";
+      if (resolved.length) {
         for (var draftId in meta) {
-          var pending = meta[draftId] && meta[draftId].pendingDeletes;
+          var entry = meta[draftId];
+          var pending = entry && entry.pendingDeletes;
           if (!pending || !pending.length) continue;
-          meta[draftId].pendingDeletes = pending.filter(function (path) {
-            return confirmed.indexOf(path) === -1;
+          if ((entry.kitId || "") !== appliedKit) continue;
+          entry.pendingDeletes = pending.filter(function (path) {
+            return resolved.indexOf(path) === -1;
           });
         }
       }

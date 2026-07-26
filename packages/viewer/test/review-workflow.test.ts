@@ -4150,11 +4150,11 @@ describe("unload guard survives a stranded deletion (#256)", () => {
     return loadWired({ ...HAPPY_REPLIES, mcp__genie__delete_files: deleteReply });
   }
 
-  function seed(wired: ReturnType<typeof loadWired>, diff: string | undefined) {
+  function seed(wired: ReturnType<typeof loadWired>, diff: string | undefined, kitId = "my-kit") {
     // `componentInKit: false` is the honest state for a draft whose renamed bytes are not on
     // disk yet — and it is what arms the guard in the first place.
     wired.controller.addDraft(diff === undefined ? conjureResult() : refineResult({ diff }), {
-      kitId: "my-kit",
+      kitId,
       kitLabel: "My Kit",
       model: "m",
       componentInKit: false,
@@ -4188,6 +4188,57 @@ describe("unload guard survives a stranded deletion (#256)", () => {
     expect(wired.document.getElementById("review-status")!.textContent).toMatch(/stale/i);
     expect(wired.controller.state().appliedDraftId).toBeNull();
     expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("keeps a stranded delete armed when ANOTHER KIT removes the same path (#256 round 8)", async () => {
+    const wired = loadDeleting(flakyDeletes(1));
+    seed(wired, DELETE_DIFF); // kit "my-kit" — this delete strands
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    // A draft in a DIFFERENT kit removes the same relative path. That is a different file on
+    // disk; "my-kit" is still stale, and this is the only record of which path it was.
+    seed(wired, DELETE_DIFF, "other-kit");
+    await apply(wired, 8);
+
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("stops prompting once a newer draft WRITES the stranded path (#256 round 8)", async () => {
+    // Draft 1 fails to remove the old card; draft 2 then legitimately rewrites that same path
+    // (deletes are confined to the component folder, so only the same component can resurrect
+    // it). The user has chosen, in newer work, to have those bytes there — retrying draft 1
+    // would destroy them, the same hazard round 7 closed for the delete-delete case.
+    let writes = 0;
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__delete_files: { deletedPaths: [], notFoundPaths: [] },
+      mcp__genie__write_files: () => {
+        writes += 1;
+        return {
+          writtenPaths:
+            writes === 1
+              ? ["components/actions/Button/Button.html"]
+              : ["components/actions/Button/Button.html", STRANDED],
+        };
+      },
+    });
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    wired.controller.addDraft(
+      conjureResult({
+        files: [
+          fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Go</button>\n`),
+          fileEntry(STRANDED, `${MARKER}\n<button>Back</button>\n`),
+        ],
+      }),
+      { kitId: "my-kit", kitLabel: "My Kit", model: "m", componentInKit: false },
+    );
+    await apply(wired, 7);
+
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
   });
 
   it("stops prompting once the retry finally removes the file", async () => {
