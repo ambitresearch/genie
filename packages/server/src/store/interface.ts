@@ -316,6 +316,22 @@ export interface KitStore {
 
   /**
    * Create a new kit with the given name and metadata. Returns its metadata.
+   *
+   * `kitId`, when supplied, MUST satisfy `isSafeKitId` (non-empty, not `.` or
+   * `..`, no `/` or `\`). This is a precondition, not a hint: it is checked
+   * before any repo/directory is created, so a rejected id leaves no partial
+   * kit behind. Both adapters reject a violating id with
+   * `NotFoundError("Kit", id)` — the same error every other `isSafeKitId`
+   * rejection in the store layer reports (`LocalFsKitStore.safeKitDir`,
+   * `GitHostKitStore.listFiles`/`readFile`). Implementations MUST NOT surface a
+   * different error for this case; `test/store-conformance.test.ts` pins it on
+   * every adapter.
+   *
+   * Callers that mint ids through `buildKitId` never trip this — its output is
+   * a slug. The rule exists because this method is public and the parameter is
+   * caller-supplied, so "the tool layer always mints it" is not an invariant of
+   * the CONTRACT, only of one caller.
+   *
    * Throws KitAlreadyExistsError if a kit with the same ID already exists.
    */
   createKit(name: string, kitId?: string): Promise<KitMeta>;

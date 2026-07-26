@@ -698,6 +698,19 @@ export class GitHostKitStore implements KitStore {
 
   async createKit(name: string, kitId?: string): Promise<KitMeta> {
     const repoName = kitId ?? name;
+    // Gate the RESOLVED repo name, before the POST. `createKit(name, kitId?)` is
+    // public, so the id is caller-supplied, and every other `isSafeKitId`
+    // rejection on this adapter (`listFiles`, `readFile`) already reports
+    // NotFoundError — the create path must match or the contract is two
+    // contracts, one per adapter.
+    //
+    // This must run BEFORE the repo is created, not merely somewhere on the
+    // path. Without it the POST succeeded and `writeKitMeta` then 404'd on
+    // `/contents/.kit.json`, which coincidentally surfaced a NotFoundError too
+    // — so the rejection LOOKED right while leaving an orphaned repo with no
+    // `.kit.json`, i.e. a created repo that `getKit` cannot see (that file is
+    // the kit-existence marker, per the scaffolding note below).
+    if (!isSafeKitId(repoName)) throw new NotFoundError("Kit", repoName);
     try {
       const repo = await this.api<RepoResponse>(
         "POST",

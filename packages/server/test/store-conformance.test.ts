@@ -162,6 +162,36 @@ function kitStoreContract(
       expect(fetched.name).toBe("Display Kit");
     });
 
+    it("🔒 createKit rejects a kitId isSafeKitId rejects, with the same error on every adapter", async () => {
+      // `createKit(name, kitId?)` is PUBLIC, so the optional id is caller-supplied.
+      // Every other `isSafeKitId` rejection in both adapters reports NotFoundError
+      // (`local.ts` safeKitDir, `git-host.ts` ×2), so the create path must too:
+      // a precondition that rejects with a different error per adapter is not one
+      // contract, it is two. This is the adapter-neutral half of the guard — the
+      // filesystem side-effect half stays in the LocalFs block below, because only
+      // that adapter can express "wrote nothing".
+      //
+      // Deliberately in the SHARED contract, per this suite's own rule three tests
+      // up: pinning an adapter-neutral invariant on ONE adapter is worse than not
+      // pinning it, because the suite goes green and reads as coverage.
+      await expect(store.createKit("Unsafe Kit", "unsafe\\kit")).rejects.toThrow(NotFoundError);
+      // Assert the error's IDENTITY, not just its class. Before the GitHost
+      // guard existed this rejected with NotFoundError anyway — but from
+      // `writeKitMeta` 404ing on `/contents/.kit.json` AFTER the repo had been
+      // created, i.e. `{ resource: "resource", id: "/repos/…" }` and an orphaned
+      // repo left behind. A bare `toThrow(NotFoundError)` is green in both
+      // worlds and therefore pins nothing; only `resource`/`id` separate a
+      // precondition rejection from an incidental downstream 404.
+      await expect(store.createKit("Unsafe Kit", "unsafe\\kit")).rejects.toMatchObject({
+        resource: "Kit",
+        id: "unsafe\\kit",
+      });
+      await expect(store.createKit("Escape", "..")).rejects.toMatchObject({
+        resource: "Kit",
+        id: "..",
+      });
+    });
+
     it("listKits returns created kits", async () => {
       await store.createKit("kit-a");
       await store.createKit("kit-b");
@@ -840,10 +870,13 @@ describe("LocalFsKitStore — adapter-specific", () => {
     // Worse, `join` NORMALIZES `..` rather than rejecting it, so an unsafe id
     // also resolved that directory OUTSIDE the kits root.
     //
-    // GitHost cannot reach this state — it POSTs the id as a repo NAME and a
-    // git host rejects `unsafe\kit` with a 4xx that `createKit` propagates — so
-    // this is the local adapter catching up to a rejection GitHost already had,
-    // the same divergence this PR fixes for the reported id.
+    // The ERROR CONTRACT for this input is pinned adapter-neutrally in the
+    // shared block above. What stays here is the half only this adapter can
+    // express: that nothing was written to the filesystem. (An earlier version
+    // of this comment claimed "GitHost cannot reach this state — a git host
+    // rejects the name with a 4xx". That was wrong: GitHost created the repo
+    // and only then 404'd writing `.kit.json`, leaving an orphan. Both adapters
+    // now reject up front.)
     await expect(store.createKit("Unsafe Kit", "unsafe\\kit")).rejects.toThrow(NotFoundError);
 
     // Assert against the FILESYSTEM, not `listKits`. The listing filter hides an
