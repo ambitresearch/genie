@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { KitMeta, KitStore } from "../store/interface.js";
 import { KIT_TYPE } from "../store/interface.js";
+import { isSafeKitId } from "../store/kit-files.js";
 
 export const LIST_KITS_TOOL_NAME = "mcp__genie__list_kits";
 
@@ -31,10 +32,31 @@ type ListableKitMeta = KitMeta & {
   canEdit?: boolean;
 };
 
+/**
+ * The listing every kit-taking verb is discovered through, and therefore the
+ * place `list_kits`' contract — "the ids it returns are valid input" — is kept.
+ *
+ * Two filters, for two different reasons:
+ *
+ *   - `type === KIT_TYPE` drops non-genie records an interop adapter may share
+ *     the same store with.
+ *   - `isSafeKitId` drops ids no kit-taking verb would accept. A store adapter
+ *     surfaces whatever the filesystem or git host holds — `LocalFsKitStore`
+ *     returns `.kit.json`'s `id` verbatim, and on POSIX a directory may legally
+ *     be named `victim.` or `victim ` — but the gate is deliberately platform-
+ *     INDEPENDENT (a plan authored on Linux may run on Windows, where those
+ *     spellings open the sibling `victim`). Without this filter, tightening the
+ *     gate silently re-creates the defect this discovery step exists to avoid:
+ *     an id that is advertised and then universally refused.
+ *
+ * Filtering rather than relaxing the gate is the safe direction. The excluded id
+ * is unusable on every platform, so hiding it removes a dead end; admitting it
+ * would make an id that is merely useless on Linux destructive on Windows.
+ */
 export async function listWritableKits(store: KitStore): Promise<ListKitsEntry[]> {
   const kits = (await store.listKits()) as ListableKitMeta[];
   return kits
-    .filter((kit) => kit.type === KIT_TYPE)
+    .filter((kit) => kit.type === KIT_TYPE && isSafeKitId(kit.id))
     .map((kit) => ({
       id: kit.id,
       name: kit.name,

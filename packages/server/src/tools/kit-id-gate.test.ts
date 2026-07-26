@@ -6,12 +6,15 @@
  *   - `isSafeKitId` (store/kit-files.ts) — the SAFETY rule, and the authority for
  *     its own rejection set: read the predicate, do not re-derive it here. It is
  *     the rule both store adapters (`store/local.ts`, `store/git-host.ts`) enforce.
- *     It guarantees an accepted id NAMES EXACTLY ONE KIT — which is strictly
+ *     It guarantees an accepted id SPELLS THE DIRECTORY IT OPENS — strictly
  *     stronger than "stays under the kits root", and the distinction is load-
  *     bearing: `victim.` never leaves the root, yet Windows trims the trailing
  *     dot at the syscall boundary and opens the sibling kit `victim`. Framing
  *     this as pure containment ("everything else is a literal child, so it
  *     cannot escape") is what let three separate alias classes through review.
+ *     It does NOT promise the filesystem has only one spelling for that
+ *     directory — case folding and NTFS 8.3 short names are alternate spellings
+ *     of ONE kit, explicitly out of scope; the predicate names them.
  *   - `KIT_ID_PATTERN` `/^[a-z0-9-]{3,64}$/` (tools/get_kit.ts) — a SHAPE rule
  *     describing ids MINTED by `create_kit`.
  *
@@ -48,6 +51,7 @@ import { MANIFEST_PATH } from "../store/manifest.js";
 import { resolveKitDir as resolveGridKitDir } from "../ui/grid-resource.js";
 import { seedKit } from "../../test/helpers/seed-kit.js";
 import { ProjectNotFoundError, getKit } from "./get_kit.js";
+import { listWritableKits } from "./list_kits.js";
 import type { BootRequest, BootedViewer, ViewerBooter } from "./preview.js";
 import { InvalidKitIdError, resolveKitDir as resolvePreviewKitDir } from "./preview.js";
 
@@ -55,8 +59,8 @@ import { InvalidKitIdError, resolveKitDir as resolvePreviewKitDir } from "./prev
  * Ids a `create_kit`-minted slug would never produce but an imported or
  * git-host kit legitimately can. Every one of these is safe on BOTH counts
  * `isSafeKitId` guarantees: each resolves to a literal child of the kits root
- * (never above it) AND survives a Win32 trailing-[ .] trim unchanged, so it
- * names exactly one kit on every platform.
+ * (never above it) AND survives a Win32 trailing-[ .] trim unchanged, so each
+ * spells the directory it opens on every platform.
  */
 const IMPORTED_KIT_IDS = ["My_Kit.2", "a", "UPPER"] as const;
 
@@ -673,4 +677,95 @@ describe("kitId gate — the hole in list_kits' promise is a STORE defect", () =
     // containment-safe and clears the schema. Documented, not endorsed.
     expect(got.isError, `expected the advertised id to 404: ${JSON.stringify(got)}`).toBe(true);
   });
+});
+
+// ─── Part H: a TIGHTENING must not re-break `list_kits`' promise either ──────
+//
+// Review round 7 on #277, and a defect this branch introduced itself.
+//
+// The trailing-[ .] guard is platform-INDEPENDENT by design: a plan authored on
+// Linux may be executed on Windows, and a git-host kit is shared across both, so
+// the set of usable ids cannot depend on where the server happens to run.
+// Consequence: `victim.` and `victim ` are refused everywhere — including POSIX,
+// where they are legitimate, DISTINCT directory names that `mkdir` accepts.
+//
+// `LocalFsKitStore.listKits` applies no predicate at all, so tightening the gate
+// without touching the listing put `list_kits` straight back into the position
+// this whole file exists to fix — advertising an id every kit-taking verb
+// refuses. Part A asserts that promise; this part stops a safety fix from
+// quietly falsifying it.
+//
+// The fix belongs at the LISTING, not the gate. Relaxing the gate per-platform
+// would be strictly worse: it would make an id that is merely unusable on Linux
+// actively DESTRUCTIVE on Windows, where `victim.` opens the sibling `victim`
+// through the unsafe `kitDir` that `writeFiles`/`deleteFile` resolve through.
+//
+// `listWritableKits` is the single choke point the `list_kits` tool renders, so
+// one filter there restores the promise for every store adapter at once.
+//
+// Distinct from Part G: that pin is about WHICH FIELD is authoritative for a
+// LocalFs kit's identity (`meta.id` vs the directory name) — its `My_Kit.2`
+// fixture clears `isSafeKitId`, so it is untouched by this filter and stays
+// pinned-not-fixed.
+describe("kitId gate — list_kits never advertises an id the gate refuses", () => {
+  let tempDir: string;
+  let kitsRoot: string;
+
+  /** Refused by `isSafeKitId`: Win32 trims the trailing dot onto `victim`. */
+  const ALIAS_ID = "victim.";
+  /** An ordinary kit, so an empty listing cannot pass these tests by accident. */
+  const SAFE_ID = "My_Kit.2";
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "genie-kitid-listing-"));
+    kitsRoot = join(tempDir, "kits");
+    await mkdir(kitsRoot, { recursive: true });
+    await seedImportedKit(kitsRoot, SAFE_ID);
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  // Skipped on Windows because the fixture cannot be built there: `mkdir`
+  // applies the same trailing-[ .] trim, so `victim.` would silently become a
+  // second handle on `victim`. That impossibility is exactly why the id is
+  // refused; it is also why this hole only exists on POSIX.
+  it.skipIf(process.platform === "win32")(
+    "🔒 an id the shared gate refuses is not advertised by list_kits",
+    async () => {
+      await seedImportedKit(kitsRoot, ALIAS_ID);
+      const store = new LocalFsKitStore(kitsRoot);
+
+      // Precondition: the store really does surface it, so the filter below is
+      // load-bearing rather than vacuous.
+      expect((await store.listKits()).map((kit) => kit.id)).toContain(ALIAS_ID);
+      expect(isSafeKitId(ALIAS_ID)).toBe(false);
+
+      const listed = await listWritableKits(store);
+      const ids = listed.map((kit) => kit.id);
+
+      expect(ids).not.toContain(ALIAS_ID);
+      expect(ids).toContain(SAFE_ID);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "🔒 every id list_kits advertises round-trips through get_kit",
+    async () => {
+      await seedImportedKit(kitsRoot, ALIAS_ID);
+      const store = new LocalFsKitStore(kitsRoot);
+
+      const listed = await listWritableKits(store);
+      expect(listed.length).toBeGreaterThan(0);
+
+      // The promise, stated as a property rather than a case list: anything
+      // `list_kits` offers must clear the gate AND resolve. A future tightening
+      // of `isSafeKitId` that forgets the listing fails here.
+      for (const kit of listed) {
+        expect(isSafeKitId(kit.id), `advertised but gate-refused: ${kit.id}`).toBe(true);
+        await expect(getKit(store, { kitId: kit.id })).resolves.toMatchObject({ id: kit.id });
+      }
+    },
+  );
 });
