@@ -869,27 +869,25 @@ async function verifyClineHubDaemonPid(
 /**
  * Joins every Cline hub daemon rooted in `base` so the temp tree can be removed
  * without racing an active writer. Returns the outcome per pid for diagnostics,
- * plus any lock pid that could not be proven to belong to this run.
+ * plus any pid that could not be proven to belong to this run.
  */
 async function stopClineHubDaemons(
   base: string,
   options: StopClineHubDaemonsOptions = {},
 ): Promise<ClineHubDaemonSweep> {
-  // Scanned pids came straight off a live `ps` table, matched on both the
-  // daemon flag and this run's `mkdtemp` suffix, so they are self-verifying.
-  const scanned = await scanClineHubDaemonPids(base, options);
   const outcomes = new Map<number, ClineHubTermination>();
   const unverified: number[] = [];
 
-  for (const pid of new Set(scanned)) {
-    outcomes.set(pid, await terminateAndWait(pid, options));
-  }
+  // Both the `ps` table and the discovery lock are snapshots, and this sweep
+  // awaits each daemon's exit before moving to the next, so either source can
+  // go stale mid-loop and hand us a recycled pid. Every candidate therefore
+  // re-proves itself immediately before it is signalled, however it was found.
+  const candidates = new Set([
+    ...(await scanClineHubDaemonPids(base, options)),
+    ...(await readClineHubLockPids(base)),
+  ]);
 
-  // Lock pids get no such guarantee, so each one has to prove itself first.
-  for (const pid of await readClineHubLockPids(base)) {
-    if (outcomes.has(pid)) {
-      continue;
-    }
+  for (const pid of candidates) {
     const verdict = await verifyClineHubDaemonPid(pid, base, options);
     if (verdict === "match") {
       outcomes.set(pid, await terminateAndWait(pid, options));
@@ -962,6 +960,10 @@ it("keeps the temp tree when a hub daemon cannot be reaped", async () => {
       },
       isAlive: () => true,
       sendSignal: () => {},
+      // Pin the platform so this exercises the *timeout* path on every host.
+      // On Windows the pid would be unverifiable, and the tree would be kept
+      // for an unrelated reason -- a green but vacuous test.
+      platform: "linux",
       // Proves the pid is this run's hub, so the *timeout* path is what gets
       // exercised here rather than the unverifiable-pid path below.
       describeProcess: () => `cline ${CLINE_HUB_DAEMON_FLAG} --cwd ${base}`,
@@ -1049,6 +1051,41 @@ it("leaves the temp tree when a lock pid cannot be inspected", async () => {
     expect(signalled).toEqual([]);
     await expect(stat(base)).resolves.toBeTruthy();
     expect(warnings.join("\n")).toContain("424243");
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+it("re-checks a scanned pid at signal time, not just at scan time", async () => {
+  // `ps` is a snapshot, and this sweep awaits each daemon's exit before moving
+  // to the next, so a pid can die and be recycled between the scan and its
+  // signal. That makes scan results exactly as stale as the discovery lock.
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  const recycled = 424_244;
+  const signalled: number[] = [];
+  let clock = 0;
+
+  try {
+    await removeClineSmokeTree(base, {
+      // The scan saw a genuine hub daemon...
+      listProcesses: () => `${recycled} cline ${CLINE_HUB_DAEMON_FLAG} --cwd ${base}`,
+      // ...but by the time we signal, that pid belongs to something else.
+      describeProcess: () => "/usr/bin/unrelated --not-a-daemon",
+      escalateAfterMs: 10,
+      timeoutMs: 100,
+      pollMs: 5,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      isAlive: () => true,
+      sendSignal: (pid) => signalled.push(pid),
+      warn: () => {},
+    });
+
+    expect(signalled).toEqual([]);
+    // A refuted pid means our daemon is gone, so the tree is safe to remove.
+    await expect(stat(base)).rejects.toThrow(/ENOENT/);
   } finally {
     await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
@@ -1150,17 +1187,23 @@ it("treats an already-reaped hub daemon as nothing to do", async () => {
   ).toBe("already-exited");
 });
 
-it("joins a detached hub daemon before removing the temp tree (#259)", async () => {
-  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
-  const dataDir = join(base, ".cline", "data");
-  const lockPath = join(base, CLINE_HUB_LOCK_PATHS[0]!);
-  let daemonPid: number | undefined;
+// POSIX-only: reaping the daemon needs `ps` for identity plus real signals, so
+// on Windows every live pid is correctly unverifiable and the tree is left on
+// disk by design. Asserting removal there would be asserting a contract this
+// teardown deliberately does not offer.
+it.skipIf(process.platform === "win32")(
+  "joins a detached hub daemon before removing the temp tree (#259)",
+  async () => {
+    const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+    const dataDir = join(base, ".cline", "data");
+    const lockPath = join(base, CLINE_HUB_LOCK_PATHS[0]!);
+    let daemonPid: number | undefined;
 
-  // Stands in for `cline --cline-hub-daemon`: launched through a throwaway
-  // parent so it is reparented to PID 1 (no ChildProcess handle can join it),
-  // carrying the same argv markers the real daemon does, and rewriting
-  // `<base>/.cline/data/db` every 2ms so teardown is guaranteed to be mid-write.
-  const daemonSource = `
+    // Stands in for `cline --cline-hub-daemon`: launched through a throwaway
+    // parent so it is reparented to PID 1 (no ChildProcess handle can join it),
+    // carrying the same argv markers the real daemon does, and rewriting
+    // `<base>/.cline/data/db` every 2ms so teardown is guaranteed to be mid-write.
+    const daemonSource = `
     const { mkdirSync, writeFileSync } = require("node:fs");
     const { dirname, join } = require("node:path");
     const dataDir = process.env.GENIE_TEST_HUB_DATA_DIR;
@@ -1176,7 +1219,7 @@ it("joins a detached hub daemon before removing the temp tree (#259)", async () 
       } catch {}
     }, 2);
   `;
-  const launcherSource = `
+    const launcherSource = `
     const { spawn } = require("node:child_process");
     const child = spawn(
       process.execPath,
@@ -1193,46 +1236,48 @@ it("joins a detached hub daemon before removing the temp tree (#259)", async () 
     child.unref();
   `;
 
-  try {
-    await execFileAsync(process.execPath, ["-e", launcherSource], {
-      env: {
-        ...process.env,
-        GENIE_TEST_HUB_SRC: daemonSource,
-        GENIE_TEST_HUB_CWD: base,
-        GENIE_TEST_HUB_DATA_DIR: dataDir,
-        GENIE_TEST_HUB_LOCK: lockPath,
-      },
-    });
+    try {
+      await execFileAsync(process.execPath, ["-e", launcherSource], {
+        env: {
+          ...process.env,
+          GENIE_TEST_HUB_SRC: daemonSource,
+          GENIE_TEST_HUB_CWD: base,
+          GENIE_TEST_HUB_DATA_DIR: dataDir,
+          GENIE_TEST_HUB_LOCK: lockPath,
+        },
+      });
 
-    // The daemon publishes its pid to the discovery lock once it is writing.
-    const deadline = Date.now() + 10_000;
-    while (daemonPid === undefined && Date.now() < deadline) {
-      [daemonPid] = await readClineHubLockPids(base);
-      if (daemonPid === undefined) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+      // The daemon publishes its pid to the discovery lock once it is writing.
+      const deadline = Date.now() + 10_000;
+      while (daemonPid === undefined && Date.now() < deadline) {
+        [daemonPid] = await readClineHubLockPids(base);
+        if (daemonPid === undefined) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
       }
-    }
-    expect(daemonPid).toBeTypeOf("number");
-    expect(processIsAlive(daemonPid!)).toBe(true);
-    // The `ps` scan is a no-op on Windows, where the discovery lock above is
-    // the only discovery channel; asserting on it there would always fail.
-    if (process.platform !== "win32") {
-      expect(await scanClineHubDaemonPids(base)).toContain(daemonPid);
-    }
+      expect(daemonPid).toBeTypeOf("number");
+      expect(processIsAlive(daemonPid!)).toBe(true);
+      // The `ps` scan is a no-op on Windows, where the discovery lock above is
+      // the only discovery channel; asserting on it there would always fail.
+      if (process.platform !== "win32") {
+        expect(await scanClineHubDaemonPids(base)).toContain(daemonPid);
+      }
 
-    await removeClineSmokeTree(base);
+      await removeClineSmokeTree(base);
 
-    // Both halves of the fix: the daemon is genuinely reaped (not merely
-    // signalled), and only then does the tree come away without ENOTEMPTY.
-    expect(processIsAlive(daemonPid!)).toBe(false);
-    await expect(stat(base)).rejects.toMatchObject({ code: "ENOENT" });
-  } finally {
-    if (daemonPid !== undefined && processIsAlive(daemonPid)) {
-      await terminateAndWait(daemonPid);
+      // Both halves of the fix: the daemon is genuinely reaped (not merely
+      // signalled), and only then does the tree come away without ENOTEMPTY.
+      expect(processIsAlive(daemonPid!)).toBe(false);
+      await expect(stat(base)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (daemonPid !== undefined && processIsAlive(daemonPid)) {
+        await terminateAndWait(daemonPid);
+      }
+      await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
-    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-  }
-}, 30_000);
+  },
+  30_000,
+);
 
 describe("M5-14 Cline harness smoke test — real CLI", () => {
   it("drives the four-verb chain through pinned Cline and surfaces preview text", async () => {
