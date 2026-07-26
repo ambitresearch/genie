@@ -523,12 +523,16 @@ export async function startMcpHostVehicle(
         } catch (err) {
           // Surface the failure to the iframe as a JSON-RPC error rather than a
           // dead socket, so the viewer renders its real read-failure copy.
+          //
+          // The detail is logged rather than returned. Echoing a caught exception
+          // into an HTTP response body is the shape CodeQL flags as information
+          // exposure, and it buys nothing here: the viewer only needs to *see* an
+          // error to render its failure copy, and never reads the message. stderr
+          // is also the more useful destination, since it lands in the vitest
+          // output beside the failing assertion instead of inside an iframe.
+          console.error("[genie-e2e] MCP host tools/call failed:", err);
           res.writeHead(200, { "content-type": MIME[".json"] });
-          res.end(
-            JSON.stringify({
-              error: { code: -32603, message: err instanceof Error ? err.message : String(err) },
-            }),
-          );
+          res.end(JSON.stringify({ error: { code: -32603, message: "Internal error" } }));
         }
         return;
       }
