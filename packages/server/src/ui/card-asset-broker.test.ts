@@ -25,6 +25,7 @@ import {
   type CardAssetKit,
   MAX_LIVE_DRAFTS,
 } from "./card-asset-broker.js";
+import { MAX_FILE_BYTES } from "../store/interface.js";
 
 interface HttpResult {
   status: number;
@@ -769,5 +770,14 @@ describe("card asset draft serving", () => {
     const broker = await start({ env: {} });
 
     expect(() => broker.registerDraft("")).toThrow("non-empty");
+  });
+
+  it("rejects a draft body larger than the store's max file size", async () => {
+    const broker = await start({ env: {} });
+    const oversized = `<p>${"a".repeat(MAX_FILE_BYTES)}</p>`;
+
+    expect(() => broker.registerDraft(oversized)).toThrow(
+      new RegExp(`exceeds the ${MAX_FILE_BYTES}-byte limit`),
+    );
   });
 });

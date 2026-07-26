@@ -3305,6 +3305,20 @@ describe("round 7 — inherited style-src hashes", () => {
     void window;
   });
 
+  it("warns when the embedding document pins only script-src to build-time hashes", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    const meta = document.createElement("meta");
+    meta.setAttribute("http-equiv", "Content-Security-Policy");
+    meta.setAttribute("content", "default-src 'none'; script-src 'sha256-abc123'");
+    document.head.append(meta);
+    controller.addDraft(conjureResult(), { kitId: "my-kit", kitLabel: "My Kit" });
+    const note = document.getElementById("review-preview-note") as HTMLElement;
+    // The note copy warns the preview may render "inert"; an inherited
+    // script-src hash policy is exactly what makes an unwritten draft's inline
+    // <script> inert, so the warning must fire even with no style-src hashes.
+    expect(note.hidden).toBe(false);
+  });
+
   it("stays quiet when the embedding document pins no style hashes", () => {
     const { document, controller } = loadWired(HAPPY_REPLIES);
     controller.addDraft(conjureResult(), { kitId: "my-kit", kitLabel: "My Kit" });

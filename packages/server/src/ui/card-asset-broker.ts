@@ -7,6 +7,8 @@ import { pipeline } from "node:stream/promises";
 
 import { parse } from "parse5";
 
+import { MAX_FILE_BYTES } from "../store/interface.js";
+
 /** Optional stable port for hosts that must advertise frame origins before a request. */
 export const CARD_ASSET_PORT_ENV = "GENIE_CARD_ASSET_PORT";
 
@@ -456,6 +458,16 @@ class LoopbackCardAssetBroker implements CardAssetBroker {
     if (this.#closed) throw new Error("Card asset broker is closed.");
     if (typeof html !== "string" || html.length === 0) {
       throw new Error("Card asset draft body must be a non-empty string.");
+    }
+    // The store's own file cap, deliberately: a draft body is a file the reviewer is being
+    // asked to approve, so a card too large to ever be written is a card not worth serving.
+    // `publishDraftPreview` catches this and degrades to no preview rather than failing the
+    // generation. Copilot (round 11, PR #273).
+    const byteLength = Buffer.byteLength(html, "utf8");
+    if (byteLength > MAX_FILE_BYTES) {
+      throw new Error(
+        `Card asset draft body (${byteLength} bytes) exceeds the ${MAX_FILE_BYTES}-byte limit.`,
+      );
     }
 
     let token: string;

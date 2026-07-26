@@ -5,7 +5,7 @@ import type { CardAssetBroker, CardAssetDraft } from "./card-asset-broker.js";
 
 function draftStub(url: string, expired: readonly string[] = []): CardAssetDraft {
   return Object.freeze({
-    token: "t".repeat(32),
+    token: url.slice(url.lastIndexOf("/") + 1),
     hostname: "127.0.0.1",
     authority: "127.0.0.1:4173",
     origin: "http://127.0.0.1:4173",
@@ -15,7 +15,7 @@ function draftStub(url: string, expired: readonly string[] = []): CardAssetDraft
 }
 
 function brokerStub(
-  url = "http://127.0.0.1:4173/d/abc",
+  url = `http://127.0.0.1:4173/d/${"0".repeat(32)}`,
   expired: readonly string[] = [],
 ): {
   broker: CardAssetBroker;
@@ -42,11 +42,11 @@ function files(overrides: { path: string; content: string }[] = []): {
 
 describe("publishDraftPreview", () => {
   it("publishes the component's own <Name>.html and returns its URL", () => {
-    const { broker, registerDraft } = brokerStub("http://127.0.0.1:4173/d/deadbeef");
+    const { broker, registerDraft } = brokerStub(`http://127.0.0.1:4173/d/${"deadbeef".repeat(4)}`);
 
     const { url } = publishDraftPreview(broker, files(), IDENTITY);
 
-    expect(url).toBe("http://127.0.0.1:4173/d/deadbeef");
+    expect(url).toBe(`http://127.0.0.1:4173/d/${"deadbeef".repeat(4)}`);
     expect(registerDraft).toHaveBeenCalledExactlyOnceWith(CARD);
   });
 
@@ -153,7 +153,7 @@ describe("publishDraftPreview", () => {
     // through verbatim, or the viewer keeps fetching evicted drafts that 404. A stub
     // that omits `expired` makes this read `undefined` — the exact shape lie #257 fixes.
     const dead = `http://127.0.0.1:4173/d/${"a".repeat(32)}`;
-    const { broker } = brokerStub("http://127.0.0.1:4173/d/deadbeef", [dead]);
+    const { broker } = brokerStub(`http://127.0.0.1:4173/d/${"deadbeef".repeat(4)}`, [dead]);
 
     expect(publishDraftPreview(broker, files(), IDENTITY).expired).toEqual([dead]);
   });

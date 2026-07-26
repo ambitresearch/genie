@@ -923,9 +923,10 @@ function stderrLines(): Array<
 }
 
 describe("#257 — draft preview URL", () => {
+  const LIVE = "http://127.0.0.1:4173/d/" + "feed".repeat(8);
   function brokerStub(url: string, expired: readonly string[] = []) {
     const registerDraft = vi.fn(() => ({
-      token: "t".repeat(32),
+      token: url.slice(url.lastIndexOf("/") + 1),
       hostname: "127.0.0.1",
       authority: "127.0.0.1:4173",
       origin: "http://127.0.0.1:4173",
@@ -936,11 +937,11 @@ describe("#257 — draft preview URL", () => {
   }
 
   it("publishes the refined card and returns its broker URL", async () => {
-    const broker = brokerStub("http://127.0.0.1:4173/d/feed01");
+    const broker = brokerStub(LIVE);
 
     const res = await refine(deps({ getRunningCardAssetBroker: () => broker }), args());
 
-    expect(res.previewUrl).toBe("http://127.0.0.1:4173/d/feed01");
+    expect(res.previewUrl).toBe(LIVE);
     // The refined card, not the framework source that sits beside it.
     const card = refinedComponent().files.find((file) =>
       file.path.endsWith("/Button/Button.html"),
@@ -951,7 +952,7 @@ describe("#257 — draft preview URL", () => {
 
   it("forwards the broker's eviction notice so the viewer can retire dead URLs", async () => {
     const dead = "http://127.0.0.1:4173/d/" + "0".repeat(32);
-    const broker = brokerStub("http://127.0.0.1:4173/d/feed01", [dead]);
+    const broker = brokerStub(LIVE, [dead]);
 
     const res = await refine(deps({ getRunningCardAssetBroker: () => broker }), args());
 
@@ -959,7 +960,7 @@ describe("#257 — draft preview URL", () => {
   });
 
   it("omits expiredPreviewUrls when the broker evicted nothing", async () => {
-    const broker = brokerStub("http://127.0.0.1:4173/d/feed01");
+    const broker = brokerStub(LIVE);
 
     const res = await refine(deps({ getRunningCardAssetBroker: () => broker }), args());
 

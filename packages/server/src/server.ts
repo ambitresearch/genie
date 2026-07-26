@@ -353,7 +353,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
           cardAssetBrokerPromise = startup;
           void startup.then(
             (broker) => {
-              if (cardAssetBrokerPromise === startup) runningCardAssetBroker = broker;
+              if (!cardAssetBrokerDisposed && cardAssetBrokerPromise === startup)
+                runningCardAssetBroker = broker;
             },
             () => {},
           );

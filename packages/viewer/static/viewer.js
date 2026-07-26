@@ -2238,7 +2238,7 @@
     function inheritsStyleHashPolicy() {
       var meta = doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
       var content = meta && meta.getAttribute("content");
-      return typeof content === "string" && /style-src[^;]*sha256-/i.test(content);
+      return typeof content === "string" && /(?:script|style)-src[^;]*sha256-/i.test(content);
     }
 
     function renderSummary(draft) {

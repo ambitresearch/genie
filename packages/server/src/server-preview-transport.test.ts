@@ -369,6 +369,44 @@ describe("createServer preview transport policy", () => {
     expect(cardAssets.instance.close).not.toHaveBeenCalled();
   });
 
+  it("keeps the running-broker accessor empty when startup resolves after disposal", async () => {
+    let resolveStartup: (broker: typeof cardAssets.instance) => void = () => {};
+    cardAssets.startCardAssetBroker.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStartup = resolve;
+      }),
+    );
+    const server = createServer({ transportKind: "stdio" });
+    const getCardAssetBroker = (
+      preview.registerPreviewTool.mock.calls[0]?.[1] as {
+        getCardAssetBroker?: () => Promise<typeof cardAssets.instance>;
+      }
+    ).getCardAssetBroker!;
+    const getRunningCardAssetBroker = (
+      conjure.registerConjureTool.mock.calls[0]?.[1] as {
+        getRunningCardAssetBroker?: () => typeof cardAssets.instance | undefined;
+      }
+    ).getRunningCardAssetBroker!;
+
+    // In-flight startup: the `.then` that records the running broker is now queued
+    // against a promise the disposer is about to abandon.
+    const brokerRequest = getCardAssetBroker();
+    const client = new Client({ name: "dispose-race-client", version: "0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    await client.close();
+    await vi.waitFor(() => expect(lifecycle.disposerResults).toHaveLength(2));
+
+    // Startup wins the race AFTER disposal began: without a disposed guard the
+    // success `.then` repopulates the accessor with a broker that is then closed.
+    resolveStartup(cardAssets.instance);
+    await brokerRequest.catch(() => undefined);
+    await vi.waitFor(() => expect(cardAssets.instance.close).toHaveBeenCalledOnce());
+
+    expect(getRunningCardAssetBroker()).toBeUndefined();
+  });
+
   it("rejects delayed broker acquisition after transport shutdown", async () => {
     const server = createServer({ transportKind: "stdio" });
     const getCardAssetBroker = (
