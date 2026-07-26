@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.2](https://github.com/ambitresearch/genie/compare/server-v1.3.1...server-v1.3.2) (2026-07-26)
+
+
+### Bug Fixes
+
+* **broker:** report cross-viewer draft eviction to the victim ([#257](https://github.com/ambitresearch/genie/issues/257)) ([de353bc](https://github.com/ambitresearch/genie/commit/de353bcde5eea066ff572da8fa8fcfe453a56769))
+* **cli:** make local npm setup actionable ([#232](https://github.com/ambitresearch/genie/issues/232)) ([e677b78](https://github.com/ambitresearch/genie/commit/e677b78ba22fb83b9d95e13aed97463e02c5004e))
+* **server:** gate kitId on containment, not create_kit shape ([#276](https://github.com/ambitresearch/genie/issues/276)) ([23c281e](https://github.com/ambitresearch/genie/commit/23c281e97d3573970139893227d2028d5728bfd7))
+* **server:** re-check kit existence before write_files commits ([#269](https://github.com/ambitresearch/genie/issues/269)) ([210e050](https://github.com/ambitresearch/genie/commit/210e050194f0c1638fe72f8ebcde2ebce3416d22))
+* **server:** validate kitId at plan time ([#252](https://github.com/ambitresearch/genie/issues/252)) ([1ddccb3](https://github.com/ambitresearch/genie/commit/1ddccb34c2cceea8e4ef4580890e4efb97b705c0))
+* **viewer:** honour eviction notices on discarded refine replies ([#257](https://github.com/ambitresearch/genie/issues/257)) ([d14895a](https://github.com/ambitresearch/genie/commit/d14895a1d7e5abdade67686e9807fe9adb2cce53))
+* **viewer:** split Browse workbench out of viewer.js to clear the store read cap ([#253](https://github.com/ambitresearch/genie/issues/253)) ([51b46b8](https://github.com/ambitresearch/genie/commit/51b46b8db138b7d59639b05a5b89ce55e0b1ef6b))
+
 ## [1.3.1](https://github.com/ambitresearch/genie/compare/server-v1.3.0...server-v1.3.1) (2026-07-20)
 
 

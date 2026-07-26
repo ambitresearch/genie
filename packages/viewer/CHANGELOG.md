@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.0](https://github.com/ambitresearch/genie/compare/viewer-v0.1.1...viewer-v0.2.0) (2026-07-26)
+
+
+### Features
+
+* **viewer:** review, refine, approve, and apply workflow (M7-03) ([#250](https://github.com/ambitresearch/genie/issues/250)) ([aaab4c4](https://github.com/ambitresearch/genie/commit/aaab4c4ef3b4464223e0abbe1b99628615c162bf))
+
+
+### Bug Fixes
+
+* **broker:** report cross-viewer draft eviction to the victim ([#257](https://github.com/ambitresearch/genie/issues/257)) ([de353bc](https://github.com/ambitresearch/genie/commit/de353bcde5eea066ff572da8fa8fcfe453a56769))
+* **security:** clear the two remaining CodeQL alerts ([#260](https://github.com/ambitresearch/genie/issues/260)) ([ab5640c](https://github.com/ambitresearch/genie/commit/ab5640c35ae9eed5611851f858b0df85fcfb9617))
+* **viewer:** accept text-only MCP tool results ([#251](https://github.com/ambitresearch/genie/issues/251)) ([d7d9369](https://github.com/ambitresearch/genie/commit/d7d93694a30443e3ca1599cef07e39c9060b3267))
+* **viewer:** honour eviction notices on discarded refine replies ([#257](https://github.com/ambitresearch/genie/issues/257)) ([d14895a](https://github.com/ambitresearch/genie/commit/d14895a1d7e5abdade67686e9807fe9adb2cce53))
+* **viewer:** pass real kit context (tokens/primitives) to conjure ([#246](https://github.com/ambitresearch/genie/issues/246)) ([7fe8626](https://github.com/ambitresearch/genie/commit/7fe8626dc83e36f5aa53ce894c36be03163d8af2))
+* **viewer:** prompt before a reload discards unsaved drafts ([#256](https://github.com/ambitresearch/genie/issues/256)) ([0dd0f88](https://github.com/ambitresearch/genie/commit/0dd0f88612eb29808be1c8d5bb7c2481e55714db))
+* **viewer:** split Browse workbench out of viewer.js to clear the store read cap ([#253](https://github.com/ambitresearch/genie/issues/253)) ([51b46b8](https://github.com/ambitresearch/genie/commit/51b46b8db138b7d59639b05a5b89ce55e0b1ef6b))
+
 ## [0.1.1](https://github.com/ambitresearch/genie/compare/viewer-v0.1.0...viewer-v0.1.1) (2026-07-20)
 
 
