@@ -1489,6 +1489,28 @@ describe("MCP host bridge — text-only tool results (#251)", () => {
     ).rejects.toThrow("malformed");
   });
 
+  it("rejects a text payload that parses to a JSON array", async () => {
+    // MCP models `structuredContent` as an object/map and constrains
+    // `outputSchema` to an object root, so an array is malformed even though
+    // `typeof [] === "object"` would wave it through.
+    const { hooks, window } = loadHooks();
+    await expect(
+      callWithResult(hooks, window, {
+        content: [{ type: "text", text: '[{"kitId":"design"}]' }],
+      }),
+    ).rejects.toThrow("malformed");
+  });
+
+  it("rejects an array structuredContent instead of falling back to text", async () => {
+    const { hooks, window } = loadHooks();
+    await expect(
+      callWithResult(hooks, window, {
+        structuredContent: [{ kitId: "design" }],
+        content: [{ type: "text", text: '{"kitId":"design"}' }],
+      }),
+    ).resolves.toEqual({ kitId: "design" });
+  });
+
   it("rejects when no content entry yields JSON", async () => {
     const { hooks, window } = loadHooks();
     await expect(

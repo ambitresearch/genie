@@ -3027,6 +3027,13 @@
    * @param {object|undefined} result Raw `tools/call` result from the host.
    * @returns {object|undefined} Parsed payload, or `undefined` when none applies.
    */
+  function isPayloadObject(value) {
+    // MCP models `structuredContent` as a JSON object/map, and constrains
+    // `outputSchema` to an object root. An array passes `typeof === "object"`
+    // but hands field-based callers the same unusable shape a primitive would.
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+
   function textResultPayload(result) {
     var content = result && result.content;
     if (!Array.isArray(content)) return undefined;
@@ -3035,7 +3042,7 @@
       if (!entry || entry.type !== "text" || typeof entry.text !== "string") continue;
       try {
         var parsed = JSON.parse(entry.text);
-        if (parsed && typeof parsed === "object") return parsed;
+        if (isPayloadObject(parsed)) return parsed;
       } catch {
         // A human-readable line rather than a payload. Keep scanning.
       }
@@ -3069,12 +3076,12 @@
         return;
       }
       var structured = data.result && data.result.structuredContent;
-      if (!structured || typeof structured !== "object") {
+      if (!isPayloadObject(structured)) {
         // genie#251 — `structuredContent` is only guaranteed for tools that
         // declare an `outputSchema`. Read the text payload before failing.
         structured = textResultPayload(data.result);
       }
-      if (!structured || typeof structured !== "object") {
+      if (!isPayloadObject(structured)) {
         request.reject(new Error("The host returned a malformed tool result."));
         return;
       }
