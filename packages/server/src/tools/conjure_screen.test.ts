@@ -560,19 +560,47 @@ describe("LocalScaffoldScreenGenerator", () => {
     // original asymmetry survive review in the first place.
     const UNGATED_BREAKOUT = "evil/--><img src=x onerror=alert(1)><!--";
 
-    it.each(["default", "sole"] as const)(
-      "%s — an UNGATED kitId cannot terminate the comment either",
-      async (via) => {
+    // Raised in review (round 5): the version of this block that shipped first
+    // *fabricated* the request object, so it demonstrated that the escape holds
+    // for an input we asserted was reachable rather than one we had observed
+    // arriving. The premise was true — but "true" and "shown" are different, and
+    // this file has already been bitten twice this cycle by assertions that were
+    // argued in prose and pinned by nothing.
+    //
+    // So the seam moved. These now drive the real pipeline end to end:
+    // `create_project` persists the binding, `conjure_screen` resolves it, and
+    // the request handed to the real generator is the one the recording stub
+    // *observed the pipeline emit* — never one this test wrote. If the ungated
+    // arms are ever tightened, `emitted.kit` stops matching and this fails at the
+    // premise rather than silently passing on a fabrication.
+    const UNGATED_BINDINGS: [string, { kitId: string; default?: boolean }[]][] = [
+      ["default", [{ kitId: UNGATED_BREAKOUT, default: true }]],
+      ["sole", [{ kitId: UNGATED_BREAKOUT }]],
+    ];
+
+    it.each(UNGATED_BINDINGS)(
+      "%s — an UNGATED kitId reaches the generator raw and still cannot terminate the comment",
+      async (via, kitBindings) => {
         // Unreachable through `explicit`: this pins the two-source claim in
         // `provenanceNote`'s docblock so it cannot quietly go stale.
         expect(isSafeKitId(UNGATED_BREAKOUT)).toBe(false);
-        const result = await generator.generate(
-          request({
-            framework: "html",
-            entryPath: "s/index.html",
-            kit: { kitId: UNGATED_BREAKOUT, via },
-          }),
-        );
+
+        const { deps, projectId } = await fixture({ kitBindings });
+        await conjureScreen(deps, {
+          projectId,
+          prompt: "A page with cards",
+          framework: "html",
+        });
+
+        // The premise, established by execution rather than asserted: a
+        // containment-unsafe id was persisted by `create_project` under its
+        // `z.string().min(1)` binding shape and handed to the generator
+        // unchanged, through the arm named in the test title.
+        const emitted = deps.generator.calls[0];
+        if (!emitted) throw new Error("conjure_screen never reached the generator");
+        expect(emitted.kit).toEqual({ kitId: UNGATED_BREAKOUT, via });
+
+        const result = await generator.generate(emitted);
         const content = result.files[0]?.content ?? "";
         const header = content.split("\n").find((l) => l.includes("genie conjure_screen")) ?? "";
         expect(header).not.toBe("");
@@ -582,6 +610,50 @@ describe("LocalScaffoldScreenGenerator", () => {
         expect(note).not.toContain("<");
         expect(note).not.toContain(">");
         expect(content).not.toContain("<img src=x onerror=alert(1)>");
+      },
+    );
+
+    // A control character is the one caller-supplied byte class the `<`/`>`
+    // escape does not touch, and it is NOT a containment problem: nothing here
+    // can close `-->` or end a `//` line. It is a *conformance* one. WHATWG
+    // makes a raw control character a parse error in comment data and mandates
+    // U+FFFD in its place, so an un-neutralised NUL means the bytes on disk and
+    // the bytes a browser holds in the DOM disagree.
+    //
+    // Note what this deliberately does NOT assert: that `@vue/compiler-sfc`
+    // rejects it. Measured — it does not. `UNEXPECTED_NULL_CHARACTER` survives
+    // as a constant in `@vue/compiler-core` with zero `emitError` call sites
+    // since the 3.4 tokenizer rewrite, so a test shaped "the Vue build fails"
+    // would pass vacuously against unfixed code and prove nothing. The falsifier
+    // has to be the byte itself.
+    //
+    // All three frameworks, because the note reaches three sinks through two
+    // different escapes. Pinning only the HTML pair is what let `title` be
+    // escaped 4/4 while `note` was escaped 0/3 in the first place.
+    const NUL_KIT_ID = "acme\u0000ui";
+
+    it.each(["html", "vue", "react"] as const)(
+      "%s — a control character in the kitId is neutralised, not passed through",
+      async (framework) => {
+        // The gate is not what stops this one: `isSafeKitId` permits NUL, so it
+        // is in-band on the *explicit* arm too, not merely the ungated ones.
+        expect(isSafeKitId(NUL_KIT_ID)).toBe(true);
+
+        const { deps, projectId } = await fixture({
+          kitBindings: [{ kitId: NUL_KIT_ID, default: true }],
+        });
+        await conjureScreen(deps, { projectId, prompt: "A page with cards", framework });
+
+        const emitted = deps.generator.calls[0];
+        if (!emitted) throw new Error("conjure_screen never reached the generator");
+        // Raw on the way in — the neutralisation is the generator's job, and
+        // this pins that it has something to do.
+        expect(emitted.kit?.kitId).toContain("\u0000");
+
+        const result = await generator.generate(emitted);
+        const content = result.files[0]?.content ?? "";
+        expect(content).not.toContain("\u0000");
+        expect(content).toContain("\uFFFD");
       },
     );
 

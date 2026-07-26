@@ -591,6 +591,40 @@ function toSingleLine(value: string): string {
   return value.replace(/[\r\n\u2028\u2029]+/g, " ");
 }
 
+/** Replace control characters with U+FFFD, the substitution a conforming HTML
+ * tokenizer would make anyway.
+ *
+ * Scope, stated precisely because it is narrower than it looks: this is a
+ * *conformance* measure, not a containment one. No control character can close
+ * an HTML comment (only a sequence ending in `>` can) and none can end a `//`
+ * comment (ECMAScript LineTerminator is exactly LF, CR, U+2028, U+2029 — all
+ * four already collapsed by `toSingleLine` above). So heading 1 of
+ * `escapeHtmlComment` is untouched by this; heading 2 is the whole reason.
+ *
+ * The reason it is worth doing at all: WHATWG HTML makes a raw control
+ * character a parse error in comment data *and* mandates that the tokenizer
+ * emit U+FFFD in its place. So a NUL written into a scaffold is not preserved —
+ * the file on disk and the DOM a browser builds from it silently disagree.
+ * Substituting here makes the artifact byte-stable across that boundary, which
+ * is exactly the "conformance / artifact quality" property this file already
+ * claims to care about.
+ *
+ * The class is the HTML definition — C0 and C1 controls *except* the four
+ * characters HTML counts as ASCII whitespace (TAB, LF, FF, CR). LF and CR are
+ * excluded here because `toSingleLine` has already turned them into a space;
+ * TAB and FF are legal whitespace and are left alone.
+ *
+ * Measured, not assumed: `@vue/compiler-sfc` does **not** reject any of these.
+ * `UNEXPECTED_NULL_CHARACTER` (code 20) is still *defined* in
+ * `@vue/compiler-core`, but the 3.4 tokenizer rewrite left it with zero
+ * `emitError` call sites, and a NUL in comment text, element text, an attribute
+ * value or ahead of the template all parse and compile with zero errors. Do not
+ * re-document this as "the Vue build would fail" — it would not. */
+function neutralizeControls(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u0008\u000B\u000E-\u001F\u007F-\u009F]/g, "\uFFFD");
+}
+
 /** Escape a value destined for the inside of an `<!-- … -->` comment.
  *
  * Escapes `<` and `>`, so the note contributes no markup-significant character
@@ -610,19 +644,30 @@ function toSingleLine(value: string): string {
  *      non-conforming document — even though no parser in this repo rejects it.
  *      Escaping `<` costs one character class and turns a property that has to
  *      be argued per-construct into one sentence: the note cannot contribute a
- *      terminator, a nested `<!--`, or a tag.
+ *      terminator, a nested `<!--`, or a tag. `neutralizeControls` below serves
+ *      this same heading for a different character class — see its docblock for
+ *      why control characters are a conformance problem and not a containment
+ *      one.
  *
  * Deliberately still NOT `escapeHtml`: that also rewrites `"` to `&quot;`, which
  * would turn the quotes around every ordinary kit name into entity noise for no
  * gain under either heading. `&` and `"` are genuinely inert in comment text. */
 function escapeHtmlComment(value: string): string {
-  return toSingleLine(value).replace(/[<>]/g, (c) => (c === "<" ? "&lt;" : "&gt;"));
+  return neutralizeControls(toSingleLine(value)).replace(/[<>]/g, (c) =>
+    c === "<" ? "&lt;" : "&gt;",
+  );
 }
 
 /** Escape a value destined for the tail of a `//` line comment, which runs to
- * the end of the line and so can only be escaped by ending the line. */
+ * the end of the line and so can only be escaped by ending the line.
+ *
+ * Shares `neutralizeControls` with `escapeHtmlComment` deliberately. The note
+ * reaching all three sinks is the same caller-controlled string, so neutralizing
+ * in only the HTML pair would leave `react` passing bytes the other two strip —
+ * re-creating a sink asymmetry, which is the precise defect this block exists to
+ * remove. */
 function escapeLineComment(value: string): string {
-  return toSingleLine(value);
+  return neutralizeControls(toSingleLine(value));
 }
 
 function escapeHtml(value: string): string {
