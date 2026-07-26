@@ -490,12 +490,26 @@ export class LocalScaffoldScreenGenerator implements ScreenGenerator {
 
 /** A one-line, honest provenance note for the scaffold header comment.
  *
- * ⚠️ Returns RAW, UNESCAPED text. It interpolates `kitId`, which is gated by
- * `isSafeKitId` — a *containment* rule about path segments that deliberately
- * permits `>` and newlines (neither can escape a directory). Every sink must
- * therefore escape this with the helper appropriate to the comment syntax it is
- * embedding into: `escapeHtmlComment` for `<!-- … -->`, `escapeLineComment` for
- * `//`. Adding a fourth sink without one re-opens the injection. */
+ * ⚠️ Returns RAW, UNESCAPED text. It interpolates `kitId`, which arrives here
+ * from TWO sources with DIFFERENT validation. Rely on neither:
+ *
+ *   - `via: "explicit"` — the caller's own `kitId`, gated by this tool's
+ *     `.refine(isSafeKitId, …)`. That is a *containment* rule about path
+ *     segments: it deliberately permits `>`, `<` and newlines, because none of
+ *     them can escape a directory. It was never an output-safety rule.
+ *   - `via: "default" | "sole"` — read straight off the project record by
+ *     `resolveKit`, which applies NO gate on those two arms. The stored value is
+ *     only ever schema-checked as `z.string().min(1)` (`kitBindingShape`, and
+ *     `projectManifestSchema` on the way back off disk — both in
+ *     `create_project.ts`), and `create_project` accepts caller-supplied
+ *     `kitBindings` under that same shape. So these arms admit a STRICTLY WIDER
+ *     set than `explicit`: additionally `.`, `..`, `/` and `\`, i.e. precisely
+ *     the ids `isSafeKitId` exists to reject.
+ *
+ * Every sink must therefore escape this UNCONDITIONALLY — never conditioned on
+ * provenance — with the helper appropriate to the comment syntax it embeds
+ * into: `escapeHtmlComment` for `<!-- … -->`, `escapeLineComment` for `//`.
+ * Adding a fourth sink without one re-opens the injection. */
 function provenanceNote(request: ScreenGenerationRequest): string {
   const parts: string[] = [];
   if (request.kit) {

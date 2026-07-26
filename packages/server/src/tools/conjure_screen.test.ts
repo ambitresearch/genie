@@ -545,6 +545,46 @@ describe("LocalScaffoldScreenGenerator", () => {
       }
     });
 
+    // Raised in review: `provenanceNote`'s docblock used to claim the interpolated
+    // kitId "is gated by isSafeKitId". True for ONE of `resolveKit`'s three arms.
+    // `default` and `sole` are read straight off the project record, which is only
+    // ever schema-checked as `z.string().min(1)` — and `create_project` accepts
+    // caller-supplied `kitBindings` under exactly that shape. So the ungated arms
+    // admit a STRICTLY WIDER set, including the `/` and `\` that `isSafeKitId`
+    // exists to reject.
+    //
+    // Every other assertion in this block runs through `explicit`, i.e. the narrow
+    // arm. Without this one the suite would prove the escape holds only where a
+    // gate happens to exist, and say nothing about the wider, ungated majority —
+    // the "passes for a different reason than its name claims" shape that let the
+    // original asymmetry survive review in the first place.
+    const UNGATED_BREAKOUT = "evil/--><img src=x onerror=alert(1)><!--";
+
+    it.each(["default", "sole"] as const)(
+      "%s — an UNGATED kitId cannot terminate the comment either",
+      async (via) => {
+        // Unreachable through `explicit`: this pins the two-source claim in
+        // `provenanceNote`'s docblock so it cannot quietly go stale.
+        expect(isSafeKitId(UNGATED_BREAKOUT)).toBe(false);
+        const result = await generator.generate(
+          request({
+            framework: "html",
+            entryPath: "s/index.html",
+            kit: { kitId: UNGATED_BREAKOUT, via },
+          }),
+        );
+        const content = result.files[0]?.content ?? "";
+        const header = content.split("\n").find((l) => l.includes("genie conjure_screen")) ?? "";
+        expect(header).not.toBe("");
+        expect(header.split("-->").length - 1).toBe(1);
+        expect(header.trimEnd().endsWith("-->")).toBe(true);
+        const note = header.slice(header.indexOf(":") + 1, header.lastIndexOf("-->"));
+        expect(note).not.toContain("<");
+        expect(note).not.toContain(">");
+        expect(content).not.toContain("<img src=x onerror=alert(1)>");
+      },
+    );
+
     // `<!-- … -->` can only be closed by a sequence ending in `>`, so "the note
     // contributes no `>`" is a *provable* containment property, not a blocklist.
     it.each(["html", "vue"] as const)("%s — a kitId cannot terminate the comment", async (fw) => {
