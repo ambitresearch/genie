@@ -744,7 +744,7 @@ interface TerminateAndWaitOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-interface RemoveClineSmokeTreeOptions extends TerminateAndWaitOptions {
+interface RemoveClineSmokeTreeOptions extends StopClineHubDaemonsOptions {
   warn?: (message: string) => void;
 }
 
@@ -794,23 +794,111 @@ async function terminateAndWait(
   return escalated ? "killed" : "terminated";
 }
 
+type ClineHubPidVerdict = "match" | "mismatch" | "unknown";
+
+interface VerifyClineHubDaemonPidOptions {
+  platform?: NodeJS.Platform;
+  isAlive?: (pid: number) => boolean;
+  describeProcess?: (pid: number) => Promise<string> | string;
+}
+
+interface StopClineHubDaemonsOptions
+  extends TerminateAndWaitOptions, ScanClineHubDaemonPidsOptions, VerifyClineHubDaemonPidOptions {}
+
+interface ClineHubDaemonSweep {
+  outcomes: Map<number, ClineHubTermination>;
+  unverified: number[];
+}
+
+/**
+ * Decides whether `pid` really is *this* run's hub daemon before teardown is
+ * allowed to signal it.
+ *
+ * The discovery lock is stale data on disk: the daemon can exit — especially
+ * abruptly, leaving the lock behind — and the OS is free to hand that pid to
+ * something else before teardown runs. Signalling it unchecked would SIGTERM
+ * and then SIGKILL an unrelated process, so the pid has to re-prove itself
+ * against the live command line, exactly like the process scan does.
+ *
+ *  - `"match"`     the command line carries the daemon flag *and* this run's
+ *                  `mkdtemp` suffix, so it is ours to join.
+ *  - `"mismatch"`  it is gone, it is this worker, or it is some other program
+ *                  wearing a recycled pid — nothing of ours is left to reap.
+ *  - `"unknown"`   the command line cannot be read at all (Windows has no
+ *                  `ps`). Neither killing nor deleting is safe on a guess.
+ */
+async function verifyClineHubDaemonPid(
+  pid: number,
+  base: string,
+  options: VerifyClineHubDaemonPidOptions = {},
+): Promise<ClineHubPidVerdict> {
+  const {
+    platform = process.platform,
+    isAlive = processIsAlive,
+    describeProcess = async (candidate: number) => {
+      const { stdout } = await execFileAsync("ps", ["-wwo", "command=", "-p", String(candidate)], {
+        maxBuffer: 10_000_000,
+      });
+      return stdout;
+    },
+  } = options;
+
+  if (!isAlive(pid) || pid === process.pid) {
+    return "mismatch";
+  }
+  if (platform === "win32") {
+    return "unknown";
+  }
+
+  let command: string;
+  try {
+    command = String(await describeProcess(pid));
+  } catch {
+    // `ps -p` exits non-zero when the pid vanished between the probe above and
+    // this call, which is a clean reap rather than an inspection failure.
+    return isAlive(pid) ? "unknown" : "mismatch";
+  }
+  if (command.trim().length === 0) {
+    return isAlive(pid) ? "unknown" : "mismatch";
+  }
+  return command.includes(CLINE_HUB_DAEMON_FLAG) && command.includes(basename(base))
+    ? "match"
+    : "mismatch";
+}
+
 /**
  * Joins every Cline hub daemon rooted in `base` so the temp tree can be removed
- * without racing an active writer. Returns the outcome per pid for diagnostics.
+ * without racing an active writer. Returns the outcome per pid for diagnostics,
+ * plus any lock pid that could not be proven to belong to this run.
  */
 async function stopClineHubDaemons(
   base: string,
-  options: TerminateAndWaitOptions = {},
-): Promise<Map<number, ClineHubTermination>> {
-  const pids = new Set([
-    ...(await readClineHubLockPids(base)),
-    ...(await scanClineHubDaemonPids(base)),
-  ]);
+  options: StopClineHubDaemonsOptions = {},
+): Promise<ClineHubDaemonSweep> {
+  // Scanned pids came straight off a live `ps` table, matched on both the
+  // daemon flag and this run's `mkdtemp` suffix, so they are self-verifying.
+  const scanned = await scanClineHubDaemonPids(base, options);
   const outcomes = new Map<number, ClineHubTermination>();
-  for (const pid of pids) {
+  const unverified: number[] = [];
+
+  for (const pid of new Set(scanned)) {
     outcomes.set(pid, await terminateAndWait(pid, options));
   }
-  return outcomes;
+
+  // Lock pids get no such guarantee, so each one has to prove itself first.
+  for (const pid of await readClineHubLockPids(base)) {
+    if (outcomes.has(pid)) {
+      continue;
+    }
+    const verdict = await verifyClineHubDaemonPid(pid, base, options);
+    if (verdict === "match") {
+      outcomes.set(pid, await terminateAndWait(pid, options));
+    } else if (verdict === "unknown") {
+      unverified.push(pid);
+    }
+  }
+
+  return { outcomes, unverified };
 }
 
 /**
@@ -828,8 +916,8 @@ async function removeClineSmokeTree(
   base: string,
   options: RemoveClineSmokeTreeOptions = {},
 ): Promise<void> {
-  const { warn = (message: string) => console.warn(message), ...terminateOptions } = options;
-  const outcomes = await stopClineHubDaemons(base, terminateOptions);
+  const { warn = (message: string) => console.warn(message), ...sweepOptions } = options;
+  const { outcomes, unverified } = await stopClineHubDaemons(base, sweepOptions);
   const survivors = [...outcomes]
     .filter(([, outcome]) => outcome === "timed-out")
     .map(([pid]) => pid);
@@ -838,6 +926,15 @@ async function removeClineSmokeTree(
     warn(
       `[m5-smoke-cline] leaving ${base} on disk: Cline hub daemon(s) ${survivors.join(", ")} ` +
         `survived SIGKILL and are still writing into .cline/data (see #259).`,
+    );
+    return;
+  }
+
+  if (unverified.length > 0) {
+    warn(
+      `[m5-smoke-cline] leaving ${base} on disk: could not confirm discovery-lock pid(s) ` +
+        `${unverified.join(", ")} still belong to this run, so they were not signalled; ` +
+        `deleting under a possibly live hub daemon is the #259 race.`,
     );
     return;
   }
@@ -865,6 +962,9 @@ it("keeps the temp tree when a hub daemon cannot be reaped", async () => {
       },
       isAlive: () => true,
       sendSignal: () => {},
+      // Proves the pid is this run's hub, so the *timeout* path is what gets
+      // exercised here rather than the unverifiable-pid path below.
+      describeProcess: () => `cline ${CLINE_HUB_DAEMON_FLAG} --cwd ${base}`,
       warn: (message) => warnings.push(message),
     });
 
@@ -872,6 +972,83 @@ it("keeps the temp tree when a hub daemon cannot be reaped", async () => {
     // a `finally` the resulting ENOTEMPTY would mask the real test failure.
     await expect(stat(base)).resolves.toBeTruthy();
     expect(warnings.join("\n")).toContain("424242");
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "never signals a lock pid that an unrelated process has recycled",
+  async () => {
+    const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+    const lockPath = join(base, CLINE_HUB_LOCK_PATHS[0]!);
+    await mkdir(dirname(lockPath), { recursive: true });
+    // The discovery lock is stale data on disk. Pid 1 is always alive and is
+    // emphatically not this run's hub, so it stands in for the pid the OS
+    // recycled after the real daemon exited. The signal spy keeps a regression
+    // observable instead of fatal.
+    await writeFile(lockPath, JSON.stringify({ pid: 1, authToken: "test" }), "utf8");
+    const signalled: Array<[number, NodeJS.Signals]> = [];
+    // A virtual clock so a regression that *does* signal pid 1 surfaces as an
+    // assertion rather than a wall-clock hang.
+    let clock = 0;
+
+    try {
+      // Pins the test: teardown really does have a lock pid to consider.
+      expect(await readClineHubLockPids(base)).toEqual([1]);
+
+      await removeClineSmokeTree(base, {
+        escalateAfterMs: 10,
+        timeoutMs: 100,
+        pollMs: 5,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        sendSignal: (pid, signal) => signalled.push([pid, signal]),
+        warn: () => {},
+      });
+
+      // Signalling a recycled pid would SIGTERM, then SIGKILL, a bystander.
+      expect(signalled).toEqual([]);
+      // A pid that is provably not ours is not writing into the tree either.
+      await expect(stat(base)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  },
+);
+
+it("leaves the temp tree when a lock pid cannot be inspected", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  const lockPath = join(base, CLINE_HUB_LOCK_PATHS[0]!);
+  await mkdir(dirname(lockPath), { recursive: true });
+  await writeFile(lockPath, JSON.stringify({ pid: 424_243, authToken: "test" }), "utf8");
+  const warnings: string[] = [];
+  const signalled: number[] = [];
+  let clock = 0;
+
+  try {
+    await removeClineSmokeTree(base, {
+      // Windows has no `ps`, so the pid can be neither confirmed nor refuted.
+      platform: "win32",
+      escalateAfterMs: 10,
+      timeoutMs: 100,
+      pollMs: 5,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      isAlive: () => true,
+      sendSignal: (pid) => signalled.push(pid),
+      warn: (message) => warnings.push(message),
+    });
+
+    // Guessing either way is a bug: killing risks an unrelated process, and
+    // deleting risks the #259 race against a daemon that is still writing.
+    expect(signalled).toEqual([]);
+    await expect(stat(base)).resolves.toBeTruthy();
+    expect(warnings.join("\n")).toContain("424243");
   } finally {
     await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
