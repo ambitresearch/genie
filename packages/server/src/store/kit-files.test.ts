@@ -1,10 +1,11 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 import { assertRangePatchesCve202527210 } from "../../test/helpers/node-cve.js";
+import { trackedFiles } from "../../test/helpers/tracked-files.js";
 
 import {
   isSafeKitId,
@@ -188,16 +189,10 @@ describe("isSafeKitId", () => {
     // gloss attached to the rule that joins its items with `+` or `and`. The
     // terminating fix is never to re-count such a gloss — the count moves — but
     // to delete it and let the rendered rationale speak.
-    const roots = [path.join(import.meta.dirname, "..")];
-    const files: string[] = [];
-    while (roots.length > 0) {
-      const dir = roots.pop()!;
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) roots.push(full);
-        else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) files.push(full);
-      }
-    }
+    const srcRoot = path.join(import.meta.dirname, "..");
+    const files = trackedFiles(srcRoot)
+      .filter((rel) => rel.endsWith(".ts") && !rel.endsWith(".test.ts"))
+      .map((rel) => path.join(srcRoot, rel));
     expect(files.length).toBeGreaterThan(20);
 
     const gloss = /isSafeKitId`?\s+rule\s+\(([^)]*)\)/gu;
@@ -408,17 +403,9 @@ it("🔒 no rationale promises an accepted kitId opens a kit directory", () => {
   expect(deviceNames.length).toBeGreaterThan(0);
 
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
-  const skip = new Set(["node_modules", "dist", ".git", "coverage", ".turbo"]);
-  const sources: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (skip.has(entry.name)) continue;
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (/\.(?:ts|tsx|md)$/u.test(entry.name)) sources.push(full);
-    }
-  };
-  walk(repoRoot);
+  const sources = trackedFiles(repoRoot)
+    .filter((relative) => /\.(?:ts|tsx|md)$/u.test(relative))
+    .map((relative) => path.join(repoRoot, relative));
   expect(sources.length).toBeGreaterThan(100);
 
   const offenders = sources.filter((file) =>
@@ -447,12 +434,9 @@ it("🔒 no rationale promises an accepted kitId opens a kit directory", () => {
 // `@ambitresearch/genie-e2e` is inside that scan but excluded by `private: true`,
 // because nobody installs it, so its `engines` describes only the dev environment
 // CI already pins; the monorepo root sits outside the scan and is private too.
-const publishablePackages = readdirSync(new URL("../../../", import.meta.url), {
-  withFileTypes: true,
-})
-  .filter((entry) => entry.isDirectory())
-  .map((entry) => new URL(`../../../${entry.name}/package.json`, import.meta.url))
-  .filter((url) => existsSync(url))
+const publishablePackages = trackedFiles(fileURLToPath(new URL("../../../", import.meta.url)))
+  .filter((relative) => /^[^/]+\/package\.json$/u.test(relative))
+  .map((relative) => new URL(`../../../${relative}`, import.meta.url))
   .map((url) => ({
     url,
     manifest: JSON.parse(readFileSync(url, "utf-8")) as {
@@ -478,15 +462,9 @@ it("🔒 no comment still calls isSafeKitId merely a containment rule", () => {
   // behind, so this asks the TREE which comments describe the predicate rather
   // than trusting a list to stay complete.
   const srcRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const files: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) files.push(full);
-    }
-  };
-  walk(srcRoot);
+  const files = trackedFiles(srcRoot)
+    .filter((rel) => rel.endsWith(".ts") && !rel.endsWith(".test.ts"))
+    .map((rel) => path.join(srcRoot, rel));
 
   const describing: string[] = [];
   const historical: string[] = [];

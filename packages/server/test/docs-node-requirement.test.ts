@@ -26,8 +26,8 @@
  * the manifest's own clause endpoints.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,6 +39,7 @@ import {
   renderNodeRequirement,
   statesNodeRequirement,
 } from "./helpers/node-cve.js";
+import { trackedFiles } from "./helpers/tracked-files.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -71,26 +72,40 @@ const CHANGELOG = /(^|\/)CHANGELOG\.md$/u;
  */
 const isPrerequisiteDoc = (relative: string): boolean => !CHANGELOG.test(relative);
 
-const repoFiles = async (matches: (relative: string) => boolean): Promise<string[]> => {
-  const skip = new Set(["node_modules", "dist", ".git", "coverage", ".turbo"]);
-  const found: string[] = [];
-  const walk = async (relative: string): Promise<void> => {
-    const entries = await readdir(path.join(REPO_ROOT, relative), { withFileTypes: true });
-    for (const entry of entries) {
-      const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
-      if (entry.isDirectory()) {
-        if (!skip.has(entry.name)) await walk(child);
-      } else if (matches(child)) {
-        found.push(child);
-      }
-    }
-  };
-  await walk("");
-  return found.sort();
-};
+const repoFiles = async (matches: (relative: string) => boolean): Promise<string[]> =>
+  trackedFiles(REPO_ROOT).filter(matches);
 
 const markdownFiles = async (): Promise<string[]> =>
   await repoFiles((file) => file.endsWith(".md") && isPrerequisiteDoc(file));
+
+/**
+ * The sweep must read the repository, not the working COPY of it.
+ *
+ * The walk skipped a hand-written set of build directories, which is a denylist
+ * standing in for the real question: does git track this file? `.genie/` and
+ * `reports/` are ignored and present, and `.claude/TASKS.md` is the gitignored
+ * scratchpad `CLAUDE.md` asks every agent to keep — so a private note stating a
+ * Node version could fail this public-contract suite on one machine and pass on
+ * the next. A denylist also has to be extended for every new artefact
+ * directory, which is the drift this file already refuses elsewhere.
+ */
+describe("documentation sweep — hermetic against the working copy", () => {
+  it("🔒 never reads a file git does not track", async () => {
+    const scratch = path.join(REPO_ROOT, "reports");
+    await mkdir(scratch, { recursive: true });
+    const note = path.join(scratch, "node-requirement-scratch.md");
+    await writeFile(note, "# scratch\n\nRequires Node >= 1.2.3 to run.\n", "utf-8");
+    try {
+      // Guards against passing because the fixture was never a candidate: the
+      // sweep only claims markdown, so an untracked markdown file is exactly
+      // the shape it would otherwise have read.
+      expect(note.endsWith(".md")).toBe(true);
+      expect(await markdownFiles()).not.toContain("reports/node-requirement-scratch.md");
+    } finally {
+      await rm(note, { force: true });
+    }
+  });
+});
 
 /**
  * The manifests whose `engines.node` those docs are promising — DERIVED, not listed.
@@ -102,10 +117,8 @@ const markdownFiles = async (): Promise<string[]> =>
  * published-runtime scan, so the two cannot disagree about what "published" means.
  */
 const publishedManifests = (): string[] =>
-  readdirSync(path.join(REPO_ROOT, "packages"), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => `packages/${entry.name}/package.json`)
-    .filter((relative) => existsSync(path.join(REPO_ROOT, relative)))
+  trackedFiles(REPO_ROOT)
+    .filter((relative) => /^packages\/[^/]+\/package\.json$/u.test(relative))
     .filter((relative) => {
       const manifest = JSON.parse(readFileSync(path.join(REPO_ROOT, relative), "utf8")) as {
         private?: boolean;
@@ -242,17 +255,9 @@ describe("published Node requirement", () => {
       /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:prose\s+)?claims?\b/giu;
     // Discovered, not listed: a hand-written file list is the same defect one
     // level up, and would have to be edited by whoever adds the next copy.
-    const scanned: string[] = [];
-    const pending = [path.join(REPO_ROOT, "packages/server/test")];
-    while (pending.length > 0) {
-      const dir = pending.pop()!;
-      for (const entry of await readdir(dir, { withFileTypes: true })) {
-        if (entry.name === "node_modules") continue;
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) pending.push(full);
-        else if (entry.name.endsWith(".ts")) scanned.push(full);
-      }
-    }
+    const scanned = trackedFiles(path.join(REPO_ROOT, "packages/server/test"))
+      .filter((relative) => relative.endsWith(".ts"))
+      .map((relative) => path.join(REPO_ROOT, "packages/server/test", relative));
     expect(scanned.length).toBeGreaterThan(5);
     const offenders: string[] = [];
     for (const file of scanned) {

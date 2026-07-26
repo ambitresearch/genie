@@ -1,8 +1,10 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+
+import { trackedFiles } from "./tracked-files.js";
 
 import {
   assertRangePatchesCve202527210,
@@ -393,15 +395,9 @@ describe("node-cve prose — the contract its comments teach", () => {
 
   /** Every comment under the test tree, `*`/`//` markers and wrapping removed. */
   const comments = (): { rel: string; text: string }[] => {
-    const files: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (entry.name.endsWith(".ts")) files.push(full);
-      }
-    };
-    walk(testRoot);
+    const files = trackedFiles(testRoot)
+      .filter((relative) => relative.endsWith(".ts"))
+      .map((relative) => path.join(testRoot, relative));
 
     const found: { rel: string; text: string }[] = [];
     for (const file of files) {
