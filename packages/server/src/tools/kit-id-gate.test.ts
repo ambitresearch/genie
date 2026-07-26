@@ -332,6 +332,10 @@ describe("kitId gate — an imported kit is usable end to end", () => {
       ". ",
       ".. ",
       "...",
+      // A NUL byte is not a traversal — it is UNREPRESENTABLE. See
+      // `🔒 refuses a NUL-bearing kitId without echoing the server's filesystem`
+      // for the disclosure this prevents.
+      "a\u0000b",
       // Win32 alias of a kit that is LIVE in this suite — see the note above.
       `${IMPORTED_KIT_ID}.`,
     ]) {
@@ -351,6 +355,37 @@ describe("kitId gate — an imported kit is usable end to end", () => {
         expect(result.ok, `${name} must refuse kitId ${JSON.stringify(bad)}`).toBe(false);
       }
     }
+  });
+
+  it("🔒 refuses a NUL-bearing kitId without echoing the server's filesystem", async () => {
+    // Discriminating counterpart to the non-discriminating loop above, and the
+    // reason the NUL rule is worth a branch of its own.
+    //
+    // A NUL is the one character no path may contain on any supported platform.
+    // Node enforces that in ARGUMENT VALIDATION, before any syscall — so it
+    // reports `ERR_INVALID_ARG_VALUE` rather than `ENOENT`, and its message
+    // quotes the offending path back in full. Measured on this suite with the
+    // guard removed, `get_kit` returned to the client:
+    //
+    //   The argument 'path' must be a string, Uint8Array, or URL without null
+    //   bytes. Received '/var/folders/…/kits/a\x00b/.kit.json'
+    //
+    // That is an absolute server path — the kits root — handed to any caller who
+    // sends one byte. So this is not merely "the wrong error code": the id
+    // cleared the gate, reached the store, and turned a rejected argument into
+    // an information disclosure. `list_files` was luckier only because its
+    // catch-all remapped the throw to a not-found.
+    //
+    // Assert the ABSENCE of the leak rather than an exact message, so a future
+    // rewording of the gate's own error cannot silently re-open it.
+    const result = await client
+      .callTool({ name: "mcp__genie__get_kit", arguments: { kitId: "a\u0000b" } })
+      .then((r) => JSON.stringify(r.content))
+      .catch((e: unknown) => String(e));
+
+    expect(result).not.toContain(tempDir);
+    expect(result).not.toMatch(/without null bytes/iu);
+    expect(result).not.toMatch(/\.kit\.json/u);
   });
 });
 
@@ -430,6 +465,10 @@ describe("kitId gate — resolveKitDir containment", () => {
       ". ",
       ".. ",
       "...",
+      // A NUL byte is not a traversal — it is UNREPRESENTABLE. See
+      // `🔒 refuses a NUL-bearing kitId without echoing the server's filesystem`
+      // for the disclosure this prevents.
+      "a\u0000b",
       // DISCRIMINATING: `My_Kit.2` is seeded and resolvable, so without the
       // trailing-[ .] guard this resolver returns a live directory for an id
       // that is not that kit's name. Unlike the loop in Part D, both
@@ -462,6 +501,10 @@ describe("kitId gate — resolveKitDir containment", () => {
       ". ",
       ".. ",
       "...",
+      // A NUL byte is not a traversal — it is UNREPRESENTABLE. See
+      // `🔒 refuses a NUL-bearing kitId without echoing the server's filesystem`
+      // for the disclosure this prevents.
+      "a\u0000b",
       // DISCRIMINATING: `My_Kit.2` is seeded and resolvable, so without the
       // trailing-[ .] guard this resolver returns a live directory for an id
       // that is not that kit's name. Unlike the loop in Part D, both

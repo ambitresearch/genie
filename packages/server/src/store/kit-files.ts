@@ -224,6 +224,15 @@ export function isSafeKitId(kitId: string): boolean {
   // any id ending in one normalizes to a DIFFERENT name — the kits root, its
   // parent, or a sibling kit. See the two sub-cases above.
   if (/[ .]$/u.test(kitId)) return false;
+  // A NUL byte is neither a traversal nor a Win32 alias — it is a path no
+  // filesystem call can express. Node rejects any path containing one with
+  // `ERR_INVALID_ARG_VALUE`, not `ENOENT`, so an id carrying one (MCP arguments
+  // are JSON, which encodes `\u0000` verbatim) would clear this gate and raise a
+  // raw argument TypeError from inside the store instead of the invalid-kit
+  // result the tool boundary advertises. NUL only: the other control characters
+  // are legal POSIX directory names, and refusing them would make a
+  // legitimately-named kit unusable.
+  if (kitId.includes("\u0000")) return false;
   return true;
 }
 
@@ -237,7 +246,7 @@ export function isSafeKitId(kitId: string): boolean {
  */
 export const KIT_ID_SAFETY_MESSAGE =
   "kitId must name a single kit: it cannot be empty, `.`, `..`, end in a dot or a space, " +
-  "or contain a path separator.";
+  "or contain a path separator or a NUL byte.";
 
 // ─── Default + .genieignore exclusion ────────────────────────────────────────
 

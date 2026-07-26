@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { assertRangePatchesCve202527210 } from "../../test/helpers/node-cve.js";
 
-import { isSafeKitId, sriSha256 } from "./kit-files.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE, sriSha256 } from "./kit-files.js";
 
 /**
  * The ONE kitId-safety rule shared by `list_files`, `read_file`, and both
@@ -13,7 +13,47 @@ import { isSafeKitId, sriSha256 } from "./kit-files.js";
  * rule so any future edit that loosens it — re-opening the cross-kit read hole
  * (AC-SEC) or letting the two tools drift — fails here first.
  */
+describe("KIT_ID_SAFETY_MESSAGE", () => {
+  it("🔒 names every rule isSafeKitId actually applies", () => {
+    // The message is the ONLY thing a caller sees when the gate refuses. Each
+    // clause below corresponds to a branch of the predicate; a branch added
+    // without a clause leaves the user staring at a rejection the message does
+    // not explain.
+    expect(KIT_ID_SAFETY_MESSAGE).toMatch(/empty/iu);
+    expect(KIT_ID_SAFETY_MESSAGE).toMatch(/path separator/iu);
+    expect(KIT_ID_SAFETY_MESSAGE).toMatch(/dot or a space|dot nor a space/iu);
+    expect(KIT_ID_SAFETY_MESSAGE).toMatch(/NUL|null byte/iu);
+  });
+});
+
 describe("isSafeKitId", () => {
+  it("🔒 rejects an id no filesystem call could ever accept", () => {
+    // A NUL byte is a third category, distinct from the traversal and Win32
+    // name-normalization rules above. It does not reach a DIFFERENT kit — it
+    // reaches NO path at all: every Node fs API refuses a path containing one
+    // with `ERR_INVALID_ARG_VALUE` rather than `ENOENT`. MCP arguments arrive as
+    // JSON, which can carry `\u0000` verbatim, so without this an id that
+    // cleared the gate would surface a raw argument TypeError from deep inside
+    // the store instead of the invalid-kit result the tool boundary promises.
+    //
+    // Scope is deliberately NUL-only. Other control characters (`\u0001`-
+    // `\u001f`) are legal in a POSIX directory name, so refusing them would
+    // make a legitimately-named kit unusable — the same defect this PR fixes.
+    // NUL is the unique character no path may contain on any supported
+    // platform, which is why it can be refused without that cost.
+    for (const id of ["a\u0000b", "\u0000", "\u0000kit", "kit\u0000"]) {
+      expect(isSafeKitId(id)).toBe(false);
+    }
+  });
+
+  it("🔒 keeps admitting the control-adjacent ids that are real directories", () => {
+    // Guards the scope decision above: the NUL rule must not become a blanket
+    // control-character denylist.
+    for (const id of ["kit\u0001x", "kit\tx", "kit\u001fx"]) {
+      expect(isSafeKitId(id)).toBe(true);
+    }
+  });
+
   it("accepts ordinary single-segment kit ids", () => {
     for (const id of ["acme-kit", "kit1", "My_Kit.2", "a", "..kit", "my..kit"]) {
       expect(isSafeKitId(id)).toBe(true);
