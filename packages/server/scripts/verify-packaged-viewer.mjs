@@ -6,11 +6,37 @@
  * reads the bare grid resource through a real in-memory MCP client. The build
  * fails unless copied `dist/ui/viewer-static` assets supply the executable
  * initialize/tool-result bridge without the optional viewer package.
+ *
+ * #253: also asserts the mirror is *complete*. `buildGridDocument` degrades to
+ * the core-only grid when `viewer-browse.js` is absent, so a partial copy would
+ * still pass the bridge check below and just silently drop the Browse
+ * workbench. The list is derived from `VIEWER_STATIC_FILES` so it cannot drift.
  */
+import { existsSync, statSync } from "node:fs";
 import Module from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+
+import { VIEWER_STATIC_FILES } from "../dist/store/viewer-assets.js";
+
+// Runs before the resolution blocker below: a missing asset is a copy failure,
+// not a bridge failure, and the clearer error beats a downstream symptom.
+const viewerStaticDir = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "dist",
+  "ui",
+  "viewer-static",
+);
+for (const asset of VIEWER_STATIC_FILES) {
+  const assetPath = join(viewerStaticDir, asset);
+  if (!existsSync(assetPath) || statSync(assetPath).size === 0) {
+    throw new Error(`packaged viewer mirror is missing or empty: dist/ui/viewer-static/${asset}`);
+  }
+}
 
 const originalResolveFilename = Module._resolveFilename;
 let viewerResolutionAttempted = false;

@@ -5,12 +5,13 @@
  * `.kit.json` — never the viewer's static shell. Neither storage adapter nor
  * any other tool filled the gap (the viewer CLI only *validates* a kit dir,
  * it never scaffolds one; no sync tool exists), so a freshly created kit had
- * no `index.html`/`viewer.js`/`viewer.css` and none of RFC G-5's three
- * mandated vehicles (`file://` / `localhost` Vite / `ui://genie/grid`) had
- * anything to render for it. This module is the fix's shared read half: it
- * loads the three files' bytes from the shell copied into the server package,
- * falling back to `@ambitresearch/genie-viewer`'s `static/` directory during source
- * development, so both stores can copy them into a new kit's root.
+ * no `index.html`/`viewer-browse.js`/`viewer.js`/`viewer.css` and none of RFC
+ * G-5's three mandated vehicles (`file://` / `localhost` Vite /
+ * `ui://genie/grid`) had anything to render for it. This module is the fix's
+ * shared read half: it loads those files' bytes from the shell copied into the
+ * server package, falling back to `@ambitresearch/genie-viewer`'s `static/`
+ * directory during source development, so both stores can copy them into a new
+ * kit's root.
  *
  * ── Optional-peer pattern (mirrors `preview.ts` / `validate/render.ts`) ──────
  * `@ambitresearch/genie-viewer` is a workspace devDependency of `@ambitresearch/genie`, not a
@@ -39,7 +40,7 @@ export interface ViewerAsset {
  * when that file reached the 256 KiB store read cap. It must be listed (and
  * loaded) before `viewer.js`; see `viewer/static/index.html`.
  */
-const VIEWER_STATIC_FILES = [
+export const VIEWER_STATIC_FILES = [
   "index.html",
   "viewer-browse.js",
   "viewer.js",
