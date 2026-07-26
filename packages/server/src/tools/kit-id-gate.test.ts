@@ -300,11 +300,22 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     // "passes for a different reason than its name claims" failure this file
     // exists to prevent, so each verb is pinned to the LAYER meant to stop it:
     //
-    //   schema — the verb's own `.refine()` is load-bearing. Nothing downstream
-    //            re-checks containment before a path is built:
-    //            `LocalFsKitStore.getKit` resolves through the UNGUARDED
-    //            `kitDir`, not `safeKitDir`, so a dropped refine reads
-    //            `<parent-of-kits-root>/.kit.json` before returning "not found".
+    //   schema — the verb's own `.refine()` is the gate under test. For every
+    //            verb here EXCEPT `preview`, it is also the ONLY containment
+    //            check on the way to a path: they resolve the kit through
+    //            `LocalFsKitStore.getKit`, which builds its path with the
+    //            UNGUARDED `kitDir` — not `safeKitDir` — so a dropped refine
+    //            reads `<parent-of-kits-root>/.kit.json` before returning
+    //            "not found".
+    //            `preview` is the exception and must not be described that way:
+    //            `runPreview` calls `preview.ts`'s own `resolveKitDir`, which
+    //            repeats `isSafeKitId` and throws `InvalidKitIdError` before
+    //            anything touches the filesystem. Its row still earns its place
+    //            — it pins the PROTOCOL boundary, and without it the schema
+    //            gate could be dropped in silence — but it is defence in depth
+    //            there, not the last line of it. (Same shape as `get_kit`,
+    //            which carries the refine twice: once on `getKitArgsSchema`,
+    //            once on the MCP `inputSchema`.)
     //   tool   — `list_files` applies `isSafeKitId` in its handler and raises
     //            its own `ERR_INVALID_KIT_ID`; `""` is stopped one step earlier
     //            by that schema's `.min(1)`.
