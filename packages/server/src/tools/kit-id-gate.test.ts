@@ -294,9 +294,11 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     // still refused.
     //
     // Asserting only "it was refused" would lock nothing. Drop a verb's
-    // `.refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE)` and the id falls through to
-    // the store, which reports it as `ERR_KIT_NOT_FOUND` — still a rejection,
-    // so a bare `ok === false` stays green with the gate gone. That is the
+    // `.refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE)` and SOME later layer will
+    // usually still refuse the id — so a bare `ok === false` can stay green
+    // with the gate gone. Deliberately vague, because WHICH layer and WHICH
+    // envelope varies per verb, and for `plan`'s dedicated test below the
+    // mutated call does not get refused at all, it SUCCEEDS. That is the
     // "passes for a different reason than its name claims" failure this file
     // exists to prevent, so each verb is pinned to the LAYER meant to stop it:
     //
@@ -326,10 +328,20 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     //            asserts above that it ACCEPTS `My_Kit.2`. Pinning a verb in
     //            the positive direction only is precisely the asymmetry this
     //            file exists to close.
-    //   store  — `plan` deliberately funnels every refusal into ONE envelope so
-    //            a client branches on a single reason (#252/#263; see plan.ts).
+    //   plan   — `plan` refuses in its OWN handler, BEFORE it consults the
+    //            store: `plan.ts` runs `isSafeKitId` and returns
+    //            `kitNotFoundResult` one statement ABOVE its `store.getKit`
+    //            call. This row was labelled `store` in an earlier revision,
+    //            which made its own failure message claim the refusal happened
+    //            "at its store gate" — flatly contradicting the dedicated test
+    //            below, which proves `getKit` is never reached. A label that
+    //            misdescribes the thing it pins is the same false-yes defect
+    //            this file exists to close, so the row is named for the verb
+    //            whose handler owns the gate.
+    //            `plan` funnels BOTH of its refusals into ONE envelope so a
+    //            client branches on a single reason (#252/#263; see plan.ts).
     //            That single envelope is why `plan` ALSO needs the dedicated
-    //            test below: this row cannot tell its two branches apart.
+    //            test below: this row cannot tell the two branches apart.
     //
     // `conjure` and `refine` are in here despite calling a live model endpoint.
     // They are safe to exercise because the MCP SDK validates `inputSchema`
@@ -427,7 +439,7 @@ describe("kitId gate — an imported kit is usable end to end", () => {
       mcp__genie__refine: "schema",
       mcp__genie__list_files: "tool",
       mcp__genie__read_file: "tool",
-      mcp__genie__plan: "store",
+      mcp__genie__plan: "plan",
     } as const;
 
     const refusedAt = (layer: (typeof REFUSES_AT)[keyof typeof REFUSES_AT], text: string) =>
