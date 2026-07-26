@@ -52,13 +52,16 @@ type ListableKitMeta = KitMeta & {
  *     gate is deliberately platform-INDEPENDENT (a plan authored on Linux may
  *     run on Windows, where those spellings open the sibling `victim`). Without
  *     this filter, such an adapter re-creates the defect this discovery step
- *     exists to avoid: an id that is advertised and then universally refused.
+ *     exists to avoid: an id that is advertised and then refused by every verb
+ *     that applies the gate.
  *     It is not dead code — Part H of `kit-id-gate.test.ts` drives a deliberately
  *     non-conforming store and fails if the clause is dropped.
  *
  * Filtering rather than relaxing the gate is the safe direction. The excluded id
- * is unusable on every platform, so hiding it removes a dead end; admitting it
- * would make an id that is merely useless on Linux destructive on Windows.
+ * is unusable through every consumer that enforces the platform-independent gate
+ * — not intrinsically unusable, since as above `victim.` is a legal POSIX
+ * directory — so hiding it removes a dead end; admitting it would make an id
+ * that is merely useless on Linux destructive on Windows.
  */
 export async function listWritableKits(store: KitStore): Promise<ListKitsEntry[]> {
   const kits = (await store.listKits()) as ListableKitMeta[];

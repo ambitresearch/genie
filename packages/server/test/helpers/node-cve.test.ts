@@ -210,6 +210,30 @@ describe("satisfiesRange — empty comparator sets are wildcards", () => {
       findOpenEndedNodeFloors("node-22.19%E2%80%9322.x%20or%20%E2%89%A524.4.1-brightgreen.svg"),
     ).toEqual(["24.4.1"]);
   });
+  it("🔒 does not attribute a co-listed tool's floor to Node", () => {
+    // Attribution was per LINE, so any prerequisite line naming Node handed the
+    // function every version on it — including versions belonging to a tool
+    // listed alongside. That is a false POSITIVE in the repository sweep: a
+    // guide correctly pinning `Node 22 (pnpm >=10.34.4)` was read as claiming a
+    // Node floor of 10.34.4, which the manifest range refuses, so honest prose
+    // failed the lock. Worse, that line yields ONLY the foreign floor, so the
+    // reported over-claim named a version the document never applied to Node.
+    expect(findOpenEndedNodeFloors("Install Node 22 (pnpm >=10.34.4)")).toEqual([]);
+    expect(findOpenEndedNodeFloors("Node.js 22.19.0 or newer, pnpm 10.0.0 or newer")).toEqual([
+      "22.19.0",
+    ]);
+    expect(
+      findOpenEndedNodeFloors("Requires Node >=22.19.0 <23 || >=24.4.1 and pnpm >=10.0.0"),
+    ).toEqual(["24.4.1"]);
+
+    // Attribution must still CARRY across a segment that names no tool of its
+    // own, which is the shape of the canonical prose: the clause after the comma
+    // is still about Node. Dropping subject inheritance would trade this false
+    // positive for a false negative and silently stop policing the real claim.
+    expect(findOpenEndedNodeFloors("Node.js 22.19.0\u201322.x, or 24.4.1 or newer")).toEqual([
+      "24.4.1",
+    ]);
+  });
   it("\u{1f512} reads a bounded comparator as bounded, not as a floor", () => {
     // Documenting the manifest range verbatim must not read as an over-claim:
     // `>=22.19.0 <23` promises nothing about 23.x, so only the trailing arm is

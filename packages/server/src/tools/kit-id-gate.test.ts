@@ -1174,8 +1174,10 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
 
     const kitVerbs: string[] = [];
     const ungated: string[] = [];
+    const sources: Array<[string, string]> = [];
     for (const file of files) {
       const source = await readFile(join(toolsDir, file), "utf8");
+      sources.push([file, source]);
       if (!/kitId:\s*z\./u.test(source)) continue;
       kitVerbs.push(file);
       // `get_kit` applies the gate inside its own args schema, so delegating to
@@ -1195,14 +1197,50 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
     // rests on a different premise (no verb is NARROWER than the shared rule)
     // and is locked by its own two tests above: the advertised-schema check and
     // the behavioural refusal check.
-    const universal =
-      LIST_KITS_DESCRIPTION.match(/\b(?:every|any) kit verb\b[^.]{0,40}?\brefuses?\b/giu) ?? [];
+    //
+    // Scope is every tool SOURCE, not just the exported description string. The
+    // first cut read only `LIST_KITS_DESCRIPTION`, so when the claim was
+    // corrected there it survived eleven lines below in the docblock of the
+    // function that string documents — a lock cannot police a restatement it
+    // never reads. The pattern likewise matches the claim's SHAPE rather than
+    // one spelling of it: a universality word beside a refusal word, in either
+    // order, since "no kit-taking verb would accept" and "universally refused"
+    // assert exactly the same thing.
+    //
+    // A claim explicitly QUALIFIED by the gate is honest and must not fire —
+    // `LIST_KITS_DESCRIPTION` says "no kit verb THAT APPLIES THAT GATE will
+    // refuse", which is exactly the narrowing this lock exists to force. So the
+    // span between the two words may not contain a qualifier; without that
+    // guard the lock reports the corrected wording as the defect and the only
+    // way to satisfy it is to delete a true sentence. For the same reason a
+    // universality word carrying "not" is a DENIAL of the claim — "not every
+    // kit verb does" is the disclaimer, and it necessarily sits beside a
+    // refusal word, so without the guard every correction reads as a relapse.
+    const QUALIFIER = String.raw`(?:that appl\w+|which appl\w+|applying|gated)`;
+    const GAP = String.raw`(?:(?!${QUALIFIER})[^.]){0,60}?`;
+    const SCOPE = String.raw`(?<!\bnot\s)(?:every|any|no)\s+kit(?:[- ]taking)?\s+verb\b`;
+    const UNIVERSAL_REFUSAL = new RegExp(
+      [
+        String.raw`univers\w*\s+\w*\s*refus\w*`,
+        String.raw`refus\w*\s+univers\w*`,
+        String.raw`\b${SCOPE}${GAP}\b(?:refus\w*|accept\w*)`,
+        String.raw`\b(?:refus\w*|accept\w*)${GAP}\b${SCOPE}`,
+      ].join("|"),
+      "giu",
+    );
+
+    const universal: string[] = [];
+    for (const [file, source] of sources) {
+      for (const match of source.matchAll(UNIVERSAL_REFUSAL)) {
+        universal.push(`${file}: ${match[0].replace(/\s+/gu, " ")}`);
+      }
+    }
     if (universal.length > 0) {
       expect(
         ungated,
-        `list_kits' description says "${universal.join('", "')}", but these declare a kitId ` +
-          `input and never apply the shared gate, so an id it withholds as unusable is one ` +
-          `they would in fact accept`,
+        `these tool sources claim a refusal every kit verb makes — "${universal.join('", "')}" ` +
+          `— but these verbs declare a kitId input and never apply the shared gate, so an id ` +
+          `withheld as unusable is one they would in fact accept`,
       ).toEqual([]);
     }
   });

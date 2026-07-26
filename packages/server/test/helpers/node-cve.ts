@@ -311,13 +311,62 @@ export function findOpenEndedNodeFloors(text: string): string[] {
     /(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/gu,
   ];
 
+  // Attribution is per CLAUSE, not per line. A line may pin several tools at
+  // once — `Install Node 22 (pnpm >=10.34.4)` — and reading the whole line as
+  // Node's handed the sweep pnpm's floor as if the document had claimed it. On
+  // that line the only floor returned was the foreign one, so the reported
+  // over-claim named a version the prose never applied to Node at all.
+  //
+  // A clause naming no tool INHERITS the previous clause's subject, because the
+  // canonical prose relies on it: in `Node.js 22.19.0–22.x, or 24.4.1 or newer`
+  // the clause after the comma is still about Node. Dropping the inheritance
+  // would trade a false positive for a false negative and quietly stop policing
+  // the claim this helper exists to police.
+  //
+  // "Names no tool" is decided against closed-class function words only — the
+  // conjunctions and comparatives that join two clauses about one subject. A
+  // list of TOOL names would be the hand-maintained enumeration this suite
+  // exists to replace, and would go stale the first time a guide pinned
+  // something new.
+  //
+  // Only the words BEFORE the clause's first version decide its subject. Words
+  // after it qualify the same claim rather than introducing another — real
+  // prose reads `or 24.4.1 or newer for the npm/source path, or Docker`, and
+  // treating `for the npm/source path` as a new subject drops the very floor
+  // the sweep exists to read.
+  const CONTINUATION = new Set([
+    "or",
+    "and",
+    "to",
+    "through",
+    "up",
+    "at",
+    "least",
+    "newer",
+    "later",
+    "then",
+    "plus",
+    "version",
+    "v",
+    "x",
+  ]);
+
   const found: string[] = [];
   for (const line of text.split("\n")) {
     if (!/node/iu.test(line)) continue;
-    for (const pattern of patterns) {
-      for (const match of line.matchAll(pattern)) {
-        if (match[4] !== undefined) continue;
-        found.push(`${match[1]}.${match[2]}.${match[3] ?? "0"}`);
+    let subjectIsNode = false;
+    for (const clause of line.split(/[,;()]|\s+and\s+/u)) {
+      const firstVersion = clause.search(/\d/u);
+      const prefix = firstVersion === -1 ? clause : clause.slice(0, firstVersion);
+      const words = prefix.toLowerCase().match(/[a-z][a-z.]*/gu) ?? [];
+      if (words.some((word) => word.includes("node"))) subjectIsNode = true;
+      else if (words.some((word) => !CONTINUATION.has(word))) subjectIsNode = false;
+      if (!subjectIsNode) continue;
+      for (const pattern of patterns) {
+        for (const match of clause.matchAll(pattern)) {
+          if (match[4] !== undefined) continue;
+          found.push(`${match[1]}.${match[2]}.${match[3] ?? "0"}`);
+        }
       }
     }
   }
