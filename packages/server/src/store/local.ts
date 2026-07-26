@@ -490,6 +490,19 @@ export class LocalFsKitStore implements KitStore {
     const kits: KitMeta[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      // A POSIX directory name may contain `\`, which `isSafeKitId` — the
+      // containment rule every kit-taking tool gates on — rejects. Reporting
+      // the directory name (below) would therefore publish an id that
+      // read_file/list_files/plan/write_files/bind_kit/conjure_screen all
+      // refuse. Skipping it here keeps the promise `list_kits` makes: the ids
+      // it hands out are valid input to the tools that consume them.
+      //
+      // Filtered at the LISTING, not by gating getKit: the invariant is about
+      // what this store PUBLISHES. A caller that constructs such an id itself
+      // is still stopped at the tool boundary. GitHostKitStore needs no
+      // equivalent — a repository name admits no path separator — so this
+      // keeps the two adapters agreeing rather than diverging.
+      if (!isSafeKitId(entry.name)) continue;
       const meta = await readMetaIfReadable<KitMetaFile>(this.kitMetaPath(entry.name));
       if (meta?.type === KIT_TYPE) {
         kits.push({
@@ -761,16 +774,25 @@ export class LocalFsProjectStore implements ProjectStore {
     return join(this.projectDir(projectId), ".project.json");
   }
 
-  // `meta.id` here is DELIBERATE, and deliberately unlike `listKits`/`getKit`
-  // above — do not "finish the job" by switching these to the routing key too.
-  // The kit sites report the routing key because the two kit adapters DISAGREED:
-  // `GitHostKitStore` reports `repo.name` and discards `.kit.json`'s embedded id,
-  // so LocalFs reporting the embedded id was a parity break with a live symptom
-  // (`list_kits` returning an id `get_kit` cannot resolve). Projects have no such
-  // split: `GitHostProjectStore.listProjects`/`getProject` both return the parsed
-  // `projects/<id>.json` body, i.e. the EMBEDDED id, exactly as these do. The
-  // adapters already agree, so changing this one would CREATE the divergence the
-  // kit change removes. Any move here has to move both adapters together.
+  // `meta.id` here is NOT the routing key, and unlike `listKits`/`getKit` above
+  // it has not been fixed. That is a deferral, not a judgement that it is
+  // correct — do not read this comment as blessing the current behaviour.
+  //
+  // The defect is the same one the kit sites just fixed, and BOTH project
+  // adapters have it: each routes on a container key — the directory holding
+  // `.project.json` here, the `projects/<projectId>.json` filename in
+  // `GitHostProjectStore` — while reporting the `id` embedded in that file's
+  // body. Let the two drift and `listProjects` hands out an id `getProject`
+  // cannot resolve, exactly as `listKits` did for kits.
+  //
+  // What differs is the SHAPE of the fix, which is why it is not in that
+  // change. The kit adapters DISAGREED: GitHostKitStore already reported the
+  // routing key and discarded `.kit.json`'s embedded id, so LocalFs was
+  // demonstrably wrong against a shipped reference and could be corrected
+  // alone. The project adapters agree — in the defect — so there is no
+  // reference to correct toward. Fixing it means moving both adapters together
+  // plus a shared `projectStoreContract` pin, and moving only this one would
+  // convert a latent shared bug into a live parity break.
   async listProjects(): Promise<ProjectMeta[]> {
     await ensureDir(this.baseDir);
     const entries = await readdir(this.baseDir, { withFileTypes: true });

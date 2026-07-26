@@ -20,6 +20,7 @@ import {
   MAX_FILE_BYTES,
   NotFoundError,
 } from "../src/store/interface.js";
+import { isSafeKitId } from "../src/store/kit-files.js";
 import { LocalFsKitStore, LocalFsProjectStore } from "../src/store/local.js";
 import { loadViewerAssets } from "../src/store/viewer-assets.js";
 
@@ -208,11 +209,17 @@ function kitStoreContract(
       expect(listed.map((k) => k.id)).not.toContain("some-other-id-999999");
 
       // The promise `list_kits` makes to every kit-taking tool, stated as an
-      // executable assertion: an id it hands out resolves, and resolves to
-      // itself. `plan.test.ts` cites this promise as the reason those tools
-      // gate on containment (isSafeKitId) rather than create_kit's slug shape;
-      // a listed-but-unresolvable id would break it from the other end.
+      // executable assertion: an id it hands out resolves, resolves to itself,
+      // and is one the tools will actually accept. `plan.test.ts` cites this
+      // promise as the reason those tools gate on containment (isSafeKitId)
+      // rather than create_kit's slug shape; a listed id that is either
+      // unresolvable OR unsafe breaks it from the other end.
+      //
+      // Both halves are needed, and neither implies the other: `getKit` routes
+      // through the raw kit dir on LocalFs, so it resolves ids that every tool
+      // then refuses. Round-tripping alone would pass such an id.
       for (const k of listed) {
+        expect(isSafeKitId(k.id), `listed id must satisfy isSafeKitId: ${k.id}`).toBe(true);
         await expect(store.getKit(k.id)).resolves.toMatchObject({ id: k.id });
       }
     });
@@ -781,6 +788,47 @@ describe("LocalFsKitStore — adapter-specific", () => {
     delete process.env["GENIE_HOME"];
     await rm(tmpDir, { recursive: true, force: true });
     await rm(genieHomeDir, { recursive: true, force: true });
+  });
+
+  it("🔒 omits a directory whose name isSafeKitId rejects", async () => {
+    // POSIX permits `\` in a directory name, and `isSafeKitId` — the containment
+    // rule every kit-taking tool gates on — rejects any id containing one. Since
+    // listKits reports the DIRECTORY NAME as the id (see the shared contract's
+    // divergent-.kit.json test), an unfiltered listing publishes an id that
+    // read_file, list_files, plan, write_files, bind_kit and conjure_screen all
+    // refuse: listable but unusable — the same broken promise this PR fixes for
+    // desynchronised ids, arriving by a different route.
+    //
+    // The shared round-trip assertion cannot catch this alone: LocalFsKitStore
+    // .getKit routes through `kitDir`, not `safeKitDir`, so it resolves the
+    // backslash directory quite happily. Only the TOOLS reject it — which is
+    // why the shared loop now asserts isSafeKitId as well as resolvability.
+    //
+    // Deliberately LocalFs-only, and NOT a repeat of the placement mistake this
+    // suite's divergent-.kit.json test was promoted to fix. That invariant was
+    // adapter-neutral, so pinning it on one adapter hid a real defect in the
+    // other. This one is adapter-REACHABLE only here: a git host admits no path
+    // separator in a repository name, so GitHostKitStore cannot enter this
+    // state and seeding it there would pin a fiction.
+    const unsafeDir = join(tmpDir, "unsafe\\kit");
+    await mkdir(unsafeDir, { recursive: true });
+    await writeFile(
+      join(unsafeDir, ".kit.json"),
+      JSON.stringify({
+        id: "unsafe\\kit",
+        name: "Unsafe Kit",
+        type: "GENIE_KIT",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await store.createKit("Safe Kit", "safe-kit-abc123");
+
+    const ids = (await store.listKits()).map((k) => k.id);
+    expect(ids).toContain("safe-kit-abc123");
+    expect(ids).not.toContain("unsafe\\kit");
+    for (const id of ids) {
+      expect(isSafeKitId(id), `listed id must satisfy isSafeKitId: ${id}`).toBe(true);
+    }
   });
 
   it("AC7 — readFile throws FileTooLargeError for files > 256 KiB", async () => {
