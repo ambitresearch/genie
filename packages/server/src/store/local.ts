@@ -493,7 +493,11 @@ export class LocalFsKitStore implements KitStore {
       const meta = await readMetaIfReadable<KitMetaFile>(this.kitMetaPath(entry.name));
       if (meta?.type === KIT_TYPE) {
         kits.push({
-          id: meta.id,
+          // The DIRECTORY name, not `meta.id`. The directory is what getKit
+          // routes on, so reporting the embedded id here can hand out an id
+          // that cannot be fetched back. Mirrors GitHostKitStore, which treats
+          // the repo name as authoritative and discards .kit.json's `id`.
+          id: entry.name,
           name: meta.name,
           type: KIT_TYPE,
           createdAt: meta.createdAt,
@@ -507,7 +511,11 @@ export class LocalFsKitStore implements KitStore {
     const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId));
     if (!meta || meta.type !== KIT_TYPE) throw new NotFoundError("Kit", kitId);
     return {
-      id: meta.id,
+      // The lookup key, not `meta.id` — see listKits. Returning the embedded
+      // id here would make `getKit(x).id !== x` for a desynchronised kit, so a
+      // caller round-tripping the result would query an id that resolves to
+      // nothing.
+      id: kitId,
       name: meta.name,
       type: KIT_TYPE,
       createdAt: meta.createdAt,
@@ -753,6 +761,16 @@ export class LocalFsProjectStore implements ProjectStore {
     return join(this.projectDir(projectId), ".project.json");
   }
 
+  // `meta.id` here is DELIBERATE, and deliberately unlike `listKits`/`getKit`
+  // above — do not "finish the job" by switching these to the routing key too.
+  // The kit sites report the routing key because the two kit adapters DISAGREED:
+  // `GitHostKitStore` reports `repo.name` and discards `.kit.json`'s embedded id,
+  // so LocalFs reporting the embedded id was a parity break with a live symptom
+  // (`list_kits` returning an id `get_kit` cannot resolve). Projects have no such
+  // split: `GitHostProjectStore.listProjects`/`getProject` both return the parsed
+  // `projects/<id>.json` body, i.e. the EMBEDDED id, exactly as these do. The
+  // adapters already agree, so changing this one would CREATE the divergence the
+  // kit change removes. Any move here has to move both adapters together.
   async listProjects(): Promise<ProjectMeta[]> {
     await ensureDir(this.baseDir);
     const entries = await readdir(this.baseDir, { withFileTypes: true });

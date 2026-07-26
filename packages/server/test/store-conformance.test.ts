@@ -95,10 +95,13 @@ function kitStoreContract(
       for (const asset of expected) {
         const read = await store.readFile(kit.id, asset.path);
         const actualBytes =
-          read.encoding === "base64" ? Buffer.from(read.content, "base64") : Buffer.from(read.content, "utf-8");
-        expect(actualBytes.equals(asset.content), `"${asset.path}" bytes must match packages/viewer/static exactly`).toBe(
-          true,
-        );
+          read.encoding === "base64"
+            ? Buffer.from(read.content, "base64")
+            : Buffer.from(read.content, "utf-8");
+        expect(
+          actualBytes.equals(asset.content),
+          `"${asset.path}" bytes must match packages/viewer/static exactly`,
+        ).toBe(true);
       }
     });
 
@@ -126,7 +129,10 @@ function kitStoreContract(
       // manifest maps to; reading raw bytes is what distinguishes "present
       // and empty" from "absent").
       const read = await store.readFile(kit.id, ".genie/manifest.json");
-      const raw = read.encoding === "base64" ? Buffer.from(read.content, "base64").toString("utf-8") : read.content;
+      const raw =
+        read.encoding === "base64"
+          ? Buffer.from(read.content, "base64").toString("utf-8")
+          : read.content;
       const parsed = JSON.parse(raw);
       expect(parsed).toMatchObject({ version: 1, groups: [], components: [] });
       expect(typeof parsed.name).toBe("string");
@@ -166,6 +172,49 @@ function kitStoreContract(
 
     it("getKit throws NotFoundError for non-existent kit", async () => {
       await expect(store.getKit("no-such-kit")).rejects.toThrow(NotFoundError);
+    });
+
+    it("🔒 reports the routing key as the id when .kit.json embeds a divergent one", async () => {
+      // The `id` a store REPORTS must be the key that store ROUTES on — the
+      // directory name on LocalFs, the repo name on GitHost — never the `id`
+      // field embedded in .kit.json, which is untrusted data that a restore,
+      // a hand-edit, or a rename can desynchronise from its container.
+      //
+      // This began life as a GitHost-only adapter test ("treats the repo name
+      // as authoritative…", PR #90), but every word of its rationale is
+      // adapter-neutral: the reported id "is the path every subsequent API
+      // call routes through". Pinning an adapter-neutral invariant on one
+      // adapter is worse than not pinning it, because the suite goes green
+      // and reads as coverage. LocalFs reported `meta.id` from both listKits
+      // and getKit and so failed this contract while GitHost passed it.
+      const kit = await store.createKit("Divergent Kit", "divergent-kit-abc123");
+      await seedFile(
+        kit.id,
+        ".kit.json",
+        JSON.stringify({
+          id: "some-other-id-999999",
+          name: "Divergent Kit",
+          type: "GENIE_KIT",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+
+      const fetched = await store.getKit(kit.id);
+      expect(fetched.id).toBe("divergent-kit-abc123");
+      expect(fetched.name).toBe("Divergent Kit");
+
+      const listed = await store.listKits();
+      expect(listed.map((k) => k.id)).toContain("divergent-kit-abc123");
+      expect(listed.map((k) => k.id)).not.toContain("some-other-id-999999");
+
+      // The promise `list_kits` makes to every kit-taking tool, stated as an
+      // executable assertion: an id it hands out resolves, and resolves to
+      // itself. `plan.test.ts` cites this promise as the reason those tools
+      // gate on containment (isSafeKitId) rather than create_kit's slug shape;
+      // a listed-but-unresolvable id would break it from the other end.
+      for (const k of listed) {
+        await expect(store.getKit(k.id)).resolves.toMatchObject({ id: k.id });
+      }
     });
 
     it("listFiles returns files in a kit", async () => {
