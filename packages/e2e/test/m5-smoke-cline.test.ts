@@ -675,23 +675,42 @@ async function readClineHubLockPids(base: string): Promise<number[]> {
   return pids;
 }
 
+interface ScanClineHubDaemonPidsOptions {
+  platform?: NodeJS.Platform;
+  listProcesses?: () => Promise<string> | string;
+}
+
 /**
  * Finds hub daemons started by *this* test run. The match is scoped by the
  * `mkdtemp` suffix rather than the full `--cwd` value because macOS reports the
  * daemon's argv with `/private/var/folders/...` while `mkdtemp` returned
  * `/var/folders/...`; the suffix is random per run, so it can never match a
  * daemon belonging to another checkout.
+ *
+ * Windows has no `ps`, so the scan is a no-op there and teardown falls back to
+ * the discovery lock alone. `platform`/`listProcesses` are seams for the tests.
  */
-async function scanClineHubDaemonPids(base: string): Promise<number[]> {
-  if (process.platform === "win32") {
+async function scanClineHubDaemonPids(
+  base: string,
+  options: ScanClineHubDaemonPidsOptions = {},
+): Promise<number[]> {
+  const {
+    platform = process.platform,
+    listProcesses = async () => {
+      const { stdout } = await execFileAsync("ps", ["-Awwo", "pid=,command="], {
+        maxBuffer: 10_000_000,
+      });
+      return stdout;
+    },
+  } = options;
+
+  if (platform === "win32") {
     return [];
   }
   const marker = basename(base);
   let stdout: string;
   try {
-    ({ stdout } = await execFileAsync("ps", ["-Awwo", "pid=,command="], {
-      maxBuffer: 10_000_000,
-    }));
+    stdout = await listProcesses();
   } catch {
     return [];
   }
@@ -858,6 +877,45 @@ it("keeps the temp tree when a hub daemon cannot be reaped", async () => {
   }
 });
 
+it("never shells out to `ps` on Windows, where teardown relies on the lock alone", async () => {
+  const base = "/tmp/genie-cline-cli-smoke-Win32";
+  let scanned = false;
+
+  const pids = await scanClineHubDaemonPids(base, {
+    platform: "win32",
+    listProcesses: () => {
+      scanned = true;
+      // A matching daemon, so an accidental scan cannot look like a clean miss.
+      return `  111 cline ${CLINE_HUB_DAEMON_FLAG} --cwd ${base}`;
+    },
+  });
+
+  expect(scanned).toBe(false);
+  expect(pids).toEqual([]);
+});
+
+it("scopes the process scan to this run's mkdtemp suffix", async () => {
+  const base = "/var/folders/ab/genie-cline-cli-smoke-AbCdEf";
+
+  const pids = await scanClineHubDaemonPids(base, {
+    platform: "darwin",
+    listProcesses: async () =>
+      [
+        // macOS reports the daemon under `/private/var/...` even though
+        // `mkdtemp` returned `/var/...`, so only the suffix can match.
+        `  111 cline ${CLINE_HUB_DAEMON_FLAG} --cwd /private${base} --host 127.0.0.1`,
+        // Another checkout's daemon: same flag, different suffix.
+        `  222 cline ${CLINE_HUB_DAEMON_FLAG} --cwd /private/var/folders/zz/genie-cline-cli-smoke-Other`,
+        // Our tree, but not a hub daemon.
+        `  333 cline --cwd /private${base}`,
+        // Never signal the vitest worker itself.
+        `${process.pid} cline ${CLINE_HUB_DAEMON_FLAG} --cwd /private${base}`,
+      ].join("\n"),
+  });
+
+  expect(pids).toEqual([111]);
+});
+
 it("escalates to SIGKILL and keeps waiting when a hub daemon ignores SIGTERM", async () => {
   const signals: NodeJS.Signals[] = [];
   let clock = 0;
@@ -979,7 +1037,11 @@ it("joins a detached hub daemon before removing the temp tree (#259)", async () 
     }
     expect(daemonPid).toBeTypeOf("number");
     expect(processIsAlive(daemonPid!)).toBe(true);
-    expect(await scanClineHubDaemonPids(base)).toContain(daemonPid);
+    // The `ps` scan is a no-op on Windows, where the discovery lock above is
+    // the only discovery channel; asserting on it there would always fail.
+    if (process.platform !== "win32") {
+      expect(await scanClineHubDaemonPids(base)).toContain(daemonPid);
+    }
 
     await removeClineSmokeTree(base);
 
