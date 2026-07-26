@@ -3332,6 +3332,20 @@ describe("round 7 — inherited style-src hashes", () => {
     void window;
   });
 
+  it("warns when the embedding document pins only script-src to build-time hashes", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    const meta = document.createElement("meta");
+    meta.setAttribute("http-equiv", "Content-Security-Policy");
+    meta.setAttribute("content", "default-src 'none'; script-src 'sha256-abc123'");
+    document.head.append(meta);
+    controller.addDraft(conjureResult(), { kitId: "my-kit", kitLabel: "My Kit" });
+    const note = document.getElementById("review-preview-note") as HTMLElement;
+    // The note copy warns the preview may render "inert"; an inherited
+    // script-src hash policy is exactly what makes an unwritten draft's inline
+    // <script> inert, so the warning must fire even with no style-src hashes.
+    expect(note.hidden).toBe(false);
+  });
+
   it("stays quiet when the embedding document pins no style hashes", () => {
     const { document, controller } = loadWired(HAPPY_REPLIES);
     controller.addDraft(conjureResult(), { kitId: "my-kit", kitLabel: "My Kit" });
@@ -3677,6 +3691,304 @@ describe("F39 — a route change cannot strand the apply dialog", () => {
     expect((shell.document.querySelector(".app-header") as HTMLElement).hasAttribute("inert")).toBe(
       false,
     );
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * #257 — broker-served draft preview                                  *
+ * ------------------------------------------------------------------ */
+
+describe("#257 — broker-served draft preview", () => {
+  /** The exact shape the card asset broker mints: loopback, `/d/`, 16-byte hex token. */
+  const DRAFT_URL = "http://127.0.0.1:51234/d/0123456789abcdef0123456789abcdef";
+
+  function frameOf(document: Document): HTMLIFrameElement {
+    return document.querySelector("#review-preview iframe") as HTMLIFrameElement;
+  }
+
+  function pinStyleHashes(document: Document): void {
+    const meta = document.createElement("meta");
+    meta.setAttribute("http-equiv", "Content-Security-Policy");
+    meta.setAttribute("content", "default-src 'none'; style-src 'sha256-abc123'");
+    document.head.append(meta);
+  }
+
+  /**
+   * Copilot round 7 (#257) — every case below seeds through `controller.addDraft`, which skips the
+   * strict validators the REAL Generate and Refine paths run. The server emits `previewUrl`
+   * (`conjure.ts`, `refine.ts`), so those validators must accept it or the feature never reaches
+   * Review at all. The end-to-end Generate proof lives in `generate-workflow.test.ts`.
+   */
+  it("accepts a served previewUrl through both strict validators (#257 round 7)", () => {
+    const hooks = loadHooks();
+    expect(hooks.isConjureResult(conjureResult({ previewUrl: DRAFT_URL }))).toBe(true);
+    expect(hooks.isRefineResult(refineResult({ previewUrl: DRAFT_URL, diff: "" }))).toBe(true);
+  });
+
+  it("accepts a locally cleared previewUrl through both strict validators (#257 round 7)", () => {
+    const hooks = loadHooks();
+    // `applyDeterministicTweak` clears it by ASSIGNING `undefined`, so the KEY survives —
+    // `hasOnlyKeys` reads `Object.keys`, which still reports it.
+    const tweaked = { ...conjureResult(), previewUrl: undefined };
+    expect(Object.keys(tweaked)).toContain("previewUrl");
+    expect(hooks.isConjureResult(tweaked)).toBe(true);
+    expect(hooks.isRefineResult({ ...tweaked, diff: "" })).toBe(true);
+  });
+
+  it("still rejects a non-string previewUrl (#257 round 7)", () => {
+    const hooks = loadHooks();
+    expect(hooks.isConjureResult(conjureResult({ previewUrl: 42 }))).toBe(false);
+    // `isRefineResult` rebuilds a plain object before delegating, so it must FORWARD the key —
+    // omitting it would silently wave a hostile value past the type check.
+    expect(hooks.isRefineResult(refineResult({ previewUrl: 42 }))).toBe(false);
+  });
+
+  it("points the frame at the broker draft URL instead of srcdoc", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
+    const frame = frameOf(document);
+    // A document FETCHED over http gets a fresh response-header CSP; `srcdoc` inherits the
+    // embedder's. Serving the draft is the whole point of #257, so `srcdoc` must be unset.
+    expect(frame.getAttribute("src")).toBe(DRAFT_URL);
+    expect(frame.hasAttribute("srcdoc")).toBe(false);
+  });
+
+  // #257 round 7 — the broker keeps 32 drafts; this history is unbounded. An evicted
+  // document answers 404 and an iframe fires `load` for HTTP errors, so a stranded draft
+  // used to render blank while the viewer reported a healthy preview.
+  it("stops pointing a reselected draft at a preview URL the broker evicted", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
+    expect(frameOf(document).getAttribute("src")).toBe(DRAFT_URL);
+
+    const NEXT_URL = DRAFT_URL.replace(/[0-9a-f]{32}$/, "f".repeat(32));
+    controller.addDraft(conjureResult({ previewUrl: NEXT_URL, expiredPreviewUrls: [DRAFT_URL] }), {
+      kitId: "k",
+      kitLabel: "K",
+    });
+    expect(frameOf(document).getAttribute("src")).toBe(NEXT_URL);
+
+    // Reselect through the switcher a reviewer actually uses, not a store back door.
+    const buttons = document.querySelectorAll<HTMLButtonElement>("#review-draft-switcher button");
+    buttons[0].dispatchEvent(new document.defaultView!.Event("click", { bubbles: true }));
+    expect(controller.state().currentNumber).toBe(1);
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("accepts the broker eviction notice through both strict validators (#257 round 7)", () => {
+    const hooks = loadHooks();
+    const notice = { expiredPreviewUrls: [DRAFT_URL] };
+    expect(hooks.isConjureResult(conjureResult(notice))).toBe(true);
+    expect(hooks.isRefineResult(refineResult(notice))).toBe(true);
+    // Same trap as `previewUrl`: `isRefineResult` rebuilds the object, so a missing
+    // forward would wave a hostile value straight past the type check.
+    expect(hooks.isConjureResult(conjureResult({ expiredPreviewUrls: [7] }))).toBe(false);
+    expect(hooks.isRefineResult(refineResult({ expiredPreviewUrls: [7] }))).toBe(false);
+    expect(hooks.isRefineResult(refineResult({ expiredPreviewUrls: "nope" }))).toBe(false);
+  });
+
+  it("falls back to srcdoc when the server published no preview URL", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult(), { kitId: "k", kitLabel: "K" });
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("refuses a preview URL that is not on the loopback broker", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(
+      conjureResult({ previewUrl: "https://evil.example/d/0123456789abcdef0123456789abcdef" }),
+      { kitId: "k", kitLabel: "K" },
+    );
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("refuses a loopback URL outside the draft path", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(conjureResult({ previewUrl: "http://127.0.0.1:51234/k/abc/Button.html" }), {
+      kitId: "k",
+      kitLabel: "K",
+    });
+    expect(frameOf(document).hasAttribute("src")).toBe(false);
+  });
+
+  it("refuses a foreign URL that merely embeds a broker-shaped one", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    // Added after mutation testing: dropping the `^` anchor left this shape accepted, which would
+    // aim the frame at an attacker origin that simply appends a valid-looking draft URL.
+    controller.addDraft(conjureResult({ previewUrl: `https://evil.example/go?to=${DRAFT_URL}` }), {
+      kitId: "k",
+      kitLabel: "K",
+    });
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("refuses a broker URL carrying anything past the token", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    // Added after mutation testing: dropping the `$` anchor left this accepted. The broker never
+    // mints it, so it would 404 into a blank frame instead of falling back to a working srcdoc.
+    controller.addDraft(conjureResult({ previewUrl: `${DRAFT_URL}/../../k/abc/Button.html` }), {
+      kitId: "k",
+      kitLabel: "K",
+    });
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("drops the inherited-policy warning once the draft is served over http", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    pinStyleHashes(document);
+    controller.addDraft(conjureResult({ previewUrl: DRAFT_URL }), { kitId: "k", kitLabel: "K" });
+    // The warning is about INHERITED policy. A served draft carries its own, so repeating it
+    // would be untrue.
+    expect((document.getElementById("review-preview-note") as HTMLElement).hidden).toBe(true);
+  });
+
+  it("accepts a broker URL whose authority omits the default HTTP port", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    // `parsePort` accepts 80 and `authorityFor` omits the port when it IS 80, so the broker can
+    // legitimately mint a portless URL. Rejecting it drops silently to `srcdoc`, losing the whole
+    // point of #257 exactly where the fix would otherwise apply.
+    controller.addDraft(
+      conjureResult({ previewUrl: "http://127.0.0.1/d/0123456789abcdef0123456789abcdef" }),
+      { kitId: "k", kitLabel: "K" },
+    );
+    const frame = frameOf(document);
+    expect(frame.getAttribute("src")).toBe("http://127.0.0.1/d/0123456789abcdef0123456789abcdef");
+    expect(frame.hasAttribute("srcdoc")).toBe(false);
+  });
+
+  it("refuses a port the broker could never bind", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    // `parsePort` caps at 65535. A guard that accepts more describes a shape the broker cannot
+    // mint, which is exactly what a barrier is supposed to exclude.
+    controller.addDraft(
+      conjureResult({ previewUrl: "http://127.0.0.1:99999/d/0123456789abcdef0123456789abcdef" }),
+      { kitId: "k", kitLabel: "K" },
+    );
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("does not let a locally tweaked draft inherit the parent's published preview", () => {
+    const { applyDeterministicTweak, detectDeterministicControls } = loadHooks();
+    // The broker published the PARENT's bytes. A tweak rewrites those bytes locally and never
+    // reaches the broker, so carrying the URL forward would fetch the pre-tweak document while
+    // Apply writes the tweaked one — the reviewer approves something they never saw.
+    const base = conjureResult({
+      previewUrl: DRAFT_URL,
+      files: [
+        fileEntry("components/actions/Button/Button.html", MARKER),
+        {
+          ...fileEntry("components/actions/Button/Button.css", ":root{--radius:8px;}"),
+          mimeType: "text/css",
+        },
+      ],
+    });
+    const control = detectDeterministicControls(base.files)[0];
+    const tweaked = applyDeterministicTweak(base, control.id, 12);
+
+    expect(tweaked.previewUrl).toBeUndefined();
+    expect(base.previewUrl).toBe(DRAFT_URL);
+  });
+
+  it("renders a tweaked draft from its own bytes rather than the stale broker document", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(
+      conjureResult({
+        previewUrl: DRAFT_URL,
+        files: [
+          fileEntry("components/actions/Button/Button.html", MARKER),
+          {
+            ...fileEntry("components/actions/Button/Button.css", ":root{--radius:8px;}"),
+            mimeType: "text/css",
+          },
+        ],
+      }),
+      { kitId: "k", kitLabel: "K" },
+    );
+    const slider = document.getElementById("control-0") as HTMLInputElement;
+    slider.value = "12";
+    slider.dispatchEvent(new document.defaultView!.Event("change", { bubbles: true }));
+
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain(MARKER);
+  });
+
+  it("keeps the warning when a rejected preview URL forces the srcdoc fallback", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    pinStyleHashes(document);
+    controller.addDraft(conjureResult({ previewUrl: "https://evil.example/d/abc" }), {
+      kitId: "k",
+      kitLabel: "K",
+    });
+    expect((document.getElementById("review-preview-note") as HTMLElement).hidden).toBe(false);
+  });
+
+  // Copilot round 12 (#257) — the server registers a refine reply's draft, and evicts to make
+  // room for it, BEFORE the viewer decides whether it still wants that reply. A draft switch
+  // mid-flight discards the reply, but the eviction already happened, so the notice it carries
+  // is still true. Dropping it on the floor strands an unrelated draft on a URL the broker now
+  // answers 404 for — and an iframe fires `load` for an HTTP error, so the blank frame reports
+  // healthy. The victim here is draft #1, which is neither refined nor reselected until later.
+  it("honours the eviction notice on a refine reply it discards mid-flight", async () => {
+    let release!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    const { document, controller } = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__refine: () => pending,
+    });
+    const token = (hex: string) => DRAFT_URL.replace(/[0-9a-f]{32}$/, hex.repeat(32));
+    const VICTIM_URL = DRAFT_URL;
+    const seed = (previewUrl: string, markup: string) =>
+      controller.addDraft(conjureResult({ previewUrl }), {
+        kitId: "k",
+        kitLabel: "K",
+        model: "m",
+        componentInKit: true,
+        source: `${MARKER}\n<button>${markup}</button>\n`,
+      });
+    seed(VICTIM_URL, "Old");
+    seed(token("e"), "Middle");
+    seed(token("d"), "New");
+
+    const options = () =>
+      document.querySelectorAll<HTMLButtonElement>(".review-draft-switcher__option");
+    const input = document.querySelector<HTMLTextAreaElement>("#refine-input")!;
+    input.value = "tighten the spacing";
+    input.dispatchEvent(new document.defaultView!.Event("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>("#refine-submit")!.click();
+
+    // Switch away from draft #3 while its refine is in flight: the reply is now unwanted.
+    options()[1]!.click();
+    expect(controller.state().currentNumber).toBe(2);
+
+    // The server evicted draft #1's document to make room for the reply we are about to drop.
+    release(refineResult({ diff: "", expiredPreviewUrls: [VICTIM_URL] }));
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLButtonElement>("#refine-submit")!.disabled).toBe(false);
+    });
+    expect(controller.state().currentNumber).toBe(2);
+
+    // Reselect the victim: its URL is dead, so it must fall back to srcdoc rather than 404
+    // into a blank frame the render check would then mark as passing.
+    options()[0]!.click();
+    expect(controller.state().currentNumber).toBe(1);
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
   });
 });
 

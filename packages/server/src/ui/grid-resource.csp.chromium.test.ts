@@ -323,6 +323,84 @@ describe.skipIf(!chromiumAvailable)("M4-07 AC4 — script-src blocks inline exec
     }
   }, 30_000);
 
+  it("a real broker DRAFT iframe runs its own hashed styles/scripts under the served policy (#257)", async () => {
+    // The CSP-text assertion in card-asset-broker.test.ts proves the broker
+    // EMITS a per-draft policy; it cannot prove the browser HONORS it. This does.
+    //
+    // A draft preview is a real HTTP document served from the broker origin, not
+    // a `srcdoc` frame. A `srcdoc` frame inherits the embedder's CSP, so a
+    // draft's inline <style>/<script> — minted AFTER the embedder computed its
+    // hashes — can never match one and is blocked. Serving the draft as its own
+    // response lets the broker compute a `sha256-` policy from the draft's exact
+    // bytes at serve time. This test embeds the draft URL (NOT srcdoc) under a
+    // host `frame-src` built from the broker origin exactly as production does,
+    // then asserts the draft's own inline style AND script actually run — which
+    // is only possible if the RESPONSE policy the broker serves authorized them.
+    let broker: CardAssetBroker | undefined;
+    let server: Server | undefined;
+    let context: BrowserContext | undefined;
+    try {
+      broker = await startCardAssetBroker({ env: {} });
+      const draft = broker.registerDraft(
+        "<!doctype html><html><head>" +
+          "<style>body{display:grid;gap:7px}</style></head><body>" +
+          '<button id="styled" style="color: rgb(12, 34, 56)" ' +
+          "onclick=\"window.name='handler-ran'\">Draft</button>" +
+          "<script>window.name='draft-ran'</script>" +
+          "</body></html>",
+      );
+      // `broker.frameOrigins()` is `[broker.origin]` (=== `[draft.origin]`) — the
+      // exact array production feeds `buildCspMeta` as `exactFrameDomains`, so the
+      // host's `frame-src` lists the broker origin and the draft URL is allowed.
+      const doc = injectCspMeta(
+        BASE_SHELL,
+        buildCspMeta(undefined, undefined, broker.frameOrigins()),
+      ).replace(
+        '<main id="grid"></main>',
+        `<main id="grid"><iframe id="c" sandbox="allow-scripts" src="${draft.url}"></iframe></main>`,
+      );
+      server = serveOne(doc);
+      const port = await listen(server);
+      const opened = await newPage();
+      context = opened.context;
+      const { page } = opened;
+
+      const { errors } = await collectConsole(page, async () => {
+        await page.goto(`http://127.0.0.1:${port}/`);
+        const frame = page.frames().find((candidate) => candidate.url() === draft.url);
+        expect(frame).toBeDefined();
+        await frame!.locator("#styled").waitFor();
+
+        // The draft's inline <script> ran — its `sha256-` hash matched the served
+        // policy (a stale embedder hash never could).
+        expect(await frame!.evaluate(() => window.name)).toBe("draft-ran");
+        // The draft's inline <style> element ran — `display:grid` only computes if
+        // its style `sha256-` hash was authorized by the RESPONSE policy.
+        expect(
+          await frame!.locator("body").evaluate((body) => getComputedStyle(body).display),
+        ).toBe("grid");
+        // The draft's inline `style=` attribute ran — exercises the
+        // `'unsafe-hashes'` + attribute-hash path of the served policy too.
+        expect(
+          await frame!.locator("#styled").evaluate((button) => getComputedStyle(button).color),
+        ).toBe("rgb(12, 34, 56)");
+
+        // An unlisted inline event handler stays blocked — hashing the draft's own
+        // blocks does not reopen `on*=` execution.
+        await frame!.locator("#styled").click();
+        await page.waitForTimeout(100);
+        expect(await frame!.evaluate(() => window.name)).toBe("draft-ran");
+      });
+      expect(errors.some((error) => error.text().toLowerCase().includes("content security"))).toBe(
+        true,
+      );
+    } finally {
+      await context?.close();
+      if (server !== undefined) await close(server);
+      await broker?.close();
+    }
+  }, 30_000);
+
   it("a sandboxed broker card can load its relative stylesheet and script", async () => {
     const kitRoot = await mkdtemp(join(tmpdir(), "genie-broker-assets-chromium-"));
     let broker: CardAssetBroker | undefined;

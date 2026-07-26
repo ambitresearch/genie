@@ -35,6 +35,7 @@ import {
 } from "./conjure.js";
 import type { ChatCompletionInput, ChatCompletionResult } from "../llm/client.js";
 import type { ValidatedComponent } from "../llm/schema.js";
+import type { CardAssetBroker } from "../ui/card-asset-broker.js";
 import { gitBlobHash, loadGenerateComponentSystemPrompt } from "../llm/prompts.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -1133,3 +1134,75 @@ function stderrLines(): Array<
       }
     });
 }
+
+describe("#257 — draft preview URL", () => {
+  function brokerStub(url: string, expired: readonly string[] = []) {
+    const registerDraft = vi.fn(() => ({
+      token: "t".repeat(32),
+      hostname: "127.0.0.1",
+      authority: "127.0.0.1:4173",
+      origin: "http://127.0.0.1:4173",
+      url,
+      expired,
+    }));
+    return { registerDraft } as unknown as CardAssetBroker;
+  }
+
+  it("publishes the generated card and returns its broker URL", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const broker = brokerStub("http://127.0.0.1:4173/d/abc123");
+
+    const res = await conjure({ chat, getRunningCardAssetBroker: () => broker }, args());
+
+    expect(res.previewUrl).toBe("http://127.0.0.1:4173/d/abc123");
+    // The card is the `<Name>/<Name>.html` preview, NOT simply the first file:
+    // a component also ships framework source that must never be previewed.
+    const card = goodComponent().files.find((file) => file.path.endsWith("/Button/Button.html"))!;
+    expect(card).toBeDefined();
+    expect(broker.registerDraft).toHaveBeenCalledExactlyOnceWith(card.content);
+  });
+
+  it("forwards the broker's eviction notice so the viewer can retire dead URLs", async () => {
+    const dead = "http://127.0.0.1:4173/d/" + "0".repeat(32);
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const broker = brokerStub("http://127.0.0.1:4173/d/abc123", [dead]);
+
+    const res = await conjure({ chat, getRunningCardAssetBroker: () => broker }, args());
+
+    expect(res.expiredPreviewUrls).toEqual([dead]);
+  });
+
+  it("omits expiredPreviewUrls when the broker evicted nothing", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const broker = brokerStub("http://127.0.0.1:4173/d/abc123");
+
+    const res = await conjure({ chat, getRunningCardAssetBroker: () => broker }, args());
+
+    // An always-present empty array would cost a field on every call and tell the
+    // viewer nothing; absence is the signal that nothing was dropped.
+    expect(Object.keys(res)).not.toContain("expiredPreviewUrls");
+  });
+
+  it("omits previewUrl when no broker is running so remote hosts are unchanged", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+
+    const res = await conjure({ chat }, args());
+
+    expect(res.previewUrl).toBeUndefined();
+    expect(Object.keys(res)).not.toContain("previewUrl");
+  });
+
+  it("still returns the component when publishing throws", async () => {
+    const chat = stubChat([completionOf(JSON.stringify(goodComponent()))]);
+    const broker = {
+      registerDraft: vi.fn(() => {
+        throw new Error("Card asset broker is closed.");
+      }),
+    } as unknown as CardAssetBroker;
+
+    const res = await conjure({ chat, getRunningCardAssetBroker: () => broker }, args());
+
+    expect(res.componentName).toBe("Button");
+    expect(res.previewUrl).toBeUndefined();
+  });
+});

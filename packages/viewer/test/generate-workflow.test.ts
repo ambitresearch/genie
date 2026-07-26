@@ -53,6 +53,86 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/**
+ * Copilot round 7 (#257) — the broker-served preview is only real if a draft carrying `previewUrl`
+ * survives `submitGenerate`'s strict `isConjureResult` gate. The server publishes that key
+ * (`conjure.ts`, `refine.ts`, both `z.string().optional()`), so without this the whole feature dies
+ * at "The host returned an invalid draft." Seeding via `controller.addDraft` cannot catch it.
+ */
+describe("#257 — a broker-served draft survives the REAL Generate path", () => {
+  const DRAFT_URL = "http://127.0.0.1:4123/d/0123456789abcdef0123456789abcdef";
+
+  function conjureReply(extra: Record<string, unknown>) {
+    return {
+      componentName: "Button",
+      group: "actions",
+      files: [
+        {
+          path: "components/actions/Button/Button.html",
+          content: '<!-- @genie group="actions" viewport="400x200" -->\n<button>Go</button>\n',
+          mimeType: "text/html",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 400, height: 200 } },
+      usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+      ...extra,
+    };
+  }
+
+  async function generate(reply: Record<string, unknown>) {
+    const { hooks, document } = loadShell();
+    const seen: string[] = [];
+    const bridge = {
+      callTool(name: string) {
+        seen.push(name);
+        if (name === "mcp__genie__list_kits") {
+          return Promise.resolve({
+            kits: [
+              { id: "acme-kit", name: "Acme", owner: "team", updatedAt: "now", canEdit: true },
+            ],
+          });
+        }
+        if (name === "mcp__genie__conjure") return Promise.resolve(reply);
+        return Promise.resolve({});
+      },
+      destroy: () => {},
+    };
+    hooks.initProductShell(document, bridge);
+    await settle();
+    const prompt = document.getElementById("generate-prompt") as HTMLTextAreaElement;
+    prompt.value = "Build a compact status card";
+    prompt.dispatchEvent(
+      new (document.defaultView as typeof window).Event("input", { bubbles: true }),
+    );
+    document.getElementById("generate-form")!.dispatchEvent(
+      new (document.defaultView as typeof window).Event("submit", {
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    // The conjure reply resolves through several awaits (kit context, then the tool call), so
+    // wait for the flow to actually settle rather than a fixed tick.
+    await vi.waitFor(() => expect(seen).toContain("mcp__genie__conjure"));
+    await settle();
+    await settle();
+    return document;
+  }
+
+  it("reaches Review instead of failing as an invalid draft", async () => {
+    const document = await generate(conjureReply({ previewUrl: DRAFT_URL }));
+    expect(document.getElementById("generate-error")!.hidden).toBe(true);
+    expect(document.getElementById("app-status")!.textContent).toContain("Generated Button");
+    expect(document.querySelector("#review-preview iframe")!.getAttribute("src")).toBe(DRAFT_URL);
+  });
+
+  it("still rejects a draft whose extra key is not the broker URL", async () => {
+    const document = await generate(conjureReply({ previewUrl: DRAFT_URL, rogue: "x" }));
+    expect(document.getElementById("generate-error")!.hidden).toBe(false);
+    expect(document.getElementById("app-status")!.textContent).not.toContain("Generated Button");
+  });
+});
+
 describe("Generate workflow state", () => {
   it("gates Conjure on trimmed prompt, kit, model, host capability, and single flight", () => {
     const { hooks } = loadHooks();
@@ -378,6 +458,88 @@ describe("Generate workflow state", () => {
         },
       }),
     ).toBe(false);
+  });
+
+  it("caps the broker eviction list at the broker's live-draft capacity (#257)", () => {
+    const { hooks } = loadHooks();
+    const valid = {
+      componentName: "StatusCard",
+      group: "surfaces",
+      files: [
+        {
+          path: "components/surfaces/StatusCard/StatusCard.tsx",
+          content: "export {}",
+          mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "<div>@genie</div>",
+          mimeType: "text/html",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 480, height: 240 } },
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    };
+    const brokerUrl = (i: number): string =>
+      "http://127.0.0.1:4173/d/" + i.toString(16).padStart(32, "0");
+    const atCap = Array.from({ length: 32 }, (_, i) => brokerUrl(i));
+
+    // Absent list — nothing was evicted — stays valid.
+    expect(hooks.isConjureResult({ ...valid, expiredPreviewUrls: undefined })).toBe(true);
+    // The steady-state case: one registration evicts one draft.
+    expect(hooks.isConjureResult({ ...valid, expiredPreviewUrls: [brokerUrl(0)] })).toBe(true);
+    // A list exactly at the broker's live-draft capacity is accepted: it can never
+    // legitimately name more URLs than it can hold.
+    expect(hooks.isConjureResult({ ...valid, expiredPreviewUrls: atCap })).toBe(true);
+    // One past capacity cannot come from an honest broker, so it fails closed — this is
+    // what bounds retireExpiredPreviews' O(drafts x gone) scan against a malformed result.
+    expect(
+      hooks.isConjureResult({ ...valid, expiredPreviewUrls: atCap.concat(brokerUrl(32)) }),
+    ).toBe(false);
+  });
+
+  it("rejects an eviction entry that is not a broker draft URL (#257)", () => {
+    const { hooks } = loadHooks();
+    const valid = {
+      componentName: "StatusCard",
+      group: "surfaces",
+      files: [
+        {
+          path: "components/surfaces/StatusCard/StatusCard.tsx",
+          content: "export {}",
+          mimeType: "text/tsx",
+          encoding: "utf-8",
+        },
+        {
+          path: "components/surfaces/StatusCard/StatusCard.html",
+          content: "<div>@genie</div>",
+          mimeType: "text/html",
+          encoding: "utf-8",
+        },
+      ],
+      manifestEntry: { viewport: { width: 480, height: 240 } },
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    };
+
+    // A well-formed broker URL is accepted (the guard reuses isDraftPreviewSrc).
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        expiredPreviewUrls: ["http://127.0.0.1:4173/d/" + "a".repeat(32)],
+      }),
+    ).toBe(true);
+    // A string that is not the broker's own URL shape — a spoofed host — is rejected, so a
+    // malformed result can never smuggle an arbitrary src into the viewer's retire loop.
+    expect(
+      hooks.isConjureResult({
+        ...valid,
+        expiredPreviewUrls: ["https://evil.example/d/" + "0".repeat(32)],
+      }),
+    ).toBe(false);
+    // A non-string entry is rejected too.
+    expect(hooks.isConjureResult({ ...valid, expiredPreviewUrls: [123] })).toBe(false);
   });
 
   it("fails closed on malformed list_kits entries (DRO-242)", () => {

@@ -89,6 +89,8 @@ import {
   type GeneratedFileWithEncoding,
 } from "../llm/generated-files.js";
 import { KIT_ID_PATTERN } from "./get_kit.js";
+import type { CardAssetBroker } from "../ui/card-asset-broker.js";
+import { publishDraftPreview } from "../ui/draft-preview.js";
 
 export const REFINE_TOOL_NAME = "mcp__genie__refine";
 
@@ -156,6 +158,12 @@ export interface RefineResult extends Record<string, unknown> {
   files: RefinedFile[];
   manifestEntry: ValidatedComponent["manifestEntry"];
   usage: UsageInfo;
+  /** Loopback URL serving this draft's own card under a policy derived from its
+   * own bytes (#257). Present only when a card asset broker is already running;
+   * absent everywhere else, where the viewer keeps its `srcdoc` fallback. */
+  previewUrl?: string;
+  /** Broker URLs that stopped resolving when this draft was published (#257). */
+  expiredPreviewUrls?: readonly string[];
 }
 
 export type RefinedFile = GeneratedFileWithEncoding;
@@ -234,6 +242,10 @@ export interface RefineDeps {
   cropper?: RegionCropper;
   /** Prompt loader override (tests). Defaults to the real versioned loader. */
   loadSystemPrompt?: () => LoadedPrompt;
+  /** Already-running card asset broker, if any (#257). Non-starting and
+   * synchronous for the same reason as `conjure`'s: refining must not acquire a
+   * listening socket as a side effect. See `ConjureDeps`. */
+  getRunningCardAssetBroker?: () => CardAssetBroker | undefined;
 }
 
 /** Typed failure surfaced to the tool boundary (mapped to an MCP error result).
@@ -725,6 +737,11 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
     attempts,
   });
 
+  const preview = publishDraftPreview(deps.getRunningCardAssetBroker?.(), files, {
+    componentName: component.componentName,
+    group: component.group,
+  });
+
   return {
     componentName: component.componentName,
     group: component.group,
@@ -732,6 +749,11 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
     files,
     manifestEntry: component.manifestEntry,
     usage,
+    // Spread so the key is absent rather than explicitly `undefined`.
+    ...(preview.url === undefined ? {} : { previewUrl: preview.url }),
+    // Same reason, plus: an empty array would tell the viewer nothing and cost a
+    // field on every single call.
+    ...(preview.expired.length === 0 ? {} : { expiredPreviewUrls: preview.expired }),
   };
 }
 
@@ -765,6 +787,8 @@ const refineOutputShape = {
       totalTokens: z.number().int().min(0),
     })
     .strict(),
+  previewUrl: z.string().optional(),
+  expiredPreviewUrls: z.array(z.string()).optional(),
 };
 
 export function registerRefineTool(server: McpServer, deps: RefineDeps): void {

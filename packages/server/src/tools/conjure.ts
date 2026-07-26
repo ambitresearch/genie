@@ -52,6 +52,8 @@ import { Agent, fetch as undiciFetch } from "undici";
 import { z } from "zod";
 
 import { type ValidatedComponent } from "../llm/schema.js";
+import type { CardAssetBroker } from "../ui/card-asset-broker.js";
+import { publishDraftPreview } from "../ui/draft-preview.js";
 import {
   GENERATE_COMPONENT_SYSTEM_PROMPT_FILE,
   loadPrompt,
@@ -471,6 +473,13 @@ export interface ConjureResult extends Record<string, unknown> {
   files: GeneratedFileWithEncoding[];
   manifestEntry: ValidatedComponent["manifestEntry"];
   usage: UsageInfo;
+  /** Loopback URL serving this draft's own card under a policy derived from its
+   * own bytes (#257). Present only when a card asset broker is already running
+   * (local stdio app surfaces); absent everywhere else, where the viewer keeps
+   * its `srcdoc` fallback. */
+  previewUrl?: string;
+  /** Broker URLs that stopped resolving when this draft was published (#257). */
+  expiredPreviewUrls?: readonly string[];
 }
 
 /** Injectable URL-fetch seam for tests (AC7). When omitted, production uses the
@@ -500,6 +509,12 @@ export interface ConjureDeps {
   refUrlTimeoutMs?: number;
   /** Prompt loader override (tests). Defaults to the real versioned loader (AC5). */
   loadSystemPrompt?: () => LoadedPrompt;
+  /** Already-running card asset broker, if any (#257). Deliberately non-starting
+   * and synchronous: `conjure` is pure generation (AC9) and must not acquire a
+   * listening socket as a side effect. The viewer starts the broker when it
+   * reads the grid resource, so by the time a draft can be reviewed this
+   * resolves; when it does not, the caller simply gets no `previewUrl`. */
+  getRunningCardAssetBroker?: () => CardAssetBroker | undefined;
 }
 
 /** Typed failure surfaced to the tool boundary (mapped to an MCP error result).
@@ -768,12 +783,24 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
     attempts,
   });
 
+  const files = normalizeGeneratedFiles(component.files);
+  const preview = publishDraftPreview(deps.getRunningCardAssetBroker?.(), files, {
+    componentName: component.componentName,
+    group: component.group,
+  });
+
   return {
     componentName: component.componentName,
     group: component.group,
-    files: normalizeGeneratedFiles(component.files),
+    files,
     manifestEntry: component.manifestEntry,
     usage,
+    // Spread so the key is absent rather than explicitly `undefined`: the tool
+    // boundary serializes this straight into `structuredContent`.
+    ...(preview.url === undefined ? {} : { previewUrl: preview.url }),
+    // Same reason, plus: an empty array would tell the viewer nothing and cost a
+    // field on every single call.
+    ...(preview.expired.length === 0 ? {} : { expiredPreviewUrls: preview.expired }),
   };
 }
 
@@ -806,6 +833,8 @@ const conjureOutputShape = {
       totalTokens: z.number().int().min(0),
     })
     .strict(),
+  previewUrl: z.string().optional(),
+  expiredPreviewUrls: z.array(z.string()).optional(),
 };
 
 export function registerConjureTool(server: McpServer, deps: ConjureDeps = {}): void {

@@ -478,6 +478,66 @@ CodeQL alerts 2/4/5/7 (js/xss-through-dom, js/xss, js/client-side-unvalidated-ur
 
 The WHATWG URL parser removes ASCII tab/LF/CR from ANYWHERE in a URL and trims leading and trailing "C0 control or space" BEFORE it detects the scheme, so `java\tscript:alert(1)` and " javascript:alert(1)" both parse as `javascript:`. Normalize exactly the same way first, or a scheme allowlist is trivially bypassed. Then allow relative paths (the common case) plus http/https/data — `data:` is a real embedded-manifest transport and lands in an opaque origin. Protocol-relative `//host/x` is rejected: it is off-origin but carries no scheme to match.
 
+### Broker-served draft previews (#257)
+
+When the server publishes a `previewUrl`, the review frame **fetches** the draft rather than
+inlining it. A fetched document gets the broker's own response-header CSP — sha256 hashes over the
+exact bytes it serves — whereas `srcdoc` can only inherit the embedder's, which was minted before
+this draft existed.
+
+Broker-served previews are scoped to the **local stdio tier**, where the server and the viewer's
+browser share a host. `createServer` builds no broker provider for an HTTP transport, a declared
+remote locality, or a configured `GENIE_PREVIEWS_BASE_URL`, so `getRunningCardAssetBroker` stays
+empty there and `conjure`/`refine` publish no `previewUrl`. The broker binds **loopback on the
+server host**, so its URL names a port the remote user's browser cannot reach; publishing one would
+swap a working inline preview for a blank frame. `GENIE_PREVIEWS_BASE_URL` is not a substitute
+either — it addresses published kit assets, whereas drafts are unwritten, ephemeral, and capped at
+32 live. Those deployments therefore keep the `srcdoc` preview, which renders correctly everywhere
+and only forgoes the per-draft response-header CSP. A browser-reachable draft route needs its own
+authentication and lifetime design, and is deliberately left out of this change.
+
+`DRAFT_PREVIEW_SRC_RE` is anchored end to end against the one shape the broker mints: loopback
+host, `/d/`, a 16-byte hex token. The port group is **optional**, because `authorityFor` omits the
+port when it is 80 and a broker bound there mints `http://127.0.0.1/d/<token>`; requiring a port
+would silently drop that draft back to `srcdoc`. The alternation spells out the exact 1-65535 range
+`parsePort` enforces — a looser `[0-9]{1,5}` would accept authorities the broker can never bind,
+which is precisely what a barrier exists to exclude. The pattern is kept a **literal** rather than
+an assembled `new RegExp`, because CodeQL has to parse it to accept `isDraftPreviewSrc` as a barrier
+guard on the iframe-`src` sink, and a concatenated source string is not reliably constant-folded for
+that analysis. `isDraftPreviewSrc` is split out and called in **guard position** for the same reason
+as `isSafeFrameSrc`: static analysis clears taint at a guard, not at a transformer.
+
+`previewUrl` is only **type**-checked at validation time. Whether a URL may aim the frame is decided
+by `isDraftPreviewSrc` at render time; rejecting a bad URL during validation would destroy an
+otherwise good draft and move the security decision off the sink CodeQL tracks. The server declares
+it `z.string().optional()`, and `applyDeterministicTweak` clears it by _assigning_ `undefined`, so
+the key survives `Object.keys` and the strict allowlist must tolerate it.
+
+A tweak inherits nothing: the broker published the **parent's** bytes, and a tweak rewrites them
+locally without ever reaching the broker, so inheriting the URL would make the frame fetch the
+pre-tweak document while Apply writes the tweaked one. Clearing it drops the draft to `srcdoc`,
+which renders exactly the bytes Apply will write.
+
+The broker keeps only the newest 32 drafts, but the viewer's history is unbounded and every entry
+stays reselectable. An evicted document answers 404, and an iframe fires `load` — not `error` — for
+HTTP responses, so the frame would report a blank page as a successful render. Nothing client-side
+can detect this: the broker sets no CORS headers, so a preflight `HEAD` is impossible, and its
+origin is cross-origin, so `contentDocument` is unreadable. The broker therefore _names_ what it
+dropped in `expiredPreviewUrls`, and the viewer forgets those URLs so the draft falls back to the
+`srcdoc` bytes the store already holds.
+
+The viewer validates that list on the way in. `expiredPreviewUrls` is accepted only when it is
+absent, or an array of at most `MAX_EVICTED_PREVIEWS` entries that each pass `isDraftPreviewSrc`.
+The cap is the broker's own `MAX_LIVE_DRAFTS` capacity (32): the broker holds at most that many
+drafts, so an honest registration can name at most that many as gone, and a list longer than the
+broker could ever mint is treated as malformed. Pinning the cap to broker capacity — not to the
+one-per-registration steady-state rate — means a legitimate result is never rejected even if the
+cap later shrinks across versions. The bound matters because `retireExpiredPreviews` walks the list
+once for every entry in the viewer's unbounded draft history, so an unchecked oversized list is
+quadratic and can lock the UI before the new draft renders. An over-long list, or any entry that is
+not the broker's own URL shape, fails the whole result closed — the same fail-closed rule every
+other field's validator follows — rather than being silently trimmed.
+
 ### `files[]` entry validation (DRO-242)
 
 DRO-242 (fail closed, Copilot review round 6) — JSON Schema's `maxLength`/`minLength` count Unicode CODE POINTS, but JS `String.length` counts UTF-16 CODE UNITS — every character outside the Basic Multilingual Plane (astral characters: most emoji, some CJK extensions) is one code point but TWO code units (a surrogate pair). A schema-valid string near either bound (e.g. exactly `maxLength` emoji) would be wrongly accepted/rejected by a raw `.length` comparison. Counting via the string iterator (`for...of` / spread) is code-point-aware — it steps over full surrogate pairs — and this early-exits once `max` is exceeded rather than materializing an array for a large string.

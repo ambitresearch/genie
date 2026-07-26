@@ -7,6 +7,8 @@ import { pipeline } from "node:stream/promises";
 
 import { parse } from "parse5";
 
+import { MAX_FILE_BYTES } from "../store/interface.js";
+
 /** Optional stable port for hosts that must advertise frame origins before a request. */
 export const CARD_ASSET_PORT_ENV = "GENIE_CARD_ASSET_PORT";
 
@@ -55,12 +57,55 @@ export interface CardAssetKit {
   urlFor(path: string): string;
 }
 
+/**
+ * How many unwritten drafts stay reachable at once (#257).
+ *
+ * Drafts live in memory because they have no file yet, so the store is bounded
+ * and evicts the least recently *served* entry. Serving refreshes an entry, so
+ * the draft a reviewer is actually looking at survives newer siblings.
+ */
+export const MAX_LIVE_DRAFTS = 32;
+
+/**
+ * A single unwritten draft published as its own document on the broker origin.
+ *
+ * This exists so a draft escapes CSP inheritance. A `srcdoc` frame adopts the
+ * embedder's policy, and no build-time hash can match bytes the model produced
+ * afterwards; a real HTTP response carries its own `content-security-policy`
+ * computed from those exact bytes. The origin is the one kit cards already use,
+ * so `frameOrigins()` — and therefore the host's `frame-src` — does not move.
+ */
+export interface CardAssetDraft {
+  readonly token: string;
+  readonly hostname: string;
+  readonly authority: string;
+  readonly origin: string;
+  /** Absolute URL of the draft document. */
+  readonly url: string;
+  /**
+   * URLs this registration evicted (#257 round 7).
+   *
+   * The viewer's draft history is unbounded and lets a reviewer reselect any past
+   * draft, so a silently dropped document would be reselected and fetched as an
+   * empty 404. An iframe fires `load` for HTTP errors, so the viewer cannot detect
+   * that itself, and the broker sets no CORS headers so it cannot pre-flight either.
+   * Naming the casualties is therefore the only signal available: the viewer clears
+   * `previewUrl` on those drafts and falls back to the `srcdoc` bytes it still holds.
+   */
+  readonly expired: readonly string[];
+}
+
 /** One loopback listener intended to live for the MCP server process lifetime. */
 export interface CardAssetBroker {
   readonly address: typeof LOOPBACK_ADDRESS;
   readonly port: number;
   registerKit(kitId: string, root: string): Promise<CardAssetKit>;
   getKit(kitId: string): CardAssetKit | undefined;
+  /**
+   * Publish draft HTML at its own URL on this origin, replacing `srcdoc` so the
+   * draft's inline styles are hash-authorized by its own response policy.
+   */
+  registerDraft(html: string): CardAssetDraft;
   /** Immutable snapshot for exact MCP App `frameDomains` composition. */
   frameOrigins(): readonly string[];
   close(): Promise<void>;
@@ -70,6 +115,13 @@ interface RegisteredKit {
   public: CardAssetKit;
   lexicalRoot: string;
   realRoot: string;
+}
+
+interface RegisteredDraft {
+  public: CardAssetDraft;
+  bytes: Buffer;
+  /** Computed once at registration: the bytes are immutable for the draft's life. */
+  policy: string;
 }
 
 interface ParsedHtmlNode {
@@ -276,6 +328,7 @@ class LoopbackCardAssetBroker implements CardAssetBroker {
   readonly #server: Server;
   readonly #kitsById = new Map<string, RegisteredKit>();
   readonly #kitsByToken = new Map<string, RegisteredKit>();
+  readonly #draftsByToken = new Map<string, RegisteredDraft>();
   #authority = "";
   #origin = "";
   #frameOrigins: readonly string[] = Object.freeze([]);
@@ -401,6 +454,74 @@ class LoopbackCardAssetBroker implements CardAssetBroker {
     return this.#kitsById.get(kitId)?.public;
   }
 
+  registerDraft(html: string): CardAssetDraft {
+    if (this.#closed) throw new Error("Card asset broker is closed.");
+    if (typeof html !== "string" || html.length === 0) {
+      throw new Error("Card asset draft body must be a non-empty string.");
+    }
+    // The store's own file cap, deliberately: a draft body is a file the reviewer is being
+    // asked to approve, so a card too large to ever be written is a card not worth serving.
+    // `publishDraftPreview` catches this and degrades to no preview rather than failing the
+    // generation. Copilot (round 11, PR #273).
+    const byteLength = Buffer.byteLength(html, "utf8");
+    if (byteLength > MAX_FILE_BYTES) {
+      throw new Error(
+        `Card asset draft body (${byteLength} bytes) exceeds the ${MAX_FILE_BYTES}-byte limit.`,
+      );
+    }
+
+    let token: string;
+    do {
+      token = randomBytes(OPAQUE_TOKEN_BYTES).toString("hex");
+    } while (this.#draftsByToken.has(token));
+
+    const pendingDraft = {
+      token,
+      hostname: this.address,
+      authority: this.#authority,
+      origin: this.#origin,
+      url: `${this.#origin}/d/${token}`,
+    };
+    // Hash the bytes now rather than per request; they can never change, and a
+    // reviewer flipping between drafts should not re-parse each one.
+    const publicDraft: CardAssetDraft = Object.freeze({
+      ...pendingDraft,
+      expired: Object.freeze(this.#evictExcessDrafts()),
+    });
+    this.#draftsByToken.set(token, {
+      public: publicDraft,
+      bytes: Buffer.from(html, "utf8"),
+      policy: cardCsp(html),
+    });
+    return publicDraft;
+  }
+
+  /**
+   * Drop least-recently-served drafts until the store is back within its cap and
+   * report their URLs so the viewer can stop pointing at them (#257 round 7).
+   *
+   * Runs BEFORE the incoming draft is stored, hence the `+ 1` — the new entry is
+   * always the most recently used and must never evict itself.
+   */
+  #evictExcessDrafts(): string[] {
+    const expired: string[] = [];
+    while (this.#draftsByToken.size + 1 > MAX_LIVE_DRAFTS) {
+      // Map iteration is insertion-ordered and `#touchDraft` re-inserts on every
+      // serve, so the first key is the least recently used entry.
+      const oldest = this.#draftsByToken.keys().next();
+      if (oldest.done === true) break;
+      this.#draftsByToken.delete(oldest.value);
+      expired.push(`${this.#origin}/d/${oldest.value}`);
+    }
+    return expired;
+  }
+
+  /** Move a served draft to the back of the eviction queue. */
+  #touchDraft(token: string, draft: RegisteredDraft): void {
+    this.#draftsByToken.delete(token);
+    this.#draftsByToken.set(token, draft);
+  }
+
   frameOrigins(): readonly string[] {
     return this.#frameOrigins;
   }
@@ -422,6 +543,25 @@ class LoopbackCardAssetBroker implements CardAssetBroker {
     return this.#closePromise;
   }
 
+  #serveDraft(token: string, req: IncomingMessage, res: ServerResponse): void {
+    const draft = this.#draftsByToken.get(token);
+    if (draft === undefined) {
+      sendEmpty(res, 404);
+      return;
+    }
+    this.#touchDraft(token, draft);
+    res.writeHead(200, {
+      ...CARD_RESPONSE_HEADERS,
+      "content-type": "text/html; charset=utf-8",
+      "content-length": String(draft.bytes.byteLength),
+      "content-security-policy": draft.policy,
+    });
+    // G-5: the draft renders byte-identically wherever it is opened, so the
+    // broker writes the registered bytes back untouched.
+    if (req.method === "HEAD") res.end();
+    else res.end(draft.bytes);
+  }
+
   async #serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const authority = req.headers.host?.toLowerCase();
     if (authority !== this.#authority) {
@@ -437,6 +577,12 @@ class LoopbackCardAssetBroker implements CardAssetBroker {
     const segments = decodeRequestPath(req.url);
     if (segments === null) {
       sendEmpty(res, 400);
+      return;
+    }
+    // Drafts resolve before kits: they are a separate namespace with no
+    // filesystem root, and their routes are two segments rather than three.
+    if (segments.length === 2 && segments[0] === "d") {
+      this.#serveDraft(segments[1]!, req, res);
       return;
     }
     if (segments.length < 3 || segments[0] !== "k") {

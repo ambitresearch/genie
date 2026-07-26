@@ -150,6 +150,13 @@
   var URL_LEADING_SLASHES_RE = /^[/\\]{2}/;
   var ANY_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
   var SAFE_FRAME_SCHEME_RE = /^(?:https?|data):/i;
+  /**
+   * The one shape the card-asset broker mints. Optional port group, exact 1-65535 alternation, and
+   * kept a LITERAL so CodeQL can parse it; see `docs/developer/architecture.md` —
+   * "Broker-served draft previews (#257)".
+   */
+  // prettier-ignore
+  var DRAFT_PREVIEW_SRC_RE = /^http:\/\/127\.0\.0\.1(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?\/d\/[0-9a-f]{32}$/;
 
   /**
    * Is an ALREADY-NORMALIZED URL safe to hand an iframe? Split out of `safeFrameSrc` and called in
@@ -164,6 +171,16 @@
     if (!url || URL_LEADING_SLASHES_RE.test(url)) return false;
     if (!ANY_URL_SCHEME_RE.test(url)) return true;
     return SAFE_FRAME_SCHEME_RE.test(url);
+  }
+
+  /**
+   * Is this exactly a card-asset-broker draft URL? Called in GUARD position, never as a
+   * transformer -- see architecture.md, "Broker-served draft previews (#257)".
+   * @param {unknown} url
+   * @returns {boolean}
+   */
+  function isDraftPreviewSrc(url) {
+    return typeof url === "string" && DRAFT_PREVIEW_SRC_RE.test(url);
   }
 
   /**
@@ -1048,10 +1065,44 @@
     );
   }
 
+  /**
+   * Type-check ONLY; the frame-aiming decision belongs to `isDraftPreviewSrc` at render time. The
+   * key survives `Object.keys` because tweaks clear it by assigning `undefined`. See
+   * architecture.md, "Broker-served draft previews (#257)".
+   */
+  function isOptionalPreviewUrl(value) {
+    return value === undefined || typeof value === "string";
+  }
+
+  // Cap eviction lists at the broker's own live-draft capacity (MAX_LIVE_DRAFTS,
+  // card-asset-broker.ts): it can never honestly name more URLs than it can hold, and
+  // this bounds retireExpiredPreviews' O(drafts x gone) scan; see architecture.md #257.
+  var MAX_EVICTED_PREVIEWS = 32;
+
+  /** The broker's eviction notice (#257): absent, or a bounded list of broker draft URLs. */
+  function isOptionalPreviewUrlList(value) {
+    if (value === undefined) return true;
+    if (!Array.isArray(value) || value.length > MAX_EVICTED_PREVIEWS) return false;
+    for (var i = 0; i < value.length; i++) {
+      if (!isDraftPreviewSrc(value[i])) return false;
+    }
+    return true;
+  }
+
   function isConjureResult(value) {
     return Boolean(
       hasReviewableCore(value) &&
-      hasOnlyKeys(value, ["componentName", "group", "files", "manifestEntry", "usage"]) &&
+      hasOnlyKeys(value, [
+        "componentName",
+        "group",
+        "files",
+        "manifestEntry",
+        "usage",
+        "previewUrl",
+        "expiredPreviewUrls",
+      ]) &&
+      isOptionalPreviewUrl(value.previewUrl) &&
+      isOptionalPreviewUrlList(value.expiredPreviewUrls) &&
       hasMatchingHtmlPreview(value.files) &&
       isManifestEntry(value.manifestEntry) &&
       isConjureUsage(value.usage),
@@ -1121,7 +1172,16 @@
   function isRefineResult(value) {
     if (!isPlainObject(value)) return false;
     if (
-      !hasOnlyKeys(value, ["componentName", "group", "files", "manifestEntry", "usage", "diff"])
+      !hasOnlyKeys(value, [
+        "componentName",
+        "group",
+        "files",
+        "manifestEntry",
+        "usage",
+        "diff",
+        "previewUrl",
+        "expiredPreviewUrls",
+      ])
     ) {
       return false;
     }
@@ -1136,6 +1196,8 @@
       files: value.files,
       manifestEntry: value.manifestEntry,
       usage: value.usage,
+      previewUrl: value.previewUrl,
+      expiredPreviewUrls: value.expiredPreviewUrls,
     });
   }
 
@@ -1448,8 +1510,28 @@
       if (decision === "approved") decision = "none";
     }
 
+    // The broker evicts; this history does not. Forget the URLs it names so the draft falls back
+    // to `srcdoc`. See architecture.md, "Broker-served draft previews (#257)".
+    function retireExpiredPreviews(result) {
+      var gone = result && result.expiredPreviewUrls;
+      if (!gone || !gone.length) return;
+      for (var i = 0; i < drafts.length; i++) {
+        var previous = drafts[i].result;
+        if (!previous || typeof previous.previewUrl !== "string") continue;
+        for (var j = 0; j < gone.length; j++) {
+          if (gone[j] !== previous.previewUrl) continue;
+          // Assigning `undefined` rather than deleting keeps the key enumerable, which is
+          // what the strict validators already accept for a locally cleared preview.
+          previous.previewUrl = undefined;
+          break;
+        }
+      }
+    }
+
     return {
+      retireExpiredPreviews: retireExpiredPreviews,
       addDraft: function (result, source) {
+        retireExpiredPreviews(result);
         sequence += 1;
         var number = drafts.length + 1;
         var draft = {
@@ -1817,6 +1899,8 @@
       if (Object.prototype.hasOwnProperty.call(result, key)) next[key] = result[key];
     }
     next.files = files;
+    // The broker published the PARENT's bytes; a tweak never reaches it. See architecture.md.
+    next.previewUrl = undefined;
     // Copilot #5 (PR #250) — AC8 promises a RECOMPUTED diff. Inheriting `result.diff` shows nothing
     // (parent was a generation) or the previous edit's stale counts (parent was a refine). Both
     // misreport the write.
@@ -2136,20 +2220,26 @@
         store.setRenderState("fail");
         render();
       });
-      frame.srcdoc = file.content;
+      // FETCH a broker-published draft so it gets the broker's own response-header CSP; guard in
+      // barrier position. See architecture.md, "Broker-served draft previews (#257)".
+      var candidate = draft.result ? draft.result.previewUrl : null;
+      var served = isDraftPreviewSrc(candidate) ? candidate : null;
+      if (served) frame.src = served;
+      else frame.srcdoc = file.content;
       el.preview.append(frame);
       el.preview.hidden = false;
       // Copilot (round 7) — a `srcdoc` frame INHERITS the embedding document's CSP (no local
       // scheme escapes it). Where the host pins `style-src` to build-time sha256 hashes, an
       // unwritten draft's inline <style> cannot match one that was minted before it existed, so a
       // green render row would over-promise. Detect the policy itself rather than guess the tier.
-      if (el.previewNote) el.previewNote.hidden = !inheritsStyleHashPolicy();
+      // A served draft carries its own policy, so the warning would be untrue.
+      if (el.previewNote) el.previewNote.hidden = Boolean(served) || !inheritsStyleHashPolicy();
     }
 
     function inheritsStyleHashPolicy() {
       var meta = doc.querySelector('meta[http-equiv="Content-Security-Policy"]');
       var content = meta && meta.getAttribute("content");
-      return typeof content === "string" && /style-src[^;]*sha256-/i.test(content);
+      return typeof content === "string" && /(?:script|style)-src[^;]*sha256-/i.test(content);
     }
 
     function renderSummary(draft) {
@@ -2590,6 +2680,10 @@
       // was still true, so every control rendered disabled. Returning without a repaint strands
       // them there.
       if (ticket !== generation) {
+        // The server registered this reply's draft — and evicted to make room for it — before we
+        // knew it was unwanted. Discarding the draft does not un-evict, so the notice is still
+        // true; drop it and the victim keeps a URL the broker now 404s. architecture.md #257.
+        if (outcome.ok) store.retireExpiredPreviews(outcome.result);
         render();
         return;
       }
