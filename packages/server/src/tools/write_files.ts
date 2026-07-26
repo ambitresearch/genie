@@ -45,8 +45,8 @@ import {
   PlanNotFoundError,
 } from "../plans/index.js";
 import type { KitStore, WriteOp } from "../store/interface.js";
-import { RollbackIncompleteError, WriteFailedError } from "../store/interface.js";
-import { isValidBase64Content } from "../store/kit-files.js";
+import { NotFoundError, RollbackIncompleteError, WriteFailedError } from "../store/interface.js";
+import { isSafeKitId, isValidBase64Content } from "../store/kit-files.js";
 
 export const WRITE_FILES_TOOL_NAME = "mcp__genie__write_files";
 
@@ -187,6 +187,30 @@ export class PayloadTooLargeError extends Error {
         "Halve the file count and retry.",
     );
     this.name = "PayloadTooLargeError";
+  }
+}
+
+/**
+ * #269 — the plan's kit no longer resolves at COMMIT time.
+ *
+ * #252 made `plan` reject a kitId that does not resolve, but that is a
+ * point-in-time guarantee: plans live for `DEFAULT_PLAN_TTL` (1 h), and nothing
+ * re-checked the kit before the write landed. Because `LocalFsKitStore.writeFiles`
+ * calls `ensureDir(kitDir)` by design, a kit deleted inside that window was
+ * silently RE-CREATED by the write.
+ *
+ * Named `KitNotFoundError` rather than reusing the store's `NotFoundError` so the
+ * tool layer keeps its own typed-error vocabulary (as `PathOutsidePlanError` et al
+ * do) — the core throws, the handler maps.
+ */
+export class KitNotFoundError extends Error {
+  readonly code = "KitNotFoundError";
+  constructor(readonly kitId: string) {
+    super(
+      `Kit "${kitId}" no longer exists. The plan authorized writes into that kit, ` +
+        `so the batch was rejected rather than re-creating it.`,
+    );
+    this.name = "KitNotFoundError";
   }
 }
 
@@ -355,6 +379,25 @@ export function registerWriteFilesTool(server: McpServer, kitStore: KitStore): v
             planId: error.planId,
           });
         }
+        if (error instanceof KitNotFoundError) {
+          // #269 — canonical -32602 envelope, using the SAME `reason` vocabulary
+          // `plan` emits for the equivalent rejection (#252) so a client can
+          // branch uniformly across the whole plan-scoped write path. The audit
+          // line goes to stderr: on the stdio transport stdout *is* the JSON-RPC
+          // stream, so a stray line there corrupts client framing.
+          process.stderr.write(
+            JSON.stringify({
+              event: "write_files.rejected",
+              reason: "kitNotFound",
+              kitId: error.kitId,
+            }) + "\n",
+          );
+          return toolError({
+            code: -32602,
+            message: error.message,
+            data: { reason: "kitNotFound", kitId: error.kitId },
+          });
+        }
         if (error instanceof RollbackIncompleteError) {
           // AC10's rollback guarantee could not be fully honored — this is
           // more severe than a plain WriteFailedError (which promises a
@@ -434,6 +477,11 @@ export interface WriteFilesResult extends Record<string, unknown> {
  *   7. AC6           — every `localPath` resolves inside the plan's `localDir`
  *                      (the SOURCE base — where uploads are read from).
  *   8. AC9           — total decoded payload size <= the configured byte cap.
+ *   9. #269          — the plan's kit STILL resolves in the store (shape via
+ *                      `isSafeKitId`, then existence via `getKit`). Deliberately
+ *                      LAST: this check exists to narrow the plan-issued →
+ *                      write-committed TOCTOU window, so any earlier placement
+ *                      widens it. Still before any write, so fail-fast holds.
  * Only once every file in the batch passes is the batch handed to
  * `store.writeFiles(plan.kitId, ops)` for the atomic commit (AC10).
  *
@@ -561,6 +609,45 @@ export async function writeFiles(
       content: decodeData(file.data as string, file.encoding ?? "utf-8", file.path),
     };
   });
+
+  // 9. #269 — the kit must STILL exist. Deliberately last: narrowing the
+  //    check→commit window is the whole point, so any earlier placement widens
+  //    it by all the validation work above. It is still "before any write", so
+  //    the fail-fast contract holds, and it avoids a wasted `getKit` network
+  //    round-trip on GitHost for calls that fail the cheap in-memory checks.
+  //
+  //    9a. Shape first. `delete_files.ts` already rejects a traversal-shaped
+  //        plan.kitId "as the first destructive consumer"; write_files had no
+  //        equivalent. It must precede 9b because `LocalFsKitStore.getKit`
+  //        resolves via `kitDir`, NOT `safeKitDir` — so `getKit("..")` would
+  //        itself read above the kits root. Uses the store's centralised
+  //        `isSafeKitId` (empty / "." / ".." / any separator) rather than
+  //        delete_files' stricter local variant, which over-rejects ids that
+  //        merely embed dots.
+  if (!isSafeKitId(plan.kitId)) {
+    throw new KitNotFoundError(plan.kitId);
+  }
+
+  //    9b. Existence. The catch is scoped to this single call on purpose: a
+  //        broad try would mislabel a NotFoundError thrown from elsewhere in the
+  //        write path as a missing kit. Anything that is not a NotFoundError
+  //        (an I/O fault, a network error) propagates unchanged.
+  //
+  //        This is an EXISTENCE check, not an identity check — a plan therefore
+  //        survives delete-and-recreate under the same id. Comparing
+  //        `kit.createdAt > plan.createdAt` would be crisper, but
+  //        `GitHostKitStore.getKit` returns the git host's clock
+  //        (`repo.created_at`) while `PlanState.createdAt` is generated locally,
+  //        so clock skew would intermittently false-reject legitimate writes —
+  //        a worse failure mode than the narrow gap it would close.
+  try {
+    await store.getKit(plan.kitId);
+  } catch (error) {
+    if (error instanceof NotFoundError) {
+      throw new KitNotFoundError(plan.kitId);
+    }
+    throw error;
+  }
 
   return store.writeFiles(plan.kitId, ops);
 }

@@ -35,6 +35,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createPlan } from "../plans/index.js";
 import { LocalFsKitStore } from "../store/local.js";
+import { seedKit } from "../../test/helpers/seed-kit.js";
 import { readAnchor } from "./anchor.js";
 import {
   RECOMPILE_SENTINEL_BODY,
@@ -65,8 +66,10 @@ async function setup(): Promise<Harness> {
   const home = await tempDir("genie-orch-home-");
   process.env.GENIE_HOME = home;
   const kitsRoot = join(home, "kits");
-  const projectRoot = join(kitsRoot, KIT_ID);
-  await mkdir(projectRoot, { recursive: true });
+  // #269: `write_files` now re-checks the kit right before it commits, so the
+  // destination needs to be a kit the store resolves — a bare mkdir no longer
+  // suffices. See `test/helpers/seed-kit.ts` for why this is not `createKit`.
+  const projectRoot = await seedKit(kitsRoot, KIT_ID);
   const store = new LocalFsKitStore(kitsRoot);
   return { home, kitsRoot, projectRoot, store, deps: { store, projectRoot } };
 }
