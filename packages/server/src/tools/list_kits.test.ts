@@ -103,6 +103,49 @@ describe("listWritableKits", () => {
   it("keeps the MCP tool description under Claude's 2 KB truncation limit", () => {
     expect(Buffer.byteLength(LIST_KITS_DESCRIPTION, "utf8")).toBeLessThanOrEqual(2048);
   });
+
+  it("🔒 discloses BOTH listing filters, because MCP clients read this as the contract", () => {
+    // The description is shipped verbatim to the model as this tool's contract, so a
+    // filter the implementation applies but the description omits is a lie the caller
+    // cannot detect. `listWritableKits` drops records for two independent reasons and
+    // the prose has to account for both:
+    //
+    //   - stored type is not GENIE_KIT (interop records sharing the store)
+    //   - the id would be refused by every kit-taking verb (`isSafeKitId`)
+    //
+    // Guard the exact word too: "every ... kit visible to the current store" claimed a
+    // completeness this function has never had since the safety filter landed.
+    expect(LIST_KITS_DESCRIPTION).not.toMatch(/every genie-native kit visible/iu);
+    expect(LIST_KITS_DESCRIPTION).toMatch(/GENIE_KIT/u);
+    expect(LIST_KITS_DESCRIPTION).toMatch(/unusable|not (?:a )?valid|cannot be used|refuse/iu);
+  });
+
+  it("🔒 the disclosed filter is the one listWritableKits actually applies", async () => {
+    // Pins prose to behaviour: an id the description says is omitted must really be
+    // omitted. Without this the two can drift back apart silently.
+    const store = {
+      async listKits() {
+        return [
+          {
+            id: "native-kit",
+            name: "Native Kit",
+            type: KIT_TYPE,
+            createdAt: "2026-06-02T10:00:00.000Z",
+          },
+          // Creatable and listable on POSIX; opens the sibling `native-kit` on Win32.
+          {
+            id: "native-kit.",
+            name: "Trailing Dot",
+            type: KIT_TYPE,
+            createdAt: "2026-06-02T10:00:00.000Z",
+          },
+        ];
+      },
+    } as Pick<KitStore, "listKits"> as KitStore;
+
+    const ids = (await listWritableKits(store)).map((kit) => kit.id);
+    expect(ids).toEqual(["native-kit"]);
+  });
 });
 
 describe("LocalFsKitStore.listKits", () => {

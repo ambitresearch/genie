@@ -7,7 +7,7 @@ import { isSafeKitId } from "../store/kit-files.js";
 export const LIST_KITS_TOOL_NAME = "mcp__genie__list_kits";
 
 export const LIST_KITS_DESCRIPTION =
-  "List the user's writable UI kits. Returns every genie-native kit visible to the current store as an array of { id, name, owner, updatedAt, canEdit }. Filters out records whose stored type is not GENIE_KIT; interop adapters map Anthropic project types separately. Reach for this as the discovery step before conjure, plan, or bind_kit — each needs a valid kitId from here (or from create_kit for a brand-new kit).";
+  "List the user's writable UI kits. Returns the usable genie-native kits in the current store as an array of { id, name, owner, updatedAt, canEdit }, and guarantees every id it returns is accepted by the other kit verbs. Two kinds of record are omitted to keep that guarantee: those whose stored type is not GENIE_KIT (interop adapters map Anthropic project types separately), and those whose id every kit verb would refuse as unsafe, which a store adapter can surface because it reports whatever the filesystem or git host holds. Reach for this as the discovery step before conjure, plan, or bind_kit — each needs a valid kitId from here (or from create_kit for a brand-new kit).";
 
 export interface ListKitsEntry extends Record<string, unknown> {
   id: string;
