@@ -215,6 +215,52 @@ export class KitNotFoundError extends Error {
 }
 
 /**
+ * #269 — assert `kitId` still resolves, immediately before a caller creates or
+ * writes anything under it. Throws {@link KitNotFoundError} when it does not.
+ *
+ * Two stages, in this order for a security reason:
+ *
+ *   1. SHAPE. `delete_files.ts:161` already rejects a traversal-shaped kitId
+ *      "as the first destructive consumer"; the write path had no equivalent.
+ *      This MUST precede stage 2, because `LocalFsKitStore.getKit` resolves via
+ *      `kitDir`, NOT `safeKitDir` — so `getKit("..")` would itself read above
+ *      the kits root. Uses the store's centralised `isSafeKitId` (empty / "." /
+ *      ".." / any separator) rather than delete_files' stricter local variant,
+ *      which over-rejects ids that merely embed dots.
+ *
+ *   2. EXISTENCE. The catch is scoped to this single call on purpose: a broad
+ *      try would mislabel a `NotFoundError` thrown from elsewhere as a missing
+ *      kit. Anything that is not a `NotFoundError` (an I/O fault, a network
+ *      error) propagates unchanged, so an unreachable backend is never reported
+ *      as a deleted kit.
+ *
+ * This is an EXISTENCE check, not an identity check — a plan therefore survives
+ * delete-and-recreate under the same id. Comparing `kit.createdAt >
+ * plan.createdAt` would be crisper, but `GitHostKitStore.getKit` returns the git
+ * host's clock (`repo.created_at`) while `PlanState.createdAt` is generated
+ * locally, so clock skew would intermittently false-reject legitimate writes — a
+ * worse failure mode than the narrow gap it would close.
+ *
+ * Shared with `sync/orchestrator.ts` step 1 rather than duplicated: the sync
+ * sequence fences the tree with a RECURSIVE mkdir before any store call, so it
+ * needs the identical invariant a beat earlier. One implementation, no drift.
+ */
+export async function assertKitLive(store: KitStore, kitId: string): Promise<void> {
+  if (!isSafeKitId(kitId)) {
+    throw new KitNotFoundError(kitId);
+  }
+
+  try {
+    await store.getKit(kitId);
+  } catch (error) {
+    if (error instanceof NotFoundError) {
+      throw new KitNotFoundError(kitId);
+    }
+    throw error;
+  }
+}
+
+/**
  * AC10 write-failure taxonomy now lives in the store layer (`store/interface.ts`),
  * because the store owns the atomic write transaction after the DRO-565 re-plumb.
  * Re-exported here so existing importers of these names from `write_files.js`
@@ -615,39 +661,9 @@ export async function writeFiles(
   //    it by all the validation work above. It is still "before any write", so
   //    the fail-fast contract holds, and it avoids a wasted `getKit` network
   //    round-trip on GitHost for calls that fail the cheap in-memory checks.
-  //
-  //    9a. Shape first. `delete_files.ts` already rejects a traversal-shaped
-  //        plan.kitId "as the first destructive consumer"; write_files had no
-  //        equivalent. It must precede 9b because `LocalFsKitStore.getKit`
-  //        resolves via `kitDir`, NOT `safeKitDir` — so `getKit("..")` would
-  //        itself read above the kits root. Uses the store's centralised
-  //        `isSafeKitId` (empty / "." / ".." / any separator) rather than
-  //        delete_files' stricter local variant, which over-rejects ids that
-  //        merely embed dots.
-  if (!isSafeKitId(plan.kitId)) {
-    throw new KitNotFoundError(plan.kitId);
-  }
-
-  //    9b. Existence. The catch is scoped to this single call on purpose: a
-  //        broad try would mislabel a NotFoundError thrown from elsewhere in the
-  //        write path as a missing kit. Anything that is not a NotFoundError
-  //        (an I/O fault, a network error) propagates unchanged.
-  //
-  //        This is an EXISTENCE check, not an identity check — a plan therefore
-  //        survives delete-and-recreate under the same id. Comparing
-  //        `kit.createdAt > plan.createdAt` would be crisper, but
-  //        `GitHostKitStore.getKit` returns the git host's clock
-  //        (`repo.created_at`) while `PlanState.createdAt` is generated locally,
-  //        so clock skew would intermittently false-reject legitimate writes —
-  //        a worse failure mode than the narrow gap it would close.
-  try {
-    await store.getKit(plan.kitId);
-  } catch (error) {
-    if (error instanceof NotFoundError) {
-      throw new KitNotFoundError(plan.kitId);
-    }
-    throw error;
-  }
+  //    See `assertKitLive` for the shape-before-existence ordering and why this
+  //    is an existence check rather than an identity one.
+  await assertKitLive(store, plan.kitId);
 
   return store.writeFiles(plan.kitId, ops);
 }
