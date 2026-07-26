@@ -837,8 +837,8 @@ describe("LocalFsKitStore — adapter-specific", () => {
     // this guard `createKit` resolved it through the UNGATED `kitDir` and wrote
     // a real directory, so a caller could create a kit the listing filter above
     // then hides: a successful creation that is permanently undiscoverable.
-    // Worse, `join` does not contain `..`, so an unsafe id also placed that
-    // directory OUTSIDE the kits root.
+    // Worse, `join` NORMALIZES `..` rather than rejecting it, so an unsafe id
+    // also resolved that directory OUTSIDE the kits root.
     //
     // GitHost cannot reach this state — it POSTs the id as a repo NAME and a
     // git host rejects `unsafe\kit` with a 4xx that `createKit` propagates — so
@@ -850,6 +850,14 @@ describe("LocalFsKitStore — adapter-specific", () => {
     // `unsafe\kit` directory whether or not this guard exists, so a listKits
     // assertion here is green either way — it would pin nothing.
     expect(await readdir(tmpDir)).not.toContain("unsafe\\kit");
+
+    // The backslash case above is an in-root child name on POSIX, so on its own
+    // it does NOT pin containment: a partial guard rejecting separators but not
+    // `..` would keep it green. `..` is the boundary case, and the ERROR TYPE is
+    // what discriminates — `kitDir("..")` resolves to an EXISTING directory (the
+    // parent), so a partial guard falls through to the `stat` check and reports
+    // `KitAlreadyExistsError`. Only the real guard reports `NotFoundError`.
+    await expect(store.createKit("Escape", "..")).rejects.toThrow(NotFoundError);
   });
 
   it("AC7 — readFile throws FileTooLargeError for files > 256 KiB", async () => {
