@@ -151,8 +151,24 @@ describe("resolveKitDir", () => {
 
   it("returns null for a traversal / malformed kitId (never escapes the root)", () => {
     expect(resolveKitDir("/kits", "../../etc")).toBeNull();
-    expect(resolveKitDir("/kits", "a")).toBeNull(); // too short for KIT_ID_PATTERN
-    expect(resolveKitDir("/kits", "UPPER")).toBeNull();
+    expect(resolveKitDir("/kits", "..")).toBeNull();
+    expect(resolveKitDir("/kits", ".")).toBeNull();
+    expect(resolveKitDir("/kits", "")).toBeNull();
+    expect(resolveKitDir("/kits", "a/b")).toBeNull();
+    expect(resolveKitDir("/kits", "a\\b")).toBeNull();
+  });
+
+  // Changed deliberately, not incidentally. `"a"` and `"UPPER"` used to return
+  // null because this guard was `KIT_ID_PATTERN` — a shape rule describing ids
+  // *minted by `create_kit`* — doing double duty as a containment rule. Neither
+  // can escape `/kits`, and an imported or git-host kit may legitimately be
+  // named either. Refusing them here made kits that `list_kits` advertises
+  // render as an empty grid. The guard is now `isSafeKitId`, the same rule both
+  // store adapters enforce; the traversal cases above are unchanged.
+  it("accepts containment-safe ids that are not create_kit-shaped", () => {
+    expect(resolveKitDir("/kits", "a")).toBe(join("/kits", "a"));
+    expect(resolveKitDir("/kits", "UPPER")).toBe(join("/kits", "UPPER"));
+    expect(resolveKitDir("/kits", "My_Kit.2")).toBe(join("/kits", "My_Kit.2"));
   });
 });
 

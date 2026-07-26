@@ -102,7 +102,7 @@ import {
   getAdapter,
   type Framework,
 } from "../framework/interface.js";
-import { KIT_ID_PATTERN } from "./get_kit.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 
 // Re-exported so existing importers (and conjure.test.ts) keep resolving these
 // through `conjure.js` after the harness extraction — the symbols moved, the
@@ -435,12 +435,7 @@ const refUrlSchema = z
 // and the MCP tool `inputSchema` (declared contract), so the two can never drift
 // (Copilot review: keep the tool-boundary schema aligned with runtime validation).
 const conjureInputShape = {
-  kitId: z
-    .string()
-    .regex(
-      KIT_ID_PATTERN,
-      "kitId must be a 3-64 character slug of lowercase letters, numbers, and hyphens.",
-    ),
+  kitId: z.string().refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE),
   kit: z.string().min(1).max(100_000),
   prompt: z.string().min(3).max(8192),
   group: z

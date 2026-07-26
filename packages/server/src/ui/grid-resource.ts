@@ -54,7 +54,7 @@ import type { ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { parse } from "parse5";
 
 import { ensureManifest, type Manifest, type ManifestCard } from "../manifest/index.js";
-import { KIT_ID_PATTERN } from "../tools/get_kit.js";
+import { isSafeKitId } from "../store/kit-files.js";
 import type { CardAssetBroker, CardAssetKit } from "./card-asset-broker.js";
 
 // ─── Public constants (AC1) ──────────────────────────────────────────────────
@@ -160,13 +160,18 @@ export interface GridResourceOptions {
 
 /**
  * Resolve `kitId` to its on-disk dir under `kitsRoot`, or `null` when the id is
- * absent or fails {@link KIT_ID_PATTERN}. Returning `null` (rather than
- * throwing) lets the handler degrade to an EMPTY grid instead of erroring a
- * host's `resources/read` — a hostile or malformed `kitId` can never escape the
- * kits root (RFC §10 T-13, the same guard `preview`/`read_file` apply).
+ * absent or fails {@link isSafeKitId}. Returning `null` (rather than throwing)
+ * lets the handler degrade to an EMPTY grid instead of erroring a host's
+ * `resources/read` — a hostile or malformed `kitId` can never escape the kits
+ * root (RFC §10 T-13, the same guard `preview`/`read_file` apply).
+ *
+ * Containment, not the create_kit slug shape: this backs `ui://genie/grid?kitId=…`,
+ * the exact URI `preview` emits. Gating on the shape meant an imported kit like
+ * `My_Kit.2` silently rendered an EMPTY grid — the same visible-but-unusable
+ * defect one layer below the tool boundary.
  */
 export function resolveKitDir(kitsRoot: string, kitId: string | undefined): string | null {
-  if (kitId === undefined || !KIT_ID_PATTERN.test(kitId)) return null;
+  if (kitId === undefined || !isSafeKitId(kitId)) return null;
   return join(kitsRoot, kitId);
 }
 
@@ -935,7 +940,7 @@ async function prepareCardBroker(
     return { exactFrameDomains: broker.frameOrigins() };
   }
 
-  if (!KIT_ID_PATTERN.test(params.kitId)) {
+  if (!isSafeKitId(params.kitId)) {
     return { exactFrameDomains: broker.frameOrigins() };
   }
   const cardAssetKit = await registerRequestedCardAssetKit(broker, deps.kitsRoot, params.kitId);

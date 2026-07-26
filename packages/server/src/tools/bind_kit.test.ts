@@ -57,7 +57,14 @@ describe("bindKit (standalone function)", () => {
     await expect(
       bindKit(store, { projectId: "valid-id", kitId: "commerce-kit", extra: true }),
     ).rejects.toThrow();
-    await expect(bindKit(store, { projectId: "valid-id", kitId: "AB" })).rejects.toThrow();
+    // Was `kitId: "AB"`, which only failed because `kitId` was gated on the
+    // `create_kit`-minted slug shape. `kitId` is an opaque, adapter-assigned
+    // string, so "AB" is now a legitimate id and would reach the store — this
+    // case would then pass for the wrong reason (ERR_KIT_NOT_FOUND, not a
+    // schema rejection), defeating the "before touching the store" claim in the
+    // test name. `".."` is rejected by the containment rule itself.
+    await expect(bindKit(store, { projectId: "valid-id", kitId: ".." })).rejects.toThrow();
+    await expect(bindKit(store, { projectId: "valid-id", kitId: "a/b" })).rejects.toThrow();
   });
 
   it("AC2 — accepts { projectId, kitId, default? } and returns the updated ProjectSummary", async () => {
