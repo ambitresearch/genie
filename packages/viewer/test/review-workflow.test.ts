@@ -4224,4 +4224,41 @@ describe("unload guard survives a stranded deletion (#256)", () => {
     expect(wired.controller.state().drafts).toHaveLength(2);
     expect(fireUnload(wired.window).defaultPrevented).toBe(true);
   });
+
+  // Copilot round 7 (PR #270) — the mirror image of the test above. There the newer draft deletes
+  // NOTHING, so draft 1's path is still on disk and the prompt is right. Here the newer draft
+  // removes that very path, so the unfinished work is finished — by someone else. A latching
+  // boolean cannot tell those apart and would prompt forever about a file that is already gone.
+  it("stops prompting once a NEWER draft removes the same stranded path", async () => {
+    const wired = loadDeleting(flakyDeletes(1));
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    // Draft 2 carries the same deletion, and this time `delete_files` reports it removed.
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 8);
+    await vi.waitFor(() => expect(wired.controller.state().appliedDraftId).not.toBeNull());
+    expect(wired.controller.state().drafts).toHaveLength(2);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  // A path the kit never had is `notFoundPaths`, not `deletedPaths` — and it is equally gone.
+  // Reconciling on "removed" alone would keep prompting about a file nothing can ever remove.
+  it("stops prompting when a later apply finds the stranded path already absent", async () => {
+    let seen = 0;
+    const wired = loadDeleting(() => {
+      seen += 1;
+      return seen === 1
+        ? { deletedPaths: [], notFoundPaths: [] }
+        : { deletedPaths: [], notFoundPaths: [STRANDED] };
+    });
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 8);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
 });

@@ -367,6 +367,15 @@ Fabricating a zero-token `usage` to make the conjure predicate pass would have b
 
 The naming rule deliberately moved out of the shared core. `Card/preview.html` is a legitimate kit entry point that the compiler's own `walkPreviewFiles` accepts, so it can never satisfy `<Name>/<Name>.html`; demanding that of existing kit source would fail valid kits. It still applies to conjure and refine output, where it is a real constraint on what the model must return.
 
+### `list_kits` entry validation (DRO-242)
+
+`isKitEntry` validates a single `list_kits` reply entry against its canonical output shape
+(`{ id, name, owner, updatedAt, canEdit }`, `packages/server/src/tools/list_kits.ts`). Both
+`owner` and `updatedAt` are required strings in that schema — not optional — so a host reply
+missing either, or supplying a non-string value, is rejected rather than silently coerced or
+ignored. `owner` is rendered directly into the kit option label, so a non-string owner (an
+object, say) would otherwise reach text interpolation as `[object Object]`.
+
 ### `manifestEntry` validation (DRO-242)
 
 DRO-242 (fail closed) — validates `manifestEntry` against conjure's canonical output schema (`packages/server/src/tools/conjure.ts` / `packages/server/src/llm/schema.ts`'s `Viewport` $def): `viewport.width`/ `viewport.height` are required integers in `[1, 4096]` (Copilot review round 5 — a bare `typeof === "number"` check still accepted fractions, `0`/negatives, values above 4096, `NaN`, and `Infinity`, none of which the canonical schema permits), and both `manifestEntry` and `viewport` are `.strict()` — no keys beyond `viewport`/`subtitle`/`tags` (resp. `width`/`height`) are allowed. `subtitle` (`maxLength: 256`) and `tags` (`maxItems: 16`, each a string) are optional but, when present, must respect those same bounds. An object-like-but-empty `manifestEntry: {}` (missing `viewport` entirely) must be rejected, not just checked for being a plain object.
@@ -451,6 +460,23 @@ though, that treeitem still exists in the DOM but is hidden (`visibility: hidden
 silently failed, and neither the rail toggle nor the compact `<select>` (the ACTUAL visible
 navigation control at those widths) was ever tried before falling through to search. Walk the
 candidates in specificity order and focus the first one that's both present and visible.
+
+### Re-projecting Browse on an HMR tick
+
+M7-02 (#234) made Browse HMR-safe by re-projecting the _same_ live tree and selection against the
+fresh manifest on every update — structural or content-only alike — so an unrelated selection or
+filter is never reset. `initBrowseController`'s own documentation covers why re-resolving by
+identity is safe there.
+
+Copilot's review of PR #248 narrowed that to updates where the manifest actually changed.
+Standalone and localhost Browse poll every `HMR_POLL_INTERVAL_MS` (two seconds) unconditionally,
+with no WebSocket, and every one of those ticks used to call `onManifestUpdate` even for a
+byte-equivalent response. `initBrowseController.update()` treats any such call as "manifest
+changed" and re-renders detail, which re-runs `fetchSource` — so a selected component's preview
+and source panel silently reloaded every two seconds with nothing to show for it. A genuinely
+new or removed group or component (`structureChanged`), a real per-card hash diff (a non-empty
+`contentChangedPaths`), or a Browse-visible metadata-only edit (`metadataChanged`) are the only
+ways the next manifest can differ from the last one in a way Browse should react to.
 
 ### Repainting Browse source text without tearing down the preview
 

@@ -797,16 +797,8 @@
     );
   }
 
-  /**
-   * DRO-242 (fail closed) — validates a single `list_kits` reply entry against its canonical output
-   * shape (`{ id, name, owner, updatedAt, canEdit }`, `packages/server/src/tools/list_kits.ts`).
-   * Both `owner` and `updatedAt` are required strings in that schema (not optional), so a host
-   * reply missing either — or supplying a non-string value — is rejected here rather than silently
-   * coerced or ignored. `owner` is
-   * rendered directly into the kit `<option>` label (`kits[i].owner ||
-   * "local"`), so a non-string owner (e.g. an object) would otherwise reach `textContent`
-   * interpolation as `[object Object]`.
-   */
+  // DRO-242 (fail closed). Rationale: docs/developer/architecture.md, "`list_kits` entry
+  // validation (DRO-242)".
   function isKitEntry(kit) {
     return Boolean(
       isPlainObject(kit) &&
@@ -2422,7 +2414,7 @@
         // ARE in the kit and it sorts below a newer applied draft. The unfinished half is a
         // file still on disk that nothing else records: applying a later draft does not remove
         // it, and a reload forgets which path it was.
-        if (info && info.pendingDeletes) return true;
+        if (info && info.pendingDeletes && info.pendingDeletes.length) return true;
         // <= rather than <: apply also sets componentInKit on the draft it stamped,
         // so skipping it here is redundant today. The two are written independently
         // though, so keep the floor inclusive rather than lean on that coupling.
@@ -2820,7 +2812,21 @@
       // it; forcing it false here would disable Refine with a reason ("apply this draft first")
       // that is simply untrue. The stranded removal is separate unfinished work, so record it
       // separately. Assigned unconditionally so a clean retry clears it.
-      meta[draft.id].pendingDeletes = stuckDeletes.length > 0;
+      meta[draft.id].pendingDeletes = stuckDeletes.slice();
+      // Copilot round 7 — the PATHS, not a boolean. A boolean latches: nothing could clear it,
+      // so a later draft deleting that very path left the tab prompting forever about a file
+      // already gone, steering the user into retrying draft 1 and overwriting the newer bytes.
+      // Reconcile EVERY draft (this one included, so a partial retry narrows its own set).
+      var confirmed = outcome.resolvedDeletes || outcome.deletedPaths || [];
+      if (confirmed.length) {
+        for (var draftId in meta) {
+          var pending = meta[draftId] && meta[draftId].pendingDeletes;
+          if (!pending || !pending.length) continue;
+          meta[draftId].pendingDeletes = pending.filter(function (path) {
+            return confirmed.indexOf(path) === -1;
+          });
+        }
+      }
       // The bytes are on disk NOW, but `syncUnloadGuard` otherwise only runs from `render()` --
       // which sits below the `await` on the host's kit refresh. A slow or hung refresh would
       // leave the tab prompting about work that is already saved. Re-sync eagerly; this cannot
@@ -3150,6 +3156,11 @@
       writtenPaths: written,
       deletedPaths: deletedPaths,
       stuckDeletes: stuckDeletes,
+      // Copilot round 7 (PR #270) — every path this apply CONFIRMED is off disk. Wider than
+      // `deletedPaths`: a path reported absent is equally gone.
+      resolvedDeletes: deletes.filter(function (path) {
+        return stuckDeletes.indexOf(path) === -1;
+      }),
       deleteWarning: deleteWarning,
       validation: validation,
       planId: planReply.planId,
@@ -4304,21 +4315,8 @@
       var metadataChanged =
         Boolean(lastManifest) && manifestBrowseMetadataChanged(lastManifest, next);
       lastManifest = next;
-      // M7-02 (#234) — HMR-safe Browse: re-project the SAME live tree/ selection against the fresh
-      // manifest on every update (structural or content-only alike), never resetting an unrelated
-      // selection/filter (see `initBrowseController`'s own doc for why re-resolving-by- identity is
-      // safe here).
-      //
-      // Copilot review (PR #248) — but only when the manifest actually changed.
-      // Standalone/localhost Browse polls every `HMR_POLL_INTERVAL_MS` (2s) unconditionally (no
-      // WebSocket), and every one of those ticks used to call `onManifestUpdate` even for a
-      // byte-equivalent response — `initBrowseController.update()` treats that as "manifest
-      // changed" unconditionally and re-renders detail (which re-runs `fetchSource`), so a selected
-      // component's preview and source panel silently reloaded every 2 seconds with nothing to show
-      // for it. `structureChanged` (a genuinely new/removed group or component), a non-empty
-      // `contentChangedPaths` (a real per-card hash diff), or `metadataChanged` (a Browse-visible
-      // metadata-only edit) are the only ways `next` can differ from `lastManifest` in a way Browse
-      // should react to.
+      // M7-02 (#234) + Copilot review (PR #248) — re-project Browse only when the manifest really
+      // changed. Rationale: docs/developer/architecture.md, "Re-projecting Browse on an HMR tick".
       if (
         (structureChanged || contentChangedPaths.length > 0 || metadataChanged) &&
         typeof opts.onManifestUpdate === "function"
