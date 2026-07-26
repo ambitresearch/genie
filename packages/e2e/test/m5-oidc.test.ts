@@ -517,6 +517,32 @@ describe.skipIf(!dockerAvailable)("M5-04 — OIDC provider integration (DRO-276)
     expect(res.status).toBe(403);
   }, 30_000);
 
+  // Request-level guard regression (#260). The unit suite in
+  // `oidc-interaction-view.test.ts` proves the helpers escape and validate, but
+  // only a real request proves `server.mjs` actually WIRES the guard in — and
+  // wires it ahead of `provider.interactionDetails`. Deleting or relocating the
+  // guard leaves every unit test green while re-exposing this path, so assert it
+  // against the live containerized fixture.
+  //
+  // Without the guard this test fails with `SocketError: other side closed`:
+  // `interactionDetails()` rejects for a uid it never issued, the async handler
+  // has no try/catch, and the unhandled rejection drops the connection before
+  // any response is written. That is precisely why the guard sits BEFORE it.
+  it("rejects a malformed interaction uid with HTTP 400 before it reaches the provider", async () => {
+    const hostile = '"><script>alert(1)</script>';
+    const res = await fetch(`${oidc.issuer}/interaction/${encodeURIComponent(hostile)}`, {
+      redirect: "manual",
+    });
+
+    expect(res.status).toBe(400);
+
+    // The rejection must not reflect the payload back in any form — neither raw
+    // (breaking out of the form's action attribute) nor as a login form at all.
+    const body = await res.text();
+    expect(body).not.toContain("<script");
+    expect(body).not.toContain("<form");
+  }, 30_000);
+
   it("AC7 — the whole walk (container boot + two full PKCE flows) completes well under 3 minutes", () => {
     expect(Date.now() - suiteStartedAt).toBeLessThan(3 * 60_000);
   });

@@ -284,6 +284,17 @@ describe("createViewerConfig", () => {
       expect(stripViteClientScript(html)).toBe("<!doctype html><head></head><body>Card</body>");
     });
 
+    /**
+     * A single `replace` pass cannot strip nested occurrences: removing the
+     * inner match splices the surrounding text into a fresh outer match the
+     * scan has already moved past. Here one pass leaves a fully intact client
+     * script behind, so stripping must run to a fixed point.
+     */
+    it("strips nested occurrences that survive a single pass", () => {
+      const inner = '<script src="/@vite/client"></script>';
+      expect(stripViteClientScript(`<scr${inner}ipt src="/@vite/client"></script>`)).toBe("");
+    });
+
     it("uses a post HTML transform so it runs after Vite injection", () => {
       const plugin = noViteClientPlugin();
       expect(plugin.transformIndexHtml).toMatchObject({ order: "post" });

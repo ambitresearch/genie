@@ -6,7 +6,7 @@ WORKDIR /app
 # explicit so provider behavior changes are reviewed deliberately.
 RUN npm install --no-save oidc-provider@9.9.1
 
-COPY server.mjs ./server.mjs
+COPY server.mjs interaction-view.mjs ./
 
 EXPOSE 9944
 
