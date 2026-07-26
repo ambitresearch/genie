@@ -563,6 +563,39 @@ describe("LocalScaffoldScreenGenerator", () => {
       expect(header.trimEnd().endsWith("-->")).toBe(true);
       // The live markup the payload was trying to smuggle never materialises.
       expect(content).not.toContain("<img src=x onerror=alert(1)>");
+      // The note contributes neither `<` nor `>`, so it cannot contribute *any*
+      // markup construct — not a terminator, not a nested `<!--`, not a tag.
+      // Stated as one property rather than argued per-construct: HTML forbids
+      // `<!--` inside comment text (WHATWG §13.1.6), so leaving it would emit a
+      // non-conforming document even though no parser in this repo rejects it.
+      const note = header.slice(header.indexOf(":") + 1, header.lastIndexOf("-->"));
+      expect(note).not.toContain("<");
+      expect(note).not.toContain(">");
+    });
+
+    // Suggested in review. The string-level assertions above prove the note cannot
+    // *terminate* the comment; this proves the artifact a caller actually receives
+    // still parses. Independent detector, and a stricter one: under a mutant that
+    // drops the escape entirely the SFC does not merely change, it loses its
+    // `<template>` block and `@vue/compiler-sfc#parse` raises — which
+    // `VueAdapter.renderPreview` turns into a hard rejection. So an unescaped note
+    // makes a *listable* kitId render as nothing at all.
+    //
+    // Dynamically imported exactly as `framework/vue.ts` does it — that module
+    // documents `@vue/compiler-sfc` as a heavy transitive graph kept off the hot path.
+    it("vue — the generated SFC still parses after escaping (renderable, not just safe)", async () => {
+      const { parse } = await import("@vue/compiler-sfc");
+      const result = await generator.generate(
+        request({
+          framework: "vue",
+          entryPath: "s/index.vue",
+          kit: { kitId: HTML_BREAKOUT, via: "explicit" },
+        }),
+      );
+      const source = result.files[0]?.content ?? "";
+      const { descriptor, errors } = parse(source, { filename: "Screen.vue" });
+      expect(errors).toHaveLength(0);
+      expect(descriptor.template?.content).toContain("<main");
     });
 
     // A `//` comment runs to the end of the line, so a line terminator inside the

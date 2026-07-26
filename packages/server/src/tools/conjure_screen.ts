@@ -572,18 +572,30 @@ function toSingleLine(value: string): string {
 
 /** Escape a value destined for the inside of an `<!-- … -->` comment.
  *
- * An HTML comment can only be closed by a sequence ending in `>` (`-->`, and
- * the `--!>` variant browsers also honour), so "contributes no `>`" is a
- * *provable* containment property rather than a blocklist of terminator
- * spellings — the reason this is not `replaceAll("--", "- -")`, which `---->`
- * defeats.
+ * Escapes `<` and `>`, so the note contributes no markup-significant character
+ * at all. Two independent reasons, kept separate because they carry different
+ * weight:
  *
- * Deliberately NOT `escapeHtml`: that also rewrites `"` to `&quot;`, which
- * would turn the quotes around every ordinary kit name into entity noise for
- * no security gain. Comment text is not parsed as markup, so `<`, `&` and `"`
- * are inert here — only `>` is load-bearing. */
+ *   1. *Containment* (security). A comment can only be closed by a sequence
+ *      ending in `>` (`-->`, and the `--!>` variant browsers also honour), so
+ *      "contributes no `>`" is a **provable** property rather than a blocklist
+ *      of terminator spellings. This alone is sufficient, and it is the reason
+ *      this is not `replaceAll("--", "- -")` — that recreates `--` across a
+ *      replacement boundary, so any *odd*-length run of 3+ hyphens defeats it:
+ *      `--->` becomes `- -->`. (Even-length runs do not: `---->` becomes
+ *      `- -- ->`. Verified by executing both, not by reading the regex.)
+ *   2. *Conformance* (artifact quality). WHATWG HTML §13.1.6 forbids `<!--`
+ *      inside comment text, so passing `<` through would emit a technically
+ *      non-conforming document — even though no parser in this repo rejects it.
+ *      Escaping `<` costs one character class and turns a property that has to
+ *      be argued per-construct into one sentence: the note cannot contribute a
+ *      terminator, a nested `<!--`, or a tag.
+ *
+ * Deliberately still NOT `escapeHtml`: that also rewrites `"` to `&quot;`, which
+ * would turn the quotes around every ordinary kit name into entity noise for no
+ * gain under either heading. `&` and `"` are genuinely inert in comment text. */
 function escapeHtmlComment(value: string): string {
-  return toSingleLine(value).replace(/>/g, "&gt;");
+  return toSingleLine(value).replace(/[<>]/g, (c) => (c === "<" ? "&lt;" : "&gt;"));
 }
 
 /** Escape a value destined for the tail of a `//` line comment, which runs to
