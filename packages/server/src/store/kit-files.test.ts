@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
+
 import { isSafeKitId, sriSha256 } from "./kit-files.js";
 
 /**
@@ -58,8 +62,11 @@ describe("isSafeKitId", () => {
     //
     //   `join(root, "victim..")` → `root\victim..` → Win32 → `root\victim`
     //
-    // Containment is not the whole contract: `isSafeKitId` promises a kitId
-    // names ONE kit. A plan for `victim..` stays under the kits root and still
+    // Containment is not the whole contract: `isSafeKitId` promises an accepted
+    // id SPELLS THE DIRECTORY IT OPENS. (Not that it names one kit — the test
+    // below deliberately accepts `Victim` and `VICTIM~1`, which are alternate
+    // spellings of one real directory.) A plan for `victim..` stays under the
+    // kits root and still
     // mutates or deletes `victim`, because `LocalFsKitStore.deleteFile` and
     // `writeFiles` resolve through the unsafe `kitDir`, with this predicate as
     // the only guard.
@@ -86,11 +93,6 @@ describe("isSafeKitId", () => {
   });
 });
 
-/**
- * `sriSha256` is the full-buffer reference the streamed LocalFs walk
- * (`hashFileStream`) must match byte-for-byte (AC3). This pins its exact output
- * shape so the two forms can be compared in the store/tool suites.
- */
 // Filesystem name-EQUIVALENCE is deliberately out of scope, and that decision
 // needs a lock rather than only a comment: every review round so far has
 // proposed widening the denylist by one more character class, and each of
@@ -123,6 +125,79 @@ it("🔒 accepts ids that are only ALIASES via filesystem name-equivalence", () 
   }
 });
 
+// CVE-2025-27210: on Windows, `path.join`/`path.normalize` could be walked out
+// of a base directory using a reserved DEVICE NAME segment, and the fix only
+// landed in 22.17.1 / 20.19.4 / 24.4.1. Review round 11 asked whether accepting
+// `CON`/`NUL` above therefore leaves the gate exploitable on an older Node 22.
+//
+// It does not, and the reason is structural rather than a version check: the
+// published exploit needs a device-name segment FOLLOWED BY traversal segments
+// in one string (`..\\CON\\..\\..\\etc\\passwd`). `isSafeKitId` refuses every
+// separator, so an accepted id is always a SINGLE path component, and the
+// trailing-dot/space rule removes the only separator-free way to end an id in a
+// traversal segment. There is no accepted id left that has the shape the CVE
+// needs. This pins that argument so a future loosening of either rule fails
+// here, next to the rationale it protects, instead of in a Windows-only report.
+it("🔒 no accepted kitId can carry the CVE-2025-27210 device-name shape", () => {
+  const ROOT = "C:\\kits";
+  const accepted = ["CON", "NUL", "COM1", "AUX", "PRN", "LPT1", "..CON", "CON.txt", "CONx"];
+  for (const id of accepted) {
+    expect(isSafeKitId(id), `${id} is expected to remain accepted`).toBe(true);
+    // A single component: no separator to start a second segment from.
+    expect(id).not.toMatch(/[/\\]/u);
+    // And it still resolves strictly inside the kits root on Win32 semantics.
+    for (const resolved of [path.win32.join(ROOT, id), path.win32.resolve(ROOT, id)]) {
+      expect(resolved.toLowerCase().startsWith(`${ROOT.toLowerCase()}\\`), `${id} escaped`).toBe(
+        true,
+      );
+    }
+  }
+  // Every spelling that WOULD carry the CVE shape is already refused.
+  for (const id of [
+    "..\\CON\\..\\..\\etc\\passwd",
+    "CON\\..\\..",
+    "..\\CON\\..",
+    "CON..",
+    "CON.",
+    "CON ",
+  ]) {
+    expect(isSafeKitId(id), `${JSON.stringify(id)} must be refused`).toBe(false);
+  }
+});
+
+// The rationale above argues the kitId GATE is unaffected by CVE-2025-27210.
+// The other half of that answer is packaging: `writeFiles`/`readFile` take a
+// `path` that legitimately DOES contain separators, so a consumer installing
+// this server on an unpatched Node 22 is exposed on that surface no matter what
+// the kitId rule does. The workspace already tests on a patched floor; this
+// pins the PUBLISHED floor to a patched release too, so the two cannot drift.
+it.each([
+  ["@ambitresearch/genie", "../../package.json"],
+  ["@ambitresearch/genie-viewer", "../../../viewer/package.json"],
+])("🔒 %s declares a Node floor that patches CVE-2025-27210", (_name, rel) => {
+  // Both published packages call `node:path` on caller-supplied strings, so both
+  // need a patched floor. Checking them together is deliberate: a floor raised on
+  // one package and not the other is the same two-contracts drift this PR fixes.
+  const manifest = JSON.parse(readFileSync(new URL(rel, import.meta.url), "utf-8")) as {
+    engines?: { node?: string };
+  };
+  const range = manifest.engines?.node ?? "";
+  const m = /^>=\s*(\d+)\.(\d+)\.(\d+)/u.exec(range);
+  expect(m, `engines.node must pin an explicit patch floor, got ${JSON.stringify(range)}`).not.toBe(
+    null,
+  );
+  const [major, minor, patch] = m!.slice(1).map(Number) as [number, number, number];
+  // Patched releases: 20.19.4, 22.17.1, 24.4.1. Both packages require Node 22+.
+  expect(major).toBeGreaterThanOrEqual(22);
+  const atLeast22_17_1 = major > 22 || minor > 17 || (major === 22 && minor === 17 && patch >= 1);
+  expect(atLeast22_17_1, `${range} predates the CVE-2025-27210 fix (22.17.1)`).toBe(true);
+});
+
+/**
+ * `sriSha256` is the full-buffer reference the streamed LocalFs walk
+ * (`hashFileStream`) must match byte-for-byte (AC3). This pins its exact output
+ * shape so the two forms can be compared in the store/tool suites.
+ */
 describe("sriSha256", () => {
   it("produces a stable sha256-<base64> SRI string", () => {
     expect(sriSha256("hello")).toMatch(/^sha256-[A-Za-z0-9+/]+=*$/);

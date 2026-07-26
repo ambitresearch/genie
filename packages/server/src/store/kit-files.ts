@@ -192,11 +192,20 @@ export function sriSha256(bytes: Buffer | string): string {
  *     legal in a POSIX directory name, so blanket-refusing it would make a
  *     `my~kit` kit listable and unusable — this rule's own defect, re-created;
  *   - Win32 reserved device names (`CON`, `NUL`, `COM1`), which resolve to a
- *     device rather than to another kit.
+ *     device rather than to another kit. CVE-2025-27210 (fixed in Node 22.17.1)
+ *     let a device name walk `path.join` OUT of a base directory, but only as a
+ *     segment FOLLOWED BY traversal segments (`..\CON\..\..\etc\passwd`).
+ *     Refusing separators makes an accepted id a single component, and the
+ *     trailing-dot/space rule removes the only separator-free way to end in a
+ *     traversal segment, so no accepted id has that shape (locked in
+ *     `kit-files.test.ts`). The `path` argument of `readFile`/`writeFiles` does
+ *     take separators, so the published `engines.node` floor is pinned to a
+ *     patched release for that surface.
  *
  * The first two are alternate SPELLINGS of one real directory, resolvable in
- * both directions, so there is no hidden second kit to cross into; the third is
- * an availability quirk. All three are filesystem name-equivalence properties
+ * both directions, so there is no hidden second kit to cross into; the third
+ * reaches a device instead of a kit, which fails the operation rather than
+ * redirecting it at another kit. All three are name-equivalence properties
  * rather than gate holes: a caller who can name a kit two ways still reaches
  * exactly one kit. Collapsing them needs the resolved path canonicalised
  * (`realpath`) and compared against the request — a store-layer change, not a
