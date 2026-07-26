@@ -31,6 +31,7 @@ import { z } from "zod";
 import type { KitStore } from "../store/interface.js";
 import { withPlanGuard } from "../middleware/plan-guard.js";
 import { getPlan, pathMatchesGlobs, PlanNotFoundError } from "../plans/index.js";
+import { isSafeKitId } from "../store/kit-files.js";
 
 export const DELETE_FILES_TOOL_NAME = "mcp__genie__delete_files";
 export const DELETE_FILES_DESCRIPTION =
@@ -107,22 +108,6 @@ function hasDotSegment(path: string): boolean {
 }
 
 /**
- * True if a kitId is path-shaped (contains a separator or a `..`). The tool no
- * longer holds a `kitsRoot`, so it cannot re-derive the on-disk kit root to
- * prove containment; instead it rejects a traversal-shaped kitId outright.
- *
- * `plan` accepts `kitId: z.string().min(1)` with no traversal guard and stores
- * it verbatim, so a plan authored with e.g. `kitId: ".."` could otherwise make
- * a LocalFs store resolve a kit dir OUTSIDE the kits root (defense in depth,
- * mirroring read_file's kitId check). A store guards internally too, but this
- * keeps the whole-call rejection at the atomic pre-flight, before anything is
- * deleted.
- */
-function isPathShapedKitId(kitId: string): boolean {
-  return kitId.includes("/") || kitId.includes("\\") || kitId.includes("..");
-}
-
-/**
  * Delete every `path` in `args.paths` from the plan's kit, subject to the
  * plan's `deletes` allow-list.
  *
@@ -154,11 +139,16 @@ export async function deleteFiles(
   //    PlanNotFoundError (surfaced to the client, not swallowed here).
   const plan = await getPlan(parsed.planId);
 
-  // 2a. Defense in depth: a plan authored with a traversal-shaped kitId (e.g.
-  //     "..") could make a LocalFs store resolve a kit dir outside the kits
-  //     root. As the first destructive consumer, reject it before deleting
-  //     anything (mirrors read_file's kitId guard).
-  if (isPathShapedKitId(plan.kitId)) {
+  // 2a. Defense in depth, via the SHARED store rule. `plan` stores `kitId`
+  //     verbatim, so a persisted plan can carry an id this tool never gated.
+  //     The tool no longer holds a `kitsRoot` and so cannot re-derive the kit
+  //     root to prove containment itself — and `LocalFsKitStore.deleteFile`
+  //     resolves through the UNSAFE `kitDir`, so there is no store-layer
+  //     backstop either. `isSafeKitId` is therefore the only guard standing
+  //     between a persisted plan and an unlink; see its docblock for the exact
+  //     rejection set. Running it here keeps the refusal whole-call, at the
+  //     atomic pre-flight, before anything is deleted.
+  if (!isSafeKitId(plan.kitId)) {
     throw new DeleteFilesError(
       "PathOutsidePlanError",
       `Plan kitId "${plan.kitId}" is not a valid kit identifier.`,

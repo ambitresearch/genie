@@ -805,8 +805,8 @@ describe("write_files re-checks the kit at commit time (#269)", () => {
   });
 
   it("rejects a path-shaped plan.kitId before it reaches the store", async () => {
-    // `delete_files.ts:161` already guards this "as the first destructive
-    // consumer"; write_files had NO equivalent. It must run before the existence
+    // `delete_files` guarded this first, as the earliest destructive consumer;
+    // write_files had NO equivalent. It must run before the existence
     // check, because LocalFsKitStore.getKit resolves via `kitDir`, not
     // `safeKitDir` — so `getKit("..")` would itself read above the kits root.
     //

@@ -196,6 +196,64 @@ describe("deleteFiles", () => {
     expect(existsSync(outsideFile)).toBe(true);
   });
 
+  it('🔒 AC3 — a plan kitId of "." cannot alias the kits root and delete a SIBLING kit', async () => {
+    // The preflight only rejected ids containing a separator or "..", so "."
+    // slipped through — and `LocalFsKitStore.deleteFile` resolves through the
+    // UNSAFE `kitDir` (no `isSafeKitId`), so `join(kitsRoot, ".")` collapses to
+    // kitsRoot itself. Every sibling kit is then addressable as a plain
+    // in-bounds relative path: it passes the dot-segment check, matches `**/*`,
+    // and resolves INSIDE the (aliased) root, so containment cannot catch it.
+    // This is not Win32-specific — POSIX `join` collapses "." identically.
+    const victimDir = join(harness.kitsRoot, "victim-kit");
+    await mkdir(victimDir, { recursive: true });
+    const victimFile = join(victimDir, "secret.txt");
+    await writeFile(victimFile, "do-not-delete", "utf8");
+
+    const state = await createPlan(".", ["**/*"], ["**/*"], process.cwd());
+
+    await expect(
+      deleteFiles(harness.store, { planId: state.planId, paths: ["victim-kit/secret.txt"] }),
+    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+
+    expect(existsSync(victimFile)).toBe(true);
+  });
+
+  it("🔒 AC3 — a plan kitId that Win32 trims to a traversal alias is rejected", async () => {
+    // Win32 strips trailing spaces and dots per path component at the syscall
+    // boundary, so `<kitsRoot>\ ` and `<kitsRoot>\. ` both OPEN as kitsRoot.
+    // Node's `path` keeps the trailing character, so no containment check sees
+    // an escape — the id itself has to be refused. Asserted as a whole-call
+    // rejection because the alias only materialises on Windows, and CI is
+    // ubuntu-only.
+    for (const kitId of [" ", ". ", ".. ", ""]) {
+      const state = await createPlan(kitId, ["**/*"], ["**/*"], process.cwd());
+      await expect(
+        deleteFiles(harness.store, { planId: state.planId, paths: ["anything.txt"] }),
+      ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+    }
+  });
+
+  it("🔒 AC3 — a kit whose id merely EMBEDS dots stays deletable (parity with plan/write_files)", async () => {
+    // The inverse failure of the same predicate drift: rejecting any id
+    // *containing* ".." also rejected `my..kit`, which `isSafeKitId` — and
+    // therefore `plan`, `write_files` and `list_files` — all accept. Such a kit
+    // could be planned and written but never cleaned up.
+    const kitId = "my..kit";
+    const dottedKitDir = join(harness.kitsRoot, kitId);
+    await mkdir(dottedKitDir, { recursive: true });
+    await writeFile(join(dottedKitDir, "stale.txt"), "x", "utf8");
+
+    const state = await createPlan(kitId, ["**/*"], ["**/*"], process.cwd());
+
+    const result = await deleteFiles(harness.store, {
+      planId: state.planId,
+      paths: ["stale.txt"],
+    });
+
+    expect(result.deletedPaths).toEqual(["stale.txt"]);
+    expect(existsSync(join(dottedKitDir, "stale.txt"))).toBe(false);
+  });
+
   it("AC3 — a dot-segment path is rejected before glob-match/resolve even when a glob would match it", async () => {
     // Plan gating checks the RAW string but deletion resolves it, so the two
     // views can disagree. A glob authored with a literal `..` segment
