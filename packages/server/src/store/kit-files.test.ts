@@ -380,6 +380,28 @@ it.each(publishablePackages)(
   },
 );
 
+// The scan above covers the PUBLISHED runtime. The monorepo root is private, so
+// it is outside that scan — but it is not outside the contract, because it is the
+// manifest that governs a SOURCE checkout, and `CONTRIBUTING.md` and
+// `docs/developer/contributing.md` state the same patched range to contributors
+// who clone this repo. Leaving the root at a bare `>=22.19.0` let those docs
+// promise a range the manifest beside them contradicted: `>=22.19.0` is satisfied
+// by an unpatched 23.5.0. Private means "not installed by consumers", not
+// "exempt from the CVE" — a contributor runs the same `writeFiles` path.
+it("🔒 the source checkout declares a Node range with no vulnerable release in it", () => {
+  const root = JSON.parse(
+    readFileSync(new URL("../../../../package.json", import.meta.url), "utf-8"),
+  ) as { private?: boolean; engines?: { node?: string } };
+
+  // Anti-vacuity: if the root ever stops being private it joins the scan above
+  // instead, and this test should be deleted rather than left duplicating it.
+  expect(root.private, "root manifest is expected to be private").toBe(true);
+
+  const range = root.engines?.node ?? "";
+  expect(range, "root must declare engines.node").not.toBe("");
+  assertRangePatchesCve202527210(range, "monorepo root");
+});
+
 /**
  * `sriSha256` is the full-buffer reference the streamed LocalFs walk
  * (`hashFileStream`) must match byte-for-byte (AC3). This pins its exact output
