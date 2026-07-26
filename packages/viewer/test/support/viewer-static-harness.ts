@@ -21,7 +21,7 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { readFile, mkdtemp, mkdir, cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, extname, resolve, dirname } from "node:path";
+import { join, extname, resolve, dirname, relative, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +38,19 @@ const MIME: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
 };
 
+/**
+ * True when `candidate` resolves to `root` itself or something beneath it.
+ *
+ * Segment-aware by construction: `relative()` yields a `..`-leading path (or an
+ * absolute one, e.g. across Windows drives) exactly when `candidate` escapes,
+ * which a string-prefix comparison cannot detect.
+ */
+function isInsideRoot(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  if (rel === "") return true;
+  return rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel);
+}
+
 /** Serve `root` read-only over plain http — no Vite, no bundler, no mocks. */
 export function serveDir(root: string): Server {
   return createServer((req, res) => {
@@ -49,7 +62,13 @@ export function serveDir(root: string): Server {
         const filePath = join(root, relPath);
         // Only ever serves in-process fixture content, but there is no reason
         // to skip a traversal guard.
-        if (!filePath.startsWith(root)) {
+        //
+        // This must be segment-aware, not a `startsWith` prefix test: the
+        // pathname is percent-decoded above, so `/%2e%2e%2f<root>-sibling/x`
+        // joins to a real sibling directory that shares the root's string
+        // prefix and would otherwise be served. Mirrors the containment check
+        // in `packages/server/src/plans/index.ts` (`isPathInsideLocalDir`).
+        if (!isInsideRoot(root, filePath)) {
           res.writeHead(403);
           res.end("forbidden");
           return;
