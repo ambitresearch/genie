@@ -3934,6 +3934,62 @@ describe("#257 — broker-served draft preview", () => {
     });
     expect((document.getElementById("review-preview-note") as HTMLElement).hidden).toBe(false);
   });
+
+  // Copilot round 12 (#257) — the server registers a refine reply's draft, and evicts to make
+  // room for it, BEFORE the viewer decides whether it still wants that reply. A draft switch
+  // mid-flight discards the reply, but the eviction already happened, so the notice it carries
+  // is still true. Dropping it on the floor strands an unrelated draft on a URL the broker now
+  // answers 404 for — and an iframe fires `load` for an HTTP error, so the blank frame reports
+  // healthy. The victim here is draft #1, which is neither refined nor reselected until later.
+  it("honours the eviction notice on a refine reply it discards mid-flight", async () => {
+    let release!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      release = resolve;
+    });
+    const { document, controller } = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__refine: () => pending,
+    });
+    const token = (hex: string) => DRAFT_URL.replace(/[0-9a-f]{32}$/, hex.repeat(32));
+    const VICTIM_URL = DRAFT_URL;
+    const seed = (previewUrl: string, markup: string) =>
+      controller.addDraft(conjureResult({ previewUrl }), {
+        kitId: "k",
+        kitLabel: "K",
+        model: "m",
+        componentInKit: true,
+        source: `${MARKER}\n<button>${markup}</button>\n`,
+      });
+    seed(VICTIM_URL, "Old");
+    seed(token("e"), "Middle");
+    seed(token("d"), "New");
+
+    const options = () =>
+      document.querySelectorAll<HTMLButtonElement>(".review-draft-switcher__option");
+    const input = document.querySelector<HTMLTextAreaElement>("#refine-input")!;
+    input.value = "tighten the spacing";
+    input.dispatchEvent(new document.defaultView!.Event("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>("#refine-submit")!.click();
+
+    // Switch away from draft #3 while its refine is in flight: the reply is now unwanted.
+    options()[1]!.click();
+    expect(controller.state().currentNumber).toBe(2);
+
+    // The server evicted draft #1's document to make room for the reply we are about to drop.
+    release(refineResult({ diff: "", expiredPreviewUrls: [VICTIM_URL] }));
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLButtonElement>("#refine-submit")!.disabled).toBe(false);
+    });
+    expect(controller.state().currentNumber).toBe(2);
+
+    // Reselect the victim: its URL is dead, so it must fall back to srcdoc rather than 404
+    // into a blank frame the render check would then mark as passing.
+    options()[0]!.click();
+    expect(controller.state().currentNumber).toBe(1);
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
 });
 
 /* ------------------------------------------------------------------------ *

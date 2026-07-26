@@ -1529,6 +1529,7 @@
     }
 
     return {
+      retireExpiredPreviews: retireExpiredPreviews,
       addDraft: function (result, source) {
         retireExpiredPreviews(result);
         sequence += 1;
@@ -2679,6 +2680,10 @@
       // was still true, so every control rendered disabled. Returning without a repaint strands
       // them there.
       if (ticket !== generation) {
+        // The server registered this reply's draft — and evicted to make room for it — before we
+        // knew it was unwanted. Discarding the draft does not un-evict, so the notice is still
+        // true; drop it and the victim keeps a URL the broker now 404s. architecture.md #257.
+        if (outcome.ok) store.retireExpiredPreviews(outcome.result);
         render();
         return;
       }
