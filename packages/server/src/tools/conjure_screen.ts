@@ -591,8 +591,7 @@ function toSingleLine(value: string): string {
   return value.replace(/[\r\n\u2028\u2029]+/g, " ");
 }
 
-/** Replace control characters with U+FFFD, the substitution a conforming HTML
- * tokenizer would make anyway.
+/** Replace control characters with U+FFFD.
  *
  * Scope, stated precisely because it is narrower than it looks: this is a
  * *conformance* measure, not a containment one. No control character can close
@@ -601,18 +600,33 @@ function toSingleLine(value: string): string {
  * four already collapsed by `toSingleLine` above). So heading 1 of
  * `escapeHtmlComment` is untouched by this; heading 2 is the whole reason.
  *
- * The reason it is worth doing at all: WHATWG HTML makes a raw control
- * character a parse error in comment data *and* mandates that the tokenizer
- * emit U+FFFD in its place. So a NUL written into a scaffold is not preserved —
- * the file on disk and the DOM a browser builds from it silently disagree.
- * Substituting here makes the artifact byte-stable across that boundary, which
- * is exactly the "conformance / artifact quality" property this file already
- * claims to care about.
+ * Two *different* justifications, kept apart because an earlier revision of
+ * this comment merged them and thereby overstated the standard:
+ *
+ *   1. U+0000 alone — a genuine round-trip defect. WHATWG HTML §13.2.5.4
+ *      (comment state) mandates that the tokenizer append U+FFFD *in place of*
+ *      a NUL. So a NUL written into a scaffold is not preserved: the file on
+ *      disk and the DOM a browser builds from it really do disagree.
+ *      Neutralising here makes the artifact byte-stable across that boundary.
+ *
+ *   2. Every other C0/C1 control — project policy, not spec substitution.
+ *      WHATWG §13.2.3.5 (preprocessing the input stream) makes these
+ *      `control-character-in-input-stream` parse errors, but comment state then
+ *      appends them *unchanged*. There is no disk/DOM disagreement to fix here.
+ *      We neutralise anyway so a generated scaffold never obliges its consumer
+ *      to parse a document that is, by the standard's own definition, in error.
+ *
+ * Verified rather than reasoned: driving `parse5` (a conforming tokenizer) with
+ * `<!-- acme<CH>ui -->` substitutes U+FFFD for U+0000 and passes U+0001, U+0008,
+ * U+000B, U+000E, U+001F, U+007F, U+0080 and U+009F through untouched. Do not
+ * re-broaden heading 1 to the whole class — it is true of NUL and nothing else.
  *
  * The class is the HTML definition — C0 and C1 controls *except* the four
  * characters HTML counts as ASCII whitespace (TAB, LF, FF, CR). LF and CR are
  * excluded here because `toSingleLine` has already turned them into a space;
- * TAB and FF are legal whitespace and are left alone.
+ * TAB and FF are legal whitespace and are left alone. Every range boundary and
+ * both exclusions are pinned by the table in the test file: the class is a
+ * contract, so it is tested as one rather than sampled at a single member.
  *
  * Measured, not assumed: `@vue/compiler-sfc` does **not** reject any of these.
  * `UNEXPECTED_NULL_CHARACTER` (code 20) is still *defined* in

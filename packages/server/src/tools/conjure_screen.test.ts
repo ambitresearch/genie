@@ -615,10 +615,17 @@ describe("LocalScaffoldScreenGenerator", () => {
 
     // A control character is the one caller-supplied byte class the `<`/`>`
     // escape does not touch, and it is NOT a containment problem: nothing here
-    // can close `-->` or end a `//` line. It is a *conformance* one. WHATWG
-    // makes a raw control character a parse error in comment data and mandates
-    // U+FFFD in its place, so an un-neutralised NUL means the bytes on disk and
-    // the bytes a browser holds in the DOM disagree.
+    // can close `-->` or end a `//` line. It is a *conformance* one — but for
+    // two different reasons, which an earlier revision of this comment ran
+    // together into a claim the standard does not make.
+    //
+    // NUL is the round-trip case, and the only one: WHATWG §13.2.5.4 mandates
+    // that comment state append U+FFFD *in place of* a NUL, so leaving it raw
+    // means the bytes on disk and the bytes a browser holds in the DOM really
+    // do disagree. Every other C0/C1 control is a parse error under §13.2.3.5
+    // but is appended *unchanged* — no disagreement, so neutralising those is
+    // project policy (emit nothing a conforming parser must flag), not spec
+    // compliance. Verified with `parse5`, not read off the spec alone.
     //
     // Note what this deliberately does NOT assert: that `@vue/compiler-sfc`
     // rejects it. Measured — it does not. `UNEXPECTED_NULL_CHARACTER` survives
@@ -654,6 +661,75 @@ describe("LocalScaffoldScreenGenerator", () => {
         const content = result.files[0]?.content ?? "";
         expect(content).not.toContain("\u0000");
         expect(content).toContain("\uFFFD");
+      },
+    );
+
+    // The block above pins *composition* — that the note reaches all three
+    // sinks through an escape that neutralises. This table pins *the class*:
+    // that the character set `neutralizeControls` advertises is the set it
+    // actually acts on, at every range boundary and at both deliberate
+    // exclusions.
+    //
+    // Neither subsumes the other, and sampling a single member left the class
+    // entirely unpinned: narrowing the regex to `/[\u0000]/g` was green against
+    // all 51 tests that preceded this table. A test that passes for a narrower
+    // reason than its name claims is the same defect shape as the misleading
+    // test names this cycle already repaired — here it was mine.
+    //
+    // One framework is enough *here*: the class is a property of the single
+    // shared helper both escapes call, and the three-framework block above is
+    // what pins that both call it. Splitting the two concerns this way costs 12
+    // tests instead of 36 and loses no falsifier.
+    //
+    // LF and CR are absent deliberately — they never reach `neutralizeControls`
+    // because `toSingleLine` collapses them first, and `JS_LINE_TERMINATORS`
+    // above already pins that. This table is about one helper's own class.
+    //
+    // Names spell out the codepoint rather than interpolating the character:
+    // every member is non-printing, so an interpolated name renders blank and
+    // "which case failed" — the entire value of a table — is lost.
+    const CONTROL_CLASS: [name: string, char: string, expected: string][] = [
+      // in-class: C0, on both sides of every range boundary
+      ["U+0000 NUL (\\u0000-\\u0008 lower bound)", "\u0000", "\uFFFD"],
+      ["U+0001 SOH", "\u0001", "\uFFFD"],
+      ["U+0008 BS (\\u0000-\\u0008 upper bound)", "\u0008", "\uFFFD"],
+      ["U+000B VT (singleton between the ranges)", "\u000b", "\uFFFD"],
+      ["U+000E SO (\\u000E-\\u001F lower bound)", "\u000e", "\uFFFD"],
+      ["U+001F US (\\u000E-\\u001F upper bound)", "\u001f", "\uFFFD"],
+      // in-class: DEL and the C1 block
+      ["U+007F DEL (\\u007F-\\u009F lower bound)", "\u007f", "\uFFFD"],
+      ["U+0080 PAD", "\u0080", "\uFFFD"],
+      ["U+009F APC (\\u007F-\\u009F upper bound)", "\u009f", "\uFFFD"],
+      // out of class, deliberately: HTML counts these as ASCII whitespace, and
+      // neither is an ECMAScript LineTerminator, so no sink is threatened
+      ["U+0009 TAB (excluded: HTML whitespace)", "\u0009", "\u0009"],
+      ["U+000C FF (excluded: HTML whitespace)", "\u000c", "\u000c"],
+      // out of class: the first codepoint above C1. Pins that the upper range
+      // stops where it says it does rather than running on into printable text.
+      ["U+00A0 NBSP (excluded: above the C1 block)", "\u00a0", "\u00a0"],
+    ];
+
+    it.each(CONTROL_CLASS)(
+      "%s — neutralised in the note iff it is in the advertised class",
+      async (_name, char, expected) => {
+        const kitId = `acme${char}ui`;
+        // In-band on every arm: `isSafeKitId` permits all of these, so the gate
+        // is not what stops them and the escape is the only thing that can.
+        expect(isSafeKitId(kitId)).toBe(true);
+
+        const { deps, projectId } = await fixture({ kitBindings: [{ kitId, default: true }] });
+        await conjureScreen(deps, { projectId, prompt: "A page with cards", framework: "html" });
+
+        const emitted = deps.generator.calls[0];
+        if (!emitted) throw new Error("conjure_screen never reached the generator");
+        // Raw on the way in, so the assertion below is about the generator's
+        // escape and not about something upstream having already sanitised it.
+        expect(emitted.kit?.kitId).toContain(char);
+
+        const result = await generator.generate(emitted);
+        const content = result.files[0]?.content ?? "";
+        expect(content).toContain(`acme${expected}ui`);
+        if (expected !== char) expect(content).not.toContain(char);
       },
     );
 
