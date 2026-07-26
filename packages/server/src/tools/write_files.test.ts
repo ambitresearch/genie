@@ -1,14 +1,16 @@
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { tmpdir, platform } from "node:os";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { createPlan, PlanNotFoundError } from "../plans/index.js";
 import { LocalFsKitStore } from "../store/local.js";
-import type { KitStore } from "../store/interface.js";
+import { type KitStore } from "../store/interface.js";
+import { seedKit } from "../../test/helpers/seed-kit.js";
+import { deleteFiles } from "./delete_files.js";
 import { registerPlan } from "./plan.js";
 import {
   DEFAULT_WRITE_BYTE_CAP,
@@ -57,6 +59,16 @@ describe("writeFiles (core logic)", () => {
     // suite never touches the real `<cwd>/.genie/plans/`.
     genieHome = await tempDir("genie-wf-home-");
     process.env["GENIE_HOME"] = genieHome;
+    // #269 — the kit must exist before `write_files` will commit into it. These
+    // core tests call `createPlan` directly (beneath the tool layer, see the
+    // file header), so they bypass the #252 plan-time `getKit` gate that every
+    // production caller passes through — `plan.ts:216` is `createPlan`'s ONLY
+    // production caller and it has been kit-gated since #252. Before #269 these
+    // tests leaned on `LocalFsKitStore.writeFiles`' `ensureDir` to conjure the
+    // kit dir; that implicit creation is exactly the bug #269 fixes, so the
+    // fixture now seeds the kit explicitly instead. See `seedKit` for why this
+    // is not `store.createKit`.
+    await seedKit(kitsRoot, KIT_ID, "Write Files Kit");
   });
 
   afterEach(async () => {
@@ -494,6 +506,10 @@ describe("writeFiles (core logic)", () => {
 
   it("does not mutate the kit at all when plan/schema validation fails before staging", async () => {
     const plan = await createPlan(KIT_ID, ["components/**"], [], localDir);
+    // Snapshot rather than hardcode: the fixture seeds `.kit.json` and this
+    // test's invariant is "the write changed nothing", not "the kit contains
+    // exactly these files".
+    const before = (await readdir(kitDir)).sort();
 
     await expect(
       writeFiles(store, {
@@ -502,8 +518,12 @@ describe("writeFiles (core logic)", () => {
       }),
     ).rejects.toThrow();
 
-    // The kit dir was never even created (nothing staged).
-    await expect(readdir(kitDir)).rejects.toThrow();
+    // Nothing was staged. Pre-#269 this asserted the kit dir did not exist at
+    // all — it only ever came into being via the `ensureDir` that #269 removes
+    // reliance on. The kit is now seeded up front (see beforeEach), so the
+    // equivalent assertion is that its contents are byte-for-byte unchanged.
+    expect((await readdir(kitDir)).sort()).toEqual(before);
+    expect(before).not.toContain("outside");
   });
 });
 
@@ -687,5 +707,246 @@ describe("mcp__genie__write_files tool (MCP wire level)", () => {
     });
     expect(result.isError).toBe(true);
     expect(firstTextOf(result)).toContain("TooManyFilesError");
+  });
+});
+
+// ─── #269: the kit must still exist at COMMIT time (TOCTOU re-check) ────────
+
+/**
+ * #252 made `plan` reject a kitId that does not resolve — but that is a
+ * point-in-time guarantee, checked once when the plan is issued. Plans live for
+ * `DEFAULT_PLAN_TTL` (1 h), and `LocalFsKitStore.writeFiles` calls
+ * `ensureDir(kitDir)` by design, so before this fix a kit deleted inside that
+ * window was silently RE-CREATED by the write.
+ *
+ * These tests pin the commit-time re-check that closes the window, and — just as
+ * importantly — lock in the two behaviours the fix must NOT change: the
+ * brand-new-kit `ensureDir` case, and `delete_files`' idempotent no-op.
+ */
+describe("write_files re-checks the kit at commit time (#269)", () => {
+  const TOCTOU_KIT_ID = "wf-toctou-kit";
+  let localDir: string;
+  let kitsRoot: string;
+  let kitDir: string;
+  let store: LocalFsKitStore;
+  let genieHome: string;
+
+  beforeEach(async () => {
+    localDir = await tempDir("genie-wf-toctou-local-");
+    kitsRoot = await tempDir("genie-wf-toctou-kits-");
+    kitDir = join(kitsRoot, TOCTOU_KIT_ID);
+    store = new LocalFsKitStore(kitsRoot);
+    genieHome = await tempDir("genie-wf-toctou-home-");
+    process.env["GENIE_HOME"] = genieHome;
+    // A plan can only exist for a kit that resolved — `plan.ts:216` is the only
+    // production caller of `createPlan`, and since #252 it is `getKit`-gated. So
+    // seeding a real kit is what production always does, not test convenience.
+    await seedKit(kitsRoot, TOCTOU_KIT_ID, "TOCTOU Kit");
+  });
+
+  afterEach(async () => {
+    delete process.env["GENIE_HOME"];
+    await rm(localDir, { recursive: true, force: true });
+    await rm(kitsRoot, { recursive: true, force: true });
+    await rm(genieHome, { recursive: true, force: true });
+  });
+
+  it("rejects the write when the kit was deleted after the plan was issued", async () => {
+    const plan = await createPlan(TOCTOU_KIT_ID, ["**"], [], localDir);
+    // The out-of-band deletion the issue describes: a user `rm -rf`, an external
+    // sync, or a shared GENIE_HOME. There is no `delete_kit` MCP tool, which is
+    // exactly why this is a narrow gap rather than an agent-reachable one.
+    await rm(kitDir, { recursive: true, force: true });
+
+    await expect(
+      writeFiles(store, { planId: plan.planId, files: [{ path: "a.html", data: "x" }] }),
+    ).rejects.toMatchObject({ code: "KitNotFoundError", kitId: TOCTOU_KIT_ID });
+  });
+
+  it("does not re-create the deleted kit directory (the 'writes anyway' half of the bug)", async () => {
+    const plan = await createPlan(TOCTOU_KIT_ID, ["**"], [], localDir);
+    await rm(kitDir, { recursive: true, force: true });
+
+    await expect(
+      writeFiles(store, { planId: plan.planId, files: [{ path: "a.html", data: "x" }] }),
+    ).rejects.toThrow();
+
+    // Nothing on disk: no resurrected kit dir, and therefore no written file.
+    await expect(stat(kitDir)).rejects.toThrow();
+  });
+
+  it("🔒 still writes into a kit that exists (the ensureDir brand-new-kit case must not regress)", async () => {
+    const plan = await createPlan(TOCTOU_KIT_ID, ["**"], [], localDir);
+
+    const result = await writeFiles(store, {
+      planId: plan.planId,
+      files: [{ path: "components/Button.html", data: "<button>Hi</button>" }],
+    });
+
+    expect(result.writtenPaths).toEqual(["components/Button.html"]);
+    await expect(readFile(join(kitDir, "components", "Button.html"), "utf-8")).resolves.toBe(
+      "<button>Hi</button>",
+    );
+  });
+
+  it("🔒 delete_files against a deleted kit still returns the idempotent no-op", async () => {
+    // local.ts:606-619 documents "a missing kit is the same idempotent no-op as
+    // a missing file … we do NOT pre-stat the kit dir." The asymmetry is the
+    // point of #269: write RE-CREATES, delete does not. This proves the fix did
+    // not leak into the delete path (and is why it cannot live in withPlanGuard).
+    const plan = await createPlan(TOCTOU_KIT_ID, [], ["**"], localDir);
+    await rm(kitDir, { recursive: true, force: true });
+
+    const result = await deleteFiles(store, { planId: plan.planId, paths: ["a.html"] });
+
+    expect(result.deletedPaths).toEqual([]);
+    expect(result.notFoundPaths).toEqual(["a.html"]);
+    await expect(stat(kitDir)).rejects.toThrow();
+  });
+
+  it("rejects a path-shaped plan.kitId before it reaches the store", async () => {
+    // `delete_files.ts:161` already guards this "as the first destructive
+    // consumer"; write_files had NO equivalent. It must run before the existence
+    // check, because LocalFsKitStore.getKit resolves via `kitDir`, not
+    // `safeKitDir` — so `getKit("..")` would itself read above the kits root.
+    //
+    // Asserting only the rejection would NOT test what this name claims: if the
+    // two stages were reordered, `getKit("..")` would resolve above the kits
+    // root, fail, and raise the very same KitNotFoundError — a green test over a
+    // reopened traversal. Spying on getKit is what actually pins the ordering.
+    const getKitSpy = vi.spyOn(store, "getKit");
+    const plan = await createPlan("..", ["**"], [], localDir);
+
+    await expect(
+      writeFiles(store, { planId: plan.planId, files: [{ path: "a.html", data: "x" }] }),
+    ).rejects.toMatchObject({ code: "KitNotFoundError", kitId: ".." });
+
+    expect(getKitSpy).not.toHaveBeenCalled();
+    getKitSpy.mockRestore();
+  });
+
+  it("re-throws a store fault instead of reporting it as a missing kit", async () => {
+    // Fail-closed is not fail-silent. A genuine "no such kit" is a kitNotFound
+    // rejection; an I/O or transport fault (EACCES, or a network error behind a
+    // git-host store) must surface as ITSELF, so an operator can tell a deleted
+    // kit apart from an unreadable disk. Widening the catch in step 9b to a bare
+    // `catch` would silently tell users their kit was gone when the backend was
+    // merely unreachable. Mirrors the plan-time lock in plan.test.ts.
+    const boom = new Error("EACCES: permission denied, open '.kit.json'");
+    const writeFilesSpy = vi.fn();
+    const failingStore = {
+      getKit: vi.fn(async () => {
+        throw boom;
+      }),
+      writeFiles: writeFilesSpy,
+    } as unknown as KitStore;
+
+    const plan = await createPlan(TOCTOU_KIT_ID, ["**"], [], localDir);
+
+    await expect(
+      writeFiles(failingStore, { planId: plan.planId, files: [{ path: "a.html", data: "x" }] }),
+    ).rejects.toBe(boom);
+
+    // Crucially NOT mislabelled, and nothing committed.
+    expect(writeFilesSpy).not.toHaveBeenCalled();
+  });
+
+  it("🔒 accepts a kit deleted and re-created under the same id (existence-only, by design)", async () => {
+    // The issue's open question, answered in code rather than prose: the check is
+    // existence-only, so a plan SURVIVES delete-and-recreate. The stronger
+    // identity check (kit.createdAt > plan.createdAt) was rejected because
+    // GitHostKitStore.getKit returns the git host's clock (`repo.created_at`)
+    // while PlanState.createdAt is local — skew would intermittently false-reject
+    // legitimate writes, a worse failure mode than the narrow gap it closes.
+    const plan = await createPlan(TOCTOU_KIT_ID, ["**"], [], localDir);
+    await rm(kitDir, { recursive: true, force: true });
+    await seedKit(kitsRoot, TOCTOU_KIT_ID, "TOCTOU Kit Reborn");
+
+    const result = await writeFiles(store, {
+      planId: plan.planId,
+      files: [{ path: "a.html", data: "x" }],
+    });
+
+    expect(result.writtenPaths).toEqual(["a.html"]);
+  });
+});
+
+describe("mcp__genie__write_files kit re-check (MCP wire level, #269)", () => {
+  let h: WireHarness;
+
+  beforeEach(async () => {
+    h = await makeWireHarness();
+  });
+
+  afterEach(async () => {
+    await h.close();
+  });
+
+  it("surfaces a canonical -32602 kitNotFound envelope, matching plan's (#252)", async () => {
+    const planResult = await h.client.callTool({
+      name: PLAN_TOOL_NAME,
+      arguments: { kitId: KIT_ID, writes: ["*.html"], localDir: h.localDir },
+    });
+    const { planId } = planResult.structuredContent as { planId: string };
+
+    await rm(h.kitDir, { recursive: true, force: true });
+
+    const result = await h.client.callTool({
+      name: WRITE_FILES_TOOL_NAME,
+      arguments: { planId, files: [{ path: "a.html", data: "x" }] },
+    });
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(firstTextOf(result));
+    expect(parsed.code).toBe(-32602);
+    expect(parsed.data.reason).toBe("kitNotFound");
+    expect(parsed.data.kitId).toBe(KIT_ID);
+    // And still nothing on disk.
+    await expect(stat(h.kitDir)).rejects.toThrow();
+  });
+
+  it("emits a write_files.rejected audit line to stderr, not stdout", async () => {
+    // On the stdio transport stdout *is* the JSON-RPC stream, so a stray line
+    // there corrupts client framing. Mirrors plan.rejected from #252.
+    const planResult = await h.client.callTool({
+      name: PLAN_TOOL_NAME,
+      arguments: { kitId: KIT_ID, writes: ["*.html"], localDir: h.localDir },
+    });
+    const { planId } = planResult.structuredContent as { planId: string };
+    await rm(h.kitDir, { recursive: true, force: true });
+
+    const stderrLines: string[] = [];
+    const stdoutLines: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        stderrLines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      });
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        stdoutLines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      });
+
+    try {
+      await h.client.callTool({
+        name: WRITE_FILES_TOOL_NAME,
+        arguments: { planId, files: [{ path: "a.html", data: "x" }] },
+      });
+
+      const auditLine = stderrLines.find((l) => l.includes("write_files.rejected"));
+      expect(auditLine).toBeTruthy();
+      expect(JSON.parse(auditLine as string)).toMatchObject({
+        event: "write_files.rejected",
+        reason: "kitNotFound",
+        kitId: KIT_ID,
+      });
+      expect(stdoutLines.some((l) => l.includes("write_files.rejected"))).toBe(false);
+    } finally {
+      stderrSpy.mockRestore();
+      stdoutSpy.mockRestore();
+    }
   });
 });

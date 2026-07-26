@@ -35,6 +35,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createPlan } from "../plans/index.js";
 import { LocalFsKitStore } from "../store/local.js";
+import { seedKit } from "../../test/helpers/seed-kit.js";
 import { readAnchor } from "./anchor.js";
 import {
   RECOMPILE_SENTINEL_BODY,
@@ -65,8 +66,10 @@ async function setup(): Promise<Harness> {
   const home = await tempDir("genie-orch-home-");
   process.env.GENIE_HOME = home;
   const kitsRoot = join(home, "kits");
-  const projectRoot = join(kitsRoot, KIT_ID);
-  await mkdir(projectRoot, { recursive: true });
+  // #269: `write_files` now re-checks the kit right before it commits, so the
+  // destination needs to be a kit the store resolves — a bare mkdir no longer
+  // suffices. See `test/helpers/seed-kit.ts` for why this is not `createKit`.
+  const projectRoot = await seedKit(kitsRoot, KIT_ID);
   const store = new LocalFsKitStore(kitsRoot);
   return { home, kitsRoot, projectRoot, store, deps: { store, projectRoot } };
 }
@@ -475,5 +478,76 @@ describe("runAtomicSync — StepEvent shape (AC9)", () => {
     });
     expect(result.events.map((event) => event.step)).toEqual([1, 2]);
     assertEventShape(result.events);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// #269 — a kit deleted after the plan was issued must not be
+// resurrected by step 1's recursive mkdir
+// ────────────────────────────────────────────────────────────
+
+describe("runAtomicSync — kit deleted after the plan was issued (#269)", () => {
+  it("fails at step 1 and leaves NO zombie kit directory behind", async () => {
+    const planId = await seedPlan(["**"]);
+
+    // Out-of-band deletion inside the plan's TTL — the #269 window.
+    await rm(harness.projectRoot, { recursive: true, force: true });
+    expect(existsSync(harness.projectRoot)).toBe(false);
+
+    const result = await runAtomicSync(harness.deps, {
+      planId,
+      writes: [{ path: "a.html", data: "<p>a</p>" }],
+      deletes: [],
+      verified: [],
+    });
+
+    expect(result.ok).toBe(false);
+    // Step 1, NOT step 2: the gate has to run before `writeSentinel`'s
+    // recursive mkdir, otherwise the directory is already back by the time
+    // `write_files`' own step-9 re-check can reject.
+    expect(result.ok === false && result.failedStep).toBe(1);
+    expect(result.ok === false && result.error.name).toBe("KitNotFoundError");
+    expect(result.events.map((event) => event.step)).toEqual([1]);
+    assertEventShape(result.events);
+
+    // The heart of the regression: nothing was resurrected. A zombie here is
+    // not inert — `LocalFsKitStore.createKit` stats the directory first and
+    // throws `KitAlreadyExistsError`, so a leftover would permanently block
+    // re-creating this kit id by hand.
+    expect(existsSync(harness.projectRoot)).toBe(false);
+    expect(existsSync(join(harness.projectRoot, RECOMPILE_SENTINEL_PATH))).toBe(false);
+  });
+
+  it("gates a deletes-only sync, which never reaches write_files at all", async () => {
+    // `runWrites` chunks `[]` into zero batches, so step 2 issues no
+    // `write_files` call and its step-9 re-check can never fire. Only the
+    // step-1 gate covers this shape.
+    const planId = await seedPlan([], ["**"]);
+    await rm(harness.projectRoot, { recursive: true, force: true });
+
+    const result = await runAtomicSync(harness.deps, {
+      planId,
+      writes: [],
+      deletes: ["gone.html"],
+      verified: [],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.failedStep).toBe(1);
+    expect(existsSync(harness.projectRoot)).toBe(false);
+  });
+
+  it("🔒 still syncs cleanly when the kit is present (no false rejection)", async () => {
+    const planId = await seedPlan(["**"]);
+    const result = await runAtomicSync(harness.deps, {
+      planId,
+      writes: [{ path: "a.html", data: "<p>a</p>" }],
+      deletes: [],
+      verified: [],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.events.map((event) => event.step)).toEqual([1, 2, 3, 4, 5]);
+    expect(await readFile(join(harness.projectRoot, "a.html"), "utf-8")).toBe("<p>a</p>");
   });
 });

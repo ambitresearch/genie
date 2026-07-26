@@ -44,6 +44,7 @@ vi.mock("node:fs/promises", async () => {
 const { createPlan } = await import("../plans/index.js");
 const { writeFiles } = await import("./write_files.js");
 const { LocalFsKitStore } = await import("../store/local.js");
+const { seedKit } = await import("../../test/helpers/seed-kit.js");
 
 const KIT_ID = "k";
 
@@ -61,7 +62,9 @@ describe("writeFiles — rollback-incomplete path (Copilot review finding)", () 
   beforeEach(async () => {
     localDir = await tempDir("genie-wf-rb-local-");
     kitsRoot = await tempDir("genie-wf-rb-kits-");
-    kitDir = join(kitsRoot, KIT_ID);
+    // #269: `write_files` re-checks the kit right before it commits, so these
+    // rollback fixtures need a kit `getKit` resolves — not just a path.
+    kitDir = await seedKit(kitsRoot, KIT_ID);
     store = new LocalFsKitStore(kitsRoot);
     genieHome = await tempDir("genie-wf-rb-home-");
     process.env["GENIE_HOME"] = genieHome;

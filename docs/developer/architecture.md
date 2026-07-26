@@ -43,7 +43,8 @@ baseline
        ├─ Approve + gates green → approved draft
        │    └─ Confirm Apply → plan → write_files → [delete_files] → applied
        │       (kit validation advisory; refresh gates only the "live in Browse" claim)
-       └─ in-app route change → reversible; draft state remains in memory
+       ├─ in-app route change → reversible; draft state remains in memory
+       └─ reload / tab close → browser prompt (standalone tier, unsaved bytes only)
 
 Any failure → remain on the last good draft; never report a false applied state.
 ```
@@ -51,9 +52,84 @@ Any failure → remain on the last good draft; never report a false applied stat
 In-app route changes — a route link, or browser Back/Forward between genie's own routes — are
 reversible: the Review store stays alive, so drafts, selection, approval state, and
 acknowledgements survive. A full reload, tab close, or host teardown destroys that in-memory
-session without warning. There is deliberately no `beforeunload` handler: a confirmation prompt
-in the embedded tier would fire inside the host's own frame, and no M7-03 acceptance criterion
-calls for one. Drafts are never persisted; Apply is the only durability boundary.
+session. Drafts are never persisted; Apply is the only durability boundary.
+
+Because that loss is unrecoverable, the standalone tier registers a `beforeunload` handler
+(`syncUnloadGuard`) so the browser shows its native "leave site?" prompt. It re-evaluates on
+every `render`, and additionally the instant Apply stamps a draft as written — Apply then awaits
+the host's kit refresh before it renders, and prompting about bytes that are already on disk
+would be a lie for as long as that refresh takes. It is deliberately narrow, and each condition
+removes a false positive:
+
+| Condition                                                                          | Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Standalone tier only (`win.parent === win`)                                        | Embedded, the user is closing the **host**, not genie. The prompt is hostile there and several hosts suppress it anyway, so teardown UX stays the host's call.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| No unapplied draft in the applied draft's own lineage                              | Apply stamps one **specific** draft, and the drafts it was chosen _over_ are alternatives the user rejected — losing one of those is the outcome they already picked. Draft number alone does not identify them. The review store is append-only and never resets between components: Generate appends, and so does every Browse → Review handoff, so a lower-numbered draft can be independent unsaved work for a different component rather than a rejected alternative. The floor is therefore a **lineage** test — earlier _and_ same `kitId` + `group` + `componentName` (`lineageOf`) — not a bare `number <= applied`. A draft whose identity cannot be read matches no lineage and stays in scope, which is the safe direction: prompt about work that was already saved rather than discard work that was not. A _later_ draft is different: tweak and refine are frozen while `inFlight` (`input.disabled = inFlight`) but go live again the moment apply settles, and the draft switcher carries no flight guard, so the applied draft need not be the newest one. Either way a later draft can exist while `appliedDraftId` is still set, and its bytes were never written. An earlier Apply must not disarm the guard for it.                                                                                                                                                                                                                                                                                                                                             |
+| At least one draft whose bytes are not in the kit, **or** whose deletion never ran | A Browse → Review handoff seeds draft #1 from the kit's own file, so reloading there loses nothing. `derivedInfo()` clears `componentInKit` as soon as a refine or tweak proposes anything the kit does not already hold, which makes the flag exactly "would reloading lose this proposal?". Two things count as a proposal. Divergent **bytes** are decided by comparing the derived files against the parent's, keyed by path, because only a tweak rewrites entries in place — a refine's files come back from the model in whatever order it chose, and a reordered but byte-identical reply is not a change. Where the parent's baseline cannot answer, the derive's `diff` does; see below. A proposed **deletion** counts too, even when every returned file is byte-identical: a draft's `files` are only what the model returned, so its `diff` can carry a `+++ /dev/null` hunk for a sibling the draft never listed, and that sibling becomes a real `deletes` entry in the apply plan. Both the guard and the plan read those deletions through the same `effectiveDeletes()` helper, so they cannot drift into disagreeing about whether a deletion is pending. A stranded delete is tracked separately (`pendingDeletes`) because it is the opposite shape: the bytes _did_ land, so `componentInKit` is true and Refine must stay enabled, yet a file the draft meant to remove is still on disk and only this tab records which one. That check runs **before** the applied-draft floor above, since applying a newer draft does not perform an older one's deletion. |
+
+The handler drives both channels — `preventDefault()` for the current spec and a **non-empty**
+`returnValue` for older engines. Both parts matter. A real `BeforeUnloadEvent` exposes
+`returnValue` as a plain string slot where assignment does _not_ imply `preventDefault()`, so the
+legacy channel has to be driven explicitly; and HTML shows the dialog when the event was
+default-prevented **or** `returnValue !== ""`, so assigning an empty string would contribute
+nothing on engines that honour only that channel. The handler returns nothing: the
+return-a-string channel comes from HTML's event-**handler** processing algorithm, which runs for
+`onbeforeunload` and never for an `addEventListener` listener. In-app route changes never reach
+the handler at all: they are `pushState`, not an unload.
+
+### Judging a derive against an incomplete baseline
+
+The comparison above needs a baseline of what is on disk, and the viewer does not always have a
+complete one. A Browse handoff seeds the review draft with the single file Browse read, while
+`refine` loads the component's whole directory server-side and returns every file in it. So for a
+multi-file component even a refine that changes nothing hands back more files than the baseline
+holds, and treating a size mismatch as divergence armed the prompt and locked Refine over bytes
+that were already on disk.
+
+The files the baseline is missing are exactly the ones its bytes cannot speak for, so the derive's
+`diff` speaks for those and only those. That is sound because the diff is **not** a model claim:
+`refine` computes it server-side from the complete on-disk set it just read, and `refineOutputShape`
+requires it, so a path with no hunk in it is a path that is byte-identical on disk. A file that is
+genuinely new carries an add hunk (`--- /dev/null`), which is what separates unsaved work from a
+sibling that was merely absent from the baseline. A derive with no diff **at all** — the field
+absent, or present but not a string — vouches for nothing and counts as divergent. That is not the
+same as a diff that is present and names nothing, which is a positive statement about every path.
+
+Where the baseline does hold the file its bytes look like corroboration, but they are not evidence,
+because the baseline is a **snapshot** — for a Browse handoff, one taken before Refine ran — while
+the diff is measured against the file on disk at refine time. While the two agree they say the same
+thing, since the server omits any path whose before and after match. Once the kit moves under the
+snapshot they part company, and they part company in both directions. The snapshot holds `A`, disk
+holds `B`, and the model returns `A`: the server honestly reports `B` becoming `A` while a byte
+check against the snapshot sees no change at all, so believing the bytes would disarm a prompt a
+real draft needed. Have the model return `B` and the mirror happens: the bytes differ from the
+snapshot, the diff is silent because the reply already matches disk, and believing the bytes raises
+a prompt nobody earned and locks Refine behind an Apply that would write nothing.
+
+So the derive is judged on its diff alone, and equal bytes buy it nothing. A path the diff names has
+diverged whether or not the baseline held it; a diff that names no path is a true no-op, because
+`buildUnifiedDiff` walks the **union** of the on-disk and returned paths and skips only those whose
+before and after match, so silence there is a statement about every path on either side. A
+`+++ /dev/null` hunk for a path the derive also rewrites is still not a deletion — the plan writes
+that path rather than removing it — but it is a hunk, so it is drift like any other. The baseline
+keeps exactly one job the diff cannot do: a baseline path that disappears from the derive is
+divergence, since the deletion of a sibling is real proposed work.
+
+Deterministic tweaks reuse that rule against a different origin, and the two must not be conflated.
+A refine reply's diff is **disk-baselined** — computed server-side from the directory `refine` had
+just read — so a silent one means the reply is already saved and the draft inherits `componentInKit`
+honestly. A tweak never reaches the server, so `applyDeterministicTweak` recomputes its diff locally
+as parent-versus-tweaked, making it **parent-baselined**; a silent one there means the tweak moved
+nothing its parent did not already carry, which is the same no-op verdict for a different reason.
+The narrower alternative, having the handoff rebuild a full baseline with `list_files` plus a
+`read_file` per sibling, was rejected: it spends N+1 extra round trips re-reading precisely what
+`refine` returns for free moments later, and adds a partial-read failure mode of its own.
+
+`componentInKit` is inherited by a derive only when that derive moved nothing. Neither `refine`
+nor a deterministic tweak persists anything, so a derived draft whose bytes moved is not in the kit;
+marking it as though it were would re-open Refine, whose next call reloads the older on-disk bytes
+and silently discards the work. A derive that handed back the parent's exact bytes _and_ named no
+path in its diff lost nothing, so it keeps the parent's flag.
 
 ### Partial apply is not an apply
 
@@ -64,6 +140,29 @@ not stamp the draft as applied. Stamping it would raise the "already applied" bl
 one control that could finish the removal. Instead `runApply` returns the stranded paths as
 `stuckDeletes`, the status line names them and says the removal can be retried, and the Apply gate
 stays open. `write_files` is idempotent, so a retry costs a duplicate write of identical bytes.
+
+Because the draft is deliberately left unstamped, its in-memory record is the only thing that still
+knows which path is stranded — so the unload guard stays armed until a retry clears `pendingDeletes`,
+rather than disarming on the writes alone.
+
+`pendingDeletes` records the stranded **paths**, not a boolean, and is checked _before_ the
+applied-draft floor above. A boolean would latch: nothing could clear it, so a later draft that
+deleted the very same path left the tab prompting forever about a file that was already gone,
+steering the user into retrying draft 1 and overwriting newer bytes. Keeping the paths lets every
+apply reconcile every draft's set — its own included, so a partial retry narrows itself. A **write**
+resolves a path as surely as a delete does, because deletes are confined to the component folder,
+so only that same component can put the file back; when it does, the user now has newer bytes there
+and retrying the old draft would destroy them. Reconciliation is scoped to the applying kit: the
+same relative path in another kit is a different file, and clearing it there would disarm the only
+guard over work still on disk. `componentInKit` is deliberately left true throughout, because it
+describes the **bytes**, which did land, and Refine reads it — forcing it false would disable Refine
+with a reason ("apply this draft first") that is simply untrue.
+
+A successful apply re-syncs the guard eagerly rather than waiting for the next `render()`, which
+sits below the `await` on the host's kit refresh; a slow or hung refresh would otherwise leave the
+tab prompting about work that is already saved. It cannot over-disarm, because `hasUnsavedDrafts`
+reads the whole store and still returns true while any draft newer than the applied one holds bytes
+the kit does not have.
 
 ### The post-apply refresh is awaitable
 
@@ -225,6 +324,61 @@ screen reader concatenates heading, group pill, and viewport into one run-on nam
 is pulled out of Tab order with `tabindex="-1"`, because a sandboxed iframe without
 `allow-same-origin` is still natively focusable; otherwise Tab order would alternate card,
 iframe, card, iframe.
+
+### Standalone source-fetch path containment
+
+The standalone tier has no server to defer to, so `createStandaloneSourceBridge` enforces the
+same boundary a real host's read-file tool would enforce server-side (AC16): a plain
+kit-relative path, no `..` segments, no scheme, no leading slash.
+
+Testing the raw string is not enough, because the browser's URL parser does not treat a
+literal `..` and a literal leading `/` as the only escape hatches. It reads backslashes as
+forward slashes for http(s) URLs: `\evil.example/x` resolves to the absolute path
+`/evil.example/x`, escaping the kit root, and `\\evil.example/x` resolves to the protocol-relative
+`//evil.example/x` — off-origin entirely. Neither ever holds a `/` at index 0. And a percent-encoded
+segment (`%2e%2e`, `%2E%2e`) holds no literal `..` before decoding, yet normalizes to `..` once
+the real `fetch` parses it. So the check decodes first, then rejects backslashes, any leading
+separator, and any decoded `.` or `..` segment.
+
+Separately, the parser strips leading and trailing "C0 control or space" characters (`\x00-\x20`
+— tabs, newlines, plain spaces) BEFORE it detects the scheme. A value like `"\nhttps://evil.example/x"`
+therefore carries no leading scheme letter for a raw-string check to catch, yet still parses as
+an absolute cross-origin URL. Rejecting that set up front is what stops the scheme and separator
+checks below it from being bypassed by whitespace the parser would normalize away.
+
+### Superseded kit discovery must not land
+
+`loadKits()` captures a monotonic generation counter on entry. If a newer call has started by
+the time an older call's `await bridge.callTool(...)` settles — the bridge was swapped through
+`setBridge`/`setUnavailable`, or a fresh refresh was triggered — the older call must not touch
+`kits` or the DOM at all, in either resolution order, because network replies can complete out
+of order.
+
+Without that check a stale in-flight discovery whose reply arrives last could resurrect trusted
+`kits` state and silently re-enable Conjure and Retry on data that a newer call had already
+invalidated by failing closed.
+
+### A card/token HMR push must refresh Browse too
+
+`card.changed` and `tokens.changed` (and the legacy `refresh` message, which normalizes to the
+same commands) reload the hidden `#grid`'s iframes through `applyHmrMessage`. Nothing in that
+path tells Browse's selected detail iframe to re-render: `onManifestUpdate` fires only from the
+fetch-manifest path in `applyFetchedManifest`, and a per-card or per-token push carries no new
+manifest at all. Browse would sit visibly stale while the grid updated correctly.
+
+`onCardOrTokensChanged` exists so the `boot()` call sites can force a Browse detail re-render —
+bypassing the identity-selection dedup, which would otherwise treat "same component selected"
+as nothing to do — on those normalized commands specifically.
+
+### Every inlined resource is hosted
+
+The inlined tier IS the embedded MCP-App surface, so the postMessage host bridge applies to
+every inlined resource, not only the bare tool-result shell. Query-bearing `ui://` resources —
+the preview URI carrying `kitId`, for instance — are deliberately emitted WITHOUT the
+tool-result-shell marker (`grid-resource.ts`), yet still use the MCP-App MIME type and still run
+inside a host frame. Gating the bridge on that marker wrongly reported "Host unavailable" on
+their Generate tab. The shell therefore starts in the pending state and lets `initMcpApp`
+resolve ready or unavailable from the actual host handshake.
 
 ## Transport and authentication
 
@@ -401,6 +555,15 @@ Fabricating a zero-token `usage` to make the conjure predicate pass would have b
 
 The naming rule deliberately moved out of the shared core. `Card/preview.html` is a legitimate kit entry point that the compiler's own `walkPreviewFiles` accepts, so it can never satisfy `<Name>/<Name>.html`; demanding that of existing kit source would fail valid kits. It still applies to conjure and refine output, where it is a real constraint on what the model must return.
 
+### `list_kits` entry validation (DRO-242)
+
+`isKitEntry` validates a single `list_kits` reply entry against its canonical output shape
+(`{ id, name, owner, updatedAt, canEdit }`, `packages/server/src/tools/list_kits.ts`). Both
+`owner` and `updatedAt` are required strings in that schema — not optional — so a host reply
+missing either, or supplying a non-string value, is rejected rather than silently coerced or
+ignored. `owner` is rendered directly into the kit option label, so a non-string owner (an
+object, say) would otherwise reach text interpolation as `[object Object]`.
+
 ### `manifestEntry` validation (DRO-242)
 
 DRO-242 (fail closed) — validates `manifestEntry` against conjure's canonical output schema (`packages/server/src/tools/conjure.ts` / `packages/server/src/llm/schema.ts`'s `Viewport` $def): `viewport.width`/ `viewport.height` are required integers in `[1, 4096]` (Copilot review round 5 — a bare `typeof === "number"` check still accepted fractions, `0`/negatives, values above 4096, `NaN`, and `Infinity`, none of which the canonical schema permits), and both `manifestEntry` and `viewport` are `.strict()` — no keys beyond `viewport`/`subtitle`/`tags` (resp. `width`/`height`) are allowed. `subtitle` (`maxLength: 256`) and `tags` (`maxItems: 16`, each a string) are optional but, when present, must respect those same bounds. An object-like-but-empty `manifestEntry: {}` (missing `viewport` entirely) must be rejected, not just checked for being a plain object.
@@ -485,6 +648,23 @@ though, that treeitem still exists in the DOM but is hidden (`visibility: hidden
 silently failed, and neither the rail toggle nor the compact `<select>` (the ACTUAL visible
 navigation control at those widths) was ever tried before falling through to search. Walk the
 candidates in specificity order and focus the first one that's both present and visible.
+
+### Re-projecting Browse on an HMR tick
+
+M7-02 (#234) made Browse HMR-safe by re-projecting the _same_ live tree and selection against the
+fresh manifest on every update — structural or content-only alike — so an unrelated selection or
+filter is never reset. `initBrowseController`'s own documentation covers why re-resolving by
+identity is safe there.
+
+Copilot's review of PR #248 narrowed that to updates where the manifest actually changed.
+Standalone and localhost Browse poll every `HMR_POLL_INTERVAL_MS` (two seconds) unconditionally,
+with no WebSocket, and every one of those ticks used to call `onManifestUpdate` even for a
+byte-equivalent response. `initBrowseController.update()` treats any such call as "manifest
+changed" and re-renders detail, which re-runs `fetchSource` — so a selected component's preview
+and source panel silently reloaded every two seconds with nothing to show for it. A genuinely
+new or removed group or component (`structureChanged`), a real per-card hash diff (a non-empty
+`contentChangedPaths`), or a Browse-visible metadata-only edit (`metadataChanged`) are the only
+ways the next manifest can differ from the last one in a way Browse should react to.
 
 ### Repainting Browse source text without tearing down the preview
 

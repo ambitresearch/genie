@@ -303,14 +303,8 @@
     // re-lowercases per keystroke.
     article.setAttribute("data-name", (card.name || "").toLowerCase());
 
-    // M4-09 AC3 — keyboard-operable card: `tabindex="0"` puts it in Tab order, `role="link"` + an
-    // explicit `aria-label` give it a clean accessible name (see the module doc's "Accessibility"
-    // section — without the label, a screen reader concatenates the heading + group pill + viewport
-    // text with no separators), and Enter/click activate it (`role="link"` supplies semantics only,
-    // never key handling — unlike a real `<a>`, so the listener below is required, not decorative).
-    // There is no dedicated card-detail route yet (M4-05 leaves "per-card detail view" out of scope
-    // for v1), so the placeholder destination is the component's own preview: the one real,
-    // already-working URL a card carries.
+    // M4-09 AC3 — `role="link"` supplies semantics only, never key handling, so the Enter listener
+    // below is required. See architecture.md, "Validation and preview" > Security and accessibility.
     article.setAttribute("tabindex", "0");
     article.setAttribute("role", "link");
     // `accessibleName` guards against axe-core's `link-name` (critical): an empty-string aria-label
@@ -814,16 +808,8 @@
     );
   }
 
-  /**
-   * DRO-242 (fail closed) — validates a single `list_kits` reply entry against its canonical output
-   * shape (`{ id, name, owner, updatedAt, canEdit }`, `packages/server/src/tools/list_kits.ts`).
-   * Both `owner` and `updatedAt` are required strings in that schema (not optional), so a host
-   * reply missing either — or supplying a non-string value — is rejected here rather than silently
-   * coerced or ignored. `owner` is
-   * rendered directly into the kit `<option>` label (`kits[i].owner ||
-   * "local"`), so a non-string owner (e.g. an object) would otherwise reach `textContent`
-   * interpolation as `[object Object]`.
-   */
+  // DRO-242 (fail closed). Rationale: docs/developer/architecture.md, "`list_kits` entry
+  // validation (DRO-242)".
   function isKitEntry(kit) {
     return Boolean(
       isPlainObject(kit) &&
@@ -1760,6 +1746,26 @@
     return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
   }
 
+  /**
+   * Paths this draft would DELETE if applied. Shared with `buildPlanArgs` so the unload guard and
+   * the apply plan read deletions identically; if they disagreed the guard would either nag about
+   * a deletion that never happens or wave through one that does.
+   * @param {Record<string, unknown>} result a draft's result payload
+   * @returns {string[]} paths the plan would delete
+   */
+  function effectiveDeletes(result) {
+    var payload = result || {};
+    var writes = (payload.files || []).map(function (file) {
+      return file.path;
+    });
+    // The plan IS the authorisation boundary, so it never names a path outside this folder.
+    var prefix = componentPrefix(payload);
+    // A path the draft also rewrites is not a deletion, so it never enters `deletes`.
+    return deletedPathsFromDiff(payload.diff).filter(function (path) {
+      return writes.indexOf(path) === -1 && isInsidePrefix(path, prefix);
+    });
+  }
+
   function buildPlanArgs(draft, kitId) {
     var result = (draft && draft.result) || {};
     var files = result.files || [];
@@ -1767,14 +1773,8 @@
       return file.path;
     });
     var args = { kitId: kitId, writes: writes };
-    // Copilot (round 2) — AC7/AC11 require the DELETE paths too. A path the draft also rewrites is
-    // not a deletion, so it never enters `deletes`.
-    // Copilot (round 4) — the plan IS the authorisation boundary, so it never names a path outside
-    // this component's folder even though the checklist above already blocks such a draft.
-    var prefix = componentPrefix(result);
-    var deletes = deletedPathsFromDiff(result.diff).filter(function (path) {
-      return writes.indexOf(path) === -1 && isInsidePrefix(path, prefix);
-    });
+    // Copilot (round 2) — AC7/AC11 require the DELETE paths too.
+    var deletes = effectiveDeletes(result);
     if (deletes.length) args.deletes = deletes;
     return args;
   }
@@ -2352,20 +2352,78 @@
         var info = meta[draft.id] || {};
         // id is `fileIndex:offset:--property`.
         var property = controlId.split(":").slice(2).join(":");
-        // A tweaked draft is new bytes NOT in the kit, even if its parent was applied. Inheriting
-        // `componentInKit` would re-enable Refine, which reads the kit's older source and silently
-        // discards the tweak.
-        addDraft(next, derivedInfo(info), "Adjusted " + property + ".");
+        // Inherits `componentInKit` only when the tweak moved nothing; see architecture.md.
+        addDraft(
+          next,
+          derivedInfo(info, derivesNothing(draft.result.files, next)),
+          "Adjusted " + property + ".",
+        );
       };
     }
 
     /**
-     * Metadata for a draft DERIVED from another (a refine reply or a deterministic tweak). Both
-     * produce PROPOSED bytes that are not on disk, so `componentInKit` must be cleared however the
-     * parent was flagged — otherwise Refine stays unlocked and its next call reloads the older
-     * on-disk source, silently discarding this draft.
+     * Whether a derived file set moved anything, judged against a baseline that may be INCOMPLETE
+     * and may also be STALE. See `docs/developer/architecture.md` — "Judging a derive against an
+     * incomplete baseline".
+     * @param {Array<Record<string, string>>} a parent draft files (the baseline)
+     * @param {Array<Record<string, string>>} b derived draft files
+     * @param {unknown} diff the derive's server-computed unified diff, if it has one
+     * @returns {boolean} true when every baseline path survives into the derive and `diff` names
+     *   none of the derive's paths. Bytes are deliberately NOT compared
      */
-    function derivedInfo(info) {
+    function sameFileSet(a, b, diff) {
+      if (!Array.isArray(a) || !Array.isArray(b)) return false;
+      // The diff, not the baseline, is what testifies about disk: `buildUnifiedDiff` walks the
+      // union of the on-disk and returned paths, so a diff that names nothing says the derive
+      // already IS the kit -- even where a stale baseline disagrees. The baseline keeps the one
+      // job the diff cannot do, counting what survived. Copilot (round 12, PR #270).
+      var byPath = Object.create(null);
+      // Keying is safe because `hasReviewableCore` runs `hasUniquePaths` on every payload before it
+      // can become a draft, so neither side can repeat a path and mask a vanished sibling.
+      for (var i = 0; i < a.length; i += 1) byPath[a[i].path] = a[i];
+      var seen = 0;
+      var touched = null;
+      for (var j = 0; j < b.length; j += 1) {
+        if (byPath[b[j].path]) seen += 1;
+        // A path the diff names has diverged, whether or not the baseline holds it, and equal
+        // bytes prove nothing: the baseline is a snapshot, the diff is measured against disk at
+        // refine time, and once the kit moves under the snapshot they part company (snapshot `A`,
+        // disk `B`, reply `A`). Same architecture.md section.
+        if (typeof diff !== "string") return false;
+        if (touched === null) touched = parseUnifiedDiff(diff).files;
+        if (touched.indexOf(b[j].path) !== -1) return false;
+      }
+      // Every baseline path must still be accounted for; one that vanished is a real divergence.
+      return seen === a.length;
+    }
+
+    /**
+     * Whether a derived draft holds only what is already on disk. Equal bytes are not enough: a
+     * reply can hand back unchanged files while its `diff` still proposes a deletion, which
+     * `buildPlanArgs` turns into a real `deletes` entry. See architecture.md, same section.
+     * @param {Array<Record<string, string>>} parentFiles files of the draft derived from
+     * @param {Record<string, unknown>} result the derived draft's result payload
+     * @returns {boolean} true when the derive neither changed bytes nor proposed a deletion
+     */
+    function derivesNothing(parentFiles, result) {
+      var payload = result || {};
+      return (
+        sameFileSet(parentFiles, payload.files, payload.diff) &&
+        effectiveDeletes(result).length === 0
+      );
+    }
+
+    /**
+     * Metadata for a draft DERIVED from another (a refine reply or a deterministic tweak). A derive
+     * that MOVED bytes is PROPOSED work sitting nowhere on disk, so `componentInKit` clears —
+     * otherwise Refine stays unlocked and its next call reloads the older on-disk source, silently
+     * discarding this draft. Copilot (round 4, PR #270) — a derive that handed back the parent's
+     * exact bytes moved nothing, so it keeps the parent's flag: reloading it loses nothing, and
+     * prompting on unload would be a lie.
+     * @param {Record<string, unknown>} info metadata of the parent draft
+     * @param {boolean} identical whether the derived bytes equal the parent's, byte for byte
+     */
+    function derivedInfo(info, identical) {
       var source = info || {};
       return {
         kitId: source.kitId,
@@ -2375,7 +2433,9 @@
         source: source.source,
         model: source.model,
         displayName: source.displayName || "",
-        componentInKit: false,
+        // Byte-identical only counts as "in the kit" when the PARENT was: bytes identical to
+        // unsaved work are still unsaved work.
+        componentInKit: Boolean(identical) && Boolean(source.componentInKit),
       };
     }
 
@@ -2395,11 +2455,86 @@
       announce(value ? "Checked off " + id + "." : "Cleared " + id + ".");
     }
 
+    // #256 -- the review store lives in memory only, so a reload or tab close destroys work
+    // irrecoverably. Warn about exactly the drafts that would be lost, and nothing else. Each
+    // condition below removes a false positive; see `docs/developer/architecture.md`, "Unapplied
+    // drafts are lost on reload", for why every one of them is load-bearing.
+
+    // For the handful of engines that still render the page's string; only has to be non-empty.
+    var UNSAVED_DRAFT_PROMPT = "This draft has not been applied to your kit yet.";
+    var unloadGuard = null;
+
+    // Which component a draft proposes, as one comparable key. `null` matches nothing, so an
+    // unreadable identity keeps its draft in scope.
+    function lineageOf(draft, info) {
+      var result = (draft && draft.result) || {};
+      var name = typeof result.componentName === "string" ? result.componentName : null;
+      if (!name) return null;
+      var group = typeof result.group === "string" ? result.group : "";
+      return ((info && info.kitId) || "") + "\u0000" + group + "\u0000" + name;
+    }
+
+    function hasUnsavedDrafts(state) {
+      // 0 keeps every draft in scope, the right fallback if the applied id names no draft.
+      var applied = 0;
+      var appliedLineage = null;
+      if (state.appliedDraftId) {
+        for (var a = 0; a < state.drafts.length; a += 1) {
+          if (state.drafts[a].id !== state.appliedDraftId) continue;
+          applied = state.drafts[a].number;
+          appliedLineage = lineageOf(state.drafts[a], meta[state.drafts[a].id]);
+        }
+      }
+      for (var i = 0; i < state.drafts.length; i += 1) {
+        var info = meta[state.drafts[i].id];
+        // Checked BEFORE the `applied` floor, deliberately: a stranded delete leaves the bytes
+        // in the kit, so the draft sorts below a newer applied one, yet the file it meant to
+        // remove is still on disk and nothing else records which path that was.
+        if (info && info.pendingDeletes && info.pendingDeletes.length) return true;
+        // Earlier AND same lineage: an alternative the user rejected. Earlier alone is not --
+        // the store is append-only across components. See the architecture.md row.
+        if (
+          state.drafts[i].number <= applied &&
+          appliedLineage !== null &&
+          lineageOf(state.drafts[i], info) === appliedLineage
+        )
+          continue;
+        if (!info || !info.componentInKit) return true;
+      }
+      return false;
+    }
+
+    // Standalone only; embedded, the user is closing the HOST. Same parent-identity test
+    // `initMcpApp` uses to pick its tier.
+    function syncUnloadGuard(state) {
+      var win = doc.defaultView;
+      var standalone = Boolean(
+        win && win.parent === win && typeof win.addEventListener === "function",
+      );
+      var wanted = standalone && hasUnsavedDrafts(state);
+      if (wanted === Boolean(unloadGuard)) return;
+      if (wanted) {
+        unloadGuard = function (event) {
+          event.preventDefault();
+          // Legacy channel: HTML shows the dialog on defaultPrevented OR returnValue !== "".
+          event.returnValue = UNSAVED_DRAFT_PROMPT;
+        };
+        win.addEventListener("beforeunload", unloadGuard);
+        return;
+      }
+      if (win && typeof win.removeEventListener === "function") {
+        win.removeEventListener("beforeunload", unloadGuard);
+      }
+      unloadGuard = null;
+    }
+
     function render() {
       var draft = store.current();
       var state = store.state();
       var bridge = opts.getBridge();
       var hostAvailable = Boolean(bridge);
+
+      syncUnloadGuard(state);
 
       if (!draft) {
         if (el.empty) el.empty.hidden = false;
@@ -2558,10 +2693,12 @@
       }
       if (el.refineStatus) el.refineStatus.textContent = "";
       if (el.refineInput) el.refineInput.value = "";
-      // Copilot #4 (PR #250) — `refine` persists nothing, so a refined draft is NOT in the kit;
-      // marking it so re-opens Refine, whose next call reloads the older on-disk bytes and loses
-      // this work.
-      addDraft(outcome.result, derivedInfo(info), "Refined: " + instruction);
+      // Inherits `componentInKit` only when the refine moved nothing; see architecture.md.
+      addDraft(
+        outcome.result,
+        derivedInfo(info, derivesNothing(draft.result.files, outcome.result)),
+        "Refined: " + instruction,
+      );
     }
 
     function openApplyConfirm() {
@@ -2745,6 +2882,29 @@
       var stuckDeletes = outcome.stuckDeletes || [];
       if (!stuckDeletes.length) store.markApplied(outcome.writtenPaths, draft.id);
       meta[draft.id].componentInKit = true;
+      // Recorded separately from `componentInKit`, and assigned unconditionally so a clean retry
+      // clears it. See architecture.md, "Partial apply is not an apply".
+      meta[draft.id].pendingDeletes = stuckDeletes.slice();
+      // A write resolves a stranded path as surely as a delete does, and every draft is
+      // reconciled, this one included so a partial retry narrows its own set.
+      var resolved = (outcome.resolvedDeletes || outcome.deletedPaths || []).concat(
+        outcome.writtenPaths || [],
+      );
+      // Scoped to the applying KIT: the same relative path elsewhere is a different file.
+      var appliedKit = (meta[draft.id] && meta[draft.id].kitId) || "";
+      if (resolved.length) {
+        for (var draftId in meta) {
+          var entry = meta[draftId];
+          var pending = entry && entry.pendingDeletes;
+          if (!pending || !pending.length) continue;
+          if ((entry.kitId || "") !== appliedKit) continue;
+          entry.pendingDeletes = pending.filter(function (path) {
+            return resolved.indexOf(path) === -1;
+          });
+        }
+      }
+      // Eagerly, rather than waiting for the `render()` below the host's kit refresh.
+      syncUnloadGuard(store.state());
 
       // AC13 — report success only once the refresh lands. AC14 — a failed refresh is a STALE VIEW,
       // not a failed apply: the bytes are on disk.
@@ -2892,6 +3052,9 @@
       },
       refresh: render,
       state: store.state,
+      teardown: function () {
+        syncUnloadGuard({ appliedDraftId: null, drafts: [] });
+      },
     };
   }
 
@@ -3065,6 +3228,11 @@
       writtenPaths: written,
       deletedPaths: deletedPaths,
       stuckDeletes: stuckDeletes,
+      // Copilot round 7 (PR #270) — every path this apply CONFIRMED is off disk. Wider than
+      // `deletedPaths`: a path reported absent is equally gone.
+      resolvedDeletes: deletes.filter(function (path) {
+        return stuckDeletes.indexOf(path) === -1;
+      }),
       deleteWarning: deleteWarning,
       validation: validation,
       planId: planReply.planId,
@@ -3230,14 +3398,8 @@
     var status = doc.getElementById("app-status");
     var drafts = createDraftStore();
     var kits = [];
-    // DRO-242 (fail closed, Copilot review round 5/6) — a monotonic "discovery generation" counter.
-    // `loadKits()` captures the current value on entry; if a NEWER call has started (bridge swapped
-    // via `setBridge`/`setUnavailable`, or a fresh refresh triggered) by the time an OLDER call's
-    // `await bridge.callTool(...)` resolves — in either order, since network replies can complete
-    // out of order — the older call's resolution/rejection must not mutate `kits`/the DOM at all.
-    // Without this, a stale in-flight discovery whose reply finally arrives after a newer (possibly
-    // malformed-and-already-failed-closed) one could resurrect trusted `kits` state and silently
-    // re-enable Conjure/Retry on data a subsequent call had already invalidated.
+    // Monotonic generation: `loadKits()` captures it on entry and a superseded call must not
+    // mutate `kits`/the DOM. See architecture.md, "Superseded kit discovery must not land".
     var kitDiscoveryGeneration = 0;
     var inFlight = false;
     var hostAvailable = Boolean(bridge);
@@ -4258,21 +4420,8 @@
       var metadataChanged =
         Boolean(lastManifest) && manifestBrowseMetadataChanged(lastManifest, next);
       lastManifest = next;
-      // M7-02 (#234) — HMR-safe Browse: re-project the SAME live tree/ selection against the fresh
-      // manifest on every update (structural or content-only alike), never resetting an unrelated
-      // selection/filter (see `initBrowseController`'s own doc for why re-resolving-by- identity is
-      // safe here).
-      //
-      // Copilot review (PR #248) — but only when the manifest actually changed.
-      // Standalone/localhost Browse polls every `HMR_POLL_INTERVAL_MS` (2s) unconditionally (no
-      // WebSocket), and every one of those ticks used to call `onManifestUpdate` even for a
-      // byte-equivalent response — `initBrowseController.update()` treats that as "manifest
-      // changed" unconditionally and re-renders detail (which re-runs `fetchSource`), so a selected
-      // component's preview and source panel silently reloaded every 2 seconds with nothing to show
-      // for it. `structureChanged` (a genuinely new/removed group or component), a non-empty
-      // `contentChangedPaths` (a real per-card hash diff), or `metadataChanged` (a Browse-visible
-      // metadata-only edit) are the only ways `next` can differ from `lastManifest` in a way Browse
-      // should react to.
+      // M7-02 (#234) + Copilot review (PR #248) — re-project Browse only when the manifest really
+      // changed. Rationale: docs/developer/architecture.md, "Re-projecting Browse on an HMR tick".
       if (
         (structureChanged || contentChangedPaths.length > 0 || metadataChanged) &&
         typeof opts.onManifestUpdate === "function"
@@ -4319,14 +4468,8 @@
       }
       var reloaded = applyHmrMessage(grid, rawData);
       if (reloaded > 0) bumpReloadCounter(doc, reloaded);
-      // Copilot review (PR #248) — `card.changed`/`tokens.changed` (and the legacy `refresh`
-      // message normalizing to the same commands) previously reloaded ONLY the hidden `#grid`'s
-      // iframes via `applyHmrMessage` above. Neither `onManifestUpdate` (fired only by the
-      // fetch-manifest path in `applyFetchedManifest`) nor anything else told Browse's selected
-      // detail iframe to refresh, so it stayed visibly stale on a live per-card/token push even
-      // though the grid updated correctly. `onCardOrTokensChanged` lets the boot() call sites force
-      // a Browse detail re-render (bypassing the identity-selection dedup) on these normalized
-      // commands specifically.
+      // A per-card/token push carries no new manifest, so nothing else refreshes Browse's selected
+      // detail. See architecture.md, "A card/token HMR push must refresh Browse too".
       if (
         command &&
         (command.kind === "card" || command.kind === "tokens") &&
@@ -4491,19 +4634,8 @@
         if (name !== "mcp__genie__read_file" || !args || typeof args.path !== "string") {
           return Promise.reject(new Error("Standalone Browse cannot call " + name + "."));
         }
-        // Path containment: reject anything that isn't a plain kit-relative path (no `..` segments,
-        // no scheme, no leading slash) — the same boundary a real host's read-file tool would
-        // enforce server-side (AC16), kept here since this adapter has no server to defer to.
-        //
-        // Copilot review (PR #248) — the original check only rejected a literal `..` substring and
-        // a literal leading `/`, which the browser URL parser doesn't treat as the only escape
-        // hatches: (1) it treats backslashes as forward slashes for http(s) URLs, so
-        // `\\evil.example/x` resolves same as `//evil.example/x` (protocol- relative, off-origin)
-        // without ever containing a literal `/` at index 0; and (2) a percent-encoded segment
-        // (`%2e%2e`, `%2E%2e`, etc.) doesn't contain the literal string `..` pre-decode, but
-        // normalizes to `..` once `fetchImpl` (the real `fetch`) parses it. Decode first, then
-        // reject on backslashes, any leading separator, and any decoded `.`/`..` segment — closing
-        // both bypasses.
+        // Decode BEFORE testing, then reject backslashes, any leading separator, and any decoded
+        // `.`/`..` segment. See architecture.md, "Standalone source-fetch path containment".
         var path = args.path;
         var decodedPath;
         try {
@@ -4515,14 +4647,8 @@
         var hasUnsafeSegment = segments.some(function (segment) {
           return segment === "." || segment === "..";
         });
-        // Copilot review (PR #248) — the WHATWG URL parser (and therefore `fetch`) strips
-        // leading/trailing "C0 control or space" characters (tabs, newlines, plain spaces, etc.)
-        // BEFORE scheme detection, so a value like "\nhttps://evil.example/x" has no leading scheme
-        // letter by the raw-string checks below yet is still parsed as an absolute, cross-origin
-        // URL once handed to `fetchImpl`. Reject any leading or trailing character in that stripped
-        // set up front so the scheme/ separator checks below can't be bypassed by hiding them
-        // behind whitespace the parser would normalize away. Intentional: \x00-\x20 is the WHATWG
-        // "C0 control or space" set the URL parser trims first; that is the bypass being closed.
+        // \x00-\x20 is the WHATWG "C0 control or space" set the URL parser trims BEFORE scheme
+        // detection. See architecture.md, "Standalone source-fetch path containment".
         // eslint-disable-next-line no-control-regex
         var URL_C0_OR_SPACE_RE = /^[\x00- ]|[\x00- ]$/;
         if (
@@ -4623,13 +4749,8 @@
         } catch {
           /* live refresh is an enhancement, never a boot blocker */
         }
-        // The inlined tier IS the embedded MCP-App surface, so the postMessage host bridge applies
-        // to EVERY inlined resource — not only the bare tool-result shell. Query-bearing `ui://`
-        // resources (e.g. the preview URI carrying `kitId`) are intentionally emitted WITHOUT the
-        // tool-result-shell marker (grid-resource.ts), yet still use the MCP-App MIME type and
-        // still run inside a host frame. Gating the bridge on that marker wrongly flagged their
-        // Generate tab "Host unavailable". Start the shell in the pending state and let initMcpApp
-        // resolve ready/unavailable from the actual host handshake.
+        // Start pending and let initMcpApp resolve from the real handshake — the bridge must NOT be
+        // gated on the tool-result marker. See architecture.md, "Every inlined resource is hosted".
         var shellController = initProductShell(doc, undefined, {
           // AC13 — close the loop into Browse and re-read the bytes. A throw surfaces as the
           // truthful "written, but the view is stale" state.

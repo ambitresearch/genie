@@ -48,8 +48,9 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
 import type { KitStore } from "../store/interface.js";
+import { getPlan } from "../plans/index.js";
 import { deleteFiles } from "../tools/delete_files.js";
-import { MAX_FILES_PER_CALL, writeFiles } from "../tools/write_files.js";
+import { assertKitLive, MAX_FILES_PER_CALL, writeFiles } from "../tools/write_files.js";
 import { readAnchor, writeAnchor, type PlanResult } from "./anchor.js";
 
 // ─── Native sentinel (AC2) ───────────────────────────────────────────────────
@@ -158,7 +159,25 @@ export async function runAtomicSync(deps: SyncDeps, args: SyncArgs): Promise<Syn
 
   try {
     // Step 1 — fence the tree with the recompile sentinel FIRST (AC2).
-    await runStep(1, events, () => writeSentinel(projectRoot));
+    //
+    // #269 — but assert the kit is still live BEFORE the sentinel lands.
+    // `writeSentinel` mkdirs RECURSIVELY, so on a kit deleted after the plan was
+    // issued it would re-create the kit root, and `writeFiles`' own step-9
+    // re-check would then reject in step 2 — leaving a zombie directory holding
+    // nothing but genie's own bookkeeping. That residue is not inert:
+    // `LocalFsKitStore.createKit` stats the directory first and throws
+    // `KitAlreadyExistsError`, so the zombie permanently blocks re-creating the
+    // kit under that id until someone removes it by hand.
+    //
+    // Gating INSIDE step 1 rather than above the sequence keeps `failedStep: 1`
+    // accurate, keeps the documented-unreachable `?? 1` fallback below
+    // unreachable, and preserves AC9 (every attempted step emits an event). It
+    // also covers a case step 9 cannot: a deletes-only sync chunks `[]` into
+    // zero batches, so step 2 makes no `writeFiles` call at all.
+    await runStep(1, events, async () => {
+      await assertKitLive(store, (await getPlan(args.planId)).kitId);
+      await writeSentinel(projectRoot);
+    });
     // Step 2 — content writes, chunked ≤ 256/call (AC3).
     await runStep(2, events, () => runWrites(store, args.planId, args.writes));
     // Step 3 — deletes (AC4); a not-found delete does not throw (M1-09 AC5).
