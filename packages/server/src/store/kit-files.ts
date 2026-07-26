@@ -128,8 +128,18 @@ export function sriSha256(bytes: Buffer | string): string {
  * unusable.
  *
  * A `kitId` names a single directory (LocalFs) or repo (git host) directly
- * under the store's kits root. `isSafeKitId` returns false for exactly the ids
- * that would let a caller escape that single-kit namespace:
+ * under the store's kits root. This is a CONTAINMENT-AND-IDENTITY rule, not a
+ * containment rule. It refuses two different kinds of id: those that would let
+ * a caller escape that namespace, and those that stay inside it but do not
+ * SPELL the kit they open. The second kind is easy to miss precisely because a
+ * `join`-based containment check passes it — see the sibling sub-case below.
+ *
+ * The invariant, stated once: every accepted id is its own Win32 path-component
+ * NORMALIZATION, so it names the directory it opens on every platform. It does
+ * not, and cannot cheaply, collapse filesystem name-EQUIVALENCE — see "NOT in
+ * scope" below for where that line falls and why.
+ *
+ * It returns false for:
  *
  *   - the empty string — `join(kitsRoot, "")` is the kits ROOT itself, so an
  *     empty kitId plus a crafted `path` (e.g. `other-kit/secret.txt`) would
@@ -166,14 +176,31 @@ export function sriSha256(bytes: Buffer | string): string {
  * contains `..`), the exact holes that enabled the cross-kit read this rule
  * closes.
  *
- * NOT in scope, deliberately: case-insensitive collision (`Victim` vs `victim`
- * on Windows/macOS). Unlike a trailing-dot alias, EITHER spelling can name the
- * one real directory, so there is no hidden second kit to cross into — it is a
- * filesystem property, not a gate hole. Refusing uppercase is also exactly the
- * over-rejection this unification exists to remove (`Design-System` is a
- * legitimate git-host kit). Likewise Win32 reserved device names (`CON`, `NUL`,
- * `COM1`): they resolve to a device rather than to another kit, so they are an
- * availability quirk, not a namespace-crossing alias.
+ * NOT in scope, deliberately. The dividing line is whether an id CAN name a
+ * real directory. A trailing-[ .] id cannot — Windows applies the same trim in
+ * `mkdir` — so it has no possible referent and can ONLY alias; refusing it
+ * costs nothing. Each case below CAN, so refusing it would be exactly the
+ * over-rejection this unification exists to remove:
+ *
+ *   - case-insensitive collision (`Victim` vs `victim` on Windows/macOS).
+ *     Refusing uppercase is the original defect: `Design-System` is a
+ *     legitimate git-host kit;
+ *   - NTFS DOS 8.3 short names (`VICTIM~1` standing in for `Victim Component`
+ *     on a volume with 8.3 generation enabled). `mkdir "VICTIM~1"` succeeds on
+ *     every platform, and where a literal `VICTIM~1` exists NTFS gives the
+ *     long-named kit `VICTIM~2` instead, so the two never collide. `~` is also
+ *     legal in a POSIX directory name, so blanket-refusing it would make a
+ *     `my~kit` kit listable and unusable — this rule's own defect, re-created;
+ *   - Win32 reserved device names (`CON`, `NUL`, `COM1`), which resolve to a
+ *     device rather than to another kit.
+ *
+ * The first two are alternate SPELLINGS of one real directory, resolvable in
+ * both directions, so there is no hidden second kit to cross into; the third is
+ * an availability quirk. All three are filesystem name-equivalence properties
+ * rather than gate holes: a caller who can name a kit two ways still reaches
+ * exactly one kit. Collapsing them needs the resolved path canonicalised
+ * (`realpath`) and compared against the request — a store-layer change, not a
+ * predicate one, and not something a denylist of characters can ever finish.
  *
  * A predicate (not a throwing helper) on purpose: each caller raises its own
  * error type/code (`ListFilesError` / `McpError` / `NotFoundError`) — only the

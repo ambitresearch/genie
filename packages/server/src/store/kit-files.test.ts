@@ -91,6 +91,38 @@ describe("isSafeKitId", () => {
  * (`hashFileStream`) must match byte-for-byte (AC3). This pins its exact output
  * shape so the two forms can be compared in the store/tool suites.
  */
+// Filesystem name-EQUIVALENCE is deliberately out of scope, and that decision
+// needs a lock rather than only a comment: every review round so far has
+// proposed widening the denylist by one more character class, and each of
+// these would break `list_kits`' promise the moment it did.
+//
+// The dividing line the predicate documents: `victim.` CANNOT name a real
+// directory (Windows applies the same trim in `mkdir`), so it can only ever
+// alias. Each id below CAN name a real directory on some platform, so it has
+// a legitimate referent and refusing it is the over-rejection this rule was
+// unified to remove.
+it("🔒 accepts ids that are only ALIASES via filesystem name-equivalence", () => {
+  for (const id of [
+    // NTFS DOS 8.3 short names. `mkdir "VICTIM~1"` succeeds everywhere, and
+    // where one exists NTFS gives the long-named kit `VICTIM~2`, so the two
+    // never collide. `~` is legal on POSIX too, so refusing it would make a
+    // real `my~kit` listable-but-unusable.
+    "VICTIM~1",
+    "PROGRA~1",
+    "my~kit",
+    "kit~",
+    // Case folding on Windows/macOS. Refusing these IS the original defect —
+    // `Design-System` is a legitimate git-host repo name.
+    "Victim",
+    "Design-System",
+    // Win32 reserved device names resolve to a device, not to another kit.
+    "CON",
+    "NUL",
+  ]) {
+    expect(isSafeKitId(id), `${id} must stay accepted`).toBe(true);
+  }
+});
+
 describe("sriSha256", () => {
   it("produces a stable sha256-<base64> SRI string", () => {
     expect(sriSha256("hello")).toMatch(/^sha256-[A-Za-z0-9+/]+=*$/);

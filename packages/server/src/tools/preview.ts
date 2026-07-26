@@ -191,8 +191,11 @@ export class KitNotFoundError extends Error {
  * it refused only ids that trim away to NOTHING, still admitting `victim..` →
  * `victim`. That one never leaves the kits root, so it is not a containment
  * failure at all — it is an IDENTITY failure, one id naming two kits. The
- * predicate therefore guarantees "names exactly one kit", which is strictly
- * stronger than "stays under the root"; do not re-derive it as the latter.
+ * predicate therefore guarantees "spells the directory it opens", which is
+ * strictly stronger than "stays under the root"; do not re-derive it as the
+ * latter. It is also not "names exactly one kit": case folding and NTFS 8.3
+ * short names are alternate spellings of ONE kit and stay deliberately out of
+ * scope. `isSafeKitId`'s own docblock is the authority on where that line falls.
  *
  * ⚠️ NAME COLLISION — a second, unrelated `resolveKitDir` is exported from
  * `src/ui/grid-resource.ts`. Both apply the SAME rule (`isSafeKitId`), so they
