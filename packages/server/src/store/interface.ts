@@ -316,6 +316,37 @@ export interface KitStore {
 
   /**
    * Create a new kit with the given name and metadata. Returns its metadata.
+   *
+   * `kitId`, when supplied, MUST satisfy `isSafeKitId`
+   * (`store/kit-files.ts`), which is the authority on what that means —
+   * deliberately NOT restated here, because the rejection set grows (#277 adds
+   * trailing dots and spaces) and a copy in this file would silently understate
+   * it. This is a precondition, not a hint: it is checked
+   * before any repo/directory is created, so a rejected id leaves no partial
+   * kit behind. Both adapters reject a violating id with
+   * `NotFoundError("Kit", id)` — the same error every other `isSafeKitId`
+   * rejection in the store layer reports (`LocalFsKitStore.safeKitDir`,
+   * `GitHostKitStore.listFiles`/`readFile`). Implementations MUST NOT surface a
+   * different error for this case; `test/store-conformance.test.ts` pins it on
+   * every adapter.
+   *
+   * Callers that mint ids through `buildKitId` never trip this — its output is
+   * a slug. The rule exists because this method is public and the parameter is
+   * caller-supplied, so "the tool layer always mints it" is not an invariant of
+   * the CONTRACT, only of one caller.
+   *
+   * When `kitId` is OMITTED the adapter assigns one, and that assigned id must
+   * itself satisfy `isSafeKitId` — the constraint is on the id either way, so
+   * an adapter cannot launder an unsafe value in through its own fallback.
+   * `name` is NOT constrained: it is free display text, preserved verbatim on
+   * the returned `KitMeta`. Do NOT derive the assigned id from `name` — doing
+   * so puts a display string under a path-safety predicate and makes the call
+   * reject names that are perfectly legal (the same category error #276
+   * removed from the tools that gated input on `KIT_ID_PATTERN`, a description
+   * of `buildKitId`'s OUTPUT). Both adapters use `randomUUID()`; deriving a
+   * slug instead would also re-diverge them. Pinned on every adapter by
+   * `test/store-conformance.test.ts`.
+   *
    * Throws KitAlreadyExistsError if a kit with the same ID already exists.
    */
   createKit(name: string, kitId?: string): Promise<KitMeta>;

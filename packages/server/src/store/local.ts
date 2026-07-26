@@ -466,9 +466,13 @@ export class LocalFsKitStore implements KitStore {
    *
    * An unsafe id names no valid kit, so it surfaces as the SAME `NotFoundError`
    * a genuinely-missing kit would — this never leaks a sibling's bytes and adds
-   * no new error type to the `KitStore` contract (AC4). The write/plan verbs
-   * (`createKit`/`deleteFile`/`openPlan`) keep using `kitDir` directly: their
-   * ids are server-minted or already plan-gated, and their behavior is
+   * no new error type to the `KitStore` contract (AC4). `createKit` now applies
+   * the same rule inline rather than trusting `kitDir` (see the guard there):
+   * its `kitId?` parameter is caller-supplied, and unlike the verbs below it
+   * CREATES the container, so an unsafe id there writes a new directory at a
+   * caller-chosen path instead of merely failing to resolve one. The remaining
+   * write/plan verbs (`deleteFile`/`openPlan`) keep using `kitDir` directly:
+   * their ids are server-minted or already plan-gated, and their behavior is
    * unchanged.
    */
   private safeKitDir(kitId: KitId): string {
@@ -490,10 +494,27 @@ export class LocalFsKitStore implements KitStore {
     const kits: KitMeta[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      // A POSIX directory name may contain `\`, which `isSafeKitId` — the
+      // containment rule every kit-taking tool gates on — rejects. Reporting
+      // the directory name (below) would therefore publish an id that
+      // read_file/list_files/plan/write_files/bind_kit/conjure_screen all
+      // refuse. Skipping it here keeps the promise `list_kits` makes: the ids
+      // it hands out are valid input to the tools that consume them.
+      //
+      // Filtered at the LISTING, not by gating getKit: the invariant is about
+      // what this store PUBLISHES. A caller that constructs such an id itself
+      // is still stopped at the tool boundary. GitHostKitStore.listKits carries
+      // the same filter: the clause is adapter-neutral, so enforcing it here
+      // alone would leave the shared contract passing vacuously there.
+      if (!isSafeKitId(entry.name)) continue;
       const meta = await readMetaIfReadable<KitMetaFile>(this.kitMetaPath(entry.name));
       if (meta?.type === KIT_TYPE) {
         kits.push({
-          id: meta.id,
+          // The DIRECTORY name, not `meta.id`. The directory is what getKit
+          // routes on, so reporting the embedded id here can hand out an id
+          // that cannot be fetched back. Mirrors GitHostKitStore, which treats
+          // the repo name as authoritative and discards .kit.json's `id`.
+          id: entry.name,
           name: meta.name,
           type: KIT_TYPE,
           createdAt: meta.createdAt,
@@ -507,7 +528,11 @@ export class LocalFsKitStore implements KitStore {
     const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId));
     if (!meta || meta.type !== KIT_TYPE) throw new NotFoundError("Kit", kitId);
     return {
-      id: meta.id,
+      // The lookup key, not `meta.id` — see listKits. Returning the embedded
+      // id here would make `getKit(x).id !== x` for a desynchronised kit, so a
+      // caller round-tripping the result would query an id that resolves to
+      // nothing.
+      id: kitId,
       name: meta.name,
       type: KIT_TYPE,
       createdAt: meta.createdAt,
@@ -632,6 +657,28 @@ export class LocalFsKitStore implements KitStore {
 
   async createKit(name: string, kitId?: string): Promise<KitMeta> {
     const id = kitId ?? randomUUID();
+    // `createKit(name, kitId?)` is public on `KitStore`, so this id is
+    // caller-supplied — the "server-minted" assumption holds for the tool layer
+    // (`create_kit` mints via `buildKitId`) but not for the contract. Reject
+    // BEFORE the `kitDir` join below, which is the UNGATED helper. Two distinct
+    // consequences, both closed by the one guard: an unsafe id creates a real
+    // kit that `listKits` then filters out — a successful creation nothing can
+    // discover — and, since `join` NORMALIZES `..` rather than rejecting it, an
+    // id of `..` would resolve the new directory outside the kits root.
+    //
+    // Same `NotFoundError` every other `isSafeKitId` rejection raises, in BOTH
+    // adapters: an unsafe id names no valid kit, and AC4 keeps new error types
+    // out of the `KitStore` contract. Deliberately no site count here — an
+    // earlier version said "`git-host.ts` twice" and this PR then added a third.
+    //
+    // Both adapters apply the predicate BEFORE creating anything, and neither
+    // guard is redundant. Do NOT justify one by the other's backend: an earlier
+    // version claimed GitHost "already propagates the host's 4xx" for such a
+    // name. It does not — the host ACCEPTED `unsafe\kit`, the POST succeeded,
+    // and only the subsequent `.kit.json` write 404'd, leaving an orphan repo.
+    // `git-host.ts` needs its own up-front guard for exactly the reason this
+    // one exists. Error contract pinned in `test/store-conformance.test.ts`.
+    if (!isSafeKitId(id)) throw new NotFoundError("Kit", id);
     const dir = this.kitDir(id);
 
     // Defensive check: fail fast if kit directory already exists
@@ -753,6 +800,25 @@ export class LocalFsProjectStore implements ProjectStore {
     return join(this.projectDir(projectId), ".project.json");
   }
 
+  // `meta.id` here is NOT the routing key, and unlike `listKits`/`getKit` above
+  // it has not been fixed. That is a deferral, not a judgement that it is
+  // correct — do not read this comment as blessing the current behaviour.
+  //
+  // The defect is the same one the kit sites just fixed, and BOTH project
+  // adapters have it: each routes on a container key — the directory holding
+  // `.project.json` here, the `projects/<projectId>.json` filename in
+  // `GitHostProjectStore` — while reporting the `id` embedded in that file's
+  // body. Let the two drift and `listProjects` hands out an id `getProject`
+  // cannot resolve, exactly as `listKits` did for kits.
+  //
+  // What differs is the SHAPE of the fix, which is why it is not in that
+  // change. The kit adapters DISAGREED: GitHostKitStore already reported the
+  // routing key and discarded `.kit.json`'s embedded id, so LocalFs was
+  // demonstrably wrong against a shipped reference and could be corrected
+  // alone. The project adapters agree — in the defect — so there is no
+  // reference to correct toward. Fixing it means moving both adapters together
+  // plus a shared `projectStoreContract` pin, and moving only this one would
+  // convert a latent shared bug into a live parity break.
   async listProjects(): Promise<ProjectMeta[]> {
     await ensureDir(this.baseDir);
     const entries = await readdir(this.baseDir, { withFileTypes: true });

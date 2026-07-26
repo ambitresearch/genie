@@ -8,7 +8,7 @@
  * For GitHostStore: uses a mock HTTP server (msw or hand-rolled fetch mock).
  */
 
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -20,6 +20,7 @@ import {
   MAX_FILE_BYTES,
   NotFoundError,
 } from "../src/store/interface.js";
+import { isSafeKitId } from "../src/store/kit-files.js";
 import { LocalFsKitStore, LocalFsProjectStore } from "../src/store/local.js";
 import { loadViewerAssets } from "../src/store/viewer-assets.js";
 
@@ -95,10 +96,13 @@ function kitStoreContract(
       for (const asset of expected) {
         const read = await store.readFile(kit.id, asset.path);
         const actualBytes =
-          read.encoding === "base64" ? Buffer.from(read.content, "base64") : Buffer.from(read.content, "utf-8");
-        expect(actualBytes.equals(asset.content), `"${asset.path}" bytes must match packages/viewer/static exactly`).toBe(
-          true,
-        );
+          read.encoding === "base64"
+            ? Buffer.from(read.content, "base64")
+            : Buffer.from(read.content, "utf-8");
+        expect(
+          actualBytes.equals(asset.content),
+          `"${asset.path}" bytes must match packages/viewer/static exactly`,
+        ).toBe(true);
       }
     });
 
@@ -126,7 +130,10 @@ function kitStoreContract(
       // manifest maps to; reading raw bytes is what distinguishes "present
       // and empty" from "absent").
       const read = await store.readFile(kit.id, ".genie/manifest.json");
-      const raw = read.encoding === "base64" ? Buffer.from(read.content, "base64").toString("utf-8") : read.content;
+      const raw =
+        read.encoding === "base64"
+          ? Buffer.from(read.content, "base64").toString("utf-8")
+          : read.content;
       const parsed = JSON.parse(raw);
       expect(parsed).toMatchObject({ version: 1, groups: [], components: [] });
       expect(typeof parsed.name).toBe("string");
@@ -155,6 +162,67 @@ function kitStoreContract(
       expect(fetched.name).toBe("Display Kit");
     });
 
+    it("🔒 createKit rejects a kitId isSafeKitId rejects, with the same error on every adapter", async () => {
+      // `createKit(name, kitId?)` is PUBLIC, so the optional id is caller-supplied.
+      // Every other `isSafeKitId` rejection in both adapters reports NotFoundError
+      // (`local.ts` safeKitDir, `git-host.ts` ×2), so the create path must too:
+      // a precondition that rejects with a different error per adapter is not one
+      // contract, it is two. This is the adapter-neutral half of the guard — the
+      // filesystem side-effect half stays in the LocalFs block below, because only
+      // that adapter can express "wrote nothing".
+      //
+      // Deliberately in the SHARED contract, per this suite's own rule three tests
+      // up: pinning an adapter-neutral invariant on ONE adapter is worse than not
+      // pinning it, because the suite goes green and reads as coverage.
+      await expect(store.createKit("Unsafe Kit", "unsafe\\kit")).rejects.toThrow(NotFoundError);
+      // Assert the error's IDENTITY, not just its class. Before the GitHost
+      // guard existed this rejected with NotFoundError anyway — but from
+      // `writeKitMeta` 404ing on `/contents/.kit.json` AFTER the repo had been
+      // created, i.e. `{ resource: "resource", id: "/repos/…" }` and an orphaned
+      // repo left behind. A bare `toThrow(NotFoundError)` is green in both
+      // worlds and therefore pins nothing; only `resource`/`id` separate a
+      // precondition rejection from an incidental downstream 404.
+      await expect(store.createKit("Unsafe Kit", "unsafe\\kit")).rejects.toMatchObject({
+        resource: "Kit",
+        id: "unsafe\\kit",
+      });
+      await expect(store.createKit("Escape", "..")).rejects.toMatchObject({
+        resource: "Kit",
+        id: "..",
+      });
+    });
+
+    it("🔒 createKit accepts any display name when no kitId is supplied, on every adapter", async () => {
+      // The exact COMPLEMENT of the guard above, and the reason it needs its own
+      // test: `isSafeKitId` constrains the ID, never the NAME. `name` is free
+      // text a human typed — `create_kit` mints `buildKitId(name)` precisely
+      // BECAUSE display names are not ids. Gating a display name on a
+      // path-safety predicate is the same category error #276 removed from the
+      // eight tools that used `KIT_ID_PATTERN` (a description of one minter's
+      // OUTPUT) as an INPUT gate.
+      //
+      // This went wrong here in exactly that way: the GitHost guard was applied
+      // to `kitId ?? name`, so omitting the id silently promoted the display
+      // name into the gated position. LocalFs assigns `randomUUID()` on that
+      // branch and so was unaffected — the divergence this whole PR exists to
+      // remove, reintroduced by the fix for it. Hence a SHARED test: on one
+      // adapter it would have gone green and read as coverage.
+      const kit = await store.createKit("unsafe\\display");
+
+      // Guard the guard, three ways. "Did not throw" is far too weak: an adapter
+      // could satisfy it while minting an id nothing downstream accepts, which
+      // is the failure this PR opened with (`listKits` publishing ids every
+      // kit-taking tool rejects). So also require the assigned id to clear the
+      // same predicate the supplied-id path enforces, and require the kit to be
+      // genuinely retrievable by it.
+      expect(isSafeKitId(kit.id)).toBe(true);
+      const fetched = await store.getKit(kit.id);
+      expect(fetched.id).toBe(kit.id);
+      // The name survives verbatim — sanitising the id must not corrupt the
+      // display string, which is the whole point of their being separate fields.
+      expect(fetched.name).toBe("unsafe\\display");
+    });
+
     it("listKits returns created kits", async () => {
       await store.createKit("kit-a");
       await store.createKit("kit-b");
@@ -166,6 +234,55 @@ function kitStoreContract(
 
     it("getKit throws NotFoundError for non-existent kit", async () => {
       await expect(store.getKit("no-such-kit")).rejects.toThrow(NotFoundError);
+    });
+
+    it("🔒 reports the routing key as the id when .kit.json embeds a divergent one", async () => {
+      // The `id` a store REPORTS must be the key that store ROUTES on — the
+      // directory name on LocalFs, the repo name on GitHost — never the `id`
+      // field embedded in .kit.json, which is untrusted data that a restore,
+      // a hand-edit, or a rename can desynchronise from its container.
+      //
+      // This began life as a GitHost-only adapter test ("treats the repo name
+      // as authoritative…", PR #90), but every word of its rationale is
+      // adapter-neutral: the reported id "is the path every subsequent API
+      // call routes through". Pinning an adapter-neutral invariant on one
+      // adapter is worse than not pinning it, because the suite goes green
+      // and reads as coverage. LocalFs reported `meta.id` from both listKits
+      // and getKit and so failed this contract while GitHost passed it.
+      const kit = await store.createKit("Divergent Kit", "divergent-kit-abc123");
+      await seedFile(
+        kit.id,
+        ".kit.json",
+        JSON.stringify({
+          id: "some-other-id-999999",
+          name: "Divergent Kit",
+          type: "GENIE_KIT",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+
+      const fetched = await store.getKit(kit.id);
+      expect(fetched.id).toBe("divergent-kit-abc123");
+      expect(fetched.name).toBe("Divergent Kit");
+
+      const listed = await store.listKits();
+      expect(listed.map((k) => k.id)).toContain("divergent-kit-abc123");
+      expect(listed.map((k) => k.id)).not.toContain("some-other-id-999999");
+
+      // The promise `list_kits` makes to every kit-taking tool, stated as an
+      // executable assertion: an id it hands out resolves, resolves to itself,
+      // and is one the tools will actually accept. `plan.test.ts` cites this
+      // promise as the reason those tools gate on containment (isSafeKitId)
+      // rather than create_kit's slug shape; a listed id that is either
+      // unresolvable OR unsafe breaks it from the other end.
+      //
+      // Both halves are needed, and neither implies the other: `getKit` routes
+      // through the raw kit dir on LocalFs, so it resolves ids that every tool
+      // then refuses. Round-tripping alone would pass such an id.
+      for (const k of listed) {
+        expect(isSafeKitId(k.id), `listed id must satisfy isSafeKitId: ${k.id}`).toBe(true);
+        await expect(store.getKit(k.id)).resolves.toMatchObject({ id: k.id });
+      }
     });
 
     it("listFiles returns files in a kit", async () => {
@@ -734,6 +851,87 @@ describe("LocalFsKitStore — adapter-specific", () => {
     await rm(genieHomeDir, { recursive: true, force: true });
   });
 
+  it("🔒 omits a directory whose name isSafeKitId rejects", async () => {
+    // POSIX permits `\` in a directory name, and `isSafeKitId` — the containment
+    // rule every kit-taking tool gates on — rejects any id containing one. Since
+    // listKits reports the DIRECTORY NAME as the id (see the shared contract's
+    // divergent-.kit.json test), an unfiltered listing publishes an id that
+    // read_file, list_files, plan, write_files, bind_kit and conjure_screen all
+    // refuse: listable but unusable — the same broken promise this PR fixes for
+    // desynchronised ids, arriving by a different route.
+    //
+    // The shared round-trip assertion cannot catch this alone: LocalFsKitStore
+    // .getKit routes through `kitDir`, not `safeKitDir`, so it resolves the
+    // backslash directory quite happily. Only the TOOLS reject it — which is
+    // why the shared loop now asserts isSafeKitId as well as resolvability.
+    //
+    // Deliberately LocalFs-only, and NOT a repeat of the placement mistake this
+    // suite's divergent-.kit.json test was promoted to fix. That invariant was
+    // adapter-neutral, so pinning it on one adapter hid a real defect in the
+    // other. THIS SEED is adapter-reachable only here: a git host admits no path
+    // separator in a repository name, so seeding a backslash there would pin a
+    // fiction.
+    //
+    // The CLAUSE, though, is adapter-neutral, and an earlier draft of this
+    // comment over-generalised the seed into it — "GitHostKitStore cannot enter
+    // this state" — which is false. `isSafeKitId` rejects more than separators,
+    // and GitHostKitStore.listKits now carries the same filter with its own
+    // host-reachable seed (`..` today, `victim.` once #277 lands). Kept as a
+    // correction rather than a silent edit: the over-generalisation is exactly
+    // what made the GitHost gap look impossible.
+    const unsafeDir = join(tmpDir, "unsafe\\kit");
+    await mkdir(unsafeDir, { recursive: true });
+    await writeFile(
+      join(unsafeDir, ".kit.json"),
+      JSON.stringify({
+        id: "unsafe\\kit",
+        name: "Unsafe Kit",
+        type: "GENIE_KIT",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await store.createKit("Safe Kit", "safe-kit-abc123");
+
+    const ids = (await store.listKits()).map((k) => k.id);
+    expect(ids).toContain("safe-kit-abc123");
+    expect(ids).not.toContain("unsafe\\kit");
+    for (const id of ids) {
+      expect(isSafeKitId(id), `listed id must satisfy isSafeKitId: ${id}`).toBe(true);
+    }
+  });
+
+  it("🔒 rejects a custom kitId isSafeKitId rejects, before writing anything", async () => {
+    // `createKit(name, kitId?)` is public on `KitStore`, so the optional id is
+    // caller-supplied — NOT server-minted, whatever the tool layer does. Without
+    // this guard `createKit` resolved it through the UNGATED `kitDir` and wrote
+    // a real directory, so a caller could create a kit the listing filter above
+    // then hides: a successful creation that is permanently undiscoverable.
+    // Worse, `join` NORMALIZES `..` rather than rejecting it, so an unsafe id
+    // also resolved that directory OUTSIDE the kits root.
+    //
+    // The ERROR CONTRACT for this input is pinned adapter-neutrally in the
+    // shared block above. What stays here is the half only this adapter can
+    // express: that nothing was written to the filesystem. (An earlier version
+    // of this comment claimed "GitHost cannot reach this state — a git host
+    // rejects the name with a 4xx". That was wrong: GitHost created the repo
+    // and only then 404'd writing `.kit.json`, leaving an orphan. Both adapters
+    // now reject up front.)
+    await expect(store.createKit("Unsafe Kit", "unsafe\\kit")).rejects.toThrow(NotFoundError);
+
+    // Assert against the FILESYSTEM, not `listKits`. The listing filter hides an
+    // `unsafe\kit` directory whether or not this guard exists, so a listKits
+    // assertion here is green either way — it would pin nothing.
+    expect(await readdir(tmpDir)).not.toContain("unsafe\\kit");
+
+    // The backslash case above is an in-root child name on POSIX, so on its own
+    // it does NOT pin containment: a partial guard rejecting separators but not
+    // `..` would keep it green. `..` is the boundary case, and the ERROR TYPE is
+    // what discriminates — `kitDir("..")` resolves to an EXISTING directory (the
+    // parent), so a partial guard falls through to the `stat` check and reports
+    // `KitAlreadyExistsError`. Only the real guard reports `NotFoundError`.
+    await expect(store.createKit("Escape", "..")).rejects.toThrow(NotFoundError);
+  });
+
   it("AC7 — readFile throws FileTooLargeError for files > 256 KiB", async () => {
     const kit = await store.createKit("big-file-kit");
     // Write a file larger than MAX_FILE_BYTES directly to the kit directory
@@ -837,56 +1035,18 @@ describe("LocalFsKitStore — adapter-specific", () => {
 });
 
 // ─── Adapter-specific tests: GitHostKitStore ─────────────────────────────────
+//
+// NB: the "treats the repo name as authoritative when .kit.json embeds a
+// divergent id" pin (PR #90) used to live here. It moved into the shared
+// kitStoreContract, because its rationale was never GitHost-specific and
+// pinning it here let LocalFs violate it against a green suite. Don't move
+// it back.
 
 describe("GitHostKitStore — adapter-specific", () => {
   let originalFetch: typeof globalThis.fetch;
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-  });
-
-  it("treats the repo name as authoritative when .kit.json embeds a divergent id", async () => {
-    // Reviewer concern (PR #90): readKitMeta must not trust the `id` field
-    // inside .kit.json. If that file is hand-edited or corrupted so its `id`
-    // diverges from the repository name, getKit/listKits must still return the
-    // repo name — the path every subsequent API call routes through — not the
-    // stale embedded id that would resolve to no repo.
-    const mockFetch = createMockGitHostFactory();
-    originalFetch = globalThis.fetch;
-    globalThis.fetch = mockFetch as typeof fetch;
-
-    const store = new GitHostKitStore({
-      baseUrl: "https://mock-git-host.test/api/v1",
-      owner: "test-org",
-      token: "mock-token",
-    });
-
-    // Create a kit, then overwrite its .kit.json with a divergent embedded id.
-    const kit = await store.createKit("Corrupt Meta Kit", "corrupt-kit-abc123");
-    await mockFetch(
-      `https://mock-git-host.test/api/v1/repos/test-org/${kit.id}/contents/.kit.json`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          content: Buffer.from(
-            JSON.stringify({
-              id: "some-other-id-999999",
-              name: "Corrupt Meta Kit",
-              type: "GENIE_KIT",
-              createdAt: "2026-01-01T00:00:00.000Z",
-            }),
-          ).toString("base64"),
-        }),
-      },
-    );
-
-    const fetched = await store.getKit(kit.id);
-    expect(fetched.id).toBe("corrupt-kit-abc123");
-    expect(fetched.name).toBe("Corrupt Meta Kit");
-
-    const listed = await store.listKits();
-    expect(listed.map((k) => k.id)).toContain("corrupt-kit-abc123");
-    expect(listed.map((k) => k.id)).not.toContain("some-other-id-999999");
   });
 
   it("deleteFile on a directory target throws EISDIR, not a silent no-op (DRO-568)", async () => {
@@ -977,6 +1137,57 @@ describe("GitHostKitStore — adapter-specific", () => {
     await expect(store.readFile(kit.id, "created.html")).rejects.toThrow(NotFoundError);
     // …and the failing file never landed.
     await expect(store.readFile(kit.id, "new.html")).rejects.toThrow(NotFoundError);
+  });
+
+  it("\u{1F512} omits a listed repository whose name isSafeKitId rejects", async () => {
+    // The GitHost half of the LocalFs `omits a directory whose name isSafeKitId
+    // rejects` test. Both stores must honour the same shared-contract clause —
+    // every id `listKits` publishes satisfies `isSafeKitId` — and until now only
+    // LocalFs enforced it. On GitHost the clause passed VACUOUSLY: the mock never
+    // returned an unsafe repo name, so the assertion never had anything to bite.
+    //
+    // Why this is not the fiction the LocalFs test declines to pin. That test
+    // seeds a BACKSLASH, which no git host admits in a repository name — correct
+    // to keep LocalFs-only. But "no backslash" does not generalise to "GitHost
+    // cannot publish an unsafe id", and the difference is about to become live:
+    // #277 tightens `isSafeKitId` to reject a trailing dot or space, while Gitea
+    // keeps allowing a repository named `victim.` (`IsUsableRepoName` permits
+    // `[-.\w]+`, rejecting only repeated dots and the reserved `.`). The moment
+    // that lands, an externally created `victim.` is a host-reachable id this
+    // store would publish and every kit-taking tool would refuse.
+    //
+    // The seed here is `..` rather than `victim.` on purpose. `victim.` is SAFE
+    // under today's predicate, so asserting on it would pass before and after the
+    // fix — a test that can never be red. `..` is rejected today, so it is a real
+    // differential; and because the filter delegates to the predicate rather than
+    // to a literal, #277's tightening propagates to `victim.` for free. Seeding
+    // it through the mock's repo endpoint models what the SEARCH endpoint hands
+    // back — createKit's own guard now refuses such a name, so the only route in
+    // is a repo this store did not mint. A remote API response is untrusted
+    // input, exactly as `safeKitDir` is documented as the defence-in-depth guard
+    // behind each tool's own kitId check.
+    const mockFetch = createMockGitHostFactory();
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
+
+    const store = new GitHostKitStore({
+      baseUrl: "https://mock-git-host.test/api/v1",
+      owner: "test-org",
+      token: "mock-token",
+    });
+
+    await store.createKit("Good Kit", "good-kit");
+    const seeded = await mockFetch("https://mock-git-host.test/api/v1/orgs/test-org/repos", {
+      method: "POST",
+      body: JSON.stringify({ name: ".." }),
+    });
+    // Guard the guard: if the mock ever starts rejecting this name the test would
+    // pass for the wrong reason, so prove the hostile repo really is present.
+    expect(seeded.ok, "mock must accept the unsafe repo name for this test to bite").toBe(true);
+
+    const ids = (await store.listKits()).map((k) => k.id);
+    expect(ids).toContain("good-kit");
+    expect(ids).not.toContain("..");
   });
 });
 
