@@ -782,7 +782,10 @@ export async function conjure(deps: ConjureDeps, args: unknown): Promise<Conjure
   });
 
   const files = normalizeGeneratedFiles(component.files);
-  const previewUrl = publishDraftPreview(deps.getRunningCardAssetBroker?.(), files);
+  const previewUrl = publishDraftPreview(deps.getRunningCardAssetBroker?.(), files, {
+    componentName: component.componentName,
+    group: component.group,
+  });
 
   return {
     componentName: component.componentName,

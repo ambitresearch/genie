@@ -3745,6 +3745,79 @@ describe("#257 — broker-served draft preview", () => {
     expect((document.getElementById("review-preview-note") as HTMLElement).hidden).toBe(true);
   });
 
+  it("accepts a broker URL whose authority omits the default HTTP port", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    // `parsePort` accepts 80 and `authorityFor` omits the port when it IS 80, so the broker can
+    // legitimately mint a portless URL. Rejecting it drops silently to `srcdoc`, losing the whole
+    // point of #257 exactly where the fix would otherwise apply.
+    controller.addDraft(
+      conjureResult({ previewUrl: "http://127.0.0.1/d/0123456789abcdef0123456789abcdef" }),
+      { kitId: "k", kitLabel: "K" },
+    );
+    const frame = frameOf(document);
+    expect(frame.getAttribute("src")).toBe("http://127.0.0.1/d/0123456789abcdef0123456789abcdef");
+    expect(frame.hasAttribute("srcdoc")).toBe(false);
+  });
+
+  it("refuses a port the broker could never bind", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    // `parsePort` caps at 65535. A guard that accepts more describes a shape the broker cannot
+    // mint, which is exactly what a barrier is supposed to exclude.
+    controller.addDraft(
+      conjureResult({ previewUrl: "http://127.0.0.1:99999/d/0123456789abcdef0123456789abcdef" }),
+      { kitId: "k", kitLabel: "K" },
+    );
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain("<button>Go</button>");
+  });
+
+  it("does not let a locally tweaked draft inherit the parent's published preview", () => {
+    const { applyDeterministicTweak, detectDeterministicControls } = loadHooks();
+    // The broker published the PARENT's bytes. A tweak rewrites those bytes locally and never
+    // reaches the broker, so carrying the URL forward would fetch the pre-tweak document while
+    // Apply writes the tweaked one — the reviewer approves something they never saw.
+    const base = conjureResult({
+      previewUrl: DRAFT_URL,
+      files: [
+        fileEntry("components/actions/Button/Button.html", MARKER),
+        {
+          ...fileEntry("components/actions/Button/Button.css", ":root{--radius:8px;}"),
+          mimeType: "text/css",
+        },
+      ],
+    });
+    const control = detectDeterministicControls(base.files)[0];
+    const tweaked = applyDeterministicTweak(base, control.id, 12);
+
+    expect(tweaked.previewUrl).toBeUndefined();
+    expect(base.previewUrl).toBe(DRAFT_URL);
+  });
+
+  it("renders a tweaked draft from its own bytes rather than the stale broker document", () => {
+    const { document, controller } = loadWired(HAPPY_REPLIES);
+    controller.addDraft(
+      conjureResult({
+        previewUrl: DRAFT_URL,
+        files: [
+          fileEntry("components/actions/Button/Button.html", MARKER),
+          {
+            ...fileEntry("components/actions/Button/Button.css", ":root{--radius:8px;}"),
+            mimeType: "text/css",
+          },
+        ],
+      }),
+      { kitId: "k", kitLabel: "K" },
+    );
+    const slider = document.getElementById("control-0") as HTMLInputElement;
+    slider.value = "12";
+    slider.dispatchEvent(new document.defaultView!.Event("change", { bubbles: true }));
+
+    const frame = frameOf(document);
+    expect(frame.hasAttribute("src")).toBe(false);
+    expect(frame.getAttribute("srcdoc")).toContain(MARKER);
+  });
+
   it("keeps the warning when a rejected preview URL forces the srcdoc fallback", () => {
     const { document, controller } = loadWired(HAPPY_REPLIES);
     pinStyleHashes(document);

@@ -1,6 +1,12 @@
 import { NAMED_HTML_PATH } from "../llm/validate.js";
 import type { CardAssetBroker } from "./card-asset-broker.js";
 
+/** Which component's card to publish, as reported by the generation itself. */
+interface DraftIdentity {
+  componentName: string;
+  group: string;
+}
+
 /** The minimum a generated/refined file must expose to be previewable. */
 interface PreviewableFile {
   path: string;
@@ -25,14 +31,23 @@ interface PreviewableFile {
 export function publishDraftPreview(
   broker: CardAssetBroker | undefined,
   files: readonly PreviewableFile[],
+  identity: DraftIdentity,
 ): string | undefined {
   if (broker === undefined) return undefined;
 
-  // `NAMED_HTML_PATH` is the same predicate generation validates against, so the
-  // card is identified exactly once in the codebase. Sibling HTML such as
+  // Scoped to THIS component, not to "some component's card". `NAMED_HTML_PATH`
+  // only describes the canonical shape, so a result carrying
+  // `components/other/Decoy/Decoy.html` ahead of its own card would publish the
+  // decoy while the viewer still renders the real one — the reviewer would
+  // approve bytes the preview never showed. Building the path from the identity
+  // the generation already reported makes the choice unambiguous, and testing it
+  // against `NAMED_HTML_PATH` keeps a malformed name or group from forming a path
+  // at all rather than pasting it in unchecked. Sibling HTML such as
   // `dark-mode.html` is legal but is not the preview.
+  const expected = `components/${identity.group}/${identity.componentName}/${identity.componentName}.html`;
+  if (!NAMED_HTML_PATH.test(expected)) return undefined;
   const card = files.find(
-    (file) => NAMED_HTML_PATH.test(file.path) && (file.encoding ?? "utf-8") === "utf-8",
+    (file) => file.path === expected && (file.encoding ?? "utf-8") === "utf-8",
   );
   if (card === undefined) return undefined;
 

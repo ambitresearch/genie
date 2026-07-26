@@ -150,7 +150,18 @@
   var URL_LEADING_SLASHES_RE = /^[/\\]{2}/;
   var ANY_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
   var SAFE_FRAME_SCHEME_RE = /^(?:https?|data):/i;
-  var DRAFT_PREVIEW_SRC_RE = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/d\/[0-9a-f]{32}$/;
+  /**
+   * The port group is OPTIONAL because `authorityFor` omits the port when it is 80, so a broker
+   * bound there mints `http://127.0.0.1/d/<token>`; requiring a port would silently drop that
+   * draft back to `srcdoc`. The alternation is the exact 1-65535 range `parsePort` enforces --
+   * a looser `[0-9]{1,5}` would accept authorities the broker can never bind, which is precisely
+   * what a barrier exists to exclude.
+   */
+  // Kept a LITERAL rather than an assembled `new RegExp`: CodeQL has to parse this pattern to
+  // accept `isDraftPreviewSrc` as a barrier guard on the iframe-`src` sink, and a concatenated
+  // source string is not reliably constant-folded for that analysis.
+  // prettier-ignore
+  var DRAFT_PREVIEW_SRC_RE = /^http:\/\/127\.0\.0\.1(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?\/d\/[0-9a-f]{32}$/;
 
   /**
    * Is an ALREADY-NORMALIZED URL safe to hand an iframe? Split out of `safeFrameSrc` and called in
@@ -1831,6 +1842,11 @@
       if (Object.prototype.hasOwnProperty.call(result, key)) next[key] = result[key];
     }
     next.files = files;
+    // Copilot round 6 (PR #273) — the broker published the PARENT's bytes. A tweak rewrites them
+    // here and never reaches the broker, so inheriting the URL would make the frame fetch the
+    // pre-tweak document while Apply writes the tweaked one. Clearing it drops this draft to
+    // `srcdoc`, which renders exactly the bytes Apply will write.
+    next.previewUrl = undefined;
     // Copilot #5 (PR #250) — AC8 promises a RECOMPUTED diff. Inheriting `result.diff` shows nothing
     // (parent was a generation) or the previous edit's stale counts (parent was a refine). Both
     // misreport the write.

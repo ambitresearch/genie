@@ -735,7 +735,10 @@ export async function refine(deps: RefineDeps, args: unknown): Promise<RefineRes
     attempts,
   });
 
-  const previewUrl = publishDraftPreview(deps.getRunningCardAssetBroker?.(), files);
+  const previewUrl = publishDraftPreview(deps.getRunningCardAssetBroker?.(), files, {
+    componentName: component.componentName,
+    group: component.group,
+  });
 
   return {
     componentName: component.componentName,
