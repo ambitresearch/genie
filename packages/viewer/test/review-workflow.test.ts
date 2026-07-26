@@ -4011,3 +4011,112 @@ describe("unload guard survives in-app navigation (#256)", () => {
     expect(fireUnload(window).defaultPrevented).toBe(true);
   });
 });
+
+// Copilot round 5 (PR #270) — a partial apply stamps `componentInKit` unconditionally, so the
+// guard used to disarm over a deletion that never happened. The draft is deliberately NOT marked
+// applied (the Apply button has to stay live to retry), which means its in-memory record is the
+// ONLY thing that still knows a file is stranded on disk. Reloading loses that silently.
+describe("unload guard survives a stranded deletion (#256)", () => {
+  const STRANDED = "components/actions/Button/old.html";
+  const DELETE_DIFF = [
+    `diff --git a/${STRANDED} b/${STRANDED}`,
+    `--- a/${STRANDED}`,
+    "+++ /dev/null",
+    "@@ -1 +0,0 @@",
+    "-<div>gone</div>",
+  ].join("\n");
+
+  /**
+   * `delete_files` strands its path on the first `attempts` calls, then succeeds. Returning an
+   * empty `deletedPaths` (rather than throwing) is the harder case: the write DID land and the
+   * tool DID answer, so nothing but `stuckDeletes` marks the job unfinished.
+   */
+  function flakyDeletes(attempts: number) {
+    let seen = 0;
+    return () => {
+      seen += 1;
+      return seen <= attempts
+        ? { deletedPaths: [], notFoundPaths: [] }
+        : { deletedPaths: [STRANDED], notFoundPaths: [] };
+    };
+  }
+
+  function loadDeleting(deleteReply: unknown) {
+    return loadWired({ ...HAPPY_REPLIES, mcp__genie__delete_files: deleteReply });
+  }
+
+  function seed(wired: ReturnType<typeof loadWired>, diff: string | undefined) {
+    // `componentInKit: false` is the honest state for a draft whose renamed bytes are not on
+    // disk yet — and it is what arms the guard in the first place.
+    wired.controller.addDraft(diff === undefined ? conjureResult() : refineResult({ diff }), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: false,
+      source: `${MARKER}\n<button>Old</button>\n`,
+    });
+  }
+
+  async function apply(wired: ReturnType<typeof loadWired>, expectCalls: number) {
+    const click = (id: string) =>
+      wired.document
+        .getElementById(id)!
+        .dispatchEvent(new wired.window.Event("click", { bubbles: true }));
+    firePreviewLoad(wired.document);
+    makeGreen(wired.document, wired.controller);
+    click("decision-approve");
+    click("apply-button");
+    click("apply-confirm-accept");
+    await vi.waitFor(() => expect(wired.calls).toHaveLength(expectCalls));
+    await vi.waitFor(() =>
+      expect(wired.document.getElementById("review-status")!.textContent).toMatch(/applied/i),
+    );
+  }
+
+  it("keeps prompting while a deletion is still stranded on disk", async () => {
+    const wired = loadDeleting(flakyDeletes(1));
+    seed(wired, DELETE_DIFF);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+    await apply(wired, 4);
+    // The writes landed, so the draft IS in the kit — but the removal is unfinished, and only
+    // this tab remembers which path it was.
+    expect(wired.document.getElementById("review-status")!.textContent).toMatch(/stale/i);
+    expect(wired.controller.state().appliedDraftId).toBeNull();
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("stops prompting once the retry finally removes the file", async () => {
+    const wired = loadDeleting(flakyDeletes(1));
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    // Second pass: `delete_files` succeeds, so nothing is stranded any more.
+    wired.document
+      .getElementById("apply-button")!
+      .dispatchEvent(new wired.window.Event("click", { bubbles: true }));
+    wired.document
+      .getElementById("apply-confirm-accept")!
+      .dispatchEvent(new wired.window.Event("click", { bubbles: true }));
+    await vi.waitFor(() => expect(wired.calls).toHaveLength(8));
+    await vi.waitFor(() => expect(wired.controller.state().appliedDraftId).not.toBeNull());
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+
+  it("keeps prompting even after a NEWER draft applies cleanly", async () => {
+    // `hasUnsavedDrafts` skips drafts at or below the applied one, because the kit already holds
+    // their bytes. That reasoning does not extend to a deletion that never ran: draft 1's
+    // stranded path is not removed by applying draft 2.
+    const wired = loadDeleting(flakyDeletes(1));
+    seed(wired, DELETE_DIFF);
+    await apply(wired, 4);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+
+    // Draft 2 deletes nothing, so it applies cleanly and becomes `appliedDraftId`.
+    seed(wired, undefined);
+    await apply(wired, 7);
+    await vi.waitFor(() => expect(wired.controller.state().appliedDraftId).not.toBeNull());
+    expect(wired.controller.state().drafts).toHaveLength(2);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+});

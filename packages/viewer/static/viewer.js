@@ -2374,11 +2374,17 @@
         }
       }
       for (var i = 0; i < state.drafts.length; i += 1) {
+        var info = meta[state.drafts[i].id];
+        // Copilot round 5 (PR #270) — checked BEFORE the `applied` floor, and deliberately.
+        // A stranded delete means the writes landed but a removal did not, so the draft's bytes
+        // ARE in the kit and it sorts below a newer applied draft. The unfinished half is a
+        // file still on disk that nothing else records: applying a later draft does not remove
+        // it, and a reload forgets which path it was.
+        if (info && info.pendingDeletes) return true;
         // <= rather than <: apply also sets componentInKit on the draft it stamped,
         // so skipping it here is redundant today. The two are written independently
         // though, so keep the floor inclusive rather than lean on that coupling.
         if (state.drafts[i].number <= applied) continue;
-        var info = meta[state.drafts[i].id];
         if (!info || !info.componentInKit) return true;
       }
       return false;
@@ -2768,6 +2774,11 @@
       var stuckDeletes = outcome.stuckDeletes || [];
       if (!stuckDeletes.length) store.markApplied(outcome.writtenPaths, draft.id);
       meta[draft.id].componentInKit = true;
+      // Copilot round 5 — `componentInKit` is about the BYTES, which did land, and Refine reads
+      // it; forcing it false here would disable Refine with a reason ("apply this draft first")
+      // that is simply untrue. The stranded removal is separate unfinished work, so record it
+      // separately. Assigned unconditionally so a clean retry clears it.
+      meta[draft.id].pendingDeletes = stuckDeletes.length > 0;
       // The bytes are on disk NOW, but `syncUnloadGuard` otherwise only runs from `render()` --
       // which sits below the `await` on the host's kit refresh. A slow or hung refresh would
       // leave the tab prompting about work that is already saved. Re-sync eagerly; this cannot
