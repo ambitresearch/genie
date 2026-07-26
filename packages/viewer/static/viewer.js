@@ -1679,6 +1679,28 @@
     return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
   }
 
+  /**
+   * Paths this draft would DELETE if applied. Split out of `buildPlanArgs` (Copilot round 6,
+   * PR #270) so the unload guard and the apply plan read deletions the same way — if they ever
+   * disagreed, the guard would either nag about a deletion that never happens or wave through one
+   * that does.
+   * @param {Record<string, unknown>} result a draft's result payload
+   * @returns {string[]} paths the plan would delete
+   */
+  function effectiveDeletes(result) {
+    var payload = result || {};
+    var writes = (payload.files || []).map(function (file) {
+      return file.path;
+    });
+    // Copilot (round 4) — the plan IS the authorisation boundary, so it never names a path outside
+    // this component's folder even though the checklist already blocks such a draft.
+    var prefix = componentPrefix(payload);
+    // A path the draft also rewrites is not a deletion, so it never enters `deletes`.
+    return deletedPathsFromDiff(payload.diff).filter(function (path) {
+      return writes.indexOf(path) === -1 && isInsidePrefix(path, prefix);
+    });
+  }
+
   function buildPlanArgs(draft, kitId) {
     var result = (draft && draft.result) || {};
     var files = result.files || [];
@@ -1686,14 +1708,8 @@
       return file.path;
     });
     var args = { kitId: kitId, writes: writes };
-    // Copilot (round 2) — AC7/AC11 require the DELETE paths too. A path the draft also rewrites is
-    // not a deletion, so it never enters `deletes`.
-    // Copilot (round 4) — the plan IS the authorisation boundary, so it never names a path outside
-    // this component's folder even though the checklist above already blocks such a draft.
-    var prefix = componentPrefix(result);
-    var deletes = deletedPathsFromDiff(result.diff).filter(function (path) {
-      return writes.indexOf(path) === -1 && isInsidePrefix(path, prefix);
-    });
+    // Copilot (round 2) — AC7/AC11 require the DELETE paths too.
+    var deletes = effectiveDeletes(result);
     if (deletes.length) args.deletes = deletes;
     return args;
   }
@@ -2268,7 +2284,7 @@
         // silently discards the tweak. A no-op tweak moved nothing, so it keeps the parent's flag.
         addDraft(
           next,
-          derivedInfo(info, sameFileSet(draft.result.files, next.files)),
+          derivedInfo(info, derivesNothing(draft.result.files, next)),
           "Adjusted " + property + ".",
         );
       };
@@ -2279,24 +2295,50 @@
      * is a CLAIM (`refineOutputShape.diff` is a bare string and an empty one is accepted), so the
      * bytes it returned are the only evidence. `buildUnifiedDiff` is exact only for the single
      * declaration `applyDeterministicTweak` rewrites, so it cannot stand in as a comparator.
+     *
+     * Copilot (round 6) — keyed by path, not by position. A tweak rewrites entries in place, but a
+     * refine's files come straight back from the model and, while `hasUniquePaths` keeps those
+     * paths distinct, nothing constrains their ORDER. Comparing by index read a reordered but byte-identical reply as divergent, which prompted on
+     * unload and locked Refine for a derive that had moved nothing.
      * @param {Array<Record<string, string>>} a parent draft files
      * @param {Array<Record<string, string>>} b derived draft files
-     * @returns {boolean} true when every entry matches path, content, mimeType and encoding
+     * @returns {boolean} true when both hold the same paths, each exactly once, with the same
+     *   content, mimeType and encoding, in any order
      */
     function sameFileSet(a, b) {
       if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-      for (var i = 0; i < a.length; i += 1) {
-        // Order is stable: a derive rewrites entries in place, it never reorders them.
+      var byPath = Object.create(null);
+      for (var i = 0; i < a.length; i += 1) byPath[a[i].path] = a[i];
+      for (var j = 0; j < b.length; j += 1) {
+        // Keying is safe because `hasReviewableCore` runs `hasUniquePaths` on every payload before
+        // it can become a draft, so neither side can repeat a path and mask a vanished sibling.
+        var mate = byPath[b[j].path];
         if (
-          a[i].path !== b[i].path ||
-          a[i].content !== b[i].content ||
-          a[i].mimeType !== b[i].mimeType ||
-          a[i].encoding !== b[i].encoding
+          !mate ||
+          mate.content !== b[j].content ||
+          mate.mimeType !== b[j].mimeType ||
+          mate.encoding !== b[j].encoding
         ) {
           return false;
         }
       }
       return true;
+    }
+
+    /**
+     * Whether a derived draft holds exactly what is already on disk. Copilot (round 6, PR #270) —
+     * equal bytes are not enough. A refine also returns a `diff`, and `buildPlanArgs` turns every
+     * `+++ /dev/null` hunk in it into a real `deletes` entry, so a reply can hand back unchanged
+     * files while still proposing a deletion. That deletion is unsaved work like any other and has
+     * to keep the guard armed; weighing files alone let it ride along unguarded.
+     * @param {Array<Record<string, string>>} parentFiles files of the draft derived from
+     * @param {Record<string, unknown>} result the derived draft's result payload
+     * @returns {boolean} true when the derive neither changed bytes nor proposed a deletion
+     */
+    function derivesNothing(parentFiles, result) {
+      return (
+        sameFileSet(parentFiles, (result || {}).files) && effectiveDeletes(result).length === 0
+      );
     }
 
     /**
@@ -2588,7 +2630,7 @@
       // parent's exact bytes lost nothing, so it inherits the parent's flag instead.
       addDraft(
         outcome.result,
-        derivedInfo(info, sameFileSet(draft.result.files, outcome.result.files)),
+        derivedInfo(info, derivesNothing(draft.result.files, outcome.result)),
         "Refined: " + instruction,
       );
     }

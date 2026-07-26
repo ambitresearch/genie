@@ -3963,6 +3963,111 @@ describe("unload guard ignores byte-identical derivatives (#256)", () => {
   });
 });
 
+/**
+ * Copilot (round 6, PR #270) — byte equality decided the guard, but it was
+ * decided two ways that both looked at the wrong thing.
+ *
+ * 1. It compared the two file arrays BY POSITION. That holds for a tweak, which
+ *    rewrites entries in place, but a refine's files come back from the model and
+ *    nothing in `refineOutputShape` constrains their order — validation only
+ *    enforces unique paths. So a refine that returned the parent's exact bytes
+ *    in a different order read as divergent.
+ * 2. It looked only at files. A refine also carries a `diff`, and
+ *    `deletedPathsFromDiff` turns `+++ /dev/null` into a real `deletes` entry in
+ *    the apply plan. So a refine could hand back unchanged files while proposing
+ *    a deletion, and that deletion rode along completely unguarded.
+ */
+describe("unload guard weighs the whole derive, not file positions (#256)", () => {
+  const HTML = fileEntry(
+    "components/actions/Button/Button.html",
+    `${MARKER}\n<button>Go</button>\n`,
+  );
+  const CSS = {
+    ...fileEntry("components/actions/Button/Button.css", ":root{--radius:8px;}"),
+    mimeType: "text/css",
+  };
+
+  async function refinedFrom(parentFiles: unknown[], reply: Record<string, unknown>) {
+    const wired = loadWired({
+      ...HAPPY_REPLIES,
+      mcp__genie__refine: refineResult(reply),
+    });
+    wired.controller.addDraft(conjureResult({ files: parentFiles }), {
+      kitId: "my-kit",
+      kitLabel: "My Kit",
+      model: "m",
+      componentInKit: true,
+    });
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "leave it exactly as it is";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    (wired.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(wired.controller.state().drafts).toHaveLength(2);
+    });
+    return wired;
+  }
+
+  it("stays silent when identical bytes come back in a different order", async () => {
+    const wired = await refinedFrom([HTML, CSS], { files: [CSS, HTML] });
+    // Pin the fixture: these must really be the same set, only reordered.
+    const [parent, derived] = wired.controller.state().drafts;
+    expect([...derived.result.files].map((f: { path: string }) => f.path).sort()).toEqual(
+      [...parent.result.files].map((f: { path: string }) => f.path).sort(),
+    );
+    expect(derived.result.files).not.toEqual(parent.result.files);
+
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+    // Refine stays usable: the bytes we hold are the bytes on disk.
+    const input = wired.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "now change it";
+    input.dispatchEvent(new wired.window.Event("input", { bubbles: true }));
+    expect((wired.document.getElementById("refine-submit") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  // A draft's `files` are only what the model returned, which need not be everything the
+  // component has on disk. So a refine can hand back one unchanged file while its diff
+  // deletes a sibling it never carried -- and that sibling really does enter the apply plan.
+  it("prompts when unchanged files ride along with a proposed deletion", async () => {
+    const wired = await refinedFrom([HTML], {
+      files: [HTML],
+      diff: [
+        "diff --git a/components/actions/Button/Button.css b/components/actions/Button/Button.css",
+        "--- a/components/actions/Button/Button.css",
+        "+++ /dev/null",
+        "@@ -1 +0,0 @@",
+        "-:root{--radius:8px;}",
+        "",
+      ].join("\n"),
+    });
+    const derived = wired.controller.state().drafts[1];
+    // Pin the fixture: the files really are unchanged, and the diff really does
+    // produce a delete in the apply plan.
+    expect(derived.result.files).toEqual(wired.controller.state().drafts[0].result.files);
+
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  it("ignores a /dev/null hunk for a path the derive also rewrites", async () => {
+    // The apply plan drops such a path from `deletes` (it is a rewrite, not a
+    // deletion), so the guard must drop it too or every refine prompts forever.
+    const wired = await refinedFrom([HTML], {
+      files: [HTML],
+      diff: [
+        "diff --git a/components/actions/Button/Button.html b/components/actions/Button/Button.html",
+        "--- a/components/actions/Button/Button.html",
+        "+++ /dev/null",
+        "@@ -1 +0,0 @@",
+        "-gone",
+        "",
+      ].join("\n"),
+    });
+    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  });
+});
+
 describe("unload guard survives in-app navigation (#256)", () => {
   it("keeps the drafts and an armed guard across a route change", async () => {
     const shell = loadShell();
