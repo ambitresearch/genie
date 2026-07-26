@@ -647,9 +647,17 @@ describe("LocalScaffoldScreenGenerator", () => {
     it.each(["html", "vue", "react"] as const)(
       "%s — a control character in the kitId is neutralised, not passed through",
       async (framework) => {
-        // The gate is not what stops this one: `isSafeKitId` permits NUL, so it
-        // is in-band on the *explicit* arm too, not merely the ungated ones.
-        expect(isSafeKitId(NUL_KIT_ID)).toBe(true);
+        // Reachability here is the *binding* path, not the explicit one:
+        // `conjure_screen` is addressed by `projectId`, and the kitId comes from
+        // `create_project`'s recorded `kitBindings[]`, which applies no
+        // `isSafeKitId` check. That is what keeps this escape load-bearing.
+        //
+        // The explicit `kitId` arm does refuse NUL — `isSafeKitId` rejects it,
+        // because a NUL in a path argument made `get_kit` fail with a raw
+        // `ERR_INVALID_ARG_VALUE` quoting the absolute kits root. Pinned as
+        // `false` rather than dropped, so that re-admitting NUL at the gate
+        // cannot happen silently.
+        expect(isSafeKitId(NUL_KIT_ID)).toBe(false);
 
         const { deps, projectId } = await fixture({
           kitBindings: [{ kitId: NUL_KIT_ID, default: true }],
@@ -724,9 +732,22 @@ describe("LocalScaffoldScreenGenerator", () => {
       "%s — neutralised in the note iff it is in the advertised class",
       async (_name, char, expected) => {
         const kitId = `acme${char}ui`;
-        // In-band on every arm: `isSafeKitId` permits all of these, so the gate
-        // is not what stops them and the escape is the only thing that can.
-        expect(isSafeKitId(kitId)).toBe(true);
+        // What reaches the sink is decided by the *binding* path, not by the
+        // gate: `conjure_screen` is addressed by `projectId` here, and the
+        // `kitId` it uses comes from `create_project`'s recorded
+        // `kitBindings[]`, which applies no `isSafeKitId` check. So every row
+        // arrives raw regardless of what the gate would say — `emitted.kit
+        // ?.kitId` below is the assertion that actually pins that, and it is
+        // unconditional.
+        //
+        // The gate is still worth stating, because it says how much of this is
+        // defence in depth. Eleven of these twelve are in-band on the explicit
+        // `kitId` arm too. NUL is the exception: it is the one member
+        // `isSafeKitId` refuses outright, because a NUL in a path argument made
+        // `get_kit` fail with a raw `ERR_INVALID_ARG_VALUE` that quoted the
+        // absolute kits root. Derived from the character rather than hand-listed
+        // so that widening the gate cannot leave a stale `true` here.
+        expect(isSafeKitId(kitId)).toBe(!kitId.includes("\u0000"));
 
         const { deps, projectId } = await fixture({ kitBindings: [{ kitId, default: true }] });
         await conjureScreen(deps, { projectId, prompt: "A page with cards", framework: "html" });
