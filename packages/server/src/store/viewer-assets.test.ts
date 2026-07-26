@@ -7,10 +7,15 @@ import { describe, expect, it } from "vitest";
 import { loadViewerAssets } from "./viewer-assets.js";
 
 describe("loadViewerAssets", () => {
-  it("loads all three viewer static files, byte-identical to packages/viewer/static", async () => {
+  it("loads all four viewer static files, byte-identical to packages/viewer/static", async () => {
     const assets = await loadViewerAssets();
 
-    expect(assets.map((a) => a.path)).toEqual(["index.html", "viewer.js", "viewer.css"]);
+    expect(assets.map((a) => a.path)).toEqual([
+      "index.html",
+      "viewer-browse.js",
+      "viewer.js",
+      "viewer.css",
+    ]);
     for (const asset of assets) {
       expect(Buffer.isBuffer(asset.content)).toBe(true);
       expect(asset.content.length).toBeGreaterThan(0);

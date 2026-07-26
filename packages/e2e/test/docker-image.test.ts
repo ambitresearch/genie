@@ -454,7 +454,7 @@ describe.skipIf(!dockerAvailable)("AC2/AC3/AC4 — real image build + boot", () 
         'if (result.isError) throw new Error("create_kit failed");',
         'const kitId = readdirSync(root).find((name) => !name.startsWith("."));',
         'if (!kitId) throw new Error("create_kit wrote no kit");',
-        'const assets = ["index.html", "viewer.js", "viewer.css"];',
+        'const assets = ["index.html", "viewer-browse.js", "viewer.js", "viewer.css"];',
         'if (assets.some((name) => !existsSync(join(root, kitId, name)))) throw new Error("viewer scaffold missing");',
         'process.stdout.write("viewer-scaffold-ok");',
         "await client.close();",

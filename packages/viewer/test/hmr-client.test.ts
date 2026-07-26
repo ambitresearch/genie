@@ -34,7 +34,15 @@ import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = resolve(HERE, "../static");
+const VIEWER_BROWSE_JS = readFileSync(resolve(STATIC_DIR, "viewer-browse.js"), "utf8");
 const VIEWER_JS = readFileSync(resolve(STATIC_DIR, "viewer.js"), "utf8");
+/**
+ * The two classic scripts `index.html` loads, concatenated in document order.
+ * Browse comes FIRST (#253): `viewer.js` auto-boots as it is parsed and its
+ * boot path calls into the Browse workbench. Each file is its own IIFE, so
+ * concatenating them is equivalent to two ordered `<script>` tags.
+ */
+const VIEWER_SCRIPTS = VIEWER_BROWSE_JS + "\n" + VIEWER_JS;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Hooks = Record<string, any>;
@@ -96,7 +104,7 @@ function setup(manifest: Record<string, unknown> = twoCardManifest()): {
   const { window } = dom;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window as any).__genieViewerTestHooks = {};
-  window.eval(VIEWER_JS);
+  window.eval(VIEWER_SCRIPTS);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const hooks = (window as any).__genieViewerTestHooks as Hooks;
   const document = window.document;

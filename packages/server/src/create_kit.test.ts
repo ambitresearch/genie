@@ -180,14 +180,15 @@ describe("create_kit tool (via MCP)", () => {
     const kitRoot = join(tempDir, "kits", kitId);
     const viewerStaticDir = join(import.meta.dirname, "../../viewer/static");
 
-    for (const asset of ["index.html", "viewer.js", "viewer.css"]) {
+    for (const asset of ["index.html", "viewer-browse.js", "viewer.js", "viewer.css"]) {
       const [scaffolded, source] = await Promise.all([
         readFile(join(kitRoot, asset)),
         readFile(join(viewerStaticDir, asset)),
       ]);
-      expect(scaffolded.equals(source), `"${asset}" must be byte-identical to packages/viewer/static`).toBe(
-        true,
-      );
+      expect(
+        scaffolded.equals(source),
+        `"${asset}" must be byte-identical to packages/viewer/static`,
+      ).toBe(true);
     }
   });
 
@@ -214,6 +215,10 @@ describe("create_kit tool (via MCP)", () => {
     const kitRoot = join(tempDir, "kits", kitId);
 
     const { JSDOM } = await import("jsdom");
+    // Both classic scripts index.html loads, in its document order
+    // (browse BEFORE core, #253) — the same thing a real file:// navigation
+    // does with the scaffolded shell.
+    const viewerBrowseJs = await readFile(join(kitRoot, "viewer-browse.js"), "utf-8");
     const viewerJs = await readFile(join(kitRoot, "viewer.js"), "utf-8");
     const dom = new JSDOM(await readFile(join(kitRoot, "index.html"), "utf-8"), {
       runScripts: "outside-only",
@@ -222,6 +227,7 @@ describe("create_kit tool (via MCP)", () => {
     const { window } = dom;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__genieViewerTestHooks = {};
+    window.eval(viewerBrowseJs);
     window.eval(viewerJs);
 
     // A `fetch` that reads relative to the kit root, mirroring what a real

@@ -50,7 +50,15 @@ import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = resolve(HERE, "../static");
+const VIEWER_BROWSE_JS = readFileSync(resolve(STATIC_DIR, "viewer-browse.js"), "utf8");
 const VIEWER_JS = readFileSync(resolve(STATIC_DIR, "viewer.js"), "utf8");
+/**
+ * The two classic scripts `index.html` loads, concatenated in document order.
+ * Browse comes FIRST (#253): `viewer.js` auto-boots as it is parsed and its
+ * boot path calls into the Browse workbench. Each file is its own IIFE, so
+ * concatenating them is equivalent to two ordered `<script>` tags.
+ */
+const VIEWER_SCRIPTS = VIEWER_BROWSE_JS + "\n" + VIEWER_JS;
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -133,7 +141,7 @@ function loadHooks(): { hooks: Hooks; window: JSDOM["window"]; document: Documen
   const { window } = dom;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window as any).__genieViewerTestHooks = {};
-  window.eval(VIEWER_JS);
+  window.eval(VIEWER_SCRIPTS);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return { hooks: (window as any).__genieViewerTestHooks, window, document: window.document };
 }
@@ -756,7 +764,7 @@ describe("inlined manifest (embedded tier — no fetch under connect-src 'none')
     const { window } = dom;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__genieViewerTestHooks = {};
-    window.eval(VIEWER_JS);
+    window.eval(VIEWER_SCRIPTS);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return { hooks: (window as any).__genieViewerTestHooks, window, document: window.document };
   }
@@ -895,5 +903,93 @@ describe("XSS safety — card name rendered as inert text", () => {
     expect((window as any).__pwned).toBeUndefined();
     expect(el.querySelector("img")).toBeNull();
     expect(el.querySelector(".ds-card__name")?.textContent).toBe(hostile.name);
+  });
+});
+
+/**
+ * ── Cross-script seam resilience (#253) ────────────────────────────────────
+ *
+ * #253 split the Browse UI-kit workbench out of `viewer.js` into a second
+ * classic script, `viewer-browse.js`, to get back under the 256 KiB
+ * `MAX_FILE_BYTES` cap. The two files talk through one global apiece
+ * (`window.__genieViewerCore` / `window.__genieViewerBrowse`), resolved
+ * lazily at call time.
+ *
+ * That split introduced a failure mode the single-file build could not have:
+ * if `viewer-browse.js` is missing at runtime, `browse()` returns `{}` and
+ * `browse().initBrowseController(...)` throws a `TypeError` — from INSIDE the
+ * boot path that also renders the grid. The whole page then falls into the
+ * `.ds-error` state with the misleading message "Could not load the preview
+ * manifest", because the grid's own render never got to run.
+ *
+ * The grid is the PRIMARY product surface; Browse (M7-02) is a secondary one.
+ * A secondary surface's script failing to load must degrade THAT surface, not
+ * take the grid down with it. These tests pin that: boot with ONLY the core
+ * script evaluated — exactly what a browser does when the `viewer-browse.js`
+ * request 404s or is blocked — and require the grid to render anyway.
+ *
+ * Packaging (both files present, referenced in the load-bearing order) stays
+ * enforced separately by `static-index.test.ts` and the server package's
+ * `VIEWER_STATIC_FILES` conformance tests, so a genuinely missing asset is
+ * still a hard test failure — it just is not ALSO a grid outage.
+ */
+describe("cross-script seam (#253) — grid survives a missing viewer-browse.js", () => {
+  function bootCoreOnly(manifestObj: unknown): {
+    document: Document;
+    errors: string[];
+  } {
+    const html =
+      "<!doctype html><html><head>" +
+      '<script type="application/json" id="manifest">' +
+      JSON.stringify(manifestObj) +
+      "</scr" +
+      "ipt>" +
+      '</head><body><input id="q" /><main id="grid"></main></body></html>';
+    const dom = new JSDOM(html, { runScripts: "outside-only" });
+    const { window } = dom;
+    const errors: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).console = {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      error: (...args: any[]) => errors.push(args.map(String).join(" ")),
+      warn: () => {},
+      log: () => {},
+    };
+    // The embedded tier is `connect-src 'none'`: booting must not fetch.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).fetch = () => {
+      throw new Error("fetch called — embedded tier must not fetch");
+    };
+    // Deliberately NOT evaluating VIEWER_BROWSE_JS: this is the 404 case.
+    window.eval(VIEWER_JS);
+    return { document: window.document, errors };
+  }
+
+  it("renders the grid from an inlined manifest with only viewer.js evaluated", async () => {
+    const { document } = bootCoreOnly(twoGroupManifest());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.querySelectorAll("iframe").length).toBe(2);
+    expect(document.querySelector(".ds-error")).toBeNull();
+  });
+
+  it("renders the empty state (not an error) for an empty manifest with only viewer.js", async () => {
+    const { document } = bootCoreOnly({
+      version: 1,
+      name: "k",
+      generatedAt: "2026-07-05T00:00:00.000Z",
+      groups: [],
+      components: [],
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.querySelector(".ds-empty")).not.toBeNull();
+    expect(document.querySelector(".ds-error")).toBeNull();
+  });
+
+  it("reports the REAL cause (the missing script), not a bogus manifest error", async () => {
+    const { errors } = bootCoreOnly(twoGroupManifest());
+    await new Promise((r) => setTimeout(r, 0));
+    // Diagnosability: whoever hits this must be pointed at the asset that
+    // failed to load, not sent to debug a manifest that parsed perfectly.
+    expect(errors.some((m) => m.includes("viewer-browse.js"))).toBe(true);
   });
 });

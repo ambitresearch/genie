@@ -76,6 +76,7 @@ const FAKE_INDEX =
 function fakeAssetReader(index = FAKE_INDEX): AssetReader {
   return async (name) => {
     if (name === "index.html") return index;
+    if (name === "viewer-browse.js") return "/* viewer-browse.js bytes */";
     if (name === "viewer.js") return "/* viewer.js bytes */";
     return "/* viewer.css bytes */";
   };

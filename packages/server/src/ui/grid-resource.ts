@@ -97,8 +97,8 @@ export const VIEWER_CSS_URI = "ui://genie/viewer.css";
 /** Compiles the on-disk kit at `kitDir` to a manifest (default: M3-03). */
 export type ManifestCompiler = (kitDir: string) => Promise<Manifest>;
 
-/** The three static assets the embedded shell is assembled from. */
-export type ViewerAssetName = "index.html" | "viewer.js" | "viewer.css";
+/** The static assets the embedded shell is assembled from. */
+export type ViewerAssetName = "index.html" | "viewer-browse.js" | "viewer.js" | "viewer.css";
 
 /** Reads one `@ambitresearch/genie-viewer` static asset's text (default: from disk). */
 export type AssetReader = (name: ViewerAssetName) => Promise<string>;
@@ -371,40 +371,54 @@ function escapeRawTextEndTag(content: string, tagName: "script" | "style"): stri
  * Make the MCP App document self-contained. A host receives one raw HTML
  * resource; browser-relative `ui://` siblings are not additional resources/read
  * calls, so the exact viewer JS/CSS bytes must travel inside that document.
+ *
+ * `viewerScripts` is ordered and each entry is inlined in place of its own
+ * `<script src>` tag, preserving document order — load order is load-bearing
+ * for the `viewer-browse.js` / `viewer.js` pair (#253).
  */
 export function inlineViewerAssets(
   indexHtml: string,
-  viewerJs: string,
+  viewerScripts: ReadonlyArray<{ name: string; source: string }>,
   viewerCss: string,
 ): { html: string; hashes: InlineCspHashes } {
-  const script = escapeRawTextEndTag(viewerJs, "script");
   const style = escapeRawTextEndTag(viewerCss, "style");
   const styleTag = `<style>${style}</style>`;
-  const scriptTag = `<script>${script}</script>`;
 
   const cssLink = /<link\b[^>]*href=["']\.\/viewer\.css["'][^>]*>/i;
-  const jsScript = /<script\b[^>]*src=["']\.\/viewer\.js["'][^>]*><\/script>/i;
   // `replace(regex, replacementString)` treats `$&`, `$$`, `$1`, etc. in the
-  // replacement string as substitution tokens, not literal text. `scriptTag`
-  // embeds the ENTIRE viewer.js source verbatim — if that source ever
+  // replacement string as substitution tokens, not literal text. The script
+  // tags embed the ENTIRE viewer source verbatim — if that source ever
   // contains a `$`-prefixed sequence matching one of those tokens (e.g. a
   // regex literal like `/[!#$&^_.+-]/` inside a comment, which contains
   // `$&`), the replacement corrupts the inlined document by
-  // duplicating/substituting fragments of viewer.js in place of the token,
+  // duplicating/substituting fragments of the source in place of the token,
   // desyncing the CSP hash from what a browser actually parses. A function
   // replacer receives the matched text as a plain argument and is never
   // subject to token interpretation.
   let html = cssLink.test(indexHtml)
     ? indexHtml.replace(cssLink, () => styleTag)
     : injectBeforeClosingTag(indexHtml, "head", styleTag);
-  html = jsScript.test(html)
-    ? html.replace(jsScript, () => scriptTag)
-    : injectBeforeClosingTag(html, "body", scriptTag);
+
+  const scriptHashes: string[] = [];
+  for (const { name, source } of viewerScripts) {
+    const script = escapeRawTextEndTag(source, "script");
+    const scriptTag = `<script>${script}</script>`;
+    // Escape the literal `.` in the filename so `viewer.js`'s pattern cannot
+    // also match `viewer-js`-style neighbours.
+    const srcTag = new RegExp(
+      `<script\\b[^>]*src=["']\\./${name.replace(/[.]/g, "\\.")}["'][^>]*></script>`,
+      "i",
+    );
+    html = srcTag.test(html)
+      ? html.replace(srcTag, () => scriptTag)
+      : injectBeforeClosingTag(html, "body", scriptTag);
+    scriptHashes.push(cspSha256(script));
+  }
 
   return {
     html,
     hashes: {
-      scriptHashes: [cspSha256(script)],
+      scriptHashes,
       styleHashes: [cspSha256(style)],
     },
   };
@@ -734,11 +748,13 @@ export async function buildGridDocument(
   }
 
   let indexHtml: string;
+  let viewerBrowseJs: string;
   let viewerJs: string;
   let viewerCss: string;
   try {
-    [indexHtml, viewerJs, viewerCss] = await Promise.all([
+    [indexHtml, viewerBrowseJs, viewerJs, viewerCss] = await Promise.all([
       deps.readAsset("index.html"),
+      deps.readAsset("viewer-browse.js"),
       deps.readAsset("viewer.js"),
       deps.readAsset("viewer.css"),
     ]);
@@ -753,7 +769,16 @@ export async function buildGridDocument(
     return params.kitId === undefined ? markToolResultShell(fallback) : fallback;
   }
 
-  const inlinedAssets = inlineViewerAssets(indexHtml, viewerJs, viewerCss);
+  const inlinedAssets = inlineViewerAssets(
+    indexHtml,
+    // Ordered: `viewer-browse.js` must execute before `viewer.js`, which
+    // auto-boots on parse and calls into the Browse workbench (#253).
+    [
+      { name: "viewer-browse.js", source: viewerBrowseJs },
+      { name: "viewer.js", source: viewerJs },
+    ],
+    viewerCss,
+  );
   for (const hash of inlinedAssets.hashes.scriptHashes) scriptHashes.add(hash);
   for (const hash of inlinedAssets.hashes.styleHashes) styleHashes.add(hash);
   // The manifest data island is itself an inline `<script>` element (AC2), so
@@ -950,6 +975,13 @@ export function registerGridResource(server: McpServer, options: GridResourceOpt
 
   // Compatibility for older experimental hosts. The standard MCP Apps payload
   // is self-contained and does not reference these sibling resources.
+  //
+  // Deliberately NOT extended with a `viewer-browse.js` sibling (#253). A host
+  // fetching loose assets controls neither their order nor their completeness,
+  // and `viewer.js` boots synchronously at parse time — so a Browse sibling
+  // would only wire up if such a host happened to evaluate it FIRST, which no
+  // pre-Browse host knows to do. The core's `initBrowse` fallback is the real
+  // guarantee here: the grid renders regardless, and names the gap on stderr.
   registerAsset(server, "genie-viewer-js", VIEWER_JS_URI, "text/javascript", () =>
     deps.readAsset("viewer.js"),
   );

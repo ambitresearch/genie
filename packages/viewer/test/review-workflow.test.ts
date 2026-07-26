@@ -19,7 +19,15 @@ import { JSDOM } from "jsdom";
 import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const VIEWER_BROWSE_JS = readFileSync(resolve(HERE, "../static/viewer-browse.js"), "utf8");
 const VIEWER_JS = readFileSync(resolve(HERE, "../static/viewer.js"), "utf8");
+/**
+ * The two classic scripts `index.html` loads, concatenated in document order.
+ * Browse comes FIRST (#253): `viewer.js` auto-boots as it is parsed and its
+ * boot path calls into the Browse workbench. Each file is its own IIFE, so
+ * concatenating them is equivalent to two ordered `<script>` tags.
+ */
+const VIEWER_SCRIPTS = VIEWER_BROWSE_JS + "\n" + VIEWER_JS;
 const VIEWER_HTML = readFileSync(resolve(HERE, "../static/index.html"), "utf8");
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -32,7 +40,7 @@ function loadHooks(): Hooks {
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (dom.window as any).__genieViewerTestHooks = {};
-  dom.window.eval(VIEWER_JS);
+  dom.window.eval(VIEWER_SCRIPTS);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (dom.window as any).__genieViewerTestHooks as Hooks;
 }
@@ -44,7 +52,7 @@ function loadShell() {
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (dom.window as any).__genieViewerTestHooks = {};
-  dom.window.eval(VIEWER_JS);
+  dom.window.eval(VIEWER_SCRIPTS);
   return {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     hooks: (dom.window as any).__genieViewerTestHooks as Hooks,
@@ -2487,7 +2495,9 @@ describe("PR #250 third review round", () => {
   // Dropping the promise there defeats the whole awaitable-refresh fix while every behavioural
   // test still passes, so pin the wiring at the source level.
   it("returns the Browse refresh from every boot onApplied so confirmApply can await it", () => {
-    const callbacks = VIEWER_JS.match(/onApplied: function \(applied\) \{[\s\S]*?\n\s*\},/g);
+    // Scans BOTH scripts (#253): a site that migrates into `viewer-browse.js`
+    // must still be counted, not silently drop out of the guard.
+    const callbacks = VIEWER_SCRIPTS.match(/onApplied: function \(applied\) \{[\s\S]*?\n\s*\},/g);
     expect(callbacks).toBeTruthy();
     // The shell wrapper plus both boot sites. Every one of them has to hand the promise back.
     expect(callbacks!.length).toBe(3);
@@ -3087,10 +3097,17 @@ describe("CodeQL — iframe src taint (alerts 2, 4, 5, 7)", () => {
   });
 
   it("guards every iframe src assignment in the source", () => {
-    const source = VIEWER_JS;
+    // BOTH scripts (#253). `viewer-browse.js` owns one of these assignments;
+    // scanning only `viewer.js` would quietly stop guarding it and let a
+    // CodeQL `xss-through-dom` alert back in through the Browse workbench.
+    const source = VIEWER_SCRIPTS;
     // A raw assignment that isn't wrapped is exactly how alerts 2/4/5/7 got in. If you add a new
     // one, wrap it — don't relax this guard.
-    const assignments = source.match(/setAttribute\("src",\s*([^)]*)\)/g) ?? [];
+    // Match to end-of-line, NOT to the first ")" — these assignments are one per
+    // line, and a nested call like `core().safeFrameSrc(x)` closes a paren before
+    // the guard name appears. A first-paren regex would read that as unguarded
+    // (and, worse, would read `unsafe(core().x)` as guarded once the tail is cut).
+    const assignments = source.match(/setAttribute\("src",[^\n]*/g) ?? [];
     expect(assignments.length).toBeGreaterThan(0);
     for (const line of assignments) {
       expect(line).toMatch(/safeFrameSrc\(/);

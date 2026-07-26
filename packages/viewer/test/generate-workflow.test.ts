@@ -6,7 +6,15 @@ import { JSDOM } from "jsdom";
 import { describe, expect, it, vi } from "vitest";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const VIEWER_BROWSE_JS = readFileSync(resolve(HERE, "../static/viewer-browse.js"), "utf8");
 const VIEWER_JS = readFileSync(resolve(HERE, "../static/viewer.js"), "utf8");
+/**
+ * The two classic scripts `index.html` loads, concatenated in document order.
+ * Browse comes FIRST (#253): `viewer.js` auto-boots as it is parsed and its
+ * boot path calls into the Browse workbench. Each file is its own IIFE, so
+ * concatenating them is equivalent to two ordered `<script>` tags.
+ */
+const VIEWER_SCRIPTS = VIEWER_BROWSE_JS + "\n" + VIEWER_JS;
 const VIEWER_HTML = readFileSync(resolve(HERE, "../static/index.html"), "utf8");
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -19,7 +27,7 @@ function loadHooks(): { hooks: Hooks; window: JSDOM["window"] } {
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (dom.window as any).__genieViewerTestHooks = {};
-  dom.window.eval(VIEWER_JS);
+  dom.window.eval(VIEWER_SCRIPTS);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return { hooks: (dom.window as any).__genieViewerTestHooks, window: dom.window };
 }
@@ -31,7 +39,7 @@ function loadShell() {
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (dom.window as any).__genieViewerTestHooks = {};
-  dom.window.eval(VIEWER_JS);
+  dom.window.eval(VIEWER_SCRIPTS);
   return {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     hooks: (dom.window as any).__genieViewerTestHooks as Hooks,

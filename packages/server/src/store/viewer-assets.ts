@@ -33,10 +33,18 @@ export interface ViewerAsset {
 }
 
 /**
- * The exact three files a kit needs at its root for every RFC G-5 vehicle to
- * have something to render (AC1). Order matches the DRO-764 issue body.
+ * The exact files a kit needs at its root for every RFC G-5 vehicle to have
+ * something to render (AC1). Order matches the DRO-764 issue body, extended by
+ * #253 with `viewer-browse.js` — the Browse workbench, split out of `viewer.js`
+ * when that file reached the 256 KiB store read cap. It must be listed (and
+ * loaded) before `viewer.js`; see `viewer/static/index.html`.
  */
-const VIEWER_STATIC_FILES = ["index.html", "viewer.js", "viewer.css"] as const;
+const VIEWER_STATIC_FILES = [
+  "index.html",
+  "viewer-browse.js",
+  "viewer.js",
+  "viewer.css",
+] as const;
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const BUNDLED_STATIC_DIR = join(MODULE_DIR, "..", "ui", "viewer-static");

@@ -14,7 +14,7 @@
  * These are asserted on the file *bytes* (parsed with jsdom for the HTML) — no
  * server boot needed; M4-08's `cli.boot.test.ts` already covers the live serve.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -264,7 +264,36 @@ describe("scaffolded static assets stay servable", () => {
   // @ambitresearch/genie is not a dependency of the viewer package.
   const MAX_FILE_BYTES = 262_144;
 
-  for (const name of ["index.html", "viewer.js", "viewer.css"]) {
+  /**
+   * Headroom floor (#253). The cap alone is a cliff, not a budget: `viewer.js`
+   * sat at 261,788 B — 356 bytes clear — so any routine edit broke the build,
+   * and the file was only kept servable by relocating comment blocks out into
+   * `docs/developer/architecture.md`. Requiring real slack turns the silent
+   * cliff into an early, actionable signal.
+   *
+   * The cap itself is *not* negotiable here: it is a DesignSync contract
+   * constant (`server/src/tools/read_file.ts`) backing `read_file`'s
+   * "> 256 KiB → -32603" guarantee. The fix is smaller assets, never a
+   * looser cap.
+   */
+  const MAX_UTILISATION = 0.8;
+
+  // Derived from the directory, not a hardcoded list: a newly added static
+  // asset is scaffolded by `create_kit` the moment it lands in `static/`, so
+  // the guard has to discover it rather than wait to be told about it.
+  const assets = readdirSync(STATIC_DIR)
+    .filter((name) => /\.(html|js|css)$/.test(name))
+    .sort();
+
+  it("discovers the scaffolded assets from disk", () => {
+    // Guards the guard: a bad glob silently reduces every assertion below to a
+    // no-op, and a vacuous pass here would prove nothing.
+    expect(assets).toContain("index.html");
+    expect(assets).toContain("viewer.js");
+    expect(assets).toContain("viewer.css");
+  });
+
+  for (const name of assets) {
     it(`${name} is under the store's ${MAX_FILE_BYTES}-byte read cap`, () => {
       const bytes = Buffer.byteLength(readStatic(name), "utf8");
       expect(
@@ -272,8 +301,21 @@ describe("scaffolded static assets stay servable", () => {
         `static/${name} is ${bytes} bytes, over the ${MAX_FILE_BYTES}-byte ` +
           `store cap. create_kit scaffolds it into every new kit, so the kit ` +
           `would be created with a file the server cannot serve over ` +
-          `read_file. Reduce the file or raise MAX_FILE_BYTES deliberately.`,
+          `read_file. Reduce the file — the cap is a DesignSync contract.`,
       ).toBeLessThanOrEqual(MAX_FILE_BYTES);
+    });
+
+    it(`${name} keeps at least ${Math.round((1 - MAX_UTILISATION) * 100)}% headroom under the cap`, () => {
+      const bytes = Buffer.byteLength(readStatic(name), "utf8");
+      const budget = Math.floor(MAX_FILE_BYTES * MAX_UTILISATION);
+      expect(
+        bytes,
+        `static/${name} is ${bytes} bytes — ` +
+          `${((bytes / MAX_FILE_BYTES) * 100).toFixed(1)}% of the ` +
+          `${MAX_FILE_BYTES}-byte cap, over the ${MAX_UTILISATION * 100}% ` +
+          `budget (${budget} bytes). Split it into another scaffolded asset ` +
+          `rather than shaving comments to squeeze under the cliff (#253).`,
+      ).toBeLessThanOrEqual(budget);
     });
   }
 });
