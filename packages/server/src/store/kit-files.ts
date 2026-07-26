@@ -136,9 +136,11 @@ export function sriSha256(bytes: Buffer | string): string {
  * `join`-based containment check passes it — see the sibling sub-case below.
  *
  * The invariant, stated once: every accepted id is its own Win32 path-component
- * NORMALIZATION, so it names the directory it opens on every platform, and is
- * REPRESENTABLE, so the store fails it as a missing kit rather than as a bad
- * argument. It does not, and cannot cheaply, collapse filesystem
+ * NORMALIZATION, so on no platform does it resolve to a DIFFERENT kit than it
+ * spells, and is REPRESENTABLE, so the store fails it as a missing kit rather
+ * than as a bad argument. (Not that it opens a kit at all: a Win32 device name
+ * spells no kit, and stays deliberately in scope of the predicate for the reason
+ * given under "NOT in scope".) It does not, and cannot cheaply, collapse filesystem
  * name-EQUIVALENCE — see "NOT in scope" below for where that line falls and why.
  *
  * It returns false for (one bullet per guard in the body; the count is locked

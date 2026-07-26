@@ -318,7 +318,9 @@ it("🔒 no rationale promises an accepted kitId opens a kit directory", () => {
   const offenders = sources.filter((file) =>
     // Collapse docblock leaders first: the claim spans a line break at every
     // site, so a same-line pattern silently passes.
-    /spells?\s+the\s+directory\s+it\s+opens/iu.test(
+    // Both spellings: the authority itself said "names", so a `spells`-only
+    // pattern would have missed the one site that mattered most.
+    /(?:spells?|names?)\s+the\s+directory\s+it\s+opens/iu.test(
       readFileSync(file, "utf8").replace(/\n\s*\*?\s*/gu, " "),
     ),
   );
