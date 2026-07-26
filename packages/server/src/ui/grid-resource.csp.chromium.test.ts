@@ -60,7 +60,11 @@ import type { Browser, BrowserContext, ConsoleMessage, Dialog, Page } from "play
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Manifest, ManifestCard } from "../manifest/index.js";
-import { startCardAssetBroker, type CardAssetBroker } from "./card-asset-broker.js";
+import {
+  MAX_LIVE_DRAFTS,
+  startCardAssetBroker,
+  type CardAssetBroker,
+} from "./card-asset-broker.js";
 import {
   buildCspMeta,
   collectInlineCspHashes,
@@ -751,4 +755,69 @@ describe.skipIf(!chromiumAvailable)("M4-07 — cspMetaTag survives a real HTML p
       await close(server);
     }
   }, 30_000);
+});
+
+/**
+ * #257 — the expiry notice must actually RUN, not merely be well-formed.
+ *
+ * The Node-level broker tests prove the notice's CSP hash is SELF-CONSISTENT:
+ * they recompute sha256 over the script text extracted from the served body.
+ * That is a shape assertion of exactly the kind this file's module doc warns
+ * about — it proves "we shipped a matching pair of strings", never "a browser
+ * agreed to execute it". If the hash were computed over the wrong bytes in a
+ * way that stayed internally consistent (a normalisation, an encoding, a
+ * stray character folded into both sides), every Node test would still pass
+ * while Chromium silently refused the script and the evicted viewer went on
+ * rendering a blank frame as a success — the precise bug #257 exists to kill.
+ *
+ * So this probe runs the real path: a real broker, a genuinely evicted draft
+ * URL, a real cross-origin parent, and a real Chromium. It passes only if the
+ * inline script was admitted by its own `script-src 'sha256-…'` AND its
+ * postMessage crossed the origin boundary to the parent.
+ */
+describe.skipIf(!chromiumAvailable)("#257 — the eviction notice executes in a real browser", () => {
+  it("posts draft-expired to the parent when a genuinely evicted draft URL is framed", async () => {
+    const broker = await startCardAssetBroker({});
+    try {
+      // Register one draft, then push it out of the LRU exactly the way a
+      // second viewer would: MAX_LIVE_DRAFTS further registrations.
+      const victim = broker.registerDraft("<!doctype html><title>victim</title>");
+      for (let i = 0; i < MAX_LIVE_DRAFTS; i += 1) {
+        broker.registerDraft("<!doctype html><title>filler</title>");
+      }
+      const deadUrl = victim.url;
+
+      const parentDoc =
+        '<!doctype html><html><head><meta charset="utf-8"><title>p</title></head><body>' +
+        "<script>window.__got=[];addEventListener('message',function(e){window.__got.push(e.data);});</script>" +
+        // `renderPreview` ships `sandbox="allow-scripts"` with NO `allow-same-origin`, so the
+        // production frame runs at an OPAQUE origin. Framing without that attribute would
+        // prove the notice runs somewhere the viewer never puts it.
+        '<iframe id="f" sandbox="allow-scripts" src="' +
+        deadUrl +
+        '"></iframe></body></html>';
+
+      const server = serveOne(parentDoc);
+      const port = await listen(server);
+      const { context, page } = await newPage();
+      try {
+        await page.goto(`http://127.0.0.1:${port}/`);
+        await page.waitForFunction(
+          () => (window as unknown as { __got: unknown[] }).__got.length > 0,
+          undefined,
+          { timeout: 10_000 },
+        );
+        const got = await page.evaluate(
+          () => (window as unknown as { __got: unknown[] }).__got as Array<Record<string, unknown>>,
+        );
+        expect(got).toHaveLength(1);
+        expect(got[0]).toEqual({ genie: "draft-expired", url: deadUrl });
+      } finally {
+        await context.close();
+        await close(server);
+      }
+    } finally {
+      await broker.close();
+    }
+  }, 45_000);
 });

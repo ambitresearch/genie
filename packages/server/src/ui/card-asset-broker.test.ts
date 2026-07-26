@@ -735,8 +735,96 @@ describe("card asset draft serving", () => {
     const wrongHost = await fetchDraft(broker, draft, { authority: "example.test" });
 
     expect(unknown.status).toBe(404);
-    expect(unknown.body.byteLength).toBe(0);
+    // The missing-draft 404 now self-reports rather than returning an empty body.
+    expect(unknown.body.toString("utf8")).toContain("draft-expired");
     expect(wrongHost.status).toBe(421);
+  });
+
+  // #257 — the broker is process-global, but its `expired` notice only reaches the
+  // caller whose registration caused the eviction. A viewer whose draft another
+  // viewer evicted is never told; it keeps a `previewUrl` the broker now 404s, and a
+  // cross-origin iframe fires `load` (not `error`) for HTTP errors, so it renders a
+  // blank frame as a "success". The evicted document reporting its own URL is the
+  // only signal such a viewer can receive.
+  it("serves an unknown draft token a self-reporting expiry notice, not a blank 404", async () => {
+    const broker = await start({ env: {} });
+    const draft = broker.registerDraft("<p>anchor</p>");
+
+    const response = await fetchDraft(broker, draft, { path: `/d/${"0".repeat(32)}` });
+    const body = response.body.toString("utf8");
+    const policy = String(response.headers["content-security-policy"]);
+    const scriptSrc = policy.split("; ").find((directive) => directive.startsWith("script-src "));
+
+    expect(response.status).toBe(404);
+    expect(response.headers["content-type"]).toBe("text/html; charset=utf-8");
+    expect(response.headers["content-length"]).toBe(String(Buffer.byteLength(body, "utf8")));
+    expect(body).toContain("draft-expired");
+    expect(body).toContain("parent.postMessage");
+    expect(scriptSrc).toContain("sha256-");
+    expect(policy).toContain("default-src 'none'");
+    expect(policy).toContain("style-src 'none'");
+    expect(policy).not.toContain("'unsafe-inline'");
+  });
+
+  it("mints the notice CSP hash from the exact script text it serves so they cannot drift", async () => {
+    const broker = await start({ env: {} });
+    const draft = broker.registerDraft("<p>anchor</p>");
+
+    const response = await fetchDraft(broker, draft, { path: `/d/${"1".repeat(32)}` });
+    const body = response.body.toString("utf8");
+    const policy = String(response.headers["content-security-policy"]);
+    // Case-insensitive: HTML tag names are case-insensitive, so a `<SCRIPT>` the broker
+    // might one day emit must still be extracted rather than silently skipping the check.
+    const script = body.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
+    const scriptSrc = policy.split("; ").find((directive) => directive.startsWith("script-src "));
+
+    expect(script).toBeTypeOf("string");
+    // The served hash must cover the exact served script, or the browser rejects it.
+    expect(scriptSrc).toBe(`script-src ${cspHash(script!)}`);
+  });
+
+  it("answers an evicted draft's old URL with the expiry notice", async () => {
+    const broker = await start({ env: {} });
+    const first = broker.registerDraft("<p>first</p>");
+    // MAX_LIVE_DRAFTS more registrations (MAX_LIVE_DRAFTS + 1 total) evict the
+    // least-recently-used entry — `first`, which was never served.
+    for (let i = 0; i < MAX_LIVE_DRAFTS; i += 1) broker.registerDraft(`<p>fill ${i}</p>`);
+
+    const response = await fetchDraft(broker, first);
+    const body = response.body.toString("utf8");
+
+    expect(response.status).toBe(404);
+    expect(response.headers["content-type"]).toBe("text/html; charset=utf-8");
+    expect(body).toContain("draft-expired");
+  });
+
+  it("answers HEAD for a missing draft with the notice headers and no body", async () => {
+    const broker = await start({ env: {} });
+    const draft = broker.registerDraft("<p>anchor</p>");
+    const missing = `/d/${"2".repeat(32)}`;
+
+    const get = await fetchDraft(broker, draft, { path: missing });
+    const head = await fetchDraft(broker, draft, { method: "HEAD", path: missing });
+
+    expect(head.status).toBe(404);
+    expect(head.body.byteLength).toBe(0);
+    expect(head.headers["content-type"]).toBe("text/html; charset=utf-8");
+    expect(head.headers["content-length"]).toBe(get.headers["content-length"]);
+    expect(head.headers["content-security-policy"]).toBe(get.headers["content-security-policy"]);
+  });
+
+  it("leaves a still-live draft serving its own bytes when a sibling 404s", async () => {
+    const broker = await start({ env: {} });
+    const html = "<!doctype html><html><body><p>still here</p></body></html>";
+    const live = broker.registerDraft(html);
+
+    const miss = await fetchDraft(broker, live, { path: `/d/${"3".repeat(32)}` });
+    const response = await fetchDraft(broker, live);
+
+    expect(miss.status).toBe(404);
+    expect(response.status).toBe(200);
+    expect(response.body.toString("utf8")).toBe(html);
+    expect(response.headers["content-type"]).toBe("text/html; charset=utf-8");
   });
 
   it("bounds the draft store and keeps the most recently served draft alive", async () => {
