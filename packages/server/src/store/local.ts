@@ -497,11 +497,9 @@ export class LocalFsKitStore implements KitStore {
       // A POSIX directory name may contain `\`, which `isSafeKitId` — the
       // kit-id safety rule every kit verb that applies it gates on (`validate`
       // applies none, and `create_project` records `kitBindings[].kitId` without
-      // resolving it; see the docblock on `isSafeKitId` in kit-files.ts: it
-      // refuses escapes, ids that do not spell the kit they open, and ids no
-      // filesystem call accepts) —
-      // rejects. Reporting
-      // the directory name (below) would therefore publish an id that
+      // resolving it) — rejects. What that rule refuses is stated once, in its
+      // docblock in kit-files.ts; restating it here is how the two drift apart.
+      // Reporting the directory name (below) would therefore publish an id that
       // read_file/list_files/plan/write_files/bind_kit/conjure_screen all
       // refuse. Skipping it here keeps the promise `list_kits` makes: the ids
       // it hands out are valid input to the tools that consume them.

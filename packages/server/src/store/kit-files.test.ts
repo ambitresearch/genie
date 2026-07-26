@@ -189,22 +189,51 @@ describe("isSafeKitId", () => {
     // gloss attached to the rule that joins its items with `+` or `and`. The
     // terminating fix is never to re-count such a gloss — the count moves — but
     // to delete it and let the rendered rationale speak.
-    const srcRoot = path.join(import.meta.dirname, "..");
-    const files = trackedFiles(srcRoot)
-      .filter((rel) => rel.endsWith(".ts") && !rel.endsWith(".test.ts"))
-      .map((rel) => path.join(srcRoot, rel));
-    expect(files.length).toBeGreaterThan(20);
+    //
+    // The corpus is every tracked `.ts` file under the package, NOT just
+    // non-test sources under `src/`. That earlier scope was the recurring
+    // defect of this whole change: a lock that reaches one directory cannot
+    // police a claim restated in another, and `preview.test.ts` and
+    // `store-conformance.test.ts` both had to be corrected BY HAND in this PR
+    // for exactly that reason. A short gloss teaches the wrong contract from a
+    // test file just as readily as from a source one.
+    //
+    // Prose enumerations ("which refuses escapes AND ids that …") are
+    // deliberately NOT policed. That shape was measured across this package
+    // before being rejected: the tightest anchor that caught it still produced
+    // one false positive and missed a second real site whose clause straddled
+    // a `//` line break. A discovery lock is only worth having while it
+    // discriminates, and a lock that flags legitimate prose is neutered by the
+    // first person it obstructs. Those two sites are fixed by hand instead,
+    // and the terminating rule for them is written where they live: cite the
+    // authority, never re-render its list.
+    const serverRoot = path.join(import.meta.dirname, "..", "..");
+    // This file names the banned shape in order to explain it, so it would
+    // match itself. Excluding it is only safe while the detector is known to
+    // still fire, which the fixture below asserts in both directions.
+    const SELF = path.join("src", "store", "kit-files.test.ts");
+    const files = trackedFiles(serverRoot)
+      .filter((rel) => rel.endsWith(".ts") && rel !== SELF)
+      .map((rel) => path.join(serverRoot, rel));
+    expect(files.length).toBeGreaterThan(60);
 
-    const gloss = /isSafeKitId`?\s+rule\s+\(([^)]*)\)/gu;
-    const offenders: string[] = [];
-    for (const file of files) {
-      const text = readFileSync(file, "utf8");
-      for (const match of text.matchAll(gloss)) {
+    const shortGloss = (text: string): string[] => {
+      const found: string[] = [];
+      for (const match of text.matchAll(/isSafeKitId`?\s+rule\s+\(([^)]*)\)/gu)) {
         const items = match[1]!.split(/\s*(?:\+|,|\band\b)\s*/u).filter(Boolean);
         if (items.length > 1 && items.length < KIT_ID_SAFETY_CATEGORIES.length)
-          offenders.push(`${path.basename(file)}: (${match[1]!})`);
+          found.push(`(${match[1]!})`);
       }
-    }
+      return found;
+    };
+
+    expect(shortGloss("the `isSafeKitId` rule (containment + identity) holds")).toHaveLength(1);
+    expect(shortGloss("the `isSafeKitId` rule refuses three kinds of id")).toHaveLength(0);
+
+    const offenders: string[] = [];
+    for (const file of files)
+      for (const gloss of shortGloss(readFileSync(file, "utf8")))
+        offenders.push(`${path.basename(file)}: ${gloss}`);
     expect(offenders).toEqual([]);
   });
 
