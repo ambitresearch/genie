@@ -345,7 +345,7 @@ as `isSafeFrameSrc`: static analysis clears taint at a guard, not at a transform
 `previewUrl` is only **type**-checked at validation time. Whether a URL may aim the frame is decided
 by `isDraftPreviewSrc` at render time; rejecting a bad URL during validation would destroy an
 otherwise good draft and move the security decision off the sink CodeQL tracks. The server declares
-it `z.string().optional()`, and `applyDeterministicTweak` clears it by *assigning* `undefined`, so
+it `z.string().optional()`, and `applyDeterministicTweak` clears it by _assigning_ `undefined`, so
 the key survives `Object.keys` and the strict allowlist must tolerate it.
 
 A tweak inherits nothing: the broker published the **parent's** bytes, and a tweak rewrites them
@@ -357,7 +357,7 @@ The broker keeps only the newest 32 drafts, but the viewer's history is unbounde
 stays reselectable. An evicted document answers 404, and an iframe fires `load` — not `error` — for
 HTTP responses, so the frame would report a blank page as a successful render. Nothing client-side
 can detect this: the broker sets no CORS headers, so a preflight `HEAD` is impossible, and its
-origin is cross-origin, so `contentDocument` is unreadable. The broker therefore *names* what it
+origin is cross-origin, so `contentDocument` is unreadable. The broker therefore _names_ what it
 dropped in `expiredPreviewUrls`, and the viewer forgets those URLs so the draft falls back to the
 `srcdoc` bytes the store already holds.
 
