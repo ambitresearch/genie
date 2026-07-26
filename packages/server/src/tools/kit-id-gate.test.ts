@@ -370,10 +370,34 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     //   · also never gated: at `de353bcd` `kitBindingShape` was byte-identical
     //     and the whole file contained ZERO `isSafeKitId`/`KIT_ID_PATTERN`
     //     references, so again the widening neither opened nor closed it.
-    //   · not a traversal either. A binding's id flows to `conjure_screen`'s
-    //     `resolveKit` and from there into the GENERATION PROMPT text and the
-    //     manifest JSON. `conjure_screen.ts` imports no `node:path` at all —
-    //     every `join(` in it is `Array.prototype.join` building a message.
+    //   · not a traversal: `conjure_screen.ts` imports no `node:path` at all —
+    //     every `join(` in it is `Array.prototype.join` building a string.
+    //   · ⚠️ but NOT harmless either, and an earlier revision of this comment
+    //     said the id "reaches only prompt text and JSON". That was WRONG.
+    //     `resolveKit` returns `project.defaultKitId` / `sole.kitId` RAW from
+    //     the manifest, `provenanceNote` interpolates it unescaped, and
+    //     `renderScaffold` emits it into GENERATED ARTIFACT BYTES at three
+    //     sinks with two different break-out mechanisms:
+    //       - `conjure_screen.ts:501` (html) + `:518` (vue) — inside
+    //         `<!-- ... -->`, broken out of by `-->`;
+    //       - `conjure_screen.ts:531` (react) — inside a `//` line comment,
+    //         broken out of by a bare NEWLINE, which `isSafeKitId` permits.
+    //     Both `--><img src=x onerror=alert(1)><!--` and `"kit\nalert(1)"`
+    //     satisfy `isSafeKitId` and are refused by `KIT_ID_PATTERN` — i.e.
+    //     squarely in the band this PR's subject widens into.
+    //     The tell that it is an oversight rather than a trust decision:
+    //     `escapeHtml` is defined in that same file (`:545`) and applied to
+    //     `title` on the line ADJACENT to each sink (`:506`, `:509`, `:521`);
+    //     `note` is the one interpolation it skips.
+    //   · attribution, stated against my own interest: for `default`/`sole`
+    //     this is PRE-EXISTING — those ids come from bindings that were never
+    //     gated on either rule. For the `explicit` branch it is NOT: at
+    //     `de353bcd` that path was `.regex(KIT_ID_PATTERN)`, which bans `<`,
+    //     `>`, space and newline, so it refused these payloads BY ACCIDENT.
+    //     Widening to `isSafeKitId` was right but removed that incidental
+    //     cover without replacing it — the same shape as the Win32 trailing
+    //     `.`/space alias, and it needs the same remedy: escape at the sink,
+    //     not a narrower id rule. Source fix, tracked separately (below).
     //   · ⚠️ but note `conjure_screen`'s `kitStore` docblock asserts that
     //     "default/sole kits came from bindings already validated at bind
     //     time". That is TRUE for bindings created via `bind_kit` (which does
