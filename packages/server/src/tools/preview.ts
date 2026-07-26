@@ -177,6 +177,23 @@ export class KitNotFoundError extends Error {
  * `My_Kit.2` and `UPPER` included, resolves to a literal child of the root and
  * so is safe. Using the slug shape here made preview reject imported and
  * git-host kits that `list_kits` had just advertised as usable.
+ *
+ * ⚠️ NAME COLLISION — a second, unrelated `resolveKitDir` is exported from
+ * `src/ui/grid-resource.ts`. Both apply the SAME rule (`isSafeKitId`), so they
+ * always agree on *which* ids are safe; they differ in what happens when one
+ * is not:
+ *
+ *   |             | this function (preview)       | ui/grid-resource.ts        |
+ *   |-------------|-------------------------------|----------------------------|
+ *   | kitId param | `string`                      | `string \| undefined`      |
+ *   | returns     | `string`                      | `string \| null`           |
+ *   | unsafe id   | throws `InvalidKitIdError`    | returns `null`             |
+ *   | rationale   | surface a typed error         | degrade to an EMPTY grid   |
+ *   | caller      | `runPreview`                  | `ui://genie/grid` resource |
+ *
+ * `create_kit.test.ts` imports the OTHER one. Do not attribute this function's
+ * throwing behaviour to it — `kit-id-gate.test.ts` imports both under aliases
+ * for exactly this reason.
  */
 export function resolveKitDir(kitsRoot: string, kitId: string): string {
   if (!isSafeKitId(kitId)) {
