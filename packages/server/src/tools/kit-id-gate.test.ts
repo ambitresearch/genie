@@ -3,10 +3,15 @@
  *
  * genie has two kitId rules and they disagreed about which kits are usable:
  *
- *   - `isSafeKitId` (store/kit-files.ts) — the CONTAINMENT rule. Rejects `""`,
- *     `.`, `..`, and anything carrying a `/` or `\`. Everything else names a
- *     literal child of the kits root, so it cannot escape. This is the rule both
- *     store adapters (`store/local.ts`, `store/git-host.ts`) enforce.
+ *   - `isSafeKitId` (store/kit-files.ts) — the SAFETY rule, and the authority for
+ *     its own rejection set: read the predicate, do not re-derive it here. It is
+ *     the rule both store adapters (`store/local.ts`, `store/git-host.ts`) enforce.
+ *     It guarantees an accepted id NAMES EXACTLY ONE KIT — which is strictly
+ *     stronger than "stays under the kits root", and the distinction is load-
+ *     bearing: `victim.` never leaves the root, yet Windows trims the trailing
+ *     dot at the syscall boundary and opens the sibling kit `victim`. Framing
+ *     this as pure containment ("everything else is a literal child, so it
+ *     cannot escape") is what let three separate alias classes through review.
  *   - `KIT_ID_PATTERN` `/^[a-z0-9-]{3,64}$/` (tools/get_kit.ts) — a SHAPE rule
  *     describing ids MINTED by `create_kit`.
  *
@@ -48,8 +53,10 @@ import { InvalidKitIdError, resolveKitDir as resolvePreviewKitDir } from "./prev
 
 /**
  * Ids a `create_kit`-minted slug would never produce but an imported or
- * git-host kit legitimately can. Every one of these is containment-safe: it
- * resolves to a literal child of the kits root, never above it.
+ * git-host kit legitimately can. Every one of these is safe on BOTH counts
+ * `isSafeKitId` guarantees: each resolves to a literal child of the kits root
+ * (never above it) AND survives a Win32 trailing-[ .] trim unchanged, so it
+ * names exactly one kit on every platform.
  */
 const IMPORTED_KIT_IDS = ["My_Kit.2", "a", "UPPER"] as const;
 
@@ -289,14 +296,16 @@ describe("kitId gate — an imported kit is usable end to end", () => {
   });
 
   it("still refuses containment-unsafe kitIds everywhere", async () => {
-    // Relaxing the SHAPE rule must not relax the CONTAINMENT rule. `""`, `.`,
-    // `..` and any separator still escape the single-kit namespace and are
-    // still refused by every verb.
+    // Relaxing the SHAPE rule must not relax the SAFETY rule. `""`, `.`, `..`
+    // and any separator still escape the single-kit namespace and are still
+    // refused by every verb.
     //
-    // The trailing-space/dot entries are the Win32 aliases of those same three
-    // names: Windows trims trailing spaces and dots from a path component at
-    // the syscall boundary, so `".. "` reaches the filesystem as `".."`. The
-    // old per-tool slug gate banned spaces and dots and so refused them by
+    // The trailing-space/dot entries are Win32 aliases: Windows trims a trailing
+    // run of spaces and dots from a path component at the syscall boundary. Two
+    // sub-cases, and missing the second cost a review round — `".. "` reaches the
+    // filesystem as `".."` (escapes the root), while `"My_Kit.2."` reaches it as
+    // `"My_Kit.2"` (stays inside the root but names a DIFFERENT, live kit). The
+    // old per-tool slug gate banned spaces and dots and so refused both by
     // accident; this list makes the refusal deliberate and cross-gate.
     //
     // NOTE this loop is deliberately NON-discriminating: `assertKitLive` maps a
@@ -306,7 +315,20 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     // `" "` even before the Win32 aliases were closed. The discriminating locks
     // are `isSafeKitId`'s own unit tests (store/kit-files.test.ts) and the two
     // `resolveKitDir` tests below, which observe the containment decision itself.
-    for (const bad of ["", "..", ".", "../escape", "a/b", "a\\b", " ", ". ", ".. ", "..."]) {
+    for (const bad of [
+      "",
+      "..",
+      ".",
+      "../escape",
+      "a/b",
+      "a\\b",
+      " ",
+      ". ",
+      ".. ",
+      "...",
+      // Win32 alias of a kit that is LIVE in this suite — see the note above.
+      `${IMPORTED_KIT_ID}.`,
+    ]) {
       for (const name of [
         "mcp__genie__get_kit",
         "mcp__genie__preview",
@@ -391,7 +413,24 @@ describe("kitId gate — resolveKitDir containment", () => {
   });
 
   it("preview.resolveKitDir still rejects escapes", () => {
-    for (const bad of ["", ".", "..", "../escape", "a/b", "a\\b", " ", ". ", ".. ", "..."]) {
+    for (const bad of [
+      "",
+      ".",
+      "..",
+      "../escape",
+      "a/b",
+      "a\\b",
+      " ",
+      ". ",
+      ".. ",
+      "...",
+      // DISCRIMINATING: `My_Kit.2` is seeded and resolvable, so without the
+      // trailing-[ .] guard this resolver returns a live directory for an id
+      // that is not that kit's name. Unlike the loop in Part D, both
+      // resolvers observe the safety decision itself rather than a
+      // KitNotFoundError that a genuine miss would also produce.
+      `${IMPORTED_KIT_ID}.`,
+    ]) {
       expect(
         () => resolvePreviewKitDir("/kits", bad),
         `expected ${JSON.stringify(bad)} to be refused`,
@@ -406,7 +445,24 @@ describe("kitId gate — resolveKitDir containment", () => {
   });
 
   it("grid-resource.resolveKitDir still rejects escapes", () => {
-    for (const bad of ["", ".", "..", "../escape", "a/b", "a\\b", " ", ". ", ".. ", "..."]) {
+    for (const bad of [
+      "",
+      ".",
+      "..",
+      "../escape",
+      "a/b",
+      "a\\b",
+      " ",
+      ". ",
+      ".. ",
+      "...",
+      // DISCRIMINATING: `My_Kit.2` is seeded and resolvable, so without the
+      // trailing-[ .] guard this resolver returns a live directory for an id
+      // that is not that kit's name. Unlike the loop in Part D, both
+      // resolvers observe the safety decision itself rather than a
+      // KitNotFoundError that a genuine miss would also produce.
+      `${IMPORTED_KIT_ID}.`,
+    ]) {
       expect(resolveGridKitDir("/kits", bad), `expected ${JSON.stringify(bad)} null`).toBeNull();
     }
   });
