@@ -10,8 +10,9 @@
  *
  * That matters more since CVE-2025-27210 narrowed both manifests to
  * `>=22.19.0 <23 || >=24.4.1`. The supported set stopped being a floor and
- * acquired a hole covering all of 23.x and 24.0–24.4.0, both EOL lines that
- * never received the fix. Four prose claims across three files went on
+ * acquired a hole covering all of 23.x — an EOL line that reached end of life
+ * without ever receiving the fix — and 24.0–24.4.0, the vulnerable prefix of a
+ * still-supported line that was patched at 24.4.1. Four prose claims across three files went on
  * describing the old floor, telling a user on Node 23 that a documented command
  * was supported when it lands them on an unpatched runtime with only a warning
  * that never mentions the CVE. Hence a range, never a floor.

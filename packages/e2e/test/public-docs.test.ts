@@ -8,8 +8,10 @@ const ROOT = resolve(import.meta.dirname, "../../..");
 const readRootFile = (path: string): string => readFileSync(resolve(ROOT, path), "utf8");
 
 /**
- * The published Node range, read from the manifest that enforces it rather
- * than copied into this file. `docs-node-requirement.test.ts` locks every
+ * The published Node range, read from the manifest that declares it rather
+ * than copied into this file. The manifest declares support; it does not enforce
+ * it — without `engine-strict` npm warns and installs anyway, which is precisely
+ * why these docs have to be right. `docs-node-requirement.test.ts` locks every
  * prerequisite doc against the same source.
  */
 function publishedNodeRange(): string {
