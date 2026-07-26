@@ -173,13 +173,19 @@ export class KitNotFoundError extends Error {
  * is checked by {@link runPreview} before compilation so a missing kit cannot
  * create a phantom one through manifest persistence.
  *
- * The rule is `isSafeKitId`, NOT the create_kit slug shape. `isSafeKitId` is a
- * COMPLETE containment rule for `join(root, id)`: it refuses exactly the ids
- * that escape — `""` (resolves to the root itself), `.`/`..` (aliases for the
- * root and its parent), and anything carrying a separator. Every other id,
- * `My_Kit.2` and `UPPER` included, resolves to a literal child of the root and
- * so is safe. Using the slug shape here made preview reject imported and
+ * The rule is `isSafeKitId`, NOT the create_kit slug shape; see that predicate's
+ * docblock for the authoritative rejection set, deliberately not restated here.
+ * Non-slug ids like `My_Kit.2` and `UPPER` resolve to a literal child of the
+ * root and are safe — gating on the slug shape made preview reject imported and
  * git-host kits that `list_kits` had just advertised as usable.
+ *
+ * This comment used to claim `isSafeKitId` was a COMPLETE containment rule, on
+ * the grounds that every id it admits `join`s to a literal child of the root.
+ * That reasoning holds only on POSIX: Win32 trims trailing spaces and dots from
+ * a path component at the syscall boundary, so `".. "` — which Node's `path`
+ * reports as the contained `root\.. ` — reaches the filesystem as `root\..`.
+ * Containment cannot be judged from `join`'s output alone, which is precisely
+ * why the rule lives in ONE place instead of being restated per call site.
  *
  * ⚠️ NAME COLLISION — a second, unrelated `resolveKitDir` is exported from
  * `src/ui/grid-resource.ts`. Both apply the SAME rule (`isSafeKitId`), so they

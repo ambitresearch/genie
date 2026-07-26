@@ -224,9 +224,10 @@ export class KitNotFoundError extends Error {
  *      "as the first destructive consumer"; the write path had no equivalent.
  *      This MUST precede stage 2, because `LocalFsKitStore.getKit` resolves via
  *      `kitDir`, NOT `safeKitDir` — so `getKit("..")` would itself read above
- *      the kits root. Uses the store's centralised `isSafeKitId` (empty / "." /
- *      ".." / any separator) rather than delete_files' stricter local variant,
- *      which over-rejects ids that merely embed dots.
+ *      the kits root. Uses the store's centralised `isSafeKitId` — see its
+ *      docblock for the authoritative rejection set, deliberately not restated
+ *      here — rather than delete_files' stricter local variant, which
+ *      over-rejects ids that merely embed dots.
  *
  *   2. EXISTENCE. The catch is scoped to this single call on purpose: a broad
  *      try would mislabel a `NotFoundError` thrown from elsewhere as a missing
