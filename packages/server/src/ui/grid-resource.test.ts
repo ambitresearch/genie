@@ -38,6 +38,7 @@ import {
   escapeJsonForScript,
   filterManifest,
   inlineManifest,
+  inlineViewerAssets,
   normalizePreviewsBaseUrl,
   gridResourceMeta,
   registerGridResource,
@@ -289,6 +290,49 @@ describe("escapeJsonForScript", () => {
     // Still valid JSON round-trips to the same value (the escapes are inside
     // the JSON string literal, so JSON.parse restores the original text).
     expect(JSON.parse(esc)).toEqual({ name: "</script><script>alert(1)</script>" });
+  });
+});
+
+describe("inlineViewerAssets — script-tag matcher escapes regex metacharacters", () => {
+  const CSS = "body{}";
+  const HEAD = "<html><head><link rel=stylesheet href='./viewer.css'></head>";
+
+  // `inlineViewerAssets` builds a RegExp from each asset's `name` to find the
+  // `<script src="./name">` placeholder it must replace. Any regex
+  // metacharacter left unescaped in `name` changes what that pattern MEANS,
+  // so the matcher can silently bind the WRONG tag (or a maliciously crafted
+  // name could inject pattern syntax). CodeQL alert 13 flagged the original
+  // `.`-only escape for exactly this reason: it left `\` (and `+ * ? ( ) [ ]
+  // { } ^ $ |`) live.
+  it("does not let a `+` in the name quantify the preceding character", () => {
+    // `a+b.js` under a `.`-only escape compiles to `a+b\.js`, where `a+` means
+    // "one or more a" — so it MATCHES the unrelated `./ab.js` tag below and
+    // replaces the wrong script.
+    const html = `${HEAD}<body><script src="./ab.js"></script></body></html>`;
+    const { html: out } = inlineViewerAssets(html, [{ name: "a+b.js", source: "AAA" }], CSS);
+
+    // The unrelated tag must survive untouched...
+    expect(out).toContain('<script src="./ab.js"></script>');
+    // ...and the real source is appended instead (no placeholder matched).
+    expect(out).toContain("<script>AAA</script>");
+  });
+
+  it("treats a backslash in the name literally instead of as an escape", () => {
+    // A `.`-only escape leaves `\` live, so `a\.js` compiles to the pattern
+    // `a\.js` — which matches the literal `a.js`, a DIFFERENT filename.
+    const html = `${HEAD}<body><script src="./a.js"></script></body></html>`;
+    const { html: out } = inlineViewerAssets(html, [{ name: "a\\.js", source: "BBB" }], CSS);
+
+    expect(out).toContain('<script src="./a.js"></script>');
+    expect(out).toContain("<script>BBB</script>");
+  });
+
+  it("still replaces the placeholder for a well-formed asset name", () => {
+    const html = `${HEAD}<body><script src="./viewer.js"></script></body></html>`;
+    const { html: out } = inlineViewerAssets(html, [{ name: "viewer.js", source: "CCC" }], CSS);
+
+    expect(out).not.toContain('src="./viewer.js"');
+    expect(out).toContain("<script>CCC</script>");
   });
 });
 

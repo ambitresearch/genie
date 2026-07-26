@@ -368,6 +368,18 @@ function escapeRawTextEndTag(content: string, tagName: "script" | "style"): stri
 }
 
 /**
+ * Quote every ECMAScript RegExp metacharacter in `value` so it can be embedded
+ * in a pattern and matched as literal text.
+ *
+ * The character class must include `\` itself: escaping only `.` (or any
+ * proper subset) leaves the rest live, so the caller's pattern silently means
+ * something other than "this exact string".
+ */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Make the MCP App document self-contained. A host receives one raw HTML
  * resource; browser-relative `ui://` siblings are not additional resources/read
  * calls, so the exact viewer JS/CSS bytes must travel inside that document.
@@ -403,10 +415,14 @@ export function inlineViewerAssets(
   for (const { name, source } of viewerScripts) {
     const script = escapeRawTextEndTag(source, "script");
     const scriptTag = `<script>${script}</script>`;
-    // Escape the literal `.` in the filename so `viewer.js`'s pattern cannot
-    // also match `viewer-js`-style neighbours.
+    // The filename becomes part of a RegExp, so EVERY metacharacter must be
+    // escaped — not just `.`. Escaping only `.` leaves `\ + * ? ( ) [ ] { } ^
+    // $ |` live, which changes what the pattern MEANS: a name like `a+b.js`
+    // compiles to `a+b\.js`, where `a+` is "one or more a", so the matcher
+    // binds the unrelated `./ab.js` tag and replaces the wrong script
+    // (CodeQL: incomplete string escaping or encoding).
     const srcTag = new RegExp(
-      `<script\\b[^>]*src=["']\\./${name.replace(/[.]/g, "\\.")}["'][^>]*></script>`,
+      `<script\\b[^>]*src=["']\\./${escapeRegExp(name)}["'][^>]*></script>`,
       "i",
     );
     html = srcTag.test(html)
