@@ -1488,7 +1488,11 @@ const CARD_SOURCE = `${MARKER}\n<div class="card">Card from the kit</div>`;
 /** Wire Browse to a real product shell exactly the way the boot paths do. */
 function loadBrowseToReview(
   source: string | null,
-  opts: { onApplied?: (applied: Record<string, unknown>) => unknown } = {},
+  opts: {
+    onApplied?: (applied: Record<string, unknown>) => unknown;
+    /** One reply, or a queue consumed in order (the last one repeats). */
+    refineReply?: Record<string, unknown> | Record<string, unknown>[];
+  } = {},
   manifest: Record<string, unknown> = BROWSE_MANIFEST,
 ) {
   const shell = loadShell();
@@ -1500,6 +1504,11 @@ function loadBrowseToReview(
         return Promise.resolve(source === null ? {} : { content: source, encoding: "utf-8" });
       }
       if (name === "mcp__genie__list_kits") return Promise.resolve({ kits: [] });
+      if (name === "mcp__genie__refine" && opts.refineReply) {
+        const queued = opts.refineReply;
+        if (!Array.isArray(queued)) return Promise.resolve(queued);
+        return Promise.resolve(queued.length > 1 ? queued.shift()! : queued[0]);
+      }
       return Promise.resolve({});
     },
     destroy() {},
@@ -4114,6 +4123,160 @@ describe("unload guard survives in-app navigation (#256)", () => {
     expect(document.getElementById("draft-label")!.textContent).toBe(before);
     // Routing must not disarm the guard over drafts that are still unsaved.
     expect(fireUnload(window).defaultPrevented).toBe(true);
+  });
+});
+
+/**
+ * Copilot (round 9, PR #270) — the byte comparison was measured against a
+ * baseline that cannot be complete.
+ *
+ * `setRefineContext` seeds the review draft with the ONE file Browse read, but
+ * `refine` loads the component's WHOLE directory server-side and returns every
+ * file in it. So for an HTML+CSS component, even a refine that changes nothing
+ * hands back MORE files than the baseline holds — and a set comparison read
+ * that as divergence, arming the unload prompt and locking Refine over bytes
+ * that were already on disk.
+ *
+ * The missing files are exactly the ones the viewer cannot testify about, and
+ * the reply's `diff` is the signal that covers them: the server computes it
+ * against the complete on-disk set (`refine.ts` — `buildUnifiedDiff(originalFiles, files)`),
+ * so a path with no hunk is a path that is byte-identical on disk. Bytes stay
+ * the evidence wherever the parent actually holds the file; the diff speaks
+ * only for the files it does not.
+ */
+describe("unload guard tolerates an incomplete Browse baseline (#256)", () => {
+  const CARD_PATH = "components/surfaces/Card/Card.html";
+  const SIBLING = "components/surfaces/Card/Card.css";
+  const CARD_CSS = ".card{padding:8px;}";
+  // `refine` replies must satisfy `hasMatchingHtmlPreview`, so the component on
+  // disk is the canonical `<Name>/<Name>.html` here rather than the
+  // `preview.html` form the other Browse fixtures use.
+  const CANONICAL_MANIFEST = {
+    ...BROWSE_MANIFEST,
+    components: [{ ...BROWSE_MANIFEST.components[0], path: CARD_PATH }],
+  };
+
+  /** A refine reply carrying the component's COMPLETE file set, as the server sends it. */
+  function wholeComponent(overrides: Record<string, unknown> = {}) {
+    return {
+      componentName: "Card",
+      group: "surfaces",
+      files: [
+        fileEntry(CARD_PATH, CARD_SOURCE),
+        { ...fileEntry(SIBLING, CARD_CSS), mimeType: "text/css" },
+      ],
+      manifestEntry: { viewport: { width: 480, height: 320 } },
+      usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+      // Empty: nothing in the component differs from what is on disk.
+      diff: "",
+      ...overrides,
+    };
+  }
+
+  /** Submit one refine through the real UI and wait for the draft it produces. */
+  async function submitRefine(shell: ReturnType<typeof loadBrowseToReview>, draftNo: number) {
+    const input = shell.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "leave it exactly as it is";
+    input.dispatchEvent(new shell.window.Event("input", { bubbles: true }));
+    (shell.document.getElementById("refine-submit") as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(shell.document.getElementById("draft-label")!.textContent).toMatch(
+        new RegExp(`draft #${draftNo}`, "i"),
+      );
+    });
+  }
+
+  async function refinedFromBrowse(reply: Record<string, unknown> | Record<string, unknown>[]) {
+    const shell = loadBrowseToReview(CARD_SOURCE, { refineReply: reply }, CANONICAL_MANIFEST);
+    await refineFromBrowse(shell);
+    // Pin the premise: the Browse handoff really does seed a SINGLE-file
+    // baseline, so the reply really is wider than anything the viewer holds.
+    const seeded = shell.document.getElementById("draft-label")!.textContent;
+    expect(seeded).toMatch(/draft #1/i);
+    await submitRefine(shell, 2);
+    return shell;
+  }
+
+  it("stays silent when a wider refine reply changes nothing on disk", async () => {
+    const shell = await refinedFromBrowse(wholeComponent());
+    expect(fireUnload(shell.window).defaultPrevented).toBe(false);
+    // ...and the consequence users actually feel: Refine stays usable, because
+    // the bytes we hold are still the bytes `refine` would reload from disk.
+    const input = shell.document.getElementById("refine-input") as HTMLTextAreaElement;
+    input.value = "now change it";
+    input.dispatchEvent(new shell.window.Event("input", { bubbles: true }));
+    expect((shell.document.getElementById("refine-submit") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("still prompts when the sibling it alone carries actually changed", async () => {
+    // The one file the parent never held is the one the model rewrote. Nothing
+    // in the viewer's own bytes can see that, so the diff has to be believed.
+    const shell = await refinedFromBrowse(
+      wholeComponent({
+        files: [
+          fileEntry(CARD_PATH, CARD_SOURCE),
+          { ...fileEntry(SIBLING, ".card{padding:24px;}"), mimeType: "text/css" },
+        ],
+        diff: [
+          `diff --git a/${SIBLING} b/${SIBLING}`,
+          `--- a/${SIBLING}`,
+          `+++ b/${SIBLING}`,
+          "@@ -1 +1 @@",
+          `-${CARD_CSS}`,
+          "+.card{padding:24px;}",
+          "",
+        ].join("\n"),
+      }),
+    );
+    expect(fireUnload(shell.window).defaultPrevented).toBe(true);
+  });
+
+  it("still prompts when the reply introduces a file that is not on disk yet", async () => {
+    // A brand-new sibling is unsaved work by definition. The server marks it
+    // with a `--- /dev/null` add hunk, which is the only thing separating it
+    // from a file that was merely absent from the Browse baseline.
+    const shell = await refinedFromBrowse(
+      wholeComponent({
+        diff: [
+          `diff --git a/${SIBLING} b/${SIBLING}`,
+          "--- /dev/null",
+          `+++ b/${SIBLING}`,
+          "@@ -0,0 +1 @@",
+          `+${CARD_CSS}`,
+          "",
+        ].join("\n"),
+      }),
+    );
+    expect(fireUnload(shell.window).defaultPrevented).toBe(true);
+  });
+
+  it("still prompts when a later reply drops a file the parent had gained", async () => {
+    // Once the first reply widens the baseline to the whole component, that wider
+    // set is what the NEXT derive is judged against. A reply that silently omits
+    // one of those files is proposing its removal without saying so in the diff,
+    // and dropping a file is unsaved work exactly like rewriting one.
+    const shell = await refinedFromBrowse([
+      wholeComponent(),
+      wholeComponent({ files: [fileEntry(CARD_PATH, CARD_SOURCE)] }),
+    ]);
+    await submitRefine(shell, 3);
+    expect(fireUnload(shell.window).defaultPrevented).toBe(true);
+  });
+
+  it("still prompts when the file the parent DOES hold diverges", async () => {
+    // The diff is not a licence to stop reading bytes: where the parent holds
+    // the file, its bytes remain the evidence even if the diff says nothing.
+    const shell = await refinedFromBrowse(
+      wholeComponent({
+        files: [
+          fileEntry(CARD_PATH, `${MARKER}\n<div class="card">Rewritten</div>`),
+          { ...fileEntry(SIBLING, CARD_CSS), mimeType: "text/css" },
+        ],
+      }),
+    );
+    expect(fireUnload(shell.window).defaultPrevented).toBe(true);
   });
 });
 

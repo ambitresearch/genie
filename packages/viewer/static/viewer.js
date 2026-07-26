@@ -1672,10 +1672,9 @@
   }
 
   /**
-   * Paths this draft would DELETE if applied. Split out of `buildPlanArgs` (Copilot round 6,
-   * PR #270) so the unload guard and the apply plan read deletions the same way — if they ever
-   * disagreed, the guard would either nag about a deletion that never happens or wave through one
-   * that does.
+   * Paths this draft would DELETE if applied. Shared with `buildPlanArgs` so the unload guard and
+   * the apply plan read deletions identically; if they disagreed the guard would either nag about
+   * a deletion that never happens or wave through one that does.
    * @param {Record<string, unknown>} result a draft's result payload
    * @returns {string[]} paths the plan would delete
    */
@@ -1684,8 +1683,7 @@
     var writes = (payload.files || []).map(function (file) {
       return file.path;
     });
-    // Copilot (round 4) — the plan IS the authorisation boundary, so it never names a path outside
-    // this component's folder even though the checklist already blocks such a draft.
+    // The plan IS the authorisation boundary, so it never names a path outside this folder.
     var prefix = componentPrefix(payload);
     // A path the draft also rewrites is not a deletion, so it never enters `deletes`.
     return deletedPathsFromDiff(payload.diff).filter(function (path) {
@@ -2271,9 +2269,7 @@
         var info = meta[draft.id] || {};
         // id is `fileIndex:offset:--property`.
         var property = controlId.split(":").slice(2).join(":");
-        // A tweak that MOVED bytes is not in the kit, even if its parent was applied. Inheriting
-        // `componentInKit` there would re-enable Refine, which reads the kit's older source and
-        // silently discards the tweak. A no-op tweak moved nothing, so it keeps the parent's flag.
+        // Inherits `componentInKit` only when the tweak moved nothing; see architecture.md.
         addDraft(
           next,
           derivedInfo(info, derivesNothing(draft.result.files, next)),
@@ -2283,53 +2279,58 @@
     }
 
     /**
-     * Byte equality over two draft file sets. Copilot (round 4, PR #270) — the model's own `diff`
-     * is a CLAIM (`refineOutputShape.diff` is a bare string and an empty one is accepted), so the
-     * bytes it returned are the only evidence. `buildUnifiedDiff` is exact only for the single
-     * declaration `applyDeterministicTweak` rewrites, so it cannot stand in as a comparator.
-     *
-     * Copilot (round 6) — keyed by path, not by position. A tweak rewrites entries in place, but a
-     * refine's files come straight back from the model and, while `hasUniquePaths` keeps those
-     * paths distinct, nothing constrains their ORDER. Comparing by index read a reordered but byte-identical reply as divergent, which prompted on
-     * unload and locked Refine for a derive that had moved nothing.
-     * @param {Array<Record<string, string>>} a parent draft files
+     * Whether a derived file set moved anything, judged against a baseline that may be INCOMPLETE.
+     * See `docs/developer/architecture.md` — "Judging a derive against an incomplete baseline".
+     * @param {Array<Record<string, string>>} a parent draft files (the baseline)
      * @param {Array<Record<string, string>>} b derived draft files
-     * @returns {boolean} true when both hold the same paths, each exactly once, with the same
-     *   content, mimeType and encoding, in any order
+     * @param {unknown} diff the derive's server-computed unified diff, if it has one
+     * @returns {boolean} true when every baseline path is still present and byte-identical, and
+     *   every path the baseline never held is absent from `diff`
      */
-    function sameFileSet(a, b) {
-      if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    function sameFileSet(a, b, diff) {
+      if (!Array.isArray(a) || !Array.isArray(b)) return false;
       var byPath = Object.create(null);
+      // Keying is safe because `hasReviewableCore` runs `hasUniquePaths` on every payload before it
+      // can become a draft, so neither side can repeat a path and mask a vanished sibling.
       for (var i = 0; i < a.length; i += 1) byPath[a[i].path] = a[i];
+      var seen = 0;
+      var touched = null;
       for (var j = 0; j < b.length; j += 1) {
-        // Keying is safe because `hasReviewableCore` runs `hasUniquePaths` on every payload before
-        // it can become a draft, so neither side can repeat a path and mask a vanished sibling.
         var mate = byPath[b[j].path];
-        if (
-          !mate ||
-          mate.content !== b[j].content ||
-          mate.mimeType !== b[j].mimeType ||
-          mate.encoding !== b[j].encoding
-        ) {
-          return false;
+        if (mate) {
+          if (
+            mate.content !== b[j].content ||
+            mate.mimeType !== b[j].mimeType ||
+            mate.encoding !== b[j].encoding
+          ) {
+            return false;
+          }
+          seen += 1;
+          continue;
         }
+        // A path the baseline never held. Only the diff can testify about it, and it is a
+        // SERVER-computed diff, so silence there means "byte-identical on disk".
+        if (typeof diff !== "string") return false;
+        if (touched === null) touched = parseUnifiedDiff(diff).files;
+        if (touched.indexOf(b[j].path) !== -1) return false;
       }
-      return true;
+      // Every baseline path must still be accounted for; one that vanished is a real divergence.
+      return seen === a.length;
     }
 
     /**
-     * Whether a derived draft holds exactly what is already on disk. Copilot (round 6, PR #270) —
-     * equal bytes are not enough. A refine also returns a `diff`, and `buildPlanArgs` turns every
-     * `+++ /dev/null` hunk in it into a real `deletes` entry, so a reply can hand back unchanged
-     * files while still proposing a deletion. That deletion is unsaved work like any other and has
-     * to keep the guard armed; weighing files alone let it ride along unguarded.
+     * Whether a derived draft holds only what is already on disk. Equal bytes are not enough: a
+     * reply can hand back unchanged files while its `diff` still proposes a deletion, which
+     * `buildPlanArgs` turns into a real `deletes` entry. See architecture.md, same section.
      * @param {Array<Record<string, string>>} parentFiles files of the draft derived from
      * @param {Record<string, unknown>} result the derived draft's result payload
      * @returns {boolean} true when the derive neither changed bytes nor proposed a deletion
      */
     function derivesNothing(parentFiles, result) {
+      var payload = result || {};
       return (
-        sameFileSet(parentFiles, (result || {}).files) && effectiveDeletes(result).length === 0
+        sameFileSet(parentFiles, payload.files, payload.diff) &&
+        effectiveDeletes(result).length === 0
       );
     }
 
@@ -2375,32 +2376,17 @@
       announce(value ? "Checked off " + id + "." : "Cleared " + id + ".");
     }
 
-    // #256 -- the review store lives in memory only, so a reload or tab close
-    // destroys work irrecoverably. Warn about exactly the drafts that would be
-    // lost, and nothing else:
-    //
-    //   - Only drafts whose bytes are NOT already in the kit. A Browse -> Review
-    //     handoff seeds draft #1 from the kit's own file, and derivedInfo() clears
-    //     componentInKit the moment a refine or tweak makes the bytes diverge, so
-    //     this flag is exactly "would reloading lose these bytes?".
-    //   - Only drafts newer than the applied one. Apply stamps a SPECIFIC draft;
-    //     it and everything before it are either on disk now or alternatives the
-    //     user rejected by choosing another, and losing a rejected alternative is
-    //     the outcome they already picked. A LATER draft can still exist while
-    //     appliedDraftId is set: tweak and refine are frozen while `inFlight`
-    //     (`input.disabled = inFlight`) but go live again the moment apply
-    //     settles, and the switcher carries no flight guard, so the applied
-    //     draft need not be the newest one. Either way that later draft is new
-    //     work nothing has written.
+    // #256 -- the review store lives in memory only, so a reload or tab close destroys work
+    // irrecoverably. Warn about exactly the drafts that would be lost, and nothing else. Each
+    // condition below removes a false positive; see `docs/developer/architecture.md`, "Unapplied
+    // drafts are lost on reload", for why every one of them is load-bearing.
 
-    // Every current engine substitutes its own wording, so this text is for the
-    // handful that still render the page's string. It only has to be non-empty.
+    // For the handful of engines that still render the page's string; only has to be non-empty.
     var UNSAVED_DRAFT_PROMPT = "This draft has not been applied to your kit yet.";
     var unloadGuard = null;
 
     function hasUnsavedDrafts(state) {
-      // 0 keeps every draft in scope, which is also the right fallback if the
-      // applied id somehow names no draft: the guard fails safe by prompting.
+      // 0 keeps every draft in scope, the right fallback if the applied id names no draft.
       var applied = 0;
       if (state.appliedDraftId) {
         for (var a = 0; a < state.drafts.length; a += 1) {
@@ -2409,24 +2395,19 @@
       }
       for (var i = 0; i < state.drafts.length; i += 1) {
         var info = meta[state.drafts[i].id];
-        // Copilot round 5 (PR #270) — checked BEFORE the `applied` floor, and deliberately.
-        // A stranded delete means the writes landed but a removal did not, so the draft's bytes
-        // ARE in the kit and it sorts below a newer applied draft. The unfinished half is a
-        // file still on disk that nothing else records: applying a later draft does not remove
-        // it, and a reload forgets which path it was.
+        // Checked BEFORE the `applied` floor, deliberately: a stranded delete leaves the bytes
+        // in the kit, so the draft sorts below a newer applied one, yet the file it meant to
+        // remove is still on disk and nothing else records which path that was.
         if (info && info.pendingDeletes && info.pendingDeletes.length) return true;
-        // <= rather than <: apply also sets componentInKit on the draft it stamped,
-        // so skipping it here is redundant today. The two are written independently
-        // though, so keep the floor inclusive rather than lean on that coupling.
+        // <= rather than <: redundant today, but the two are written independently.
         if (state.drafts[i].number <= applied) continue;
         if (!info || !info.componentInKit) return true;
       }
       return false;
     }
 
-    // Standalone only. Embedded, the user is closing the HOST rather than us, so
-    // the prompt is both hostile and widely suppressed -- teardown UX is the
-    // host's call. Same parent-identity test initMcpApp uses to pick its tier.
+    // Standalone only; embedded, the user is closing the HOST. Same parent-identity test
+    // `initMcpApp` uses to pick its tier.
     function syncUnloadGuard(state) {
       var win = doc.defaultView;
       var standalone = Boolean(
@@ -2437,9 +2418,7 @@
       if (wanted) {
         unloadGuard = function (event) {
           event.preventDefault();
-          // Legacy engines read the assigned value rather than preventDefault(),
-          // and HTML shows the dialog when defaultPrevented OR returnValue !== ""
-          // -- so an empty string would contribute nothing on that channel.
+          // Legacy channel: HTML shows the dialog on defaultPrevented OR returnValue !== "".
           event.returnValue = UNSAVED_DRAFT_PROMPT;
         };
         win.addEventListener("beforeunload", unloadGuard);
@@ -2616,10 +2595,7 @@
       }
       if (el.refineStatus) el.refineStatus.textContent = "";
       if (el.refineInput) el.refineInput.value = "";
-      // Copilot #4 (PR #250) — `refine` persists nothing, so a refined draft whose bytes MOVED is
-      // NOT in the kit; marking it so re-opens Refine, whose next call reloads the older on-disk
-      // bytes and loses this work. Copilot (round 4, PR #270) — a refine that handed back the
-      // parent's exact bytes lost nothing, so it inherits the parent's flag instead.
+      // Inherits `componentInKit` only when the refine moved nothing; see architecture.md.
       addDraft(
         outcome.result,
         derivedInfo(info, derivesNothing(draft.result.files, outcome.result)),
@@ -2808,24 +2784,15 @@
       var stuckDeletes = outcome.stuckDeletes || [];
       if (!stuckDeletes.length) store.markApplied(outcome.writtenPaths, draft.id);
       meta[draft.id].componentInKit = true;
-      // Copilot round 5 — `componentInKit` is about the BYTES, which did land, and Refine reads
-      // it; forcing it false here would disable Refine with a reason ("apply this draft first")
-      // that is simply untrue. The stranded removal is separate unfinished work, so record it
-      // separately. Assigned unconditionally so a clean retry clears it.
+      // Recorded separately from `componentInKit`, and assigned unconditionally so a clean retry
+      // clears it. See architecture.md, "Partial apply is not an apply".
       meta[draft.id].pendingDeletes = stuckDeletes.slice();
-      // Copilot round 7 — the PATHS, not a boolean. A boolean latches: nothing could clear it,
-      // so a later draft deleting that very path left the tab prompting forever about a file
-      // already gone, steering the user into retrying draft 1 and overwriting the newer bytes.
-      // Reconcile EVERY draft (this one included, so a partial retry narrows its own set).
-      // Copilot round 8 — a WRITE resolves the path too. Deletes are confined to the component
-      // folder, so only the same component can resurrect one; when it does, the user has newer
-      // bytes there and retrying the old draft would destroy them. Leaving the entry latched
-      // prompts forever about a removal that must no longer happen.
+      // A write resolves a stranded path as surely as a delete does, and every draft is
+      // reconciled, this one included so a partial retry narrows its own set.
       var resolved = (outcome.resolvedDeletes || outcome.deletedPaths || []).concat(
         outcome.writtenPaths || [],
       );
-      // Copilot round 8 — scoped to the applying KIT. The same relative path in another kit is a
-      // different file; clearing it there disarms the only guard over work still on disk.
+      // Scoped to the applying KIT: the same relative path elsewhere is a different file.
       var appliedKit = (meta[draft.id] && meta[draft.id].kitId) || "";
       if (resolved.length) {
         for (var draftId in meta) {
@@ -2838,11 +2805,7 @@
           });
         }
       }
-      // The bytes are on disk NOW, but `syncUnloadGuard` otherwise only runs from `render()` --
-      // which sits below the `await` on the host's kit refresh. A slow or hung refresh would
-      // leave the tab prompting about work that is already saved. Re-sync eagerly; this cannot
-      // over-disarm, because `hasUnsavedDrafts` reads the whole store and still returns true
-      // while any draft newer than the applied one holds bytes the kit does not have.
+      // Eagerly, rather than waiting for the `render()` below the host's kit refresh.
       syncUnloadGuard(store.state());
 
       // AC13 — report success only once the refresh lands. AC14 — a failed refresh is a STALE VIEW,
