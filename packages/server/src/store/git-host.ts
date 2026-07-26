@@ -710,12 +710,27 @@ export class GitHostKitStore implements KitStore {
   }
 
   async createKit(name: string, kitId?: string): Promise<KitMeta> {
-    const repoName = kitId ?? name;
-    // Gate the RESOLVED repo name, before the POST. `createKit(name, kitId?)` is
-    // public, so the id is caller-supplied, and every other `isSafeKitId`
-    // rejection on this adapter (`listFiles`, `readFile`) already reports
-    // NotFoundError — the create path must match or the contract is two
-    // contracts, one per adapter.
+    // Fall back to an adapter-assigned id, NOT to `name`. `isSafeKitId`
+    // constrains the ID; it says nothing about the display name, which is free
+    // text (`create_kit` mints `buildKitId(name)` precisely because names are
+    // not ids). `?? name` silently promoted the display name into the gated
+    // position below, so `createKit("unsafe\\display")` threw here while
+    // LocalFs — whose `kitId ?? randomUUID()` fallback predates this PR and is
+    // untouched by it — accepted it: a store divergence introduced by the very
+    // guard added to remove one.
+    // Matching LocalFs's fallback exactly makes that parity structural rather
+    // than something a future reader has to re-derive. A UUID always satisfies
+    // `isSafeKitId`, including under #277's stricter trailing-dot/space rule.
+    // Pinned by `🔒 createKit accepts any display name when no kitId is
+    // supplied` in `test/store-conformance.test.ts`, in the SHARED contract.
+    const repoName = kitId ?? randomUUID();
+    // Gate the RESOLVED repo name, before the POST. `createKit(name, kitId?)`
+    // is public, so a SUPPLIED id is caller-supplied and unvalidated, and every
+    // other `isSafeKitId` rejection on this adapter (`listFiles`, `readFile`)
+    // already reports NotFoundError — the create path must match or the
+    // contract is two contracts, one per adapter. With the fallback above the
+    // check is reachable only for a supplied id, which is exactly the
+    // precondition `store/interface.ts` documents.
     //
     // This must run BEFORE the repo is created, not merely somewhere on the
     // path. Without it the POST succeeded and `writeKitMeta` then 404'd on

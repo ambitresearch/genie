@@ -335,6 +335,18 @@ export interface KitStore {
    * caller-supplied, so "the tool layer always mints it" is not an invariant of
    * the CONTRACT, only of one caller.
    *
+   * When `kitId` is OMITTED the adapter assigns one, and that assigned id must
+   * itself satisfy `isSafeKitId` — the constraint is on the id either way, so
+   * an adapter cannot launder an unsafe value in through its own fallback.
+   * `name` is NOT constrained: it is free display text, preserved verbatim on
+   * the returned `KitMeta`. Do NOT derive the assigned id from `name` — doing
+   * so puts a display string under a path-safety predicate and makes the call
+   * reject names that are perfectly legal (the same category error #276
+   * removed from the tools that gated input on `KIT_ID_PATTERN`, a description
+   * of `buildKitId`'s OUTPUT). Both adapters use `randomUUID()`; deriving a
+   * slug instead would also re-diverge them. Pinned on every adapter by
+   * `test/store-conformance.test.ts`.
+   *
    * Throws KitAlreadyExistsError if a kit with the same ID already exists.
    */
   createKit(name: string, kitId?: string): Promise<KitMeta>;

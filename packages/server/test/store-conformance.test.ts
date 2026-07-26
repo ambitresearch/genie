@@ -192,6 +192,37 @@ function kitStoreContract(
       });
     });
 
+    it("🔒 createKit accepts any display name when no kitId is supplied, on every adapter", async () => {
+      // The exact COMPLEMENT of the guard above, and the reason it needs its own
+      // test: `isSafeKitId` constrains the ID, never the NAME. `name` is free
+      // text a human typed — `create_kit` mints `buildKitId(name)` precisely
+      // BECAUSE display names are not ids. Gating a display name on a
+      // path-safety predicate is the same category error #276 removed from the
+      // eight tools that used `KIT_ID_PATTERN` (a description of one minter's
+      // OUTPUT) as an INPUT gate.
+      //
+      // This went wrong here in exactly that way: the GitHost guard was applied
+      // to `kitId ?? name`, so omitting the id silently promoted the display
+      // name into the gated position. LocalFs assigns `randomUUID()` on that
+      // branch and so was unaffected — the divergence this whole PR exists to
+      // remove, reintroduced by the fix for it. Hence a SHARED test: on one
+      // adapter it would have gone green and read as coverage.
+      const kit = await store.createKit("unsafe\\display");
+
+      // Guard the guard, three ways. "Did not throw" is far too weak: an adapter
+      // could satisfy it while minting an id nothing downstream accepts, which
+      // is the failure this PR opened with (`listKits` publishing ids every
+      // kit-taking tool rejects). So also require the assigned id to clear the
+      // same predicate the supplied-id path enforces, and require the kit to be
+      // genuinely retrievable by it.
+      expect(isSafeKitId(kit.id)).toBe(true);
+      const fetched = await store.getKit(kit.id);
+      expect(fetched.id).toBe(kit.id);
+      // The name survives verbatim — sanitising the id must not corrupt the
+      // display string, which is the whole point of their being separate fields.
+      expect(fetched.name).toBe("unsafe\\display");
+    });
+
     it("listKits returns created kits", async () => {
       await store.createKit("kit-a");
       await store.createKit("kit-b");
