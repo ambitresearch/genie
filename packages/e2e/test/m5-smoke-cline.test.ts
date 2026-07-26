@@ -653,26 +653,68 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-async function readClineHubLockPids(base: string): Promise<number[]> {
+interface ReadClineHubLockPidsOptions {
+  readLockFile?: (path: string) => Promise<string> | string;
+}
+
+interface ClineHubLockScan {
+  pids: number[];
+  /**
+   * Lock files that exist but could not be interpreted. Their owner is unknown
+   * rather than absent, so teardown must not conclude "no daemon" from them.
+   */
+  indeterminate: string[];
+}
+
+/**
+ * Reads the pid recorded in the hub's discovery lock.
+ *
+ * Only `ENOENT`/`ENOTDIR` mean "no daemon". Every other failure -- `EACCES`, a
+ * transient I/O error, a half-written file -- leaves the owner unknown, and
+ * that distinction is load-bearing: on Windows the process scan is disabled, so
+ * a swallowed read error would empty the candidate set and let teardown delete
+ * under a live hub. That is the #259 race with extra steps.
+ */
+async function readClineHubLockPids(
+  base: string,
+  options: ReadClineHubLockPidsOptions = {},
+): Promise<ClineHubLockScan> {
+  const { readLockFile = (path: string) => readFile(path, "utf8") } = options;
   const pids: number[] = [];
+  const indeterminate: string[] = [];
+
   for (const relative of CLINE_HUB_LOCK_PATHS) {
     let raw: string;
     try {
-      raw = await readFile(join(base, relative), "utf8");
-    } catch {
+      raw = String(await readLockFile(join(base, relative)));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        indeterminate.push(`lock ${relative} (${code ?? "read failed"})`);
+      }
       continue;
     }
+
+    let parsed: { pid?: unknown };
     try {
-      const { pid } = JSON.parse(raw) as { pid?: unknown };
-      if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) {
-        pids.push(pid);
-      }
+      parsed = JSON.parse(raw) as { pid?: unknown };
     } catch {
-      // A half-written lock file is not worth failing teardown over; the
-      // process scan below is the backstop.
+      // The file exists, so a daemon wrote it; a torn read means its owner is
+      // indeterminate, not absent.
+      indeterminate.push(`lock ${relative} (malformed)`);
+      continue;
+    }
+
+    const { pid } = parsed;
+    if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) {
+      pids.push(pid);
+    } else if ("pid" in parsed) {
+      // A pid field that is present but unusable is a claim we cannot check.
+      indeterminate.push(`lock ${relative} (unusable pid)`);
     }
   }
-  return pids;
+
+  return { pids, indeterminate };
 }
 
 interface ScanClineHubDaemonPidsOptions {
@@ -803,11 +845,16 @@ interface VerifyClineHubDaemonPidOptions {
 }
 
 interface StopClineHubDaemonsOptions
-  extends TerminateAndWaitOptions, ScanClineHubDaemonPidsOptions, VerifyClineHubDaemonPidOptions {}
+  extends
+    TerminateAndWaitOptions,
+    ScanClineHubDaemonPidsOptions,
+    VerifyClineHubDaemonPidOptions,
+    ReadClineHubLockPidsOptions {}
 
 interface ClineHubDaemonSweep {
   outcomes: Map<number, ClineHubTermination>;
-  unverified: number[];
+  /** Human-readable candidates that could not be proven dead or foreign. */
+  unverified: string[];
 }
 
 /**
@@ -876,23 +923,23 @@ async function stopClineHubDaemons(
   options: StopClineHubDaemonsOptions = {},
 ): Promise<ClineHubDaemonSweep> {
   const outcomes = new Map<number, ClineHubTermination>();
-  const unverified: number[] = [];
+  const lock = await readClineHubLockPids(base, options);
+  // A lock we could not read may still name a live daemon, so it blocks
+  // deletion just as an unverifiable pid does.
+  const unverified: string[] = [...lock.indeterminate];
 
   // Both the `ps` table and the discovery lock are snapshots, and this sweep
   // awaits each daemon's exit before moving to the next, so either source can
   // go stale mid-loop and hand us a recycled pid. Every candidate therefore
   // re-proves itself immediately before it is signalled, however it was found.
-  const candidates = new Set([
-    ...(await scanClineHubDaemonPids(base, options)),
-    ...(await readClineHubLockPids(base)),
-  ]);
+  const candidates = new Set([...(await scanClineHubDaemonPids(base, options)), ...lock.pids]);
 
   for (const pid of candidates) {
     const verdict = await verifyClineHubDaemonPid(pid, base, options);
     if (verdict === "match") {
       outcomes.set(pid, await terminateAndWait(pid, options));
     } else if (verdict === "unknown") {
-      unverified.push(pid);
+      unverified.push(`pid ${pid}`);
     }
   }
 
@@ -930,9 +977,9 @@ async function removeClineSmokeTree(
 
   if (unverified.length > 0) {
     warn(
-      `[m5-smoke-cline] leaving ${base} on disk: could not confirm discovery-lock pid(s) ` +
-        `${unverified.join(", ")} still belong to this run, so they were not signalled; ` +
-        `deleting under a possibly live hub daemon is the #259 race.`,
+      `[m5-smoke-cline] leaving ${base} on disk: could not rule out a live hub daemon ` +
+        `(${unverified.join(", ")}), so nothing was signalled; deleting under a possibly ` +
+        `live hub daemon is the #259 race.`,
     );
     return;
   }
@@ -979,6 +1026,48 @@ it("keeps the temp tree when a hub daemon cannot be reaped", async () => {
   }
 });
 
+it("leaves the temp tree when the discovery lock cannot be read", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  // A file inside the tree makes a successful delete unambiguous.
+  await writeFile(join(base, "marker.txt"), "x", "utf8");
+  const warnings: string[] = [];
+
+  try {
+    await removeClineSmokeTree(base, {
+      // Windows is the case that matters: the process scan is disabled there,
+      // so a swallowed read error leaves no backstop at all and teardown would
+      // delete under a hub daemon it never managed to look for.
+      platform: "win32",
+      readLockFile: () => {
+        throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+      },
+      warn: (message) => warnings.push(message),
+    });
+
+    await expect(stat(base)).resolves.toBeTruthy();
+    expect(warnings.join("\n")).toContain("EACCES");
+  } finally {
+    await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+it("still deletes when the discovery lock is simply absent", async () => {
+  const base = await mkdtemp(join(tmpdir(), "genie-cline-cli-smoke-"));
+  await writeFile(join(base, "marker.txt"), "x", "utf8");
+  const warnings: string[] = [];
+
+  // No lock was ever written, so both probe paths raise ENOENT. That is a
+  // definitive "no daemon" rather than an inspection failure, and treating it
+  // as unverified would leak every temp tree this suite creates.
+  await removeClineSmokeTree(base, {
+    platform: "win32",
+    warn: (message) => warnings.push(message),
+  });
+
+  await expect(stat(base)).rejects.toThrow();
+  expect(warnings).toEqual([]);
+});
+
 it.skipIf(process.platform === "win32")(
   "never signals a lock pid that an unrelated process has recycled",
   async () => {
@@ -997,7 +1086,7 @@ it.skipIf(process.platform === "win32")(
 
     try {
       // Pins the test: teardown really does have a lock pid to consider.
-      expect(await readClineHubLockPids(base)).toEqual([1]);
+      expect(await readClineHubLockPids(base)).toEqual({ pids: [1], indeterminate: [] });
 
       await removeClineSmokeTree(base, {
         escalateAfterMs: 10,
@@ -1250,7 +1339,7 @@ it.skipIf(process.platform === "win32")(
       // The daemon publishes its pid to the discovery lock once it is writing.
       const deadline = Date.now() + 10_000;
       while (daemonPid === undefined && Date.now() < deadline) {
-        [daemonPid] = await readClineHubLockPids(base);
+        [daemonPid] = (await readClineHubLockPids(base)).pids;
         if (daemonPid === undefined) {
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
