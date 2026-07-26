@@ -31,7 +31,7 @@
  *     hook mutates the local source immediately after step 2's commit lands,
  *     proving the anchor still reflects the ORIGINAL committed bytes.
  */
-import { mkdir, mkdtemp, readFile, rm as realRm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm as realRm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -110,6 +110,7 @@ vi.mock("node:fs/promises", async () => {
 // node:fs/promises (same ordering as write_files.rollback.test.ts).
 const { createPlan } = await import("../plans/index.js");
 const { LocalFsKitStore } = await import("../store/local.js");
+const { seedKit } = await import("../../test/helpers/seed-kit.js");
 const { readAnchor } = await import("./anchor.js");
 const { sriSha256 } = await import("../store/kit-files.js");
 const { runAtomicSync, detectResumeStep, RECOMPILE_SENTINEL_BODY, RECOMPILE_SENTINEL_PATH } =
@@ -127,8 +128,9 @@ async function setup(): Promise<Harness> {
   const home = await mkdtemp(join(tmpdir(), "genie-orch-fault-home-"));
   process.env.GENIE_HOME = home;
   const kitsRoot = join(home, "kits");
-  const projectRoot = join(kitsRoot, KIT_ID);
-  await mkdir(projectRoot, { recursive: true });
+  // #269: `write_files` re-checks the kit immediately before committing, so the
+  // destination must be a kit `getKit` resolves, not just a directory.
+  const projectRoot = await seedKit(kitsRoot, KIT_ID);
   const store = new LocalFsKitStore(kitsRoot);
   return { home, projectRoot, deps: { store, projectRoot } };
 }
