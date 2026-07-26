@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ProjectStore } from "./create_project.js";
 import { LocalFsKitStore } from "../store/local.js";
 import { BIND_KIT_TOOL_NAME, bindKit, registerBindKitTool } from "./bind_kit.js";
+import { KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 
 async function tempProjectsRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), "genie-bind-kit-projects-"));
@@ -50,21 +51,71 @@ afterEach(async () => {
 });
 
 describe("bindKit (standalone function)", () => {
+  // Every case asserts the ZodError's issue shape instead of a bare
+  // `.rejects.toThrow()`. A bare throw cannot evidence this test's own
+  // "before touching the store" name, because a `ProjectStoreError` throws too
+  // — and no `projectId` below exists in the fixture, so a call that reached
+  // the store would still throw and still pass, for an unrelated reason.
+  // `ProjectStoreError` carries no `issues`, so this discriminates the two.
   it("rejects malformed args before touching the store", async () => {
     const { store } = await fixture();
-    await expect(bindKit(store, { projectId: "AB", kitId: "commerce-kit" })).rejects.toThrow();
-    await expect(bindKit(store, { projectId: "valid-id" })).rejects.toThrow();
-    await expect(
-      bindKit(store, { projectId: "valid-id", kitId: "commerce-kit", extra: true }),
-    ).rejects.toThrow();
-    // Was `kitId: "AB"`, which only failed because `kitId` was gated on the
-    // `create_kit`-minted slug shape. `kitId` is an opaque, adapter-assigned
-    // string, so "AB" is now a legitimate id and would reach the store — this
-    // case would then pass for the wrong reason (ERR_KIT_NOT_FOUND, not a
-    // schema rejection), defeating the "before touching the store" claim in the
-    // test name. `".."` is rejected by the containment rule itself.
-    await expect(bindKit(store, { projectId: "valid-id", kitId: ".." })).rejects.toThrow();
-    await expect(bindKit(store, { projectId: "valid-id", kitId: "a/b" })).rejects.toThrow();
+
+    const cases: { args: unknown; issues: { code: string; path: string }[] }[] = [
+      {
+        args: { projectId: "AB", kitId: "commerce-kit" },
+        issues: [{ code: "invalid_format", path: "projectId" }],
+      },
+      { args: { projectId: "valid-id" }, issues: [{ code: "invalid_type", path: "kitId" }] },
+      {
+        args: { projectId: "valid-id", kitId: "commerce-kit", extra: true },
+        issues: [{ code: "unrecognized_keys", path: "" }],
+      },
+    ];
+
+    for (const { args, issues } of cases) {
+      const rejection = (await bindKit(store, args).catch((error: unknown) => error)) as {
+        issues?: { code: string; path: PropertyKey[] }[];
+      };
+
+      expect(
+        rejection.issues?.map((issue) => ({ code: issue.code, path: issue.path.join(".") })),
+        `expected a schema rejection for ${JSON.stringify(args)}, got ${String(rejection)}`,
+      ).toEqual(issues);
+    }
+  });
+
+  // Split out of the block above so the kitId gate has its own named case with
+  // a concrete assertion, rather than one of five bare `.rejects.toThrow()`s.
+  //
+  // A bare throw cannot evidence this file's own "before touching the store"
+  // claim, because a store error throws too. Two guards make the claim real:
+  //   1. `projectId` is a REAL project and `kitId` would otherwise be bindable,
+  //      so a well-formed id here RESOLVES — a rejection can only be the gate.
+  //   2. Asserting the ZodError's issue paths proves `kitId` was the rejected
+  //      field. A `ProjectStoreError` carries no `issues`, so a rejection that
+  //      reached the store fails this loudly instead of passing silently.
+  //
+  // Previously `kitId: "AB"`. That id only failed while `kitId` was gated on
+  // the `create_kit`-minted slug shape; `kitId` is an opaque, adapter-assigned
+  // string, so "AB" is now legitimate and would reach the store — passing for
+  // the wrong reason. (Concretely: `ProjectStore.bindKit` checks the project
+  // before the kit, so with the old absent `projectId: "valid-id"` it would
+  // have surfaced as ERR_PROJECT_NOT_FOUND — a bare throw, and green.) The ids
+  // below are rejected by the containment rule (`isSafeKitId`) itself, which is
+  // the rule the store actually enforces.
+  it("rejects a malformed kitId at the schema, before touching the store", async () => {
+    const { store, projectId } = await fixture();
+
+    for (const kitId of ["", ".", "..", "a/b", "a\\b"]) {
+      const rejection = (await bindKit(store, { projectId, kitId }).catch(
+        (error: unknown) => error,
+      )) as { issues?: { path: PropertyKey[] }[] };
+
+      expect(
+        rejection.issues?.map((issue) => issue.path.join(".")),
+        `expected a kitId schema rejection for ${JSON.stringify(kitId)}, got ${String(rejection)}`,
+      ).toEqual(["kitId"]);
+    }
   });
 
   it("AC2 — accepts { projectId, kitId, default? } and returns the updated ProjectSummary", async () => {
@@ -233,15 +284,60 @@ describe("mcp__genie__bind_kit", () => {
     expect(text).toContain("ERR_PROJECT_READONLY");
   });
 
-  it("rejects malformed projectId/kitId at the MCP protocol layer", async () => {
+  // Renamed from "rejects malformed projectId/kitId at the MCP protocol
+  // layer". The name claimed both fields, but the body passes the seeded,
+  // valid `commerce-kit` — so it only ever evidenced the projectId gate, and
+  // no protocol-layer kitId coverage existed anywhere in this file. The name
+  // answered "is malformed kitId covered here?" with a false yes. Its missing
+  // sibling is the test below.
+  it("rejects a malformed projectId at the MCP protocol layer", async () => {
     const { store } = await fixture();
     const client = await connectClient(store);
 
     const result = await client.callTool({
       name: BIND_KIT_TOOL_NAME,
+      // `kitId` is deliberately VALID here: this case isolates the projectId gate.
       arguments: { projectId: "AB", kitId: "commerce-kit" },
     });
 
-    expect(result.isError).toBe(true);
+    expect(result.isError, `expected a protocol-layer rejection: ${JSON.stringify(result)}`).toBe(
+      true,
+    );
+    // The SDK reports only the failing issue — it does not echo the arguments —
+    // so naming one field and excluding the other proves which gate fired.
+    const text = JSON.stringify(result);
+    expect(text).toContain("projectId");
+    expect(text).not.toContain("kitId");
+  });
+
+  // The sibling the test above has always named but never had.
+  //
+  // `registerBindKitTool` declares `inputSchema`, so the MCP SDK validates
+  // arguments BEFORE the handler runs — the tool's own `catch` never sees a
+  // schema failure and there is no `ERR_*` code to match on. The reason check
+  // is therefore on the message: `projectId` is real and `commerce-kit` would
+  // bind, so only `kitId` can fail, and naming that field proves which gate
+  // fired rather than merely that something did.
+  it("rejects a malformed kitId at the MCP protocol layer", async () => {
+    const { store, projectId } = await fixture();
+    const client = await connectClient(store);
+
+    const result = await client.callTool({
+      name: BIND_KIT_TOOL_NAME,
+      arguments: { projectId, kitId: ".." },
+    });
+
+    expect(result.isError, `expected a protocol-layer rejection: ${JSON.stringify(result)}`).toBe(
+      true,
+    );
+    // Asserted against the shared constant rather than a copied literal, so the
+    // test tracks the single source of truth for the gate. If `kitId` were ever
+    // re-gated on a different predicate, this fails instead of silently
+    // continuing to pass on the word "kitId" alone.
+    const text = JSON.stringify(result);
+    expect(text).toContain(KIT_ID_SAFETY_MESSAGE);
+    expect(text).not.toContain("projectId");
+    // ...and the rejection had no side effect: nothing was bound.
+    await expect(store.getProject(projectId)).resolves.toMatchObject({ kitBindings: [] });
   });
 });
