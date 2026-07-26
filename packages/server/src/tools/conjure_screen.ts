@@ -488,10 +488,11 @@ export class LocalScaffoldScreenGenerator implements ScreenGenerator {
   }
 }
 
-/** A one-line, honest provenance note for the scaffold header comment.
+/** An honest provenance note for the scaffold header comment.
  *
- * ⚠️ Returns RAW, UNESCAPED text. It interpolates `kitId`, which arrives here
- * from TWO sources with DIFFERENT validation. Rely on neither:
+ * ⚠️ Returns RAW, UNESCAPED, POSSIBLY MULTI-LINE text. It interpolates `kitId`,
+ * which arrives here from TWO sources with DIFFERENT validation. Rely on
+ * neither:
  *
  *   - `via: "explicit"` — the caller's own `kitId`, gated by this tool's
  *     `.refine(isSafeKitId, …)`. That is a *containment* rule about path
@@ -509,7 +510,13 @@ export class LocalScaffoldScreenGenerator implements ScreenGenerator {
  * Every sink must therefore escape this UNCONDITIONALLY — never conditioned on
  * provenance — with the helper appropriate to the comment syntax it embeds
  * into: `escapeHtmlComment` for `<!-- … -->`, `escapeLineComment` for `//`.
- * Adding a fourth sink without one re-opens the injection. */
+ * Adding a fourth sink without one re-opens the injection.
+ *
+ * That includes flattening. This function does NOT call `toSingleLine`, so its
+ * return value spans multiple lines whenever `kitId` does — and `isSafeKitId`
+ * permits `\n`, so that is reachable on the *gated* arm too, not only the
+ * ungated ones. Both helpers flatten, so "one line" is a property of the SINK,
+ * never of this function; it is deliberately not claimed above. */
 function provenanceNote(request: ScreenGenerationRequest): string {
   const parts: string[] = [];
   if (request.kit) {
