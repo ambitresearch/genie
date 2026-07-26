@@ -94,9 +94,19 @@ genuinely new carries an add hunk (`--- /dev/null`), which is what separates uns
 sibling that was merely absent from the baseline. A derive with no diff at all cannot vouch for an
 unknown path, so it counts as divergent.
 
-Bytes therefore remain the evidence wherever the baseline actually holds the file — a rewritten
-file is caught by its bytes even if the diff says nothing about it — and a baseline path that
-disappears from the derive is divergence, since the deletion of a sibling is real proposed work.
+Bytes remain evidence wherever the baseline does hold the file, but they are not sufficient there,
+because the baseline is a **snapshot** — for a Browse handoff, one taken before Refine ran — while
+the diff is measured against the file on disk at refine time. While the two agree, equal bytes and
+a silent diff say the same thing, since the server omits any path whose before and after match.
+Once the kit moves under the snapshot they part company: the snapshot holds `A`, disk holds `B`,
+the model returns `A`, and the server honestly reports `B` becoming `A` while a byte check against
+the snapshot sees no change at all. Reading that as "derives nothing" keeps `componentInKit`,
+disarms the prompt, and lets a reload drop a draft that still had the current kit to overwrite. So
+a path the diff names has diverged whether or not the baseline held it, and only a derive whose
+diff names nothing at all is a true no-op. A `+++ /dev/null` hunk for a path the derive also
+rewrites is still not a deletion — the plan writes that path rather than removing it — but it is a
+hunk, so it is drift like any other. A baseline path that disappears from the derive is divergence
+too, since the deletion of a sibling is real proposed work.
 The narrower alternative, having the handoff rebuild a full baseline with `list_files` plus a
 `read_file` per sibling, was rejected: it spends N+1 extra round trips re-reading precisely what
 `refine` returns for free moments later, and adds a partial-read failure mode of its own.
@@ -104,8 +114,8 @@ The narrower alternative, having the handoff rebuild a full baseline with `list_
 `componentInKit` is inherited by a derive only when that derive moved nothing. Neither `refine`
 nor a deterministic tweak persists anything, so a derived draft whose bytes moved is not in the kit;
 marking it as though it were would re-open Refine, whose next call reloads the older on-disk bytes
-and silently discards the work. A derive that handed back the parent's exact bytes lost nothing, so
-it keeps the parent's flag.
+and silently discards the work. A derive that handed back the parent's exact bytes _and_ named no
+path in its diff lost nothing, so it keeps the parent's flag.
 
 ### Partial apply is not an apply
 

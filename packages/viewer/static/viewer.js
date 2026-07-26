@@ -2273,13 +2273,14 @@
     }
 
     /**
-     * Whether a derived file set moved anything, judged against a baseline that may be INCOMPLETE.
-     * See `docs/developer/architecture.md` — "Judging a derive against an incomplete baseline".
+     * Whether a derived file set moved anything, judged against a baseline that may be INCOMPLETE
+     * and may also be STALE. See `docs/developer/architecture.md` — "Judging a derive against an
+     * incomplete baseline".
      * @param {Array<Record<string, string>>} a parent draft files (the baseline)
      * @param {Array<Record<string, string>>} b derived draft files
      * @param {unknown} diff the derive's server-computed unified diff, if it has one
      * @returns {boolean} true when every baseline path is still present and byte-identical, and
-     *   every path the baseline never held is absent from `diff`
+     *   `diff` names no path at all
      */
     function sameFileSet(a, b, diff) {
       if (!Array.isArray(a) || !Array.isArray(b)) return false;
@@ -2300,10 +2301,12 @@
             return false;
           }
           seen += 1;
-          continue;
         }
-        // A path the baseline never held. Only the diff can testify about it, and it is a
-        // SERVER-computed diff, so silence there means "byte-identical on disk".
+        // Matching the BASELINE is not matching DISK, so bytes alone cannot finish the job: the
+        // baseline is a snapshot, while the diff is measured against disk at refine time. Once the
+        // kit moves under the snapshot they part company (snapshot `A`, disk `B`, reply `A`: equal
+        // bytes here, an honest `B -> A` there), and only the diff testifies about disk. So a path
+        // the diff names has diverged, mate or not. Same architecture.md section.
         if (typeof diff !== "string") return false;
         if (touched === null) touched = parseUnifiedDiff(diff).files;
         if (touched.indexOf(b[j].path) !== -1) return false;

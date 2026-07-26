@@ -3965,17 +3965,18 @@ describe("unload guard ignores byte-identical derivatives (#256)", () => {
     fileEntry("components/actions/Button/Button.html", `${MARKER}\n<button>Different</button>\n`),
   ];
 
-  async function refined(files?: ReturnType<typeof fileEntry>[]) {
+  async function refined(overrides: Record<string, unknown> = {}) {
     const wired = loadWired({
       ...HAPPY_REPLIES,
-      // `refineResult()` reuses `conjureResult()`'s files verbatim but hardcodes
-      // a diff describing an added `<span>`, so the fixture is deliberately
-      // self-inconsistent: byte-identical files, non-empty `diff`. The real
-      // server never emits that pair -- `refine.ts` builds the diff FROM the file
-      // sets it is about to return, so a truthful reply's diff and bytes always
-      // agree. Forcing them apart is what proves the guard compares bytes rather
-      // than short-circuiting on a non-empty `diff`.
-      mcp__genie__refine: refineResult(files ? { files } : {}),
+      // Two baselines are in play and they can disagree. The viewer's is the parent
+      // draft's files -- for a Browse handoff, a SNAPSHOT of the kit taken before
+      // Refine ran. The server's is `listFiles` + `readFile` at refine time, i.e. the
+      // file on disk NOW (`refine.ts:378`, `:416`, `:710-712`). While they agree,
+      // byte-identity and diff-silence agree too, because `buildUnifiedDiff` skips
+      // any path whose before === after (`refine.ts:566`). Once the kit moves under
+      // the snapshot they part company, and only the diff testifies about disk -- so
+      // every case below states its `diff` explicitly instead of inheriting one.
+      mcp__genie__refine: refineResult(overrides),
     });
     // Refine is gated on `componentInKit`, so its parent is always in the kit.
     wired.controller.addDraft(conjureResult(), {
@@ -3995,12 +3996,32 @@ describe("unload guard ignores byte-identical derivatives (#256)", () => {
   }
 
   it("stays silent when a refine hands back the kit's own bytes", async () => {
-    const wired = await refined();
+    // The honest no-op: the model returned what was already on disk, so the server's
+    // diff is empty. Nothing is lost on reload and prompting would be a lie.
+    const wired = await refined({ diff: "" });
     expect(fireUnload(wired.window).defaultPrevented).toBe(false);
   });
 
   it("still prompts the moment those bytes actually diverge", async () => {
-    const wired = await refined(CHANGED);
+    const wired = await refined({ files: CHANGED });
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
+  });
+
+  /*
+   * Copilot (round 12, PR #270). `refineResult()`'s stock fixture is precisely this
+   * shape -- files byte-identical to the parent, `diff` naming that very path -- and
+   * it is not self-contradictory after all. It is what a TRUTHFUL server emits once
+   * the kit moves after the Browse snapshot was taken: snapshot holds `A`, disk holds
+   * `B`, the model returns `A`, so the server honestly reports `B -> A`. Judged on
+   * bytes alone that reads "derives nothing", keeps `componentInKit`, disarms the
+   * guard, and a reload silently drops a draft that would have rewritten the kit.
+   * The snapshot cannot testify about disk; only the diff can.
+   */
+  it("prompts when the diff names a path the snapshot only appears to match", async () => {
+    const wired = await refined();
+    const drafts = wired.controller.state().drafts;
+    // Pin the fixture: the bytes really are identical, so only the diff can decide.
+    expect(drafts[1].result.files).toEqual(drafts[0].result.files);
     expect(fireUnload(wired.window).defaultPrevented).toBe(true);
   });
 
@@ -4092,7 +4113,10 @@ describe("unload guard weighs the whole derive, not file positions (#256)", () =
   }
 
   it("stays silent when identical bytes come back in a different order", async () => {
-    const wired = await refinedFrom([HTML, CSS], { files: [CSS, HTML] });
+    // A reorder is a genuine no-op, so a real server reports no hunks at all: it skips
+    // every path whose before === after. State that explicitly, or the stock fixture's
+    // diff would smuggle in a disk-drift signal and decide the test for another reason.
+    const wired = await refinedFrom([HTML, CSS], { files: [CSS, HTML], diff: "" });
     // Pin the fixture: these must really be the same set, only reordered.
     const [parent, derived] = wired.controller.state().drafts;
     expect([...derived.result.files].map((f: { path: string }) => f.path).sort()).toEqual(
@@ -4133,21 +4157,32 @@ describe("unload guard weighs the whole derive, not file positions (#256)", () =
     expect(fireUnload(wired.window).defaultPrevented).toBe(true);
   });
 
-  it("ignores a /dev/null hunk for a path the derive also rewrites", async () => {
-    // The apply plan drops such a path from `deletes` (it is a rewrite, not a
-    // deletion), so the guard must drop it too or every refine prompts forever.
-    const wired = await refinedFrom([HTML], {
-      files: [HTML],
-      diff: [
-        "diff --git a/components/actions/Button/Button.html b/components/actions/Button/Button.html",
-        "--- a/components/actions/Button/Button.html",
-        "+++ /dev/null",
-        "@@ -1 +0,0 @@",
-        "-gone",
-        "",
-      ].join("\n"),
-    });
-    expect(fireUnload(wired.window).defaultPrevented).toBe(false);
+  it("treats a /dev/null hunk for a path the derive rewrites as drift, not a deletion", async () => {
+    // Two separate claims live here, and after round 12 only one of them is the guard's.
+    //
+    // `effectiveDeletes` must NOT count this path: the draft rewrites it, so the plan
+    // writes it rather than deleting it. That is still true, and it is decided by
+    // `buildPlanArgs`, so assert it there.
+    const { buildPlanArgs } = loadHooks();
+    const diff = [
+      "diff --git a/components/actions/Button/Button.html b/components/actions/Button/Button.html",
+      "--- a/components/actions/Button/Button.html",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-gone",
+      "",
+    ].join("\n");
+    const planArgs = buildPlanArgs({ result: refineResult({ files: [HTML], diff }) }, "my-kit");
+    expect(planArgs.deletes).toBeUndefined();
+    expect(planArgs.writes).toEqual(["components/actions/Button/Button.html"]);
+
+    // The guard, though, must arm. A hunk exists for this path, and the server only
+    // emits one when disk differs from what it is returning -- yet the bytes coming
+    // back equal our baseline. So the baseline is stale, and a reload would drop a
+    // draft that still has the current kit to overwrite.
+    const wired = await refinedFrom([HTML], { files: [HTML], diff });
+    expect(wired.controller.state().drafts[1].result.files).toEqual([HTML]);
+    expect(fireUnload(wired.window).defaultPrevented).toBe(true);
   });
 });
 
