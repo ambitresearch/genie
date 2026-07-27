@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.3.2](https://github.com/ambitresearch/genie/compare/server-v1.3.1...server-v1.3.2) (2026-07-27)
+
+
+### Bug Fixes
+
+* **broker:** report cross-viewer draft eviction to the victim ([#257](https://github.com/ambitresearch/genie/issues/257)) ([de353bc](https://github.com/ambitresearch/genie/commit/de353bcde5eea066ff572da8fa8fcfe453a56769))
+* **cli:** make local npm setup actionable ([#232](https://github.com/ambitresearch/genie/issues/232)) ([e677b78](https://github.com/ambitresearch/genie/commit/e677b78ba22fb83b9d95e13aed97463e02c5004e))
+* **conjure_screen:** escape the provenance note at all three comment sinks ([#288](https://github.com/ambitresearch/genie/issues/288)) ([49cb0a9](https://github.com/ambitresearch/genie/commit/49cb0a9804c2188d41e4376c8bf8c0b3d87ad061))
+* **delete_files:** gate the plan kitId on the shared isSafeKitId rule ([053a0db](https://github.com/ambitresearch/genie/commit/053a0db4e869a34031088c6dc5c3e0b993d0ff62))
+* **server:** align kit ids with the routing key and the safety gate across both stores ([#282](https://github.com/ambitresearch/genie/issues/282)) ([f8cf030](https://github.com/ambitresearch/genie/commit/f8cf0300da4f4d29d06aac415dc9badb0609616c))
+* **server:** gate create_project kit bindings ([#296](https://github.com/ambitresearch/genie/issues/296)) ([#298](https://github.com/ambitresearch/genie/issues/298)) ([e7c6109](https://github.com/ambitresearch/genie/commit/e7c6109db98b7c7c484c9f4bcac04249883e0162))
+* **server:** gate kitId on containment, not create_kit shape ([#276](https://github.com/ambitresearch/genie/issues/276)) ([23c281e](https://github.com/ambitresearch/genie/commit/23c281e97d3573970139893227d2028d5728bfd7))
+* **server:** re-check kit existence before write_files commits ([#269](https://github.com/ambitresearch/genie/issues/269)) ([210e050](https://github.com/ambitresearch/genie/commit/210e050194f0c1638fe72f8ebcde2ebce3416d22))
+* **server:** surface transport failures in GitHostProjectStore instead of reporting them as absence ([#287](https://github.com/ambitresearch/genie/issues/287)) ([cfb837b](https://github.com/ambitresearch/genie/commit/cfb837bbc0d61fa21f9fac4130268b5263a0444f))
+* **server:** unify the kitId gate on isSafeKitId across the tool layer ([#277](https://github.com/ambitresearch/genie/issues/277)) ([812838b](https://github.com/ambitresearch/genie/commit/812838bd27a1f050a70658536821a7635d1b2e13))
+* **server:** validate kitId at plan time ([#252](https://github.com/ambitresearch/genie/issues/252)) ([1ddccb3](https://github.com/ambitresearch/genie/commit/1ddccb34c2cceea8e4ef4580890e4efb97b705c0))
+* **store:** reject a .kit.json missing a required KitMeta field ([d79a516](https://github.com/ambitresearch/genie/commit/d79a51690de906e6c11b135b1f1be49218b7c0e5))
+* **viewer:** honour eviction notices on discarded refine replies ([#257](https://github.com/ambitresearch/genie/issues/257)) ([d14895a](https://github.com/ambitresearch/genie/commit/d14895a1d7e5abdade67686e9807fe9adb2cce53))
+* **viewer:** split Browse workbench out of viewer.js to clear the store read cap ([#253](https://github.com/ambitresearch/genie/issues/253)) ([51b46b8](https://github.com/ambitresearch/genie/commit/51b46b8db138b7d59639b05a5b89ce55e0b1ef6b))
+
 ## [1.3.1](https://github.com/ambitresearch/genie/compare/server-v1.3.0...server-v1.3.1) (2026-07-20)
 
 
