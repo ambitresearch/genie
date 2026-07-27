@@ -476,12 +476,16 @@ export class LocalFsKitStore implements KitStore {
    * caller-chosen path instead of merely failing to resolve one. Every other
    * write/plan verb keeps resolving through the UNGATED helpers and is
    * unchanged: `deleteFile`/`writeFiles` via `kitDir`, and
-   * `openPlan`/`commitPlan`/`closePlan` via `planDir` — which roots at
-   * `plansDir`, not `baseDir`, so `safeKitDir` could not gate those even if
-   * asked. Their ids are server-minted or already plan-gated. Treat the names
-   * as EXAMPLES, not a census: grep `this.kitDir(`/`this.planDir(` for current
-   * membership. This sentence already shipped once reading as exhaustive while
-   * naming two of the five.
+   * `openPlan`/`commitPlan`/`closePlan` via `planDir`. `safeKitDir` cannot
+   * SUPPLY a plan destination — it fuses the check with a `baseDir`-rooted
+   * resolve, and plan paths root at `plansDir` — but that binds only its
+   * RESOLUTION half; the check half is a root-independent predicate, so a plan
+   * verb wanting the same rule calls `isSafeKitId` directly. None does today:
+   * those ids are server-minted or already plan-gated. Treat the names as
+   * EXAMPLES, not a census: grep `this.kitDir(`/`this.planDir(` for current
+   * membership. This sentence has already shipped wrong twice — once reading
+   * as exhaustive while naming two of the five, once claiming `safeKitDir`
+   * could not gate the plan verbs at all.
    *
    * NOT every read verb routes through here, and the omission is deliberate.
    * `getKit` and `listComponents` both resolve through the UNCHECKED `kitDir`,
