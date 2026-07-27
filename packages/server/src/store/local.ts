@@ -157,6 +157,58 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
+/**
+ * A name the filesystem cannot represent — which is a stronger statement than
+ * "not there right now": no file with this name can ever exist here, so it is
+ * absent by definition rather than by accident.
+ *
+ * `ENAMETOOLONG` is reachable from pure input: kitIds are gated by
+ * {@link isSafeKitId}, which bounds separators and aliasing but deliberately not
+ * LENGTH, because length is not a containment property. `EINVAL` is the Win32
+ * answer for the characters it reserves (`<>:"|?*`).
+ *
+ * Kept separate from {@link isMissingPathError} on purpose: that predicate
+ * describes a path that is absent, this one an id that is unusable, and only the
+ * second is an argument about the caller's input.
+ */
+function isUnrepresentableNameError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "ENAMETOOLONG" || error.code === "EINVAL")
+  );
+}
+
+/**
+ * Strip the server's filesystem layout out of a genuine fs fault.
+ *
+ * Node builds `${code}: ${description}, ${syscall} '${path}'` and copies the
+ * ABSOLUTE path onto `.path`/`.dest`. Both cross the MCP boundary verbatim, so
+ * a caller who merely asked for a kit learns where the server keeps them.
+ *
+ * The fault itself still has to surface — #252: an unreadable kit must stay
+ * distinguishable from a missing one, or `plan` reports `kitNotFound` for a kit
+ * that exists. So the `${code}: ${description}` head is preserved (that is what
+ * `plan.test.ts` matches on) and only the path-bearing tail is removed.
+ */
+function withoutPath(error: unknown): unknown {
+  if (!(error instanceof Error) || !("code" in error)) return error;
+
+  const errno = error as NodeJS.ErrnoException;
+  const syscall = errno.syscall ?? "";
+  // Node's exact separator, so a message that does not have this shape (a
+  // hand-built error in a test double, say) is returned untouched.
+  const marker = syscall ? `, ${syscall} '` : "";
+  const cut = marker ? errno.message.indexOf(marker) : -1;
+  if (cut === -1) return error;
+
+  const redacted: NodeJS.ErrnoException = new Error(errno.message.slice(0, cut));
+  redacted.code = errno.code;
+  redacted.errno = errno.errno;
+  redacted.syscall = errno.syscall;
+  return redacted;
+}
+
 // ─── Atomic write transaction (LocalFsKitStore.writeFiles) ───────────────────
 //
 // Lifted from the shipped fs-native `write_files` tool (M1-08) when its
@@ -387,14 +439,19 @@ function isEnoent(error: unknown): boolean {
 /**
  * Read and parse a JSON metadata file for a DIRECTLY NAMED resource.
  *
- * Returns `undefined` only when the file is genuinely absent. Every other fault
- * — EACCES, EISDIR, EIO, an unparseable body — is re-thrown.
+ * Returns `undefined` when the file is absent — either because nothing is there
+ * ({@link isMissingPathError}) or because the name itself cannot exist on this
+ * filesystem ({@link isUnrepresentableNameError}). Every other fault — EACCES,
+ * EISDIR, EIO, an unparseable body — is re-thrown, with the server's absolute
+ * path stripped out of it ({@link withoutPath}).
  *
  * That distinction matters because each direct-lookup caller below turns
  * `undefined` into `NotFoundError`. The previous bare `catch` swallowed *every*
  * error, so an unreadable kit was indistinguishable from a missing one: `plan`
  * would report `kitNotFound` for a kit that exists but could not be read, and
  * its narrowed `NotFoundError` catch could never see the real fault (#252).
+ * Treating an unrepresentable NAME as absent does not reopen that: it is an
+ * argument about the caller's id, not about whether a real kit could be read.
  *
  * Scan loops want the opposite bias and use {@link readMetaIfReadable}.
  */
@@ -403,8 +460,8 @@ async function readMeta<T>(filePath: string): Promise<T | undefined> {
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw) as T;
   } catch (error) {
-    if (isMissingPathError(error)) return undefined;
-    throw error;
+    if (isMissingPathError(error) || isUnrepresentableNameError(error)) return undefined;
+    throw withoutPath(error);
   }
 }
 

@@ -266,8 +266,21 @@ export interface KitStore {
   /**
    * Get metadata for a single kit. Throws NotFoundError if missing.
    *
-   * `KitMeta.id` echoes the `kitId` that was looked up — the same routing key
-   * `listKits` reports — so the two sides of the store agree on identity.
+   * `KitMeta.id` echoes the `kitId` that was looked up, so a caller can route
+   * subsequent calls with the value it already holds. That is a lookup-key
+   * guarantee, NOT canonical identity: `isSafeKitId` (`store/kit-files.ts`)
+   * deliberately accepts alternate SPELLINGS of one kit — case folding on a
+   * case-insensitive filesystem, and NTFS short names — so an accepted id can
+   * open a kit that `listKits` publishes under a different string. Its docblock
+   * owns that residual and explains why closing it needs `realpath` in the
+   * adapters rather than a stricter predicate. GitHost has a second route to
+   * the same divergence: it falls back to the repository name when a kit's
+   * marker cannot be read, which is the string `listKits` always reports.
+   *
+   * So do not treat `getKit(x).id` as the catalogue's name for that kit. A verb
+   * that must act under the published name — anything destructive, or anything
+   * it records — should reconcile against `listKits` instead of assuming the
+   * two agree.
    */
   getKit(kitId: KitId): Promise<KitMeta>;
 

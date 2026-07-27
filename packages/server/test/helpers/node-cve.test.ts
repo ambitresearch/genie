@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { commentTexts } from "./source-text.js";
 import { trackedFiles } from "./tracked-files.js";
 
 import {
@@ -437,18 +438,12 @@ describe("node-cve prose — the contract its comments teach", () => {
     const found: { rel: string; text: string }[] = [];
     for (const file of files) {
       const source = readFileSync(file, "utf-8");
-      const raw = [
-        ...source.matchAll(/\/\*[\s\S]*?\*\//gu),
-        ...source.matchAll(/(?:^|[^:])(\/\/.*(?:\n\s*\/\/.*)*)/gmu),
-      ].map((match) => match[0]);
-      for (const comment of raw) {
-        // Unwrap so a phrase broken across two comment lines is still one
-        // phrase; the drift these police is prose, and prose wraps.
-        const text = comment
-          .replace(/\/\*+|\*+\/|^\s*\*|^\s*\/\//gmu, " ")
-          .replace(/\s+/gu, " ")
-          .trim();
-        if (text) found.push({ rel: path.relative(testRoot, file), text });
+      // Read through the shared helper. Extracting with an unanchored
+      // `/\*[\s\S]*?\*\/` treated the glob in `server-store-injection.test.ts`'s
+      // `writes: ["**\/*"]` as a comment opener and handed 1814 characters of
+      // live test code to `asserted()` below, as prose this package "teaches".
+      for (const text of commentTexts(source)) {
+        found.push({ rel: path.relative(testRoot, file), text });
       }
     }
     return found;

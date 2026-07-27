@@ -39,7 +39,7 @@
  *
  * The 🔒 tests are the regression locks.
  */
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +57,7 @@ import { LocalFsKitStore } from "../store/local.js";
 import { MANIFEST_PATH } from "../store/manifest.js";
 import { resolveKitDir as resolveGridKitDir } from "../ui/grid-resource.js";
 import { seedKit } from "../../test/helpers/seed-kit.js";
+import { commentTexts, stripComments } from "../../test/helpers/source-text.js";
 import { trackedFiles, trackedPath } from "../../test/helpers/tracked-files.js";
 import { ProjectNotFoundError, getKit } from "./get_kit.js";
 import { listWritableKits } from "./list_kits.js";
@@ -1204,7 +1205,7 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
       // a kitId, and does it gate one — so a declaration quoted in prose cannot
       // enrol a file that has none, just as a sentence naming the gate cannot
       // excuse a file that never calls it.
-      const code = source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/(^|[^:])\/\/.*$/gmu, "$1");
+      const code = stripComments(source);
       if (!KIT_ID_INPUT_DECL.test(code)) continue;
       kitVerbs.push(file);
       // Read the file for the gate itself. Delegation is NOT credited: a file
@@ -1436,7 +1437,7 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
     const declared: string[] = [];
     for (const file of files) {
       const source = await readFile(join(toolsDir, file), "utf8");
-      const code = source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/(^|[^:])\/\/.*$/gmu, "$1");
+      const code = stripComments(source);
       if (KIT_ID_INPUT_DECL.test(code)) declared.push(file);
     }
 
@@ -1492,10 +1493,6 @@ describe("kitId gate — what a tool may promise about the store adapters", () =
       }
       throw new Error(`unbalanced braces reading "${header}"`);
     };
-
-    /** Source with comments removed — they describe the gate without applying it. */
-    const stripComments = (source: string): string =>
-      source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, "");
 
     const adapters = ["local.ts", "git-host.ts"];
     const gatingGetKit: string[] = [];
@@ -1582,5 +1579,234 @@ describe("kitId gate — what a tool may promise about the store adapters", () =
       "no adapter gates getKit today; if one now does, revisit the qualified wording in " +
         "get_kit.ts, store/local.ts, preview.test.ts and this file's header",
     ).toEqual([]);
+  });
+});
+
+/**
+ * Widening the gate deleted an incidental guarantee.
+ *
+ * `KIT_ID_PATTERN`'s `{3,64}` was the only LENGTH bound anywhere in the system.
+ * `isSafeKitId` deliberately has none — length is not a containment property —
+ * so relaxing the gate made an arbitrarily long id reachable at the store, where
+ * `open()` answers `ENAMETOOLONG` and Node's `uvException` puts the ABSOLUTE
+ * path of the kits root into `.message` and `.path`. `local.ts` re-throws
+ * anything that is not `ENOENT`/`ENOTDIR`, and `get_kit` re-throws anything that
+ * is not `NotFoundError`, so it reaches the MCP client verbatim.
+ *
+ * That is server-filesystem layout disclosed from PURE INPUT — no permissions,
+ * no seeded kit, no race — on every POSIX platform.
+ *
+ * Two different faults, two different answers, and the distinction is the whole
+ * point of #252's narrowing:
+ *
+ *   - a name the filesystem CANNOT represent (`ENAMETOOLONG`, and `EINVAL` for
+ *     Win32's reserved characters) names no kit and never can, so it is ABSENT
+ *     — indistinguishable, semantically, from a kit that was never created;
+ *   - a name it CAN represent but failed to read (`EACCES`, `EIO`, `ELOOP`)
+ *     is a real operational fault and must stay distinguishable from absence,
+ *     or `plan` reports `kitNotFound` for a kit that exists (#252). It keeps its
+ *     `code` — `plan.test.ts` matches on it — and loses only the path.
+ */
+describe("kitId gate — a rejected id does not disclose the server's filesystem", () => {
+  it("🔒 answers a filesystem-unrepresentable kitId as absent, not with its path", async () => {
+    const kitsRoot = await mkdtemp(join(tmpdir(), "genie-kit-id-longname-"));
+    try {
+      const store = new LocalFsKitStore(kitsRoot);
+      // Longer than NAME_MAX (255) on every mainstream filesystem, and safe by
+      // `isSafeKitId`: no separator, no traversal, no trailing `[ .]`.
+      const overlong = "a".repeat(300);
+      expect(isSafeKitId(overlong)).toBe(true);
+
+      await expect(getKit(store, { kitId: overlong })).rejects.toBeInstanceOf(ProjectNotFoundError);
+
+      // Anti-vacuity: the control has to reach the same answer by the ordinary
+      // route, or "absent" could be coming from a gate rather than the store.
+      await expect(getKit(store, { kitId: "no-such-kit" })).rejects.toBeInstanceOf(
+        ProjectNotFoundError,
+      );
+    } finally {
+      await rm(kitsRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("🔒 keeps the code but not the path when a kit exists and cannot be read", async () => {
+    const kitsRoot = await mkdtemp(join(tmpdir(), "genie-kit-id-unreadable-"));
+    const locked = join(kitsRoot, "locked");
+    try {
+      await mkdir(locked, { recursive: true });
+      await chmod(locked, 0o000);
+
+      // Skip where the mode does not actually deny (root, or a filesystem that
+      // ignores POSIX modes) rather than assert a fault that never happened.
+      let denied = true;
+      try {
+        await readFile(join(locked, ".kit.json"), "utf-8");
+        denied = false;
+      } catch (error) {
+        denied = (error as NodeJS.ErrnoException).code === "EACCES";
+      }
+      if (!denied) return;
+
+      const store = new LocalFsKitStore(kitsRoot);
+      const error = await getKit(store, { kitId: "locked" }).then(
+        () => undefined,
+        (thrown: unknown) => thrown as NodeJS.ErrnoException,
+      );
+
+      // Still a fault, not absence — #252. The code is what `plan` surfaces.
+      expect(error).toBeDefined();
+      expect(error).not.toBeInstanceOf(ProjectNotFoundError);
+      expect(error?.code).toBe("EACCES");
+      expect(String(error?.message)).toContain("EACCES");
+
+      // …but nothing that names where the server keeps its kits.
+      expect(String(error?.message)).not.toContain(kitsRoot);
+      expect(String(error?.path ?? "")).not.toContain(kitsRoot);
+    } finally {
+      await chmod(locked, 0o755).catch(() => undefined);
+      await rm(kitsRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * The store contract must not promise an identity `isSafeKitId` deliberately
+ * withholds.
+ *
+ * Widening the gate to `isSafeKitId` admits ids the narrow shape rule excluded,
+ * and `store/kit-files.ts` is explicit about the price: the accepted alias
+ * classes "do NOT give ... canonical-id identity", so a verb "routed by such an
+ * id acts on that kit under a name `list_kits` never handed out". That is the
+ * authority, and it is stated once.
+ *
+ * `store/interface.ts` then promised the opposite for `getKit` — that its
+ * `KitMeta.id` is "the same routing key `listKits` reports — so the two sides
+ * of the store agree on identity". Both sentences shipped in this PR, so the
+ * contradiction is self-inflicted, and it is not hypothetical on either
+ * adapter:
+ *
+ *   - GitHost: `readKitMeta` returns `id: kitId` on success but falls back to
+ *     `id: repo.name` when the marker is unreadable, while `listKits` always
+ *     publishes `repo.name`.
+ *   - LocalFs: on a case-insensitive filesystem — APFS and NTFS, i.e. most
+ *     developer machines, verified on this checkout — `getKit("VICTIM")` opens
+ *     the directory `victim` and echoes `"VICTIM"`, while `listKits` reports
+ *     `"victim"`.
+ *
+ * A caller that trusts the interface sentence would treat those as the same
+ * routing key and, for a destructive verb, act under a name the catalogue never
+ * published. The residual is accepted (closing it needs `realpath` in both
+ * adapters); publishing it as closed is not.
+ *
+ * So this locks the PROPERTY, not the wording: any docblock that names both
+ * sides and asserts they agree must also carry the qualifier. The scan is
+ * derived — it reads the tracked tree rather than a list of files — because the
+ * claim is a sentence, and a sentence can be restated anywhere.
+ */
+describe("kitId gate — the store contract does not over-promise id identity", () => {
+  // A sentence that mentions the single-kit lookup AND the catalogue.
+  const NAMES_BOTH_SIDES = /\b(?:getKit|get_kit|KitMeta\.id)\b/u;
+  const NAMES_CATALOGUE = /\b(?:listKits|list_kits)\b/u;
+  // ...and claims they are the same thing. The sameness word alone is far too
+  // weak a signal: `git-host.ts` says `undefined` "is the same signal this
+  // method already returns", names both verbs as its callers, and asserts
+  // nothing at all about ids. So the claim only counts when the sameness word
+  // is ABOUT the identifier — which is the property being locked, not a
+  // convenient way to silence one file.
+  const CLAIMS_AGREEMENT = /\b(?:agree\w*|the same|identical|echo(?:es|ed)?|match(?:es|ing)?)\b/giu;
+  const IDENTITY_SUBJECT = /\b(?:id|ids|identity|identifier|routing key)\b/iu;
+  const SUBJECT_WINDOW = 48;
+  // ...without acknowledging the alias residual that authority documents.
+  const CARRIES_QUALIFIER =
+    /\b(?:alias|spelling|canonical|residual|case-insensit|short name|never handed out|not give|do NOT|unless|except)\b/iu;
+
+  /** Every docblock sentence in `source`, flattened to one line. */
+  const sentences = (source: string): string[] =>
+    commentTexts(source)
+      .flatMap((comment) => comment.split(/(?<=\.)\s+/u))
+      .map((sentence) =>
+        sentence
+          .replace(/^[ \t]*\*+ ?/gmu, " ")
+          .replace(/\s+/gu, " ")
+          .trim(),
+      )
+      .filter((sentence) => sentence !== "");
+
+  /**
+   * True when `sentence` claims sameness OF THE IDENTIFIER, rather than of some
+   * other thing that happens to be shared.
+   *
+   * A fresh regex per call: `CLAIMS_AGREEMENT` is global, and a global regex
+   * shared between calls carries `lastIndex` and silently skips matches.
+   */
+  const claimsIdentityAgreement = (sentence: string): boolean => {
+    const scan = new RegExp(CLAIMS_AGREEMENT.source, CLAIMS_AGREEMENT.flags);
+    for (const hit of sentence.matchAll(scan)) {
+      const at = hit.index ?? 0;
+      const window = sentence.slice(
+        Math.max(0, at - SUBJECT_WINDOW),
+        at + hit[0].length + SUBJECT_WINDOW,
+      );
+      if (IDENTITY_SUBJECT.test(window)) return true;
+    }
+    return false;
+  };
+
+  /** Sentences in `source` that promise identity agreement unconditionally. */
+  const overPromises = (source: string): string[] =>
+    sentences(source).filter(
+      (sentence) =>
+        NAMES_BOTH_SIDES.test(sentence) &&
+        NAMES_CATALOGUE.test(sentence) &&
+        claimsIdentityAgreement(sentence) &&
+        !CARRIES_QUALIFIER.test(sentence),
+    );
+
+  const toolsDir = dirname(fileURLToPath(import.meta.url));
+  const serverRoot = dirname(dirname(toolsDir));
+  const SELF = trackedPath(serverRoot, fileURLToPath(import.meta.url));
+
+  it("🔒 no docblock claims getKit and listKits agree on identity unconditionally", async () => {
+    const offenders: string[] = [];
+    for (const relative of trackedFiles(serverRoot)) {
+      // This file states the forbidden shape in order to forbid it. The
+      // exclusion is paid for by the two-sided fixture below, which asserts the
+      // same predicate still FIRES — so a weakened pattern fails there rather
+      // than passing silently here.
+      if (!relative.endsWith(".ts") || relative === SELF) continue;
+      const source = await readFile(join(serverRoot, relative), "utf8");
+      for (const sentence of overPromises(source)) {
+        offenders.push(`${relative}: ${sentence}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("🔒 that scan can tell an unconditional claim from a qualified one", () => {
+    const unconditional =
+      "/**\n * `KitMeta.id` echoes the `kitId` looked up — the same routing key\n" +
+      " * `listKits` reports — so the two sides agree on identity.\n */";
+    const qualified =
+      "/**\n * `KitMeta.id` echoes the `kitId` looked up, which `listKits` also reports\n" +
+      " * unless the id is a non-canonical spelling of the kit it opens.\n */";
+    // Sameness of something OTHER than the identifier, naming both verbs. This
+    // is a real sentence from `store/git-host.ts`, kept here because it is the
+    // exact shape a coarser "does it say 'the same'?" scan gets wrong.
+    const sameOtherThing =
+      "/**\n * Returning `undefined` is deliberate: it is the same signal this method\n" +
+      " * already returns for a MISSING marker, and both callers (listKits, getKit)\n" +
+      " * answer it by falling back to repo metadata.\n */";
+    expect(overPromises(unconditional)).toHaveLength(1);
+    expect(overPromises(qualified)).toEqual([]);
+    expect(overPromises(sameOtherThing)).toEqual([]);
+  });
+
+  it("🔒 the alias residual is still stated by the rule that owns it", async () => {
+    // If this ever fails, the premise above has been deleted rather than the
+    // claim corrected, and the negative scan would start passing vacuously.
+    const rule = await readFile(join(serverRoot, "src", "store", "kit-files.ts"), "utf8");
+    const prose = commentTexts(rule).join(" ").replace(/\s+/gu, " ");
+    expect(prose).toContain("canonical-id identity");
+    expect(prose).toContain("`list_kits` never handed out");
   });
 });
