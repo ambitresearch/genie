@@ -1278,6 +1278,19 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
         // so no kit verb THAT APPLIES THAT GATE will refuse" match on its own
         // preceding noun.
         String.raw`\b${SCOPE}\s+(?:gates?|appl(?:y|ies))\b`,
+        // The same universality asserted of the ENFORCEMENT, but with the verb
+        // BEFORE the scope: "shared by every kit-taking tool". The refusal arms
+        // above already read both orders; the gating arm read only one, and the
+        // canonical docblock in `store/kit-files.ts` stated the claim in the
+        // order the lock could not see. A rule whose vocabulary is symmetric but
+        // whose word ORDER is not is a lock with a documented seam in it.
+        //
+        // The qualifier guard has to trail the scope here rather than sit in the
+        // gap. In the scope-first arms the narrowing ("every kit verb THAT
+        // APPLIES IT") falls inside `GAP` and suppresses the match there; in this
+        // order it lands after the scope instead, where `GAP` cannot reach it, so
+        // the honest wording would otherwise be reported as the defect.
+        String.raw`\b(?:shar\w*|appl\w*|enforc\w*|honou?r\w*|observ\w*)\s+(?:by|across|throughout)\s+${GAP}\b${SCOPE}(?!\s+${QUALIFIER})`,
       ].join("|"),
       "giu",
     );
@@ -1313,6 +1326,12 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
       "an id every kit-taking verb refuses",
       "the containment rule every kit-taking tool gates on",
       "every kit-taking tool would refuse",
+      // Enforcement asserted BEFORE the scope. The refusal arms already read
+      // both orders, but the gating arm read only scope-then-verb, so the same
+      // false claim written the other way round ("shared by every kit-taking
+      // tool") walked past a lock built to catch exactly it.
+      "the ONE kitId-safety rule shared by every kit-taking tool",
+      "the rule applied by every kit-taking verb",
     ]) {
       expect(
         new RegExp(UNIVERSAL_REFUSAL.source, "iu").test(shape),

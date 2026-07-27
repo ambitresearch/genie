@@ -115,10 +115,21 @@ export function sriSha256(bytes: Buffer | string): string {
 // ─── kitId traversal safety ──────────────────────────────────────────────────
 
 /**
- * The ONE kitId-safety rule shared by EVERY kit-taking tool AND both `KitStore`
- * adapters, so their traversal defenses cannot silently drift apart (DRO-509 /
- * DRO-581 unification). Lives here — not in a tool module — because the store
- * layer (post-#114) also needs it, and `store/*` must not import from `tools/*`.
+ * The ONE kitId-safety rule shared by every kit-taking tool that applies it AND
+ * both `KitStore` adapters, so their traversal defenses cannot silently drift
+ * apart (DRO-509 / DRO-581 unification). Not every kit-taking tool does apply
+ * it, and this docblock is the wrong place to imply otherwise: `validate`
+ * declares a `kitId` input and applies no safety gate at all, and
+ * `create_project` records `kitBindings[].kitId` without resolving it (only its
+ * `bind_kit` path gates, transitively, via `get_kit`). Dropping the "that
+ * applies it" qualification here would promise a refusal those two verbs do not
+ * make — the same over-claim `list_kits` and `LocalFsKitStore.listKits` already
+ * carry a qualification for. (Distinct from, and compatible with, the promise
+ * `list_kits` DOES make: a listed id is valid input to every kit-taking verb.
+ * That one holds because a verb applying no gate accepts anything, so no verb
+ * is narrower than this rule.) Lives here — not in a tool module — because the
+ * store layer (post-#114) also needs it, and `store/*` must not import from
+ * `tools/*`.
  *
  * This is the shared kitId rule and it is the correct INPUT gate. It is not
  * `KIT_ID_PATTERN` (`tools/get_kit.ts`), which is a *shape* rule describing the
