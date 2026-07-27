@@ -57,7 +57,7 @@ import { LocalFsKitStore } from "../store/local.js";
 import { MANIFEST_PATH } from "../store/manifest.js";
 import { resolveKitDir as resolveGridKitDir } from "../ui/grid-resource.js";
 import { seedKit } from "../../test/helpers/seed-kit.js";
-import { trackedFiles } from "../../test/helpers/tracked-files.js";
+import { trackedFiles, trackedPath } from "../../test/helpers/tracked-files.js";
 import { ProjectNotFoundError, getKit } from "./get_kit.js";
 import { listWritableKits } from "./list_kits.js";
 import { registerPlan } from "./plan.js";
@@ -1288,7 +1288,7 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
     // scan of `src/tools/*.ts` could never have seen either. Tracked files, not a
     // disk walk, for the reason `test/helpers/tracked-files.ts` documents.
     const serverRoot = dirname(dirname(toolsDir));
-    const SELF = join("src", "tools", "kit-id-gate.test.ts");
+    const SELF = trackedPath(serverRoot, fileURLToPath(import.meta.url));
     const universal: string[] = [];
     for (const relative of trackedFiles(serverRoot)) {
       // This file is the lock, and it QUOTES the claim shapes it forbids in
@@ -1544,7 +1544,7 @@ describe("kitId gate — what a tool may promise about the store adapters", () =
         .map((match) => match[0].replace(/\s+/gu, " "))
         .filter((span) => GATING_VERB.test(span) && !RESTRICTED.test(span));
 
-    const SELF = join("src", "tools", "kit-id-gate.test.ts");
+    const SELF = trackedPath(serverRoot, fileURLToPath(import.meta.url));
     const credits: string[] = [];
     for (const relative of trackedFiles(serverRoot)) {
       // Same bargain as the universality lock above: this file quotes the claim

@@ -4,19 +4,40 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { trackedFiles } from "./tracked-files.js";
+import { trackedFiles, trackedPath } from "./tracked-files.js";
 
 const SERVER_ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 /** This file, relative to SERVER_ROOT — see the self-exclusion note below. */
-const SELF = path.join("test", "helpers", "tracked-files.test.ts");
+const SELF = trackedPath(SERVER_ROOT, fileURLToPath(import.meta.url));
 
 /** Live code only: the rule below is explained in prose that must stay legal. */
 const code = (source: string): string =>
-  source.replace(/\/\*[\s\S]*?\*\//gu, " ").replace(/(?:^|[^:])\/\/.*$/gmu, " ");
+  source
+    // A block comment is only recognised at the start of a line. Anchoring it
+    // matters: `"components/**/*.tsx"` contains `/*`, so an unanchored strip
+    // treats a glob inside a string as a comment opener and deletes everything
+    // up to the next `*/` — which silently swallowed a real offender below.
+    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gmu, " ")
+    .replace(/(?:^|[^:])\/\/.*$/gmu, " ");
 
 /** The banned shape: a hand-written skip-list standing in for "untracked". */
 const usesArtefactDenylist = (source: string): boolean => code(source).includes('"node_modules"');
+
+/**
+ * The banned shape: a path built from nothing but string literals.
+ *
+ * The discriminator is the ARGUMENTS. `join(root, relative)` re-roots a git
+ * answer onto this disk and is exactly right — `join` normalises `/` on every
+ * platform, so reading is never the problem. A join whose arguments are all
+ * literals builds a path out of nothing, which only ever happens in order to
+ * COMPARE it, and comparison is where the spelling has to match git's.
+ *
+ * Requiring two or more literal segments also keeps `array.join("|")` out: a
+ * separator is a single argument, a path is several.
+ */
+const handSpelledComparison = (source: string): boolean =>
+  /(?:path\.)?join\(\s*"[^"]*"\s*(?:,\s*"[^"]*"\s*)+\)/u.test(code(source));
 
 /**
  * A contract test asks what this repository publishes, so it has to ask git.
@@ -68,6 +89,65 @@ describe("repo scans — asked of git, not of the disk", () => {
     expect(
       usesArtefactDenylist('// never read "node_modules"\nconst files = trackedFiles(root);'),
       "the detector fires on prose, so a scan could be banned for describing the rule",
+    ).toBe(false);
+  });
+
+  it("🔒 the self-exclusion names a path git actually reports", () => {
+    // The point of `trackedPath` is that the excluded constant matches a real
+    // entry. Asserting that directly is stronger than checking the separator:
+    // it fails for a hand-spelled path on Windows, and it also fails if the
+    // file moves and the constant is left behind. Circularity is avoided by
+    // comparing against git's list rather than against another `path` call.
+    expect(trackedFiles(SERVER_ROOT)).toContain(SELF);
+    expect(SELF).not.toContain("\\");
+  });
+
+  it("🔒 no consumer hand-spells a path it compares against git's answer", () => {
+    // `git ls-files` always separates with `/`, on every platform. `path.join`
+    // separates with `path.sep`, which is `\` on Windows. A constant built with
+    // `join(...)` and compared against a `trackedFiles` entry therefore matches
+    // on POSIX and silently stops matching on Windows — and every use of that
+    // shape here is a self-exclusion, so the failure mode is not "the lock is
+    // skipped" but "the lock reports ITSELF as an offender" and fails for a
+    // reason that has nothing to do with the contract it guards.
+    //
+    // Neither vitest nor CI runs on Windows today, so no existing test can
+    // observe the bug; a textual ban is the only thing that can. `trackedPath`
+    // is the one correct spelling, and it derives the path from `import.meta`
+    // rather than restating it, so it also cannot drift when a file moves.
+    const consumers = scanned.filter(({ source }) => code(source).includes("trackedFiles("));
+    expect(consumers.length, "no consumer found — the discovery has gone vacuous").toBeGreaterThan(
+      3,
+    );
+
+    const offenders = consumers
+      .filter(({ relative }) => relative !== SELF)
+      .filter(({ source }) => handSpelledComparison(source))
+      .map(({ relative }) => relative);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("🔒 the hand-spelled-path detector fires on the banned shape and not on the replacement", () => {
+    // Pays for the self-exclusion above, in both directions.
+    expect(
+      handSpelledComparison('const SELF = path.join("src", "a.test.ts");'),
+      "the detector no longer recognises a hand-spelled comparison path",
+    ).toBe(true);
+
+    expect(
+      handSpelledComparison("const SELF = trackedPath(root, fileURLToPath(import.meta.url));"),
+      "the detector fires on the replacement, so the correct spelling is banned too",
+    ).toBe(false);
+
+    expect(
+      handSpelledComparison("const file = path.join(root, relative);"),
+      "the detector fires on reading a file, which is a normalising join and is fine",
+    ).toBe(false);
+
+    expect(
+      handSpelledComparison('const line = parts.join("|");'),
+      "the detector fires on a one-argument array join, which is a separator not a path",
     ).toBe(false);
   });
 

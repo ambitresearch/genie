@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import path from "node:path";
 
 /**
  * Every file git tracks under `root`, relative to it.
@@ -28,4 +29,23 @@ export function trackedFiles(root: string): string[] {
     .split("\0")
     .filter((entry) => entry !== "")
     .sort();
+}
+
+/**
+ * The git-index spelling of `file`, relative to `root`.
+ *
+ * `trackedFiles` returns git's answer, and git separates with `/` on every
+ * platform. `path.join` separates with `path.sep`, which is `\` on Windows, so
+ * a constant built with `join(...)` and compared against a tracked entry
+ * matches on POSIX and quietly stops matching on Windows. Every such constant
+ * in this package is a self-exclusion, so that failure is not "one file is
+ * skipped" — the lock matches ITSELF, reports itself as an offender, and fails
+ * for a reason unrelated to the contract it guards.
+ *
+ * Callers pass `fileURLToPath(import.meta.url)`, so the answer is derived from
+ * where the file actually is rather than restated as a literal, and it keeps
+ * following the file when it moves.
+ */
+export function trackedPath(root: string, file: string): string {
+  return path.relative(root, file).split(path.sep).join("/");
 }

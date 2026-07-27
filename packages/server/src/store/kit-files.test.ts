@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { assertRangePatchesCve202527210 } from "../../test/helpers/node-cve.js";
-import { trackedFiles } from "../../test/helpers/tracked-files.js";
+import { trackedFiles, trackedPath } from "../../test/helpers/tracked-files.js";
 
 import {
   isSafeKitId,
@@ -211,7 +211,7 @@ describe("isSafeKitId", () => {
     // This file names the banned shape in order to explain it, so it would
     // match itself. Excluding it is only safe while the detector is known to
     // still fire, which the fixture below asserts in both directions.
-    const SELF = path.join("src", "store", "kit-files.test.ts");
+    const SELF = trackedPath(serverRoot, fileURLToPath(import.meta.url));
     const files = trackedFiles(serverRoot)
       .filter((rel) => rel.endsWith(".ts") && rel !== SELF)
       .map((rel) => path.join(serverRoot, rel));
