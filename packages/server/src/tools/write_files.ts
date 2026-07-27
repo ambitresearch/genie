@@ -220,13 +220,15 @@ export class KitNotFoundError extends Error {
  *
  * Two stages, in this order for a security reason:
  *
- *   1. SHAPE. `delete_files.ts:161` already rejects a traversal-shaped kitId
- *      "as the first destructive consumer"; the write path had no equivalent.
- *      This MUST precede stage 2, because `LocalFsKitStore.getKit` resolves via
- *      `kitDir`, NOT `safeKitDir` — so `getKit("..")` would itself read above
- *      the kits root. Uses the store's centralised `isSafeKitId` (empty / "." /
- *      ".." / any separator) rather than delete_files' stricter local variant,
- *      which over-rejects ids that merely embed dots.
+ *   1. SHAPE. `delete_files` rejected a traversal-shaped kitId first, as the
+ *      earliest destructive consumer; the write path had no equivalent until
+ *      #269. This MUST precede stage 2, because `LocalFsKitStore.getKit`
+ *      resolves via `kitDir`, NOT `safeKitDir` — so `getKit("..")` would itself
+ *      read above the kits root. Uses the store's centralised `isSafeKitId` —
+ *      see its docblock for the authoritative rejection set, deliberately not
+ *      restated here. Both destructive paths now share that one predicate;
+ *      delete_files' stricter local variant (which additionally over-rejected
+ *      ids merely EMBEDDING dots, e.g. `my..kit`) has since been removed.
  *
  *   2. EXISTENCE. The catch is scoped to this single call on purpose: a broad
  *      try would mislabel a `NotFoundError` thrown from elsewhere as a missing

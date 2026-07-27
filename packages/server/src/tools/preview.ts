@@ -47,7 +47,7 @@ import {
   type PreviewReader,
 } from "../ui/grid-resource.js";
 
-import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE, KIT_ID_SAFETY_RATIONALE } from "../store/kit-files.js";
 
 export const PREVIEW_TOOL_NAME = "mcp__genie__preview";
 
@@ -141,14 +141,22 @@ export function buildResourceUri(params: ResourceUriParams): string {
 
 // ─── kitId → kit dir (path safety) ───────────────────────────────────────────
 
-/** A `kitId` that fails the shared `isSafeKitId` containment rule. */
+/**
+ * A `kitId` the shared `isSafeKitId` rule refuses. Deliberately unglossed: the
+ * categories are rendered from `KIT_ID_SAFETY_CATEGORIES` by the constructor
+ * below, and the short summary that used to sit here named two of them long
+ * after the predicate grew a third.
+ */
 export class InvalidKitIdError extends Error {
   readonly code = "InvalidKitIdError";
   constructor(readonly kitId: string) {
-    super(
-      `Invalid kitId "${kitId}": it cannot be empty, ".", ".." or contain a path separator. ` +
-        "This guards against path traversal into the kits root.",
-    );
+    // Both halves are centralised, and for the same reason twice over. The
+    // rejection SET drifted from `KIT_ID_SAFETY_MESSAGE` once the Win32
+    // dots-and-spaces aliases were closed; the rationale then drifted again,
+    // still claiming a refusal guarded "both" an escape and an alias after the
+    // NUL guard added a third category that is neither. Restating either here
+    // is what caused both, so this builds the message from the shared pieces.
+    super(`Invalid kitId "${kitId}": ${KIT_ID_SAFETY_MESSAGE} ${KIT_ID_SAFETY_RATIONALE}`);
     this.name = "InvalidKitIdError";
   }
 }
@@ -166,17 +174,39 @@ export class KitNotFoundError extends Error {
  * Resolve a `kitId` to its on-disk kit directory under `kitsRoot`, rejecting
  * any id that could escape that root BEFORE the `join` — an unvalidated id like
  * `../../etc` would otherwise climb out (RFC §10 T-13, the same traversal class
- * `write_files`/`read_file` guard). Only containment is checked here; existence
- * is checked by {@link runPreview} before compilation so a missing kit cannot
- * create a phantom one through manifest persistence.
+ * `write_files`/`read_file` guard). Only identifier SAFETY is checked here —
+ * and safety is broader than containment: `isSafeKitId` also refuses ids that
+ * stay under the root but alias a DIFFERENT kit inside it, and ids that name a
+ * path no filesystem call can express at all. Read the three categories off
+ * that predicate's docblock rather than inferring them from the word
+ * "traversal" above. Existence is a separate question, checked by
+ * {@link runPreview} before compilation so a missing kit cannot create a
+ * phantom one through manifest persistence.
  *
- * The rule is `isSafeKitId`, NOT the create_kit slug shape. `isSafeKitId` is a
- * COMPLETE containment rule for `join(root, id)`: it refuses exactly the ids
- * that escape — `""` (resolves to the root itself), `.`/`..` (aliases for the
- * root and its parent), and anything carrying a separator. Every other id,
- * `My_Kit.2` and `UPPER` included, resolves to a literal child of the root and
- * so is safe. Using the slug shape here made preview reject imported and
+ * The rule is `isSafeKitId`, NOT the create_kit slug shape; see that predicate's
+ * docblock for the authoritative rejection set, deliberately not restated here.
+ * Non-slug ids like `My_Kit.2` and `UPPER` resolve to a literal child of the
+ * root and are safe — gating on the slug shape made preview reject imported and
  * git-host kits that `list_kits` had just advertised as usable.
+ *
+ * This comment used to claim `isSafeKitId` was a COMPLETE containment rule, on
+ * the grounds that every id it admits `join`s to a literal child of the root.
+ * That reasoning holds only on POSIX: Win32 trims trailing spaces and dots from
+ * a path component at the syscall boundary, so `".. "` — which Node's `path`
+ * reports as the contained `root\.. ` — reaches the filesystem as `root\..`.
+ * Containment cannot be judged from `join`'s output alone, which is precisely
+ * why the rule lives in ONE place instead of being restated per call site.
+ *
+ * The first fix for that was itself incomplete, which is the sharper lesson:
+ * it refused only ids that trim away to NOTHING, still admitting `victim..` →
+ * `victim`. That one never leaves the kits root, so it is not a containment
+ * failure at all — it is an IDENTITY failure, one id naming two kits. The
+ * predicate therefore guarantees "never resolves to a DIFFERENT kit than it
+ * spells", which is strictly stronger than "stays under the root"; do not
+ * re-derive it as the latter. It is also not "opens a kit directory": case
+ * folding and NTFS 8.3 short names are alternate spellings of ONE kit, and
+ * Win32 device names spell no kit at all — all deliberately out of scope.
+ * `isSafeKitId`'s own docblock is the authority on where that line falls.
  *
  * ⚠️ NAME COLLISION — a second, unrelated `resolveKitDir` is exported from
  * `src/ui/grid-resource.ts`. Both apply the SAME rule (`isSafeKitId`), so they

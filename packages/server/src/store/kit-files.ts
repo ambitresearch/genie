@@ -115,12 +115,41 @@ export function sriSha256(bytes: Buffer | string): string {
 // ─── kitId traversal safety ──────────────────────────────────────────────────
 
 /**
- * The ONE kitId-safety rule shared by EVERY kit-taking tool AND both `KitStore`
- * adapters, so their traversal defenses cannot silently drift apart (DRO-509 /
- * DRO-581 unification). Lives here — not in a tool module — because the store
- * layer (post-#114) also needs it, and `store/*` must not import from `tools/*`.
+ * Matches an id carrying an unpaired surrogate — i.e. one that is ill-formed
+ * UTF-16. The first arm is a high surrogate with no low after it, the second a
+ * low surrogate with no high before it; a valid pair fails both.
  *
- * This is the *containment* rule and it is the correct INPUT gate. It is not
+ * `String.prototype.isWellFormed` says exactly this in one call, but it is
+ * ES2024 and this repo compiles against `lib: ES2022`. Widening the shared
+ * `tsconfig.base.json` would change the emit target for all three packages to
+ * buy one predicate a method, so the rule is spelled out instead. Equivalence
+ * is not assumed: `kit-files.test.ts` differentially checks the two against
+ * each other across the surrogate block and its neighbours, singly and pairwise.
+ *
+ * No `g` flag, deliberately — a shared `g` regex carries `lastIndex` between
+ * `.test()` calls and would answer differently on alternate invocations.
+ */
+const UNPAIRED_SURROGATE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
+
+/**
+ * The ONE kitId-safety rule shared by every kit-taking tool that applies it AND
+ * both `KitStore` adapters, so their traversal defenses cannot silently drift
+ * apart (DRO-509 / DRO-581 unification). Not every kit-taking tool does apply
+ * it, and this docblock is the wrong place to imply otherwise: `validate`
+ * declares a `kitId` input and applies no safety gate at all, and
+ * `create_project` records `kitBindings[].kitId` without resolving it (only its
+ * `bind_kit` path gates, transitively, via `get_kit`). Dropping the "that
+ * applies it" qualification here would promise a refusal those two verbs do not
+ * make — the same over-claim `list_kits` and `LocalFsKitStore.listKits` already
+ * carry a qualification for. (Distinct from, and compatible with, the promise
+ * `list_kits` DOES make: a listed id is valid input to every kit-taking verb.
+ * That one holds because a verb applying no gate accepts anything, so no verb
+ * is narrower than this rule.) Lives here — not in a tool module — because the
+ * store layer (post-#114) also needs it, and `store/*` must not import from
+ * `tools/*`.
+ *
+ * This is the shared kitId rule and it is the correct INPUT gate. It is not
  * `KIT_ID_PATTERN` (`tools/get_kit.ts`), which is a *shape* rule describing the
  * ids `create_kit` mints; `KitId` is an opaque, adapter-assigned string and
  * `list_kits` promises what it returns is valid input everywhere, so gating
@@ -128,8 +157,23 @@ export function sriSha256(bytes: Buffer | string): string {
  * unusable.
  *
  * A `kitId` names a single directory (LocalFs) or repo (git host) directly
- * under the store's kits root. `isSafeKitId` returns false for exactly the ids
- * that would let a caller escape that single-kit namespace:
+ * under the store's kits root. This is a CONTAINMENT-AND-IDENTITY rule, not a
+ * containment rule. It refuses three different kinds of id: those that would
+ * let a caller escape that namespace, those that stay inside it but do not
+ * SPELL the kit they open, and those that spell no path any filesystem call
+ * will accept. The second kind is easy to miss precisely because a
+ * `join`-based containment check passes it — see the sibling sub-case below.
+ *
+ * The invariant, stated once: every accepted id is its own Win32 path-component
+ * NORMALIZATION, so on no platform does it resolve to a DIFFERENT kit than it
+ * spells, and is REPRESENTABLE, so the store fails it as a missing kit rather
+ * than as a bad argument. (Not that it opens a kit at all: a Win32 device name
+ * spells no kit, and stays deliberately in scope of the predicate for the reason
+ * given under "NOT in scope".) It does not, and cannot cheaply, collapse filesystem
+ * name-EQUIVALENCE — see "NOT in scope" below for where that line falls and why.
+ *
+ * It returns false for (one bullet per guard in the body; the count is locked
+ * in `kit-files.test.ts` so this list cannot fall behind the code again):
  *
  *   - the empty string — `join(kitsRoot, "")` is the kits ROOT itself, so an
  *     empty kitId plus a crafted `path` (e.g. `other-kit/secret.txt`) would
@@ -137,14 +181,97 @@ export function sriSha256(bytes: Buffer | string): string {
  *   - `.` or `..` exactly — the traversal aliases for "this dir" / "the parent",
  *     which also resolve to the root or above it;
  *   - any id containing a path separator (`/` or `\`), which could introduce a
- *     nested or absolute path.
+ *     nested or absolute path;
+ *   - any id ENDING in a dot or an ASCII space (`" "`, `".. "`, `"victim.."`,
+ *     `"victim "`). Win32 strips the trailing run of spaces and dots from a
+ *     path component at the syscall boundary, so such an id is a live alias for
+ *     a DIFFERENT name. Node's `path` module does not perform that trim — it
+ *     reports `root\.. ` verbatim — so a `join`-based containment check sees a
+ *     contained path while the OS resolves it elsewhere. Two sub-cases, both
+ *     refused by the one check:
+ *       · trims away to nothing (`" "`, `". "`, `".. "`) → aliases the kits
+ *         ROOT itself, or its PARENT — a containment escape;
+ *       · trims to another non-empty name (`"victim.."` → `"victim"`) → aliases
+ *         a SIBLING kit. This one stays under the kits root, so it is not a
+ *         containment escape, but it still breaks the promise above: a plan for
+ *         `victim..` mutates or deletes `victim`, because `writeFiles` and
+ *         `deleteFile` resolve through the unsafe `kitDir` with this predicate
+ *         as their only guard.
+ *     Refusing costs nothing on the platform where the alias is live: Windows
+ *     applies the same trim in `mkdir`, so a directory named `victim..` cannot
+ *     exist there. Such an id can only ever alias; it can never name a kit;
+ *   - any id containing a NUL byte. This is a third category, neither an escape
+ *     nor an alias: it spells a path no filesystem call can express. Node
+ *     rejects it during ARGUMENT VALIDATION with `ERR_INVALID_ARG_VALUE` — and
+ *     quotes the offending absolute path back in the message — rather than
+ *     returning `ENOENT`, so without this guard a store call leaks the kits
+ *     root to any caller who sends one byte. MCP arguments are JSON, which
+ *     carries `\u0000` verbatim, so this is reachable input, not a theoretical
+ *     one. NUL ONLY: the other control characters are legal POSIX directory
+ *     names, and refusing them would re-create this rule's own defect;
+ *   - any id that is ill-formed UTF-16 — one carrying an unpaired surrogate.
+ *     This is the SIBLING-ALIAS case again, but on POSIX rather than Win32, and
+ *     it needs no exotic filesystem. A JavaScript string is a UTF-16 code-unit
+ *     sequence and may contain a surrogate with no partner, which corresponds
+ *     to no Unicode scalar; Node's POSIX path conversion therefore substitutes
+ *     U+FFFD REPLACEMENT CHARACTER for it. `"\uD800"` and `"\uFFFD"` are
+ *     different JavaScript strings that reach the filesystem as the SAME
+ *     bytes, so an accepted lone surrogate opens a live sibling kit under a
+ *     name `list_kits` never handed out — and `writeFiles`/`deleteFile` would
+ *     act on it. Like the trailing-[ .] case, refusing costs nothing: no
+ *     directory the store can LIST is ill-formed, because `readdir` decodes
+ *     names with replacement and so only ever yields well-formed strings.
  *
- * Ids that merely EMBED dots (`my..kit`, `..kit`, `kit..`) stay a literal child
- * of the root and are allowed — they simply resolve to a not-found kit if
- * absent. This is deliberately looser than the pre-unification `read_file`
- * guard (`kitId.includes("..")`), which over-rejected `my..kit` yet — crucially
- * — MISSED both `""` and `.` (neither contains `..`), the exact holes that
- * enabled the cross-kit read this rule closes.
+ * Ids that merely EMBED or LEAD with dots (`my..kit`, `..kit`, `. kit`) survive
+ * unchanged through the Win32 trim — it only touches the trailing run — so they
+ * stay a literal, unambiguous child of the root and are allowed; they simply
+ * resolve to a not-found kit if absent. This is deliberately looser than the
+ * pre-unification `read_file` guard (`kitId.includes("..")`), which
+ * over-rejected `my..kit` yet — crucially — MISSED both `""` and `.` (neither
+ * contains `..`), the exact holes that enabled the cross-kit read this rule
+ * closes.
+ *
+ * NOT in scope, deliberately. The dividing line is whether an id CAN name a
+ * real directory. A trailing-[ .] id cannot — Windows applies the same trim in
+ * `mkdir` — so it has no possible referent and can ONLY alias; refusing it
+ * costs nothing. Each case below CAN, so refusing it would be exactly the
+ * over-rejection this unification exists to remove:
+ *
+ *   - case-insensitive collision (`Victim` vs `victim` on Windows/macOS).
+ *     Refusing uppercase is the original defect: `Design-System` is a
+ *     legitimate git-host kit;
+ *   - NTFS DOS 8.3 short names (`VICTIM~1` standing in for `Victim Component`
+ *     on a volume with 8.3 generation enabled). Where that alias is assigned,
+ *     `path.join(root, "VICTIM~1")` really does open `Victim Component` — so
+ *     this IS an aliasing property, not an inability to alias, and it is
+ *     admitted for the reason given below rather than dismissed: the short name
+ *     is generated FOR that directory, so it reaches that same kit and no
+ *     other. `~` is also legal in a POSIX directory name, so blanket-refusing
+ *     it would make a `my~kit` kit listable and unusable — this rule's own
+ *     defect, re-created;
+ *   - Win32 reserved device names (`CON`, `NUL`, `COM1`), which resolve to a
+ *     device rather than to another kit. CVE-2025-27210 let a device name walk
+ *     `path.join` OUT of a base directory, but only as a
+ *     segment FOLLOWED BY traversal segments (`..\CON\..\..\etc\passwd`).
+ *     Refusing separators makes an accepted id a single component, and the
+ *     trailing-dot/space rule removes the only separator-free way to end in a
+ *     traversal segment, so no accepted id has that shape (locked in
+ *     `kit-files.test.ts`). The `path` argument of `readFile`/`writeFiles` does
+ *     take separators, so the published `engines.node` ranges exclude every
+ *     unpatched release for that surface — per release line, since the fix
+ *     landed separately in 20.19.4, 22.17.1 and 24.4.1.
+ *
+ * The first two are alternate SPELLINGS of one real directory, resolvable in
+ * both directions, so there is no hidden second kit to cross into; the third
+ * reaches a device instead of a kit, which fails the operation rather than
+ * redirecting it at another kit. All three are name-equivalence properties
+ * rather than gate holes: a caller who can name a kit two ways still reaches
+ * exactly one kit. What they do NOT give is canonical-id identity — an accepted
+ * id can be a non-canonical spelling of the kit it opens, so a destructive verb
+ * routed by such an id acts on that kit under a name `list_kits` never handed
+ * out. Closing that needs the resolved path canonicalised (`realpath`) and
+ * compared against the request — a store-layer change, not a predicate one, and
+ * not something a denylist of characters can ever finish.
  *
  * A predicate (not a throwing helper) on purpose: each caller raises its own
  * error type/code (`ListFilesError` / `McpError` / `NotFoundError`) — only the
@@ -154,6 +281,27 @@ export function isSafeKitId(kitId: string): boolean {
   if (kitId.length === 0) return false;
   if (kitId === "." || kitId === "..") return false;
   if (kitId.includes("/") || kitId.includes("\\")) return false;
+  // Win32 trims the trailing run of spaces and dots from a path component, so
+  // any id ending in one normalizes to a DIFFERENT name — the kits root, its
+  // parent, or a sibling kit. See the two sub-cases above.
+  if (/[ .]$/u.test(kitId)) return false;
+  // A NUL byte is neither a traversal nor a Win32 alias — it is a path no
+  // filesystem call can express. Node rejects any path containing one with
+  // `ERR_INVALID_ARG_VALUE`, not `ENOENT`, so an id carrying one (MCP arguments
+  // are JSON, which encodes `\u0000` verbatim) would clear this gate and raise a
+  // raw argument TypeError from inside the store instead of the invalid-kit
+  // result the tool boundary advertises. NUL only: the other control characters
+  // are legal POSIX directory names, and refusing them would make a
+  // legitimately-named kit unusable.
+  if (kitId.includes("\u0000")) return false;
+  // An unpaired surrogate is a well-typed JavaScript string that names no
+  // Unicode scalar. Node's POSIX path conversion substitutes U+FFFD for it, so
+  // `"\uD800"` and `"\uFFFD"` reach the filesystem as the SAME bytes — the
+  // sibling-alias hazard of the trailing-[ .] rule, without needing Win32. MCP
+  // arguments are JSON, which carries `"\ud800"` verbatim, so this is reachable
+  // input. Refusing costs nothing: `readdir` decodes with replacement, so no
+  // id the store can LIST is ill-formed.
+  if (UNPAIRED_SURROGATE.test(kitId)) return false;
   return true;
 }
 
@@ -166,7 +314,39 @@ export function isSafeKitId(kitId: string): boolean {
  * plain string, so this module still needs no `zod` dependency.
  */
 export const KIT_ID_SAFETY_MESSAGE =
-  "kitId must name a single kit: it cannot be empty, `.`, `..`, or contain a path separator.";
+  "kitId must be one kit's name rather than a path: it cannot be empty, `.`, or `..`; " +
+  "it cannot end in a dot or a space; " +
+  "and it cannot contain a path separator, a NUL byte, or an unpaired surrogate.";
+
+/**
+ * The three kinds of defect `isSafeKitId` refuses, in the order the docblock
+ * above introduces them, phrased to complete "This guards against …".
+ *
+ * These are DATA rather than prose because the count has drifted before. Six
+ * guards implement three categories, so a caller cannot infer one number from
+ * the other, and `preview.ts` spent a release telling users a refusal guarded
+ * "both" an escape and an alias — twenty lines above its own comment saying
+ * there were three. The NUL guard had added a category that is neither.
+ *
+ * `kit-files.test.ts` locks this array's length against the "refuses N
+ * different kinds of id" claim in that docblock, so a fourth category cannot be
+ * added to the predicate without both moving together.
+ */
+export const KIT_ID_SAFETY_CATEGORIES = [
+  "escaping the kits root",
+  "an id that aliases a different kit inside it",
+  "an id that names a path no filesystem call can express",
+] as const;
+
+/**
+ * Why an id was refused, for appending to {@link KIT_ID_SAFETY_MESSAGE} in a
+ * user-facing error. Built from {@link KIT_ID_SAFETY_CATEGORIES} so no call
+ * site has to enumerate them — the restatement is the defect this whole change
+ * exists to remove.
+ */
+export const KIT_ID_SAFETY_RATIONALE = `This guards against ${KIT_ID_SAFETY_CATEGORIES.join(
+  ", against ",
+)}.`;
 
 /**
  * Does a parsed `.kit.json` actually carry the fields an adapter copies out of it?

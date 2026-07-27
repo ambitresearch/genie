@@ -3,11 +3,15 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
+
+import { trackedFiles } from "../../test/helpers/tracked-files.js";
 import { createServer } from "../server.js";
 import { KIT_TYPE, type KitStore } from "../store/interface.js";
 import { LocalFsKitStore } from "../store/local.js";
 import { LIST_KITS_DESCRIPTION, LIST_KITS_TOOL_NAME, listWritableKits } from "./list_kits.js";
+import { unwrapped } from "../../test/helpers/source-text.js";
 
 describe("listWritableKits", () => {
   it("maps editable GENIE_KIT store records to the public list_kits result", async () => {
@@ -102,6 +106,76 @@ describe("listWritableKits", () => {
 
   it("keeps the MCP tool description under Claude's 2 KB truncation limit", () => {
     expect(Buffer.byteLength(LIST_KITS_DESCRIPTION, "utf8")).toBeLessThanOrEqual(2048);
+  });
+
+  it("🔒 discloses BOTH listing filters, because MCP clients read this as the contract", () => {
+    // The description is shipped verbatim to the model as this tool's contract, so a
+    // filter the implementation applies but the description omits is a lie the caller
+    // cannot detect. `listWritableKits` drops records for two independent reasons and
+    // the prose has to account for both:
+    //
+    //   - stored type is not GENIE_KIT (interop records sharing the store)
+    //   - the id would be refused by the kit verbs that apply the shared gate
+    //
+    // Guard the exact word too: "every ... kit visible to the current store" claimed a
+    // completeness this function has never had since the safety filter landed.
+    expect(LIST_KITS_DESCRIPTION).not.toMatch(/every genie-native kit visible/iu);
+    expect(LIST_KITS_DESCRIPTION).toMatch(/GENIE_KIT/u);
+    expect(LIST_KITS_DESCRIPTION).toMatch(/unusable|not (?:a )?valid|cannot be used|refuse/iu);
+  });
+
+  it("🔒 does not promise round-trip acceptance this store cannot deliver", () => {
+    // The filter enforces exactly one thing: no id is returned that a verb would
+    // refuse as UNSAFE. It says nothing about EXISTENCE, and safety is the only
+    // property `listWritableKits` can establish — it takes any `KitStore`, and
+    // even against a shipped adapter a kit deleted between `list_kits` and
+    // `get_kit` is a 404. So "guarantees every id it returns is accepted by the
+    // other kit verbs" over-claims in a way no filter here could make true.
+    //
+    // (Before #282 there was a second, sharper reason: `LocalFsKitStore` routed
+    // `listKits` and `getKit` on different values, so the two could disagree
+    // about a kit that plainly existed. #282 aligned them — the over-claim did
+    // not become safe, it just lost its most vivid counter-example. Part G of
+    // `kit-id-gate.test.ts` now locks that alignment instead of pinning it.)
+    expect(LIST_KITS_DESCRIPTION).not.toMatch(/guarantees? +every +id/iu);
+    expect(LIST_KITS_DESCRIPTION).not.toMatch(/accepted by the other kit verbs/iu);
+    expect(LIST_KITS_DESCRIPTION).toMatch(/safety gate|shared safety|safety rule/iu);
+    // …and pin the caveat POSITIVELY, not just the two over-claims negatively.
+    // Without this the description could re-acquire the promise in wording these
+    // `not.toMatch`es do not cover ("every id returned is safe AND resolves"),
+    // and the only thing standing between a caller and that misreading — the
+    // sentence telling them to still handle a later not-found — could be
+    // deleted silently. Safety is decided at list time; existence is not
+    // decidable at list time by anything this function can see.
+    expect(LIST_KITS_DESCRIPTION).toMatch(/not a promise|no longer fetches/iu);
+    expect(LIST_KITS_DESCRIPTION).toMatch(/not-found from a later verb/iu);
+  });
+
+  it("🔒 the disclosed filter is the one listWritableKits actually applies", async () => {
+    // Pins prose to behaviour: an id the description says is omitted must really be
+    // omitted. Without this the two can drift back apart silently.
+    const store = {
+      async listKits() {
+        return [
+          {
+            id: "native-kit",
+            name: "Native Kit",
+            type: KIT_TYPE,
+            createdAt: "2026-06-02T10:00:00.000Z",
+          },
+          // Creatable and listable on POSIX; opens the sibling `native-kit` on Win32.
+          {
+            id: "native-kit.",
+            name: "Trailing Dot",
+            type: KIT_TYPE,
+            createdAt: "2026-06-02T10:00:00.000Z",
+          },
+        ];
+      },
+    } as Pick<KitStore, "listKits"> as KitStore;
+
+    const ids = (await listWritableKits(store)).map((kit) => kit.id);
+    expect(ids).toEqual(["native-kit"]);
   });
 });
 
@@ -300,5 +374,75 @@ describe("mcp__genie__list_kits tool", () => {
     });
 
     expect(result.isError).toBe(true);
+  });
+});
+
+/**
+ * A drift lock for one specific stale claim, because it has now recurred THREE
+ * times in this change alone.
+ *
+ * Before #282, `LocalFsKitStore.listKits` really did report the `id` embedded in
+ * each `<dir>/.kit.json` while `getKit` routed on the DIRECTORY name — the two
+ * could diverge, and prose written against that behaviour was accurate. #282
+ * made both sides report the routing key AND made the adapter skip ids
+ * `isSafeKitId` refuses, which silently falsified every sentence naming LocalFs
+ * as a source of `.kit.json`-derived or unsafe ids.
+ *
+ * Each recurrence was caught by a reviewer rather than by the suite, and each
+ * fix was a hand-edit of the instances someone happened to grep for — the third
+ * was missed by the review that found the second. A one-time edit does not stop
+ * instance four, so the set is DERIVED: every `.ts` file under `src` is scanned,
+ * including this one.
+ *
+ * The pattern is assembled from fragments so this file's own source does not
+ * contain the phrase it searches for. That is not decoration: a lock written the
+ * obvious way matches itself, and the only ways out are to exclude the scanning
+ * file (which would blind the scan to a real offender that lived in this very
+ * file) or to weaken the pattern.
+ */
+describe("stale-adapter-claim drift lock", () => {
+  // Matches a present-tense claim that an adapter hands back the id embedded in
+  // a kit's marker file. Deliberately NOT matched: `local.ts`'s "discards" form
+  // (the correct post-#282 description) and `kit-id-gate.test.ts`'s past-tense
+  // "`listKits` returned `id: meta.id`", which is immediately followed by "#282
+  // closed that". History is allowed to describe history.
+  //
+  // The phrase itself is never written out here — spelling it would make this
+  // comment the very offender the lock reports, which is exactly how it failed
+  // on its first run.
+  const STALE_LOCALFS_ID_CLAIM = new RegExp(
+    ["(?:returns|reports)\\s+`?\\.", "kit\\.json`?'s\\s+`?id`?"].join(""),
+    "iu",
+  );
+
+  it("🔒 no source file still credits a shipped adapter with the marker-file id", async () => {
+    const srcDir = fileURLToPath(new URL("..", import.meta.url));
+    // Ask git for the inventory rather than walking the disk. A recursive
+    // `readdir` also sweeps up untracked scratch files and gitignored build
+    // output, so an offending phrase in a file that is not part of the
+    // repository could fail this contract on one machine and pass on CI.
+    // git's answer is the same set every reviewer and every CI job sees.
+    //
+    // git reports pathnames with `/` on every platform, so the fixtures below
+    // are spelled that way too; `path.join` would produce a backslash on
+    // Windows and match nothing.
+    const relative = trackedFiles(srcDir).filter((rel) => rel.endsWith(".ts"));
+
+    // Non-vacuity: prove the scan actually reaches the files this claim has
+    // drifted into, rather than passing over an empty or mis-rooted set.
+    expect(relative).toContain("tools/list_kits.ts");
+    expect(relative).toContain("tools/list_kits.test.ts");
+    expect(relative).toContain("store/local.ts");
+
+    const offenders: string[] = [];
+    for (const rel of relative) {
+      const file = join(srcDir, rel);
+      // Collapse wrapped comment lines so a claim split across two ` * ` lines
+      // is still seen as one sentence.
+      const text = unwrapped(await readFile(file, "utf8"));
+      if (STALE_LOCALFS_ID_CLAIM.test(text)) offenders.push(rel);
+    }
+
+    expect(offenders).toEqual([]);
   });
 });

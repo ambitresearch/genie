@@ -920,8 +920,10 @@ describe("LocalFsKitStore — adapter-specific", () => {
   });
 
   it("🔒 omits a directory whose name isSafeKitId rejects", async () => {
-    // POSIX permits `\` in a directory name, and `isSafeKitId` — the containment
-    // rule every kit-taking tool gates on — rejects any id containing one. Since
+    // POSIX permits `\` in a directory name, and `isSafeKitId` — the shared
+    // containment-and-identity rule every kit verb that applies it gates on —
+    // rejects any id containing
+    // one. Since
     // listKits reports the DIRECTORY NAME as the id (see the shared contract's
     // divergent-.kit.json test), an unfiltered listing publishes an id that
     // read_file, list_files, plan, write_files, bind_kit and conjure_screen all
@@ -1323,7 +1325,7 @@ describe("GitHostKitStore — adapter-specific", () => {
     // keeps allowing a repository named `victim.` (`IsUsableRepoName` permits
     // `[-.\w]+`, rejecting only repeated dots and the reserved `.`). The moment
     // that lands, an externally created `victim.` is a host-reachable id this
-    // store would publish and every kit-taking tool would refuse.
+    // store would publish and every kit verb that applies the gate would refuse.
     //
     // The seed here is `..` rather than `victim.` on purpose. `victim.` is SAFE
     // under today's predicate, so asserting on it would pass before and after the

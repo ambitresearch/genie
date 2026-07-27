@@ -9,7 +9,11 @@ corepack enable
 pnpm install
 ```
 
-Node 22.19 or newer is required. `.nvmrc` pins the baseline tested by CI.
+Node.js 22.19.0–22.x, or 24.4.1 or newer is required — the 23.x line and
+24.0–24.4.0 predate the CVE-2025-27210 fix, so `engines.node` excludes them. That
+field is advisory here: npm warns and installs anyway, so the check is yours.
+`.nvmrc` is a local convenience baseline; CI does not read it, and instead
+builds a `node: [22, 24]` matrix of bare majors.
 
 ## Commands
 

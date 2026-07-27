@@ -157,6 +157,115 @@ function isMissingPathError(error: unknown): boolean {
   );
 }
 
+/**
+ * The single-component limit, counted in UTF-16 code units.
+ *
+ * Filesystems disagree about the unit they cap. ext4, XFS and btrfs count
+ * BYTES; NTFS counts UTF-16 code units; APFS is Unicode-oriented and accepts
+ * names well past 255 bytes. Counting units is the conservative reading of that
+ * disagreement, because a code point never costs fewer UTF-8 bytes than UTF-16
+ * units (BMP 1-3 bytes / 1 unit, astral 4 / 2). An id above this many units is
+ * therefore also above 255 bytes, so no cap named here admits it.
+ *
+ * Counting bytes instead over-reports on the two Unicode-oriented filesystems,
+ * and over-reporting is the unsafe direction: it is what turns a name the
+ * filesystem would have accepted into a reported absence.
+ */
+const NAME_MAX_UNITS = 255;
+
+/**
+ * The characters Win32 reserves in a path component.
+ *
+ * `<>:"|?*` are the documented set, and C0 (U+0001–U+001F) is reserved with
+ * them: Win32 refuses every one of them in a filename, so `EINVAL` on such an
+ * id is a statement about the id and not about the server. U+0000 is absent on
+ * purpose — {@link isSafeKitId} already refuses it, so it can never reach here
+ * — and the range stops short of U+0020, which is a legal filename character.
+ *
+ * The `no-control-regex` suppression below is deliberate: the control characters
+ * ARE the subject here. That rule guards against one reaching a regex by
+ * accident — a stray escape, a pasted byte — and here the range is spelled with
+ * explicit `\uXXXX` escapes whose two endpoints are argued above, so the
+ * accident the rule detects cannot be what is happening.
+ */
+// eslint-disable-next-line no-control-regex
+const WIN32_RESERVED = /[<>:"|?*\u0001-\u001F]/u;
+
+/**
+ * A name the filesystem cannot represent — which is a stronger statement than
+ * "not there right now": no file with this name can ever exist here, so it is
+ * absent by definition rather than by accident.
+ *
+ * The error code alone cannot support that claim, because both codes have a
+ * second cause that has nothing to do with `id`:
+ *
+ *   - `ENAMETOOLONG` is raised for NAME_MAX (one component too long — the id,
+ *     measured against {@link NAME_MAX_UNITS}) and for PATH_MAX (the whole
+ *     pathname too long — dominated by the configured root). A deep root would
+ *     otherwise make every lookup answer "absent", including for ids as short
+ *     as `ui`.
+ *   - `EINVAL` is the Win32 answer for its reserved characters (`<>:"|?*` and
+ *     the C0 range, per {@link WIN32_RESERVED}), but is also raised by
+ *     unrelated argument faults.
+ *
+ * So the id is inspected directly, and only a fault it can actually account for
+ * is treated as absence. Anything else stays a fault. That asymmetry is the
+ * point of #252: a configuration or platform problem reported as `kitNotFound`
+ * is a problem no caller can diagnose, whereas an id no filesystem would accept
+ * genuinely names nothing.
+ *
+ * The `EINVAL` arm is deliberately NOT gated on `process.platform === "win32"`,
+ * even though the character set is Win32's. That set travels with the
+ * FILESYSTEM, not with the host: a kits root on a mounted NTFS/exFAT volume or a
+ * CIFS/SMB share refuses those characters under a POSIX kernel too, and there
+ * the id really is unrepresentable. Gating on the host would report that case as
+ * an operational fault — trading this arm's residual (an unrelated `EINVAL` on,
+ * say, ext4, for an id that happens to carry a reserved character) for a NEW
+ * misreport on a configuration people actually run. The residual is bounded by
+ * the id inspection above; the regression would not be. Stated here so it is not
+ * "fixed" into one.
+ *
+ * Kept separate from {@link isMissingPathError} on purpose: that predicate
+ * describes a path that is absent, this one an id that is unusable, and only the
+ * second is an argument about the caller's input.
+ */
+function isUnrepresentableNameError(error: unknown, id: string): boolean {
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  if (error.code === "ENAMETOOLONG") return id.length > NAME_MAX_UNITS;
+  if (error.code === "EINVAL") return WIN32_RESERVED.test(id);
+  return false;
+}
+
+/**
+ * Strip the server's filesystem layout out of a genuine fs fault.
+ *
+ * Node builds `${code}: ${description}, ${syscall} '${path}'` and copies the
+ * ABSOLUTE path onto `.path`/`.dest`. Both cross the MCP boundary verbatim, so
+ * a caller who merely asked for a kit learns where the server keeps them.
+ *
+ * The fault itself still has to surface — #252: an unreadable kit must stay
+ * distinguishable from a missing one, or `plan` reports `kitNotFound` for a kit
+ * that exists. So the `${code}: ${description}` head is preserved (that is what
+ * `plan.test.ts` matches on) and only the path-bearing tail is removed.
+ */
+function withoutPath(error: unknown): unknown {
+  if (!(error instanceof Error) || !("code" in error)) return error;
+
+  const errno = error as NodeJS.ErrnoException;
+  const syscall = errno.syscall ?? "";
+  // Node's exact separator, so a message that does not have this shape (a
+  // hand-built error in a test double, say) is returned untouched.
+  const marker = syscall ? `, ${syscall} '` : "";
+  const cut = marker ? errno.message.indexOf(marker) : -1;
+  if (cut === -1) return error;
+
+  const redacted: NodeJS.ErrnoException = new Error(errno.message.slice(0, cut));
+  redacted.code = errno.code;
+  redacted.errno = errno.errno;
+  redacted.syscall = errno.syscall;
+  return redacted;
+}
+
 // ─── Atomic write transaction (LocalFsKitStore.writeFiles) ───────────────────
 //
 // Lifted from the shipped fs-native `write_files` tool (M1-08) when its
@@ -387,24 +496,29 @@ function isEnoent(error: unknown): boolean {
 /**
  * Read and parse a JSON metadata file for a DIRECTLY NAMED resource.
  *
- * Returns `undefined` only when the file is genuinely absent. Every other fault
- * — EACCES, EISDIR, EIO, an unparseable body — is re-thrown.
+ * Returns `undefined` when the file is absent — either because nothing is there
+ * ({@link isMissingPathError}) or because the name itself cannot exist on this
+ * filesystem ({@link isUnrepresentableNameError}). Every other fault — EACCES,
+ * EISDIR, EIO, an unparseable body — is re-thrown, with the server's absolute
+ * path stripped out of it ({@link withoutPath}).
  *
  * That distinction matters because each direct-lookup caller below turns
  * `undefined` into `NotFoundError`. The previous bare `catch` swallowed *every*
  * error, so an unreadable kit was indistinguishable from a missing one: `plan`
  * would report `kitNotFound` for a kit that exists but could not be read, and
  * its narrowed `NotFoundError` catch could never see the real fault (#252).
+ * Treating an unrepresentable NAME as absent does not reopen that: it is an
+ * argument about the caller's id, not about whether a real kit could be read.
  *
  * Scan loops want the opposite bias and use {@link readMetaIfReadable}.
  */
-async function readMeta<T>(filePath: string): Promise<T | undefined> {
+async function readMeta<T>(filePath: string, id: string): Promise<T | undefined> {
   try {
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw) as T;
   } catch (error) {
-    if (isMissingPathError(error)) return undefined;
-    throw error;
+    if (isMissingPathError(error) || isUnrepresentableNameError(error, id)) return undefined;
+    throw withoutPath(error);
   }
 }
 
@@ -416,9 +530,9 @@ async function readMeta<T>(filePath: string): Promise<T | undefined> {
  * neighbours, and one bad entry must not fail the whole listing — so this keeps
  * the historic swallow-everything behaviour exactly where it is wanted.
  */
-async function readMetaIfReadable<T>(filePath: string): Promise<T | undefined> {
+async function readMetaIfReadable<T>(filePath: string, id: string): Promise<T | undefined> {
   try {
-    return await readMeta<T>(filePath);
+    return await readMeta<T>(filePath, id);
   } catch {
     return undefined;
   }
@@ -528,8 +642,11 @@ export class LocalFsKitStore implements KitStore {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       // A POSIX directory name may contain `\`, which `isSafeKitId` — the
-      // containment rule every kit-taking tool gates on — rejects. Reporting
-      // the directory name (below) would therefore publish an id that
+      // kit-id safety rule every kit verb that applies it gates on (`validate`
+      // applies none, and `create_project` records `kitBindings[].kitId` without
+      // resolving it) — rejects. What that rule refuses is stated once, in its
+      // docblock in kit-files.ts; restating it here is how the two drift apart.
+      // Reporting the directory name (below) would therefore publish an id that
       // read_file/list_files/plan/write_files/bind_kit/conjure_screen all
       // refuse. Skipping it here keeps the promise `list_kits` makes: the ids
       // it hands out are valid input to the tools that consume them.
@@ -540,7 +657,7 @@ export class LocalFsKitStore implements KitStore {
       // the same filter: the clause is adapter-neutral, so enforcing it here
       // alone would leave the shared contract passing vacuously there.
       if (!isSafeKitId(entry.name)) continue;
-      const meta = await readMetaIfReadable<KitMetaFile>(this.kitMetaPath(entry.name));
+      const meta = await readMetaIfReadable<KitMetaFile>(this.kitMetaPath(entry.name), entry.name);
       // Same publishing invariant as the id filter above, applied to the SHAPE
       // rather than the name. `readMeta` is `JSON.parse(...) as KitMetaFile` —
       // an erased cast — so a .kit.json that parses but omits `name` or
@@ -571,7 +688,7 @@ export class LocalFsKitStore implements KitStore {
   }
 
   async getKit(kitId: KitId): Promise<KitMeta> {
-    const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId));
+    const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId), kitId);
     // `!hasRequiredKitMetaFields` is NOT redundant with the listKits filter:
     // that one governs what this store PUBLISHES, this one governs what it
     // SERVES, and a caller can reach getKit with an id listKits never emitted.
@@ -883,7 +1000,7 @@ export class LocalFsProjectStore implements ProjectStore {
     const projects: ProjectMeta[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const meta = await readMetaIfReadable<ProjectMetaFile>(this.metaPath(entry.name));
+      const meta = await readMetaIfReadable<ProjectMetaFile>(this.metaPath(entry.name), entry.name);
       if (meta) {
         projects.push({
           id: meta.id,
@@ -897,7 +1014,7 @@ export class LocalFsProjectStore implements ProjectStore {
   }
 
   async getProject(projectId: ProjectId): Promise<ProjectMeta> {
-    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId));
+    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId), projectId);
     if (!meta) throw new NotFoundError("Project", projectId);
     return {
       id: meta.id,
@@ -922,7 +1039,7 @@ export class LocalFsProjectStore implements ProjectStore {
   }
 
   async deleteProject(projectId: ProjectId): Promise<void> {
-    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId));
+    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId), projectId);
     if (!meta) throw new NotFoundError("Project", projectId);
     await rm(this.projectDir(projectId), { recursive: true, force: true });
   }
@@ -947,14 +1064,14 @@ export class LocalFsProjectStore implements ProjectStore {
    * interface.
    */
   async bindKit(projectId: ProjectId, kitId: KitId): Promise<void> {
-    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId));
+    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId), projectId);
     if (!meta) throw new NotFoundError("Project", projectId);
     meta.kitId = kitId;
     await writeFile(this.metaPath(projectId), JSON.stringify(meta, null, 2));
   }
 
   async recordScreen(projectId: ProjectId, screenRef: string): Promise<void> {
-    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId));
+    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId), projectId);
     if (!meta) throw new NotFoundError("Project", projectId);
     meta.screens.push(screenRef);
     await writeFile(this.metaPath(projectId), JSON.stringify(meta, null, 2));

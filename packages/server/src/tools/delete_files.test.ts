@@ -202,6 +202,75 @@ describe("deleteFiles", () => {
     expect(existsSync(outsideFile)).toBe(true);
   });
 
+  it('🔒 AC3 — a plan kitId of "." cannot alias the kits root and delete a SIBLING kit', async () => {
+    // The preflight only rejected ids containing a separator or "..", so "."
+    // slipped through — and `LocalFsKitStore.deleteFile` resolves through the
+    // UNSAFE `kitDir` (no `isSafeKitId`), so `join(kitsRoot, ".")` collapses to
+    // kitsRoot itself. Every sibling kit is then addressable as a plain
+    // in-bounds relative path: it passes the dot-segment check, matches `**/*`,
+    // and resolves INSIDE the (aliased) root, so containment cannot catch it.
+    // This is not Win32-specific — POSIX `join` collapses "." identically.
+    const victimDir = join(harness.kitsRoot, "victim-kit");
+    await mkdir(victimDir, { recursive: true });
+    const victimFile = join(victimDir, "secret.txt");
+    await writeFile(victimFile, "do-not-delete", "utf8");
+
+    const state = await createPlan(".", ["**/*"], ["**/*"], process.cwd());
+
+    await expect(
+      deleteFiles(harness.store, { planId: state.planId, paths: ["victim-kit/secret.txt"] }),
+    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+
+    expect(existsSync(victimFile)).toBe(true);
+  });
+
+  it("🔒 AC3 — a plan kitId that Win32 trims to a traversal alias is rejected", async () => {
+    // Win32 strips trailing spaces and dots per path component at the syscall
+    // boundary, so `<kitsRoot>\ ` and `<kitsRoot>\. ` both OPEN as kitsRoot.
+    // Node's `path` keeps the trailing character, so no containment check sees
+    // an escape — the id itself has to be refused. Asserted as a whole-call
+    // rejection because the alias only materialises on Windows, and CI is
+    // ubuntu-only.
+    for (const kitId of [" ", ". ", ".. ", ""]) {
+      const state = await createPlan(kitId, ["**/*"], ["**/*"], process.cwd());
+      await expect(
+        deleteFiles(harness.store, { planId: state.planId, paths: ["anything.txt"] }),
+      ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+    }
+  });
+
+  it("🔒 AC3 — a plan kitId that Win32 trims to a SIBLING kit is rejected", async () => {
+    // The loop above covers aliases that trim away to NOTHING (they name the
+    // kits root or its parent). This is the other half of the same class: an id
+    // that trims to a different NON-EMPTY name aliases a sibling kit, so it
+    // never leaves the kits root and no containment check can catch it.
+    //
+    //   Windows: `<kitsRoot>\victim-kit..` OPENS AS `<kitsRoot>\victim-kit`.
+    //
+    // Unlike the loop above this is discriminating on ubuntu CI, because we also
+    // create the alias directory: on POSIX `victim-kit..` is a real, distinct
+    // directory, so WITHOUT the gate the delete SUCCEEDS. It is refused only
+    // because `isSafeKitId` rejects the id itself. (On Windows the `mkdir` below
+    // would not create a second directory at all — it would reuse `victim-kit`,
+    // which is exactly why the id can never legitimately name a kit there.)
+    const victimDir = join(harness.kitsRoot, "victim-kit");
+    await mkdir(victimDir, { recursive: true });
+    await writeFile(join(victimDir, "secret.txt"), "do-not-delete", "utf8");
+
+    const aliasDir = join(harness.kitsRoot, "victim-kit..");
+    await mkdir(aliasDir, { recursive: true });
+    await writeFile(join(aliasDir, "decoy.txt"), "x", "utf8");
+
+    const state = await createPlan("victim-kit..", ["**/*"], ["**/*"], process.cwd());
+
+    await expect(
+      deleteFiles(harness.store, { planId: state.planId, paths: ["decoy.txt"] }),
+    ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
+
+    expect(existsSync(join(aliasDir, "decoy.txt"))).toBe(true);
+    expect(existsSync(join(victimDir, "secret.txt"))).toBe(true);
+  });
+
   it("AC3 — the kitId guard rejects EXACTLY the ids the shared store rule calls unsafe", async () => {
     // The guard must agree with `isSafeKitId` — the rule `plan`, `read_file`,
     // `list_files` and `write_files` all gate on. The pre-unification form
@@ -231,7 +300,14 @@ describe("deleteFiles", () => {
     // kits root, not a traversal. It is listable, resolvable and plannable, so
     // rejecting it here made an adopted kit permanently undeletable — there is
     // no `delete_kit` verb to fall back to.
-    for (const kitId of ["my..kit", "..kit", "kit.."]) {
+    //
+    // `kit..` is deliberately NOT in this list. It does not merely EMBED dots,
+    // it ENDS in them, which Win32 trims away — see the sibling case
+    // "🔒 AC3 — a plan kitId that Win32 trims to a SIBLING kit is rejected".
+    // `isSafeKitId` refuses a trailing `[ .]` run, and because it is the ONE
+    // shared rule that refusal is uniform: such an id is equally un-listable,
+    // un-plannable and un-writable, so no tool asymmetry is reintroduced.
+    for (const kitId of ["my..kit", "..kit"]) {
       const kitDir = join(harness.kitsRoot, kitId);
       await mkdir(join(kitDir, "old"), { recursive: true });
       const target = join(kitDir, "old", "a.txt");

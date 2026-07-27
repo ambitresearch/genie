@@ -155,10 +155,11 @@ export function registerPlan(server: McpServer, store: PlanKitStore): void {
       // structured JSON payload below instead of a generic thrown MCP protocol
       // error — the same reasoning the `writes` field documents above.
       //
-      // Containment first, via the SHARED store rule. `isSafeKitId` rejects
-      // exactly the ids that escape a single-kit namespace (`""`, `.`, `..`,
-      // anything with a separator), which is what keeps `getKit` — it resolves a
-      // path without re-checking id safety — from reading above the kits root.
+      // Containment first, via the SHARED store rule. `isSafeKitId` rejects the
+      // ids that escape a single-kit namespace — see its docblock for the
+      // authoritative set, deliberately not restated here — which is what keeps
+      // `getKit`, which resolves a path without re-checking id safety, from
+      // reading above the kits root.
       //
       // Deliberately NOT `KIT_ID_PATTERN`. That pattern describes ids *minted by
       // `create_kit`*; `KitId` is documented as an opaque, adapter-assigned

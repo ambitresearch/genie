@@ -38,9 +38,11 @@ export class ListFilesError extends Error {
  * Reject path-shaped kit ids up front (the store also guards, but this keeps the
  * tool's `ERR_INVALID_KIT_ID` contract). Delegates to the shared `isSafeKitId`
  * rule (`store/kit-files.ts`) — the SAME predicate `read_file` and both stores
- * use — so the two tools' kitId defenses cannot silently drift (AC1). The rule
- * rejects the empty string, `.`/`..`, and any `/`/`\\` separator; ids that
- * merely embed dots (`my..kit`) stay a valid single-segment child.
+ * use — so the two tools' kitId defenses cannot silently drift (AC1). See that
+ * predicate's docblock for the authoritative rejection set; it is deliberately
+ * NOT restated here, because duplicating it across the tool layer is how the
+ * Win32 trailing-dot alias class stayed invisible. Ids that merely embed dots
+ * (`my..kit`) stay a valid single-segment child.
  */
 function assertValidKitId(kitId: string): void {
   if (!isSafeKitId(kitId)) {

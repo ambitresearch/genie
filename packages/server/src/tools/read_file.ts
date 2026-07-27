@@ -28,10 +28,7 @@ export function assertSafeRelativePath(relativePath: string): void {
   const rel = relative(root, target);
   const escapes = rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
   if (escapes) {
-    throw new McpError(
-      ErrorCode.InvalidParams,
-      `InvalidPathError: path traversal is not allowed`,
-    );
+    throw new McpError(ErrorCode.InvalidParams, `InvalidPathError: path traversal is not allowed`);
   }
 }
 
@@ -75,10 +72,13 @@ export function registerReadFile(server: McpServer, kitStore: KitStore): void {
       // stores use (`isSafeKitId`), so the tools' traversal defenses cannot
       // silently drift (AC1). This rejects the empty string — whose kit-dir
       // resolves to the kits ROOT, letting a crafted `path` such as
-      // `other-kit/secret.txt` read a SIBLING kit's bytes (AC-SEC) — as well as
-      // `.`/`..` and any separator. The `.min(1)` above already blocks an empty
-      // kitId at the MCP schema layer; this is the defense-in-depth guard for
-      // programmatic callers that bypass schema validation.
+      // `other-kit/secret.txt` read a SIBLING kit's bytes (AC-SEC) — among the
+      // other unsafe shapes; `isSafeKitId`'s docblock carries the authoritative
+      // list and it is deliberately not restated here, because duplicating it
+      // across the tool layer is how the Win32 trailing-dot alias class stayed
+      // invisible. The `.min(1)` above already blocks an empty kitId at the MCP
+      // schema layer; this is the defense-in-depth guard for programmatic
+      // callers that bypass schema validation.
       if (!isSafeKitId(kitId)) {
         throw new McpError(ErrorCode.InvalidParams, `InvalidPathError: invalid kit identifier`);
       }

@@ -2,8 +2,24 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { renderNodeRequirement } from "../../server/test/helpers/node-cve.js";
+
 const ROOT = resolve(import.meta.dirname, "../../..");
 const readRootFile = (path: string): string => readFileSync(resolve(ROOT, path), "utf8");
+
+/**
+ * The published Node range, read from the manifest that declares it rather
+ * than copied into this file. The manifest declares support; it does not enforce
+ * it — without `engine-strict` npm warns and installs anyway, which is precisely
+ * why these docs have to be right. `docs-node-requirement.test.ts` locks every
+ * prerequisite doc against the same source.
+ */
+function publishedNodeRange(): string {
+  const manifest = JSON.parse(readRootFile("packages/server/package.json")) as {
+    engines: { node: string };
+  };
+  return manifest.engines.node;
+}
 
 describe("public documentation surface", () => {
   it("publishes only the curated user and developer guides", () => {
@@ -161,7 +177,15 @@ describe("public documentation surface", () => {
 
   it("documents storage and release sequencing accurately", () => {
     const installation = readRootFile("docs/user/installation.md");
-    expect(installation).toContain("Node.js 22.19 or newer for the npm/source path");
+    // Derived, not restated. This assertion was a second literal copy of a
+    // sentence that `packages/server/package.json`'s `engines.node` owns, so
+    // narrowing that range past CVE-2025-27210 left this contract asserting
+    // prose the docs no longer contain — a deterministically red docs job that
+    // no server-side suite could see. Rendering the expectation from the same
+    // manifest the docs are generated against removes the second copy.
+    expect(installation).toContain(
+      `${renderNodeRequirement(publishedNodeRange())} for the npm/source path`,
+    );
     expect(installation).toContain("Published images run the HTTP transport");
     expect(installation).toContain(
       "| `GENIE_HOME`          | `.genie` below the working directory.",

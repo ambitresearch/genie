@@ -229,10 +229,59 @@ export const MAX_FILE_BYTES = 262_144;
  * verbs onto the git host, not just the metadata verbs.
  */
 export interface KitStore {
-  /** List all available kits. */
+  /**
+   * List all available kits.
+   *
+   * ### Identity contract (implemented by #282, documented here)
+   *
+   * Two invariants hold over the returned ids, and every adapter owes both:
+   *
+   * 1. **Routing key, not declared id.** `id` is the key `getKit`/`listFiles`/
+   *    `readFile` route through — the directory name on LocalFs, the repository
+   *    name on a git host — never an `id` embedded in `.kit.json`, which the
+   *    adapters deliberately discard. A caller can therefore round-trip a listed
+   *    id through any other kit verb without it changing under them.
+   * 2. **Every returned id satisfies `isSafeKitId`.** A kit whose routing key the
+   *    shared gate refuses is OMITTED rather than advertised, so a listed id is
+   *    always one the shared gate admits. The guarantee is about what this
+   *    method returns, NOT about uniform enforcement downstream: `validate`
+   *    applies no kitId gate at all, and `create_project` persists
+   *    `kitBindings[].kitId` unresolved and ungated (its `getKit` call belongs
+   *    to `bindKit`). Stating it as "no verb would reject a listed
+   *    id" would teach a uniformity the tool layer does not provide.
+   *
+   * Locked adapter-neutrally by `store-conformance.test.ts` →
+   * `🔒 reports the routing key as the id when .kit.json embeds a divergent one`,
+   * `🔒 omits a directory whose name isSafeKitId rejects` (LocalFs) and
+   * `🔒 omits a listed repository whose name isSafeKitId rejects` (GitHost).
+   *
+   * Invariant 2 is re-applied at the tool layer by `listWritableKits`
+   * (`tools/list_kits.ts`). That is defence in depth, not redundancy: `KitStore`
+   * is a public injection point, so a third-party adapter that does not honour
+   * this clause must still not be able to falsify the promise `list_kits` makes
+   * to its callers.
+   */
   listKits(): Promise<KitMeta[]>;
 
-  /** Get metadata for a single kit. Throws NotFoundError if missing. */
+  /**
+   * Get metadata for a single kit. Throws NotFoundError if missing.
+   *
+   * `KitMeta.id` echoes the `kitId` that was looked up, so a caller can route
+   * subsequent calls with the value it already holds. That is a lookup-key
+   * guarantee, NOT canonical identity: `isSafeKitId` (`store/kit-files.ts`)
+   * deliberately accepts alternate SPELLINGS of one kit — case folding on a
+   * case-insensitive filesystem, and NTFS short names — so an accepted id can
+   * open a kit that `listKits` publishes under a different string. Its docblock
+   * owns that residual and explains why closing it needs `realpath` in the
+   * adapters rather than a stricter predicate. GitHost has a second route to
+   * the same divergence: it falls back to the repository name when a kit's
+   * marker cannot be read, which is the string `listKits` always reports.
+   *
+   * So do not treat `getKit(x).id` as the catalogue's name for that kit. A verb
+   * that must act under the published name — anything destructive, or anything
+   * it records — should reconcile against `listKits` instead of assuming the
+   * two agree.
+   */
   getKit(kitId: KitId): Promise<KitMeta>;
 
   /**

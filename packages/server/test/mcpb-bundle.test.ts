@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { assertRangePatchesCve202527210 } from "./helpers/node-cve.js";
+
 import { VIEWER_STATIC_FILES } from "../src/store/viewer-assets.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -75,6 +77,25 @@ describe("release changelog version headings", () => {
 });
 
 describe("mcpb bundle manifest (AC1)", () => {
+  // CVE-2025-27210 (fixed in Node 20.19.4 / 22.17.1 / 24.4.1) lets a Windows
+  // reserved device-name segment walk `path.join` out of a base directory. Both
+  // published packages raised their ranges past it; this bundle deliberately did
+  // NOT, because it ships `platforms: ["darwin"]` and the CVE is Windows-only.
+  // That reasoning is load-bearing and invisible in the manifest, so pin it: the
+  // day the bundle adds win32, the range has to be fixed in the same commit.
+  it("🔒 the bundle runtime range stays consistent with the platforms it ships", () => {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const platforms: string[] = manifest.compatibility?.platforms ?? [];
+    const range: string = manifest.compatibility?.runtimes?.node ?? "";
+    expect(platforms.length).toBeGreaterThan(0);
+    expect(range).toMatch(/^>=/u);
+    if (platforms.includes("win32")) {
+      // Interval-based, not floor-based: the fix landed per release line, so a
+      // floor above 22.17.1 still admits an unpatched 24.x.
+      assertRangePatchesCve202527210(range, "mcpb/manifest.json (ships win32)");
+    }
+  });
+
   it("mcpb/manifest.json exists and declares the required fields", () => {
     expect(existsSync(manifestPath)).toBe(true);
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
