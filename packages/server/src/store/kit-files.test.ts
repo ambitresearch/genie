@@ -372,6 +372,38 @@ describe("isSafeKitId", () => {
     }
   });
 
+  it("🔒 an accepted id is ONE path component on every platform, so a backslash is refused on POSIX too", () => {
+    // A backslash is the one character refused DESPITE being able to name a
+    // real directory: `mkdir 'my\kit'` succeeds on Linux and macOS. The
+    // predicate's own dividing line ("can this id name a real directory?")
+    // therefore argues FOR admitting it — exactly as it does for `~`, which IS
+    // admitted. The reason it is refused anyway is that it is a separator on
+    // Win32 ALONE. Measured, not assumed — the same id, split by each platform:
+    expect(path.win32.dirname("my\\kit")).toBe("my"); //          Win32: TWO
+    expect(path.win32.basename("my\\kit")).toBe("kit"); //        components
+    expect(path.posix.dirname("my\\kit")).toBe("."); //           POSIX: ONE
+    expect(path.posix.basename("my\\kit")).toBe("my\\kit"); //    component
+    //
+    // (`dirname`/`basename` rather than `join` deliberately: they name the
+    // component count this test is about, and a `join("lit", "lit")` here would
+    // trip the textual ban locked by `no consumer hand-spells a path it
+    // compares against git's answer` in `test/helpers/tracked-files.test.ts`,
+    // because this file is a `trackedFiles` consumer.)
+    //
+    // So on Windows such an id leaves its own directory and destroys the
+    // single-component property the CVE-2025-27210 argument depends on.
+    // Admitting it only where it is harmless would make the accepted-id set
+    // depend on the host OS, which a kitId cannot afford: it travels with a
+    // plan that may be authored on Linux and run on Windows. The POSIX
+    // over-rejection is the deliberate price of a platform-independent
+    // predicate — do not "fix" it into a `process.platform` branch.
+    expect(isSafeKitId("my\\kit")).toBe(false);
+    // The contrast that shows the asymmetry is priced-in rather than an
+    // oversight: `~` is POSIX-legal in the same way and IS accepted, because
+    // it is not a separator anywhere.
+    expect(isSafeKitId("my~kit")).toBe(true);
+  });
+
   it("🔒 rejects the Win32 trailing-space/dot aliases of the names above", () => {
     // Win32 strips trailing spaces AND trailing dots from a path component at
     // the syscall boundary, so on Windows each of these is a live alias for a
