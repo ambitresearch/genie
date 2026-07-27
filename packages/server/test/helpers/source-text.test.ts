@@ -161,6 +161,24 @@ describe("source-text — a glob is not a comment", () => {
 
     expect(commentTexts(source)).toEqual(["first claim", "second claim"]);
   });
+
+  it("🔒 returns the two comment kinds interleaved in source order", () => {
+    // Reading each kind with its own pass and concatenating the results groups
+    // the output by kind, not by position, so a line comment written before a
+    // docblock is reported after it. Callers join this array to ask whether a
+    // file SAYS something, and joining a mis-ordered array puts two comments
+    // side by side that are not adjacent in the source — the same way a run
+    // spanning a blank line does. Both invent a sentence nobody wrote.
+    const source = [
+      "// line one",
+      "/** block one. */",
+      "// line two",
+      "/** block two. */",
+      "",
+    ].join("\n");
+
+    expect(commentTexts(source)).toEqual(["line one", "block one.", "line two", "block two."]);
+  });
 });
 
 describe("source-text — a line comment is recognised only at a line start", () => {
@@ -325,5 +343,84 @@ describe("source-text — a block comment is recognised only at a line start", (
     expect(
       unanchoredUses(["/**", ` * Never write ${UNANCHORED_OPENER} here.`, " */"].join("\n")),
     ).toEqual([]);
+  });
+});
+describe("source-text — comment order is positional across the whole package", () => {
+  /**
+   * Every position in `source` where `text` could have started.
+   *
+   * Extraction collapses wrapping, so a whole comment cannot be searched for
+   * verbatim; its opening words survive intact. Those words are not unique —
+   * two comments can open the same way, and a comment can quote a phrase that
+   * appears earlier — so every occurrence is a candidate, and choosing among
+   * them is left to the ordering check below.
+   */
+  const candidates = (source: string, text: string): number[] => {
+    const opener = text.split(" ").slice(0, 4).join(" ");
+    const found: number[] = [];
+
+    for (let at = source.indexOf(opener); at !== -1; at = source.indexOf(opener, at + 1)) {
+      found.push(at);
+    }
+
+    return found;
+  };
+
+  /**
+   * Whether `texts` can be laid out in `source` in the order they were given.
+   *
+   * Asking whether *some* consistent layout exists — rather than pinning each
+   * comment to its first textual match — is what keeps a repeated opening
+   * phrase from reading as a violation. It is a property of the output, so it
+   * holds whatever `commentTexts` does internally.
+   *
+   * The comments are taken as an argument rather than read from `source` so
+   * that the rejecting branch can be exercised directly. Deriving them here
+   * would make it unreachable the moment the extractor is correct, and a
+   * branch that cannot be reached is a branch that can be deleted without any
+   * test noticing.
+   */
+  const isPositional = (source: string, texts: string[]): boolean => {
+    let previous = -1;
+
+    for (const text of texts) {
+      const at = candidates(source, text);
+
+      // An opener that cannot be found anywhere tells us nothing about order —
+      // markers inside it may have been rewritten by extraction.
+      if (at.length === 0) continue;
+
+      const forward = at.filter((position) => position >= previous);
+      if (forward.length === 0) return false;
+
+      previous = forward[0]!;
+    }
+
+    return true;
+  };
+
+  it("🔒 no tracked file reports its comments out of source order", () => {
+    const misordered = trackedFiles(SERVER_ROOT)
+      .filter((file) => file.endsWith(".ts"))
+      .filter((file) => {
+        const source = readFileSync(path.join(SERVER_ROOT, file), "utf8");
+        return !isPositional(source, commentTexts(source));
+      });
+
+    expect(misordered).toEqual([]);
+  });
+
+  it("🔒 the scan can actually see a violation", () => {
+    // Guards the assertion above against passing because it looked at nothing.
+    // A line comment before a docblock is the shape that grouping-by-kind gets
+    // wrong: the check must accept the source order and reject the grouped
+    // reading, which reports the docblock first.
+    const source = ["// written first", "/** written second. */", ""].join("\n");
+
+    const inOrder = commentTexts(source);
+
+    expect(inOrder).toEqual(["written first", "written second."]);
+    expect(isPositional(source, inOrder)).toBe(true);
+    expect(isPositional(source, ["written second.", "written first"])).toBe(false);
   });
 });

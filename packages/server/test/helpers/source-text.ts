@@ -84,11 +84,18 @@ export const stripComments = (source: string): string =>
  * Returned with comment markers and wrapping removed, so a phrase broken across
  * lines is still one phrase. Use this for any question of the form "does this
  * file SAY x".
+ *
+ * The two kinds have to be found by separate passes, so the matches are put
+ * back into positional order before being read. Concatenating one pass after
+ * the other groups the output by kind instead, which reports a line comment
+ * written above a docblock as though it came after — and a caller joining this
+ * array to search it would then be reading two comments side by side that are
+ * not adjacent in the source, inventing a sentence neither of them states.
  */
 export const commentTexts = (source: string): string[] => {
-  const raw = [...source.matchAll(BLOCK_COMMENT), ...source.matchAll(LINE_COMMENT_RUN)].map(
-    (match) => match[0],
-  );
+  const raw = [...source.matchAll(BLOCK_COMMENT), ...source.matchAll(LINE_COMMENT_RUN)]
+    .sort((left, right) => left.index - right.index)
+    .map((match) => match[0]);
 
   return raw
     .map((comment) =>
