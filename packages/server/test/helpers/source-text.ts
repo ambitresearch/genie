@@ -64,8 +64,13 @@ const BLOCK_COMMENT = /^[ \t]*\/\*[\s\S]*?\*\//gmu;
  * The run must be built from adjacent lines only. Allowing `\s*` between them
  * spans blank lines and fuses two unrelated comments into one "sentence" able to
  * state a claim neither of them made.
+ *
+ * The line break is `\r?\n`, not `\n`. `.` excludes `\r`, so on a Windows
+ * checkout an `\n`-only continuation cannot reach the next line and every
+ * wrapped run reads as several separate comments — which silently empties any
+ * prose lock searching for a phrase that spans the wrap.
  */
-const LINE_COMMENT_RUN = /^[ \t]*\/\/.*(?:\n[ \t]*\/\/.*)*/gmu;
+const LINE_COMMENT_RUN = /^[ \t]*\/\/.*(?:\r?\n[ \t]*\/\/.*)*/gmu;
 
 /**
  * `source` with its comments replaced by whitespace — the live-code view.
@@ -92,6 +97,17 @@ export const stripComments = (source: string): string =>
  * array to search it would then be reading two comments side by side that are
  * not adjacent in the source, inventing a sentence neither of them states.
  */
+/**
+ * `source` with its docblock leaders collapsed — the wrapped-prose view.
+ *
+ * A claim written across two ` * ` lines is one sentence to a reader, so a
+ * same-line pattern silently passes over it. Callers that search comment prose
+ * for a phrase must flatten it first, and must do so here rather than inline:
+ * the obvious hand-rolled spelling breaks the line on `\n` alone, which leaves
+ * a stray `\r` mid-phrase on a Windows checkout and loses the match.
+ */
+export const unwrapped = (source: string): string => source.replace(/\r?\n\s*\*?\s*/gu, " ");
+
 export const commentTexts = (source: string): string[] => {
   const raw = [...source.matchAll(BLOCK_COMMENT), ...source.matchAll(LINE_COMMENT_RUN)]
     .sort((left, right) => left.index - right.index)

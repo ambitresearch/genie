@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { commentTexts, stripComments } from "./source-text.js";
+import { commentTexts, stripComments, unwrapped } from "./source-text.js";
 import { trackedFiles, trackedPath } from "./tracked-files.js";
 
 const SERVER_ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
@@ -531,5 +531,76 @@ describe("source-text — comment order is positional across the whole package",
     expect(inOrder).toEqual(["written first", "written second."]);
     expect(isPositional(source, inOrder)).toBe(true);
     expect(isPositional(source, ["written second.", "written first"])).toBe(false);
+  });
+});
+
+describe("source-text — a CRLF checkout reads the same as an LF one", () => {
+  /** The same source as a Windows checkout would deliver it. */
+  const asCrlf = (source: string): string => source.replace(/\r?\n/gu, "\r\n");
+
+  it("🔒 reads the same comments on either checkout", () => {
+    // `.` excludes `\r`, so a run continuation spelled `\n` alone cannot follow
+    // one line to the next once the file ends its lines `\r\n`. Every wrapped
+    // `//` block then reads as several separate comments, and a prose lock
+    // searching for a phrase that spans the wrap finds nothing — silently, and
+    // only on Windows.
+    const split = trackedFiles(SERVER_ROOT)
+      .filter((file) => file.endsWith(".ts"))
+      .filter((relative) => {
+        const source = readFileSync(path.join(SERVER_ROOT, relative), "utf8");
+        return (
+          JSON.stringify(commentTexts(source)) !== JSON.stringify(commentTexts(asCrlf(source)))
+        );
+      });
+
+    expect(split).toEqual([]);
+  });
+
+  it("🔒 that parity scan can see a run CRLF would split", () => {
+    const wrapped = "// a claim spanning\n// two comment lines\n";
+
+    expect(commentTexts(wrapped)).toEqual(["a claim spanning two comment lines"]);
+    expect(commentTexts(asCrlf(wrapped))).toEqual(commentTexts(wrapped));
+
+    // Non-vacuity: the corpus really does contain multi-line runs, so the scan
+    // above is exercising the behaviour it claims to protect.
+    const withRuns = trackedFiles(SERVER_ROOT).filter((relative) =>
+      /^[ \t]*\/\/.*\n[ \t]*\/\//mu.test(readFileSync(path.join(SERVER_ROOT, relative), "utf8")),
+    );
+    expect(withRuns.length).toBeGreaterThan(10);
+  });
+
+  it("🔒 collapses a wrapped docblock claim on either checkout", () => {
+    const doc = " * shared by every\n * kit-taking tool\n";
+
+    expect(unwrapped(doc)).toContain("every kit-taking tool");
+    expect(unwrapped(asCrlf(doc))).toContain("every kit-taking tool");
+  });
+
+  it("🔒 no tracked source hand-rolls the docblock unwrap", () => {
+    // Assembled, not written literally, so this file does not trip its own scan.
+    const HAND_ROLLED = new RegExp(["\\\\n", "\\\\s\\*", "\\\\\\*\\?"].join(""), "u");
+
+    // The helper module is where the idiom is supposed to live; every other
+    // file must delegate to it. Asserting that it still spells the shape keeps
+    // the exclusion honest — an exclusion nobody checks is how a scan quietly
+    // stops covering anything.
+    const AUTHORITY = "test/helpers/source-text.ts";
+    expect(HAND_ROLLED.test(readFileSync(path.join(SERVER_ROOT, AUTHORITY), "utf8"))).toBe(true);
+
+    const offenders = trackedFiles(SERVER_ROOT)
+      .filter((file) => file.endsWith(".ts") && file !== SELF && file !== AUTHORITY)
+      .filter((relative) =>
+        HAND_ROLLED.test(readFileSync(path.join(SERVER_ROOT, relative), "utf8")),
+      );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("🔒 that scan tells a hand-rolled unwrap from the shared helper", () => {
+    const HAND_ROLLED = new RegExp(["\\\\n", "\\\\s\\*", "\\\\\\*\\?"].join(""), "u");
+
+    expect(HAND_ROLLED.test(String.raw`text.replace(/\n\s*\*?\s*/gu, " ")`)).toBe(true);
+    expect(HAND_ROLLED.test(`text = unwrapped(raw)`)).toBe(false);
   });
 });

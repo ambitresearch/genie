@@ -11,6 +11,7 @@ import { createServer } from "../server.js";
 import { KIT_TYPE, type KitStore } from "../store/interface.js";
 import { LocalFsKitStore } from "../store/local.js";
 import { LIST_KITS_DESCRIPTION, LIST_KITS_TOOL_NAME, listWritableKits } from "./list_kits.js";
+import { unwrapped } from "../../test/helpers/source-text.js";
 
 describe("listWritableKits", () => {
   it("maps editable GENIE_KIT store records to the public list_kits result", async () => {
@@ -438,7 +439,7 @@ describe("stale-adapter-claim drift lock", () => {
       const file = join(srcDir, rel);
       // Collapse wrapped comment lines so a claim split across two ` * ` lines
       // is still seen as one sentence.
-      const text = (await readFile(file, "utf8")).replace(/\n\s*\*?\s*/gu, " ");
+      const text = unwrapped(await readFile(file, "utf8"));
       if (STALE_LOCALFS_ID_CLAIM.test(text)) offenders.push(rel);
     }
 

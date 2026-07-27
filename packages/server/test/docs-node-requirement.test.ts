@@ -39,7 +39,7 @@ import {
   renderNodeRequirement,
   statesNodeRequirement,
 } from "./helpers/node-cve.js";
-import { stripComments } from "./helpers/source-text.js";
+import { stripComments, unwrapped } from "./helpers/source-text.js";
 import { trackedFiles, trackedPath } from "./helpers/tracked-files.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -408,7 +408,7 @@ describe("published Node requirement", () => {
     for (const file of await repoFiles((f) => f.endsWith(".md") || f.endsWith(".ts"))) {
       // Collapse docblock leaders so a claim wrapped across several comment
       // lines is read as the single sentence it is.
-      const prose = (await read(file)).replace(/\n\s*\*?\s*/gu, " ");
+      const prose = unwrapped(await read(file));
       for (const [sentence] of prose.matchAll(enforcement)) {
         offenders.push(`${file}: ${sentence.trim()}`);
       }
