@@ -1,10 +1,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
+
+import { trackedFiles } from "../../test/helpers/tracked-files.js";
 import { createServer } from "../server.js";
 import { KIT_TYPE, type KitStore } from "../store/interface.js";
 import { LocalFsKitStore } from "../store/local.js";
@@ -412,34 +414,32 @@ describe("stale-adapter-claim drift lock", () => {
     "iu",
   );
 
-  async function collectSourceFiles(dir: string): Promise<string[]> {
-    const entries = await readdir(dir, { withFileTypes: true });
-    const found: string[] = [];
-    for (const entry of entries) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) found.push(...(await collectSourceFiles(full)));
-      else if (entry.name.endsWith(".ts")) found.push(full);
-    }
-    return found;
-  }
-
   it("🔒 no source file still credits a shipped adapter with the marker-file id", async () => {
     const srcDir = fileURLToPath(new URL("..", import.meta.url));
-    const files = await collectSourceFiles(srcDir);
+    // Ask git for the inventory rather than walking the disk. A recursive
+    // `readdir` also sweeps up untracked scratch files and gitignored build
+    // output, so an offending phrase in a file that is not part of the
+    // repository could fail this contract on one machine and pass on CI.
+    // git's answer is the same set every reviewer and every CI job sees.
+    //
+    // git reports pathnames with `/` on every platform, so the fixtures below
+    // are spelled that way too; `path.join` would produce a backslash on
+    // Windows and match nothing.
+    const relative = trackedFiles(srcDir).filter((rel) => rel.endsWith(".ts"));
 
-    // Non-vacuity: prove the scan actually reaches the two files this claim has
+    // Non-vacuity: prove the scan actually reaches the files this claim has
     // drifted into, rather than passing over an empty or mis-rooted set.
-    const relative = files.map((file) => file.slice(srcDir.length));
-    expect(relative).toContain(join("tools", "list_kits.ts"));
-    expect(relative).toContain(join("tools", "list_kits.test.ts"));
-    expect(relative).toContain(join("store", "local.ts"));
+    expect(relative).toContain("tools/list_kits.ts");
+    expect(relative).toContain("tools/list_kits.test.ts");
+    expect(relative).toContain("store/local.ts");
 
     const offenders: string[] = [];
-    for (const file of files) {
+    for (const rel of relative) {
+      const file = join(srcDir, rel);
       // Collapse wrapped comment lines so a claim split across two ` * ` lines
       // is still seen as one sentence.
       const text = (await readFile(file, "utf8")).replace(/\n\s*\*?\s*/gu, " ");
-      if (STALE_LOCALFS_ID_CLAIM.test(text)) offenders.push(file.slice(srcDir.length));
+      if (STALE_LOCALFS_ID_CLAIM.test(text)) offenders.push(rel);
     }
 
     expect(offenders).toEqual([]);
