@@ -214,6 +214,17 @@ const WIN32_RESERVED = /[<>:"|?*\u0001-\u001F]/u;
  * is a problem no caller can diagnose, whereas an id no filesystem would accept
  * genuinely names nothing.
  *
+ * The `EINVAL` arm is deliberately NOT gated on `process.platform === "win32"`,
+ * even though the character set is Win32's. That set travels with the
+ * FILESYSTEM, not with the host: a kits root on a mounted NTFS/exFAT volume or a
+ * CIFS/SMB share refuses those characters under a POSIX kernel too, and there
+ * the id really is unrepresentable. Gating on the host would report that case as
+ * an operational fault — trading this arm's residual (an unrelated `EINVAL` on,
+ * say, ext4, for an id that happens to carry a reserved character) for a NEW
+ * misreport on a configuration people actually run. The residual is bounded by
+ * the id inspection above; the regression would not be. Stated here so it is not
+ * "fixed" into one.
+ *
  * Kept separate from {@link isMissingPathError} on purpose: that predicate
  * describes a path that is absent, this one an id that is unusable, and only the
  * second is an argument about the caller's input.
