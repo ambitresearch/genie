@@ -273,6 +273,27 @@ const UNPAIRED_SURROGATE =
  * compared against the request — a store-layer change, not a predicate one, and
  * not something a denylist of characters can ever finish.
  *
+ * ONE case is refused DESPITE passing that test, and it is called out here
+ * because the rule above otherwise condemns it: `\`. It is an ordinary POSIX
+ * filename character (`mkdir 'my\kit'` succeeds on Linux and macOS), so it CAN
+ * name a real directory — and the `~` entry above rejects blanket-refusal for
+ * precisely that reason. It is refused anyway because it is a SEPARATOR on
+ * Win32: `path.win32.join("C:\\kits", "my\\kit")` is `C:\kits\my\kit`, three
+ * components where the POSIX form gives two, so there the id leaves its own
+ * directory and destroys the single-component property the CVE-2025-27210
+ * argument above depends on. Admitting it only where it is harmless would make
+ * the accepted-id set depend on the host OS, which a kitId cannot afford: it is
+ * a portable identifier that travels with a plan, and a plan authored on Linux
+ * may run on Windows. `local.ts` declines the same trade for a neighbouring
+ * reason — its `EINVAL` arm is deliberately NOT gated on `process.platform`,
+ * because that constraint travels with the FILESYSTEM (an NTFS or SMB kits root
+ * refuses those names under a POSIX kernel too). The POSIX cost is therefore
+ * real and knowingly paid: a directory literally named `my\kit` cannot be used
+ * as a kit. Stated here so the asymmetry with `~` is not read as an oversight
+ * and "fixed" into a platform branch; the refusal is locked by
+ * `an accepted id is ONE path component on every platform` in
+ * `kit-files.test.ts`.
+ *
  * A predicate (not a throwing helper) on purpose: each caller raises its own
  * error type/code (`ListFilesError` / `McpError` / `NotFoundError`) — only the
  * RULE is centralised here, not the error shape.
