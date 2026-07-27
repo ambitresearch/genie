@@ -477,15 +477,15 @@ describe("kitId gate — an imported kit is usable end to end", () => {
       mcp__genie__plan: "plan",
     } as const;
 
+    // `read_file` phrases its kitId refusal as `InvalidPathError`, so the "tool"
+    // layer below matches its kitId-specific wording rather than the bare error
+    // name — `assertSafeRelativePath` raises the same error type for a bad
+    // `path`, and every call below passes a VALID one.
     const refusedAt = (layer: (typeof REFUSES_AT)[keyof typeof REFUSES_AT], text: string) =>
       layer === "schema"
         ? text.includes(KIT_ID_SAFETY_MESSAGE)
         : layer === "tool"
-          ? // `read_file` phrases its kitId refusal as `InvalidPathError`, so
-            // match its kitId-specific wording rather than the bare error name
-            // — `assertSafeRelativePath` raises the same error type for a bad
-            // `path`, and every call below passes a VALID one.
-            text.includes("ERR_INVALID_KIT_ID") ||
+          ? text.includes("ERR_INVALID_KIT_ID") ||
             text.includes("invalid kit identifier") ||
             text.includes("too_small")
           : text.includes("kitNotFound");

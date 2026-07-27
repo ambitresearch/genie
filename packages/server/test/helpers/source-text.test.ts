@@ -163,6 +163,123 @@ describe("source-text — a glob is not a comment", () => {
   });
 });
 
+describe("source-text — a line comment is recognised only at a line start", () => {
+  it("🔒 a `//` inside a string literal is not a comment", () => {
+    // The same mistake as the glob, in the other pair of characters. Reading
+    // `//` wherever it appears finds one inside any literal that holds a
+    // protocol-relative URL or a POSIX path — `isSafeRefUrl("file:///etc/passwd")`
+    // is real code in `conjure.test.ts` — and then treats the rest of that line
+    // as prose. As a stripper it deletes the assertion; as an extractor it
+    // reports the literal as something the file says.
+    const source = ['expect(isSafeRefUrl("file:///etc/passwd")).toBe(false);', ""].join("\n");
+
+    const unanchored = /(?:^|[^:])(\/\/.*(?:\n[ \t]*\/\/.*)*)/gmu;
+
+    expect(
+      source.replace(new RegExp(unanchored.source, unanchored.flags), " ").includes("toBe(false)"),
+      "the fixture no longer demonstrates the hazard — an unanchored read is " +
+        "supposed to delete this assertion, so this test would pass vacuously",
+    ).toBe(false);
+
+    expect(stripComments(source)).toContain("toBe(false)");
+    expect(commentTexts(source)).toEqual([]);
+  });
+
+  it("🔒 an inline comment does not consume the character before it", () => {
+    // The `https://` guard was spelled as "any character that is not a colon",
+    // and that character is part of the match. Replacing the match therefore
+    // removes a character of live code along with the comment — a terminator,
+    // a brace, or a comma, depending on the line.
+    const source = ["const a = 1;// why", ""].join("\n");
+
+    expect(stripComments(source)).toContain("const a = 1;");
+
+    // And the documented cost of the anchor, asserted rather than assumed: the
+    // trailing comment is not read at all. `hiddenContractProse` below is what
+    // keeps that from becoming a place for a contract to hide.
+    expect(commentTexts(source)).toEqual([]);
+  });
+
+  it("🔒 still reads a line-leading comment run, indented or not", () => {
+    // Anti-vacuity: a reader that anchored so hard it found nothing would
+    // satisfy both tests above while measuring nothing at all.
+    const source = ["// top level", "", "  // indented, and", "  // wrapped", ""].join("\n");
+
+    expect(commentTexts(source)).toEqual(["top level", "indented, and wrapped"]);
+  });
+});
+
+describe("source-text — prose that the anchored reading cannot see", () => {
+  /**
+   * Vocabulary that makes a comment a claim some contract test in this package
+   * reads, rather than an incidental annotation like `// ISO-8601`.
+   */
+  const CONTRACT_VOCABULARY =
+    /isSafeKitId|kitId|list_kits|listKits|getKit|traversal|containment|identity|gate/u;
+
+  /**
+   * Lines carrying contract prose in a comment the anchored reading drops.
+   *
+   * Anchoring is an approximation, and this is the price: a comment written
+   * after code on the same line is not read. That is the safe direction for the
+   * stripper, which would otherwise delete code, but for the extractor it is a
+   * place for a claim to hide — and silence is the failure mode these scans
+   * exist to prevent. Flagging it converts the blind spot into a loud one.
+   *
+   * The `//` must sit outside any string literal opened on that line, so that
+   * `"file:///etc/passwd"` is not reported as a hidden comment.
+   */
+  const hiddenContractProse = (source: string): number[] => {
+    const hits: number[] = [];
+    source.split("\n").forEach((line, index) => {
+      const at = line.indexOf("//");
+      if (at <= 0 || line.trimStart().startsWith("//")) return;
+
+      const before = line.slice(0, at);
+      const quoted = ['"', "'", "`"].some(
+        (mark) => (before.split(mark).length - 1) % 2 === 1 || before.endsWith(":"),
+      );
+      if (quoted) return;
+      if (CONTRACT_VOCABULARY.test(line.slice(at))) hits.push(index + 1);
+    });
+    return hits;
+  };
+
+  it("🔒 no contract prose in this package hides in a trailing comment", () => {
+    const scanned: string[] = [];
+    const offenders: string[] = [];
+    for (const relative of trackedFiles(SERVER_ROOT).filter((file) => file.endsWith(".ts"))) {
+      // No `SELF` exclusion here, unlike the block-comment scan below. That one
+      // must exempt itself because its own detector spells the banned pattern
+      // out as a regex; this one bans a shape, not a literal, and the fixtures
+      // in this file sit inside string literals that the quote guard skips. An
+      // exclusion that changed nothing would misreport what is covered.
+      scanned.push(relative);
+      const lines = hiddenContractProse(readFileSync(path.join(SERVER_ROOT, relative), "utf-8"));
+      for (const line of lines) offenders.push(`${relative}:${line}`);
+    }
+
+    expect(scanned, "the scan must cover the file that defines it").toContain(SELF);
+    expect(
+      offenders,
+      "these state a contract in a comment written after code on the same " +
+        "line, which the anchored reading in `test/helpers/source-text.ts` " +
+        "does not see — move the comment onto its own line",
+    ).toEqual([]);
+  });
+
+  it("🔒 that scan can tell a hidden claim from a visible one", () => {
+    // Two-sided, and it has to clear the literal that motivated the anchor in
+    // the first place, or the empty result above would just mean the detector
+    // never fires.
+    expect(hiddenContractProse("const x = 1; // the kitId gate runs first")).toEqual([1]);
+    expect(hiddenContractProse("// the kitId gate runs first")).toEqual([]);
+    expect(hiddenContractProse("  // the kitId gate runs first")).toEqual([]);
+    expect(hiddenContractProse('expect(safe("file:///x")).toBe(false); // kitId')).toEqual([]);
+    expect(hiddenContractProse("const a = 1; // unrelated note")).toEqual([]);
+  });
+});
+
 describe("source-text — a block comment is recognised only at a line start", () => {
   it("🔒 no source in this package reads block comments without the anchor", () => {
     // Each contract test that scans source used to spell this separation

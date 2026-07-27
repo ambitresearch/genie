@@ -35,8 +35,16 @@
  * makes it report less, and silence is the failure mode these tests exist to
  * prevent.
  *
- * Line comments are matched as runs so a sentence wrapped across several `//`
- * lines stays one unit, and the `[^:]` guard keeps `https://` out.
+ * Line comments are anchored for the same reason and take the same trade-off.
+ * `//` appears inside any literal holding a protocol-relative URL or a POSIX
+ * path — `isSafeRefUrl("file:///etc/passwd")` is real code here — so reading it
+ * wherever it occurs deletes the rest of that line as a stripper and reports the
+ * literal as prose as an extractor. Anchoring costs the trailing comment,
+ * `foo(); // note`; `source-text.test.ts` fails loudly if a contract is ever
+ * stated in one, so that cost cannot become a silent gap.
+ *
+ * Line comments are matched as runs, so a sentence wrapped across several `//`
+ * lines stays one unit.
  */
 
 /**
@@ -46,13 +54,18 @@
 const BLOCK_COMMENT = /^[ \t]*\/\*[\s\S]*?\*\//gmu;
 
 /**
- * A run of consecutive `//` lines, captured as one comment.
+ * A run of consecutive `//` lines, recognised only where a comment can legally
+ * begin: at the start of a line, after nothing but indentation.
+ *
+ * Anchoring is what keeps `"file:///etc/passwd"` and `"//cdn.example.com"` from
+ * reading as comments. A trailing `foo(); // note` is not recognised, which is
+ * the same deliberate direction of error as `BLOCK_COMMENT` above.
  *
  * The run must be built from adjacent lines only. Allowing `\s*` between them
  * spans blank lines and fuses two unrelated comments into one "sentence" able to
  * state a claim neither of them made.
  */
-const LINE_COMMENT_RUN = /(?:^|[^:])(\/\/.*(?:\n[ \t]*\/\/.*)*)/gmu;
+const LINE_COMMENT_RUN = /^[ \t]*\/\/.*(?:\n[ \t]*\/\/.*)*/gmu;
 
 /**
  * `source` with its comments replaced by whitespace — the live-code view.
