@@ -372,8 +372,8 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     // since the advertised-schema lock below cannot see a `.refine()` at all.
     //
     // ⚠️ EXHAUSTIVE OVER CONTAINMENT-GATED VERBS, NOT OVER kitId-TAKING VERBS.
-    // TWO kitId-taking input surfaces apply no containment rule and are
-    // deliberately NOT here. Both are real asymmetries with the shared rule in
+    // TWO kitId-taking input surfaces apply no kit-id safety rule at all and
+    // are deliberately NOT here. Both are real asymmetries with the shared rule in
     // `store/kit-files.ts`, both are PRE-EXISTING, and neither is a gate this
     // file can pin. Reasons verified rather than assumed.
     //

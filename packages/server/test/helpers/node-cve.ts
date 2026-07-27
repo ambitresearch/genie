@@ -461,11 +461,25 @@ export function statesNodeRequirement(text: string): boolean {
   const COMPARATOR = /(?:>=|<=|>|<|≥|%E2%89%A5|%3E%3D)\s*\d/u;
   const SPANNED = /\d+(?:\.\d+)*(?:\.x)?\s*(?:–|—|%E2%80%93|\bor newer\b|\bor later\b)/iu;
   const VERSION = /\d+\.(?:\d+|x)/u;
+  // A major on its own: one or two digits that are not part of a longer number
+  // and not the head of a dotted version. `sha256` and `line 256` are excluded
+  // by construction rather than by a denylist.
+  const BARE_MAJOR = /(?<![\w.])v?\d{1,2}(?![\d.])/u;
 
   let states = false;
   eachNodeClause(text, (clause, line) => {
-    const required = /requir/iu.test(line) && VERSION.test(clause);
-    if (COMPARATOR.test(clause) || SPANNED.test(clause) || required) states = true;
+    // A DOTTED version may take the requirement verb from anywhere on the
+    // logical line, because real prose interposes a parenthetical between the
+    // two — `Node.js 23.5.0 (the current release) is required` — and the clause
+    // carrying the verb names no tool, so it cannot inherit Node as its subject.
+    const dotted = /requir/iu.test(line) && VERSION.test(clause);
+    // A BARE major must find the verb in its OWN clause. Requiring a dot used to
+    // do this job by accident: it was the only reason `Install Node 22 (pnpm
+    // >=10.34.4 is required)` did not read as a Node floor. Admitting the most
+    // ordinary spelling of a floor therefore has to re-earn that exclusion
+    // deliberately, by attributing the verb the same way the version is.
+    const bare = /requir/iu.test(clause) && BARE_MAJOR.test(clause);
+    if (COMPARATOR.test(clause) || SPANNED.test(clause) || dotted || bare) states = true;
   });
   return states;
 }

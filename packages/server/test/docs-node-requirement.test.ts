@@ -27,7 +27,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,9 +39,56 @@ import {
   renderNodeRequirement,
   statesNodeRequirement,
 } from "./helpers/node-cve.js";
-import { trackedFiles } from "./helpers/tracked-files.js";
+import { trackedFiles, trackedPath } from "./helpers/tracked-files.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const SELF = trackedPath(SERVER_ROOT, fileURLToPath(import.meta.url));
+
+/**
+ * Tests that write to a repository path fixed at author time.
+ *
+ * Taint, not pattern-matching: the destructive write is rarely on the constant
+ * itself. It was `const scratch = path.join(REPO_ROOT, "reports")` followed by
+ * `const note = path.join(scratch, "<fixed>.md")` — only `note` is written, and
+ * only `scratch` names a root. So a binding is REPO-FIXED when it derives from
+ * a repo-root identifier or from another repo-fixed binding, and UNIQUE the
+ * moment `mkdtemp` enters its chain, which clears everything derived from it.
+ */
+const ROOT_IDENTIFIER = /\b(?:\w*(?:REPO|PACKAGE|SERVER|SRC)_ROOT|__dirname)\b/u;
+const BINDING = /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*([^;\n]+)/gu;
+// `mkdir` is deliberately absent. The harm is TRUNCATION and DELETION of data a
+// developer already had; `mkdir(p, { recursive: true })` over an existing path
+// is a no-op and destroys nothing, so listing it would flag the one call this
+// file legitimately still makes and force a SELF exclusion — which would stop
+// the lock policing the very file whose regression it was written for.
+const WRITE_CALL = /\b(?:writeFile|appendFile|cp|rm)\s*\(\s*([A-Za-z_$][\w$]*)/gu;
+
+export const fixedRepoPathWrites = (text: string, label: string): string[] => {
+  // Comments first. This function's own docblock quotes the offending code as
+  // prose, and the sweep reads raw file text — unstripped, the explanation of
+  // the bug reads as a fresh instance of it. Block comments are anchored to the
+  // line start because a glob inside a string (`"**/*.tsx"`) opens `/*`.
+  const source = text
+    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gmu, " ")
+    .replace(/(?:^|[^:])\/\/.*$/gmu, " ");
+  const unique = new Set<string>();
+  const repoFixed = new Set<string>();
+  const mentions = (rhs: string, names: Set<string>): boolean =>
+    [...names].some((name) => new RegExp(String.raw`\b${name}\b`, "u").test(rhs));
+
+  for (const [, name, rhs] of source.matchAll(BINDING)) {
+    if (name === undefined || rhs === undefined) continue;
+    if (rhs.includes("mkdtemp") || mentions(rhs, unique)) unique.add(name);
+    else if (ROOT_IDENTIFIER.test(rhs) || mentions(rhs, repoFixed)) repoFixed.add(name);
+  }
+
+  const offending = new Set<string>();
+  for (const [, target] of source.matchAll(WRITE_CALL)) {
+    if (target !== undefined && repoFixed.has(target)) offending.add(target);
+  }
+  return [...offending].sort().map((target) => `${label} (${target})`);
+};
 
 /**
  * Every file that states the Node prerequisite to a reader, discovered rather
@@ -91,19 +138,79 @@ const markdownFiles = async (): Promise<string[]> =>
  */
 describe("documentation sweep — hermetic against the working copy", () => {
   it("🔒 never reads a file git does not track", async () => {
-    const scratch = path.join(REPO_ROOT, "reports");
-    await mkdir(scratch, { recursive: true });
-    const note = path.join(scratch, "node-requirement-scratch.md");
+    // The fixture has to live INSIDE the repository. Seeded anywhere else, a
+    // walk rooted at REPO_ROOT could never have reached it, and the assertion
+    // below would hold against a disk walk just as readily as against git —
+    // proving nothing. `reports/` is gitignored, so seeding there cannot leave
+    // the working tree dirty even if this process dies mid-test.
+    const scratchRoot = path.join(REPO_ROOT, "reports");
+    await mkdir(scratchRoot, { recursive: true });
+    // mkdtemp, not a fixed filename. `reports/` holds real generated output on
+    // a developer machine, and a fixed name would TRUNCATE whatever was already
+    // there and then DELETE it in the `finally` — a hermeticity test writing
+    // destructively into the working copy it exists to stay hermetic against.
+    // Only the directory this run created is removed.
+    const scratch = await mkdtemp(path.join(scratchRoot, "node-requirement-"));
+    const note = path.join(scratch, "scratch.md");
     await writeFile(note, "# scratch\n\nRequires Node >= 1.2.3 to run.\n", "utf-8");
     try {
+      // git spells paths with `/` on every platform; `path.relative` does not.
+      const relative = path.relative(REPO_ROOT, note).split(path.sep).join("/");
       // Guards against passing because the fixture was never a candidate: the
       // sweep only claims markdown, so an untracked markdown file is exactly
-      // the shape it would otherwise have read.
-      expect(note.endsWith(".md")).toBe(true);
-      expect(await markdownFiles()).not.toContain("reports/node-requirement-scratch.md");
+      // the shape it would otherwise have read — and it must sit inside the
+      // swept tree for its absence to mean anything.
+      expect(relative.endsWith(".md")).toBe(true);
+      expect(relative.startsWith("..")).toBe(false);
+      expect(await markdownFiles()).not.toContain(relative);
     } finally {
-      await rm(note, { force: true });
+      await rm(scratch, { recursive: true, force: true });
     }
+  });
+
+  it("🔒 no test seeds a fixture at a fixed path inside the repository", () => {
+    // The sibling above used to write `reports/node-requirement-scratch.md`, a
+    // path fixed at author time. `reports/` is gitignored precisely BECAUSE
+    // developers keep generated output there, so a colliding name truncated a
+    // real file and the `finally` then deleted it — silently, while the suite
+    // reported green. A scratch path inside the repository must therefore be
+    // unique per run, which in practice means `mkdtemp`.
+    //
+    // Discovered, not enumerated: the offending write was in this very file and
+    // a hand-listed set of "tests that write to disk" would have started and
+    // ended there. THIS FILE IS DELIBERATELY IN SCOPE — a SELF exclusion here
+    // would exempt the only known instance of the defect.
+    const files = trackedFiles(SERVER_ROOT).filter((rel) => rel.endsWith(".test.ts"));
+    const offenders: string[] = [];
+    for (const rel of files) {
+      offenders.push(
+        ...fixedRepoPathWrites(readFileSync(path.join(SERVER_ROOT, rel), "utf-8"), rel),
+      );
+    }
+
+    // Anti-vacuity: the scan must actually be reading files, and it must be
+    // reading THIS one — if this file moved, the regression it locks would slip
+    // out of scope without a word.
+    expect(files.length).toBeGreaterThan(20);
+    expect(files).toContain(SELF);
+
+    expect(
+      offenders.sort(),
+      "these tests write to a path fixed at author time inside the repository, so " +
+        "running the suite can truncate and then delete a developer's real file — " +
+        "derive the path from mkdtemp so only this run's directory is touched",
+    ).toEqual([]);
+  });
+
+  it("🔒 the fixed-path detector distinguishes a fixed seed from an mkdtemp one", () => {
+    // Assembled rather than written out, so the fixtures below are not themselves
+    // scanned as offending code when the sweep above reads this file.
+    const root = "REPO" + "_ROOT";
+    const fixed = `const dir = path.join(${root}, "reports");\nawait writeFile(dir, "x");`;
+    const unique = `const base = path.join(${root}, "reports");\nconst dir = await mkdtemp(base);\nawait writeFile(dir, "x");`;
+
+    expect(fixedRepoPathWrites(fixed, "fixture.test.ts")).toEqual(["fixture.test.ts (dir)"]);
+    expect(fixedRepoPathWrites(unique, "fixture.test.ts")).toEqual([]);
   });
 });
 

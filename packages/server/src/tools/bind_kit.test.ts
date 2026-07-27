@@ -101,8 +101,8 @@ describe("bindKit (standalone function)", () => {
   // the wrong reason. (Concretely: `ProjectStore.bindKit` checks the project
   // before the kit, so with the old absent `projectId: "valid-id"` it would
   // have surfaced as ERR_PROJECT_NOT_FOUND — a bare throw, and green.) The ids
-  // below are rejected by the containment rule (`isSafeKitId`) itself, which is
-  // the rule the store actually enforces.
+  // below are rejected by the shared kit-id safety rule (`isSafeKitId`) itself,
+  // which is the rule the store actually enforces.
   it("rejects a malformed kitId at the schema, before touching the store", async () => {
     const { store, projectId } = await fixture();
 

@@ -920,8 +920,9 @@ describe("LocalFsKitStore — adapter-specific", () => {
   });
 
   it("🔒 omits a directory whose name isSafeKitId rejects", async () => {
-    // POSIX permits `\` in a directory name, and `isSafeKitId` — the containment
-    // rule every kit verb that applies it gates on — rejects any id containing
+    // POSIX permits `\` in a directory name, and `isSafeKitId` — the shared
+    // containment-and-identity rule every kit verb that applies it gates on —
+    // rejects any id containing
     // one. Since
     // listKits reports the DIRECTORY NAME as the id (see the shared contract's
     // divergent-.kit.json test), an unfiltered listing publishes an id that

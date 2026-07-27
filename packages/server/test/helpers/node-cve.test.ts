@@ -338,6 +338,41 @@ describe("statesNodeRequirement — discovery independent of the claim's shape",
   it("🔒 does not attribute a co-listed tool's requirement to Node", () => {
     expect(statesNodeRequirement("Install Node 22 (pnpm >=10.34.4 is required)")).toBe(false);
   });
+
+  // A bare major is the most ordinary way to write a floor, and it was the one
+  // shape discovery could not see: the `required` branch insisted on a dot, so
+  // "Node 23 is required" was never compared with the manifest. The wording most
+  // likely to be wrong stayed invisible — the same failure this predicate
+  // replaced `findOpenEndedNodeFloors` to fix, one shape further down.
+  it("🔒 discovers a requirement written as a bare major", () => {
+    for (const prose of [
+      "Node 23 is required",
+      "Requires Node 24",
+      "Node.js 23 or newer is required",
+      "genie requires Node 22",
+    ]) {
+      expect(statesNodeRequirement(prose), `${prose} must be discovered`).toBe(true);
+    }
+  });
+
+  // The dot in the old `required` branch was load-bearing by ACCIDENT: it was
+  // the only reason a co-listed tool's "is required" did not promote Node's
+  // bare major. Admitting bare majors therefore has to re-earn that exclusion
+  // deliberately, by attributing the requirement verb to the Node CLAUSE rather
+  // than anywhere on the line.
+  it("🔒 a bare major needs the requirement verb in its OWN clause", () => {
+    for (const prose of [
+      "Install Node 22 (pnpm >=10.34.4 is required)",
+      "Install Node 22 (a lockfile is required)",
+      "builds a `node: [22, 24]` matrix (a matrix is required)",
+      // A major is one or two digits. Admitting "a digit" would let an offset,
+      // a line number or a hash width stand in for a version the moment the
+      // clause happened to say "required".
+      "Node is required to run the sha256 check at line 256",
+    ]) {
+      expect(statesNodeRequirement(prose), `${prose} is not a Node requirement`).toBe(false);
+    }
+  });
 });
 
 describe("statesNodeRequirement — soft-wrapped claims", () => {

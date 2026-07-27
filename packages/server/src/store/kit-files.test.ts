@@ -358,10 +358,12 @@ describe("isSafeKitId", () => {
 // unified to remove.
 it("🔒 accepts ids that are only ALIASES via filesystem name-equivalence", () => {
   for (const id of [
-    // NTFS DOS 8.3 short names. `mkdir "VICTIM~1"` succeeds everywhere, and
-    // where one exists NTFS gives the long-named kit `VICTIM~2`, so the two
-    // never collide. `~` is legal on POSIX too, so refusing it would make a
-    // real `my~kit` listable-but-unusable.
+    // NTFS DOS 8.3 short names. These DO alias: where the volume has assigned
+    // `VICTIM~1` to `Victim Component`, opening the short name really does open
+    // that directory. It is admitted because the alias is generated FOR that
+    // kit, so it reaches that same kit and no other — name equivalence, not an
+    // escape. `~` is legal on POSIX too, so refusing it would make a real
+    // `my~kit` listable-but-unusable.
     "VICTIM~1",
     "PROGRA~1",
     "my~kit",
@@ -478,6 +480,37 @@ const publishablePackages = trackedFiles(fileURLToPath(new URL("../../../", impo
   .filter(({ manifest }) => manifest.private !== true)
   .map(({ url, manifest }) => [manifest.name ?? String(url), manifest] as const);
 
+/**
+ * Comments, flattened to one line each.
+ *
+ * Prettier reflows code but never comments, so where a sentence wraps is an
+ * author's choice that changes on any edit. A prose check that matches raw text
+ * therefore silently stops seeing a claim the moment someone rewraps it — which
+ * is exactly how `store-conformance.test.ts` went on calling `isSafeKitId` "the
+ * containment rule" for a whole review while the lock below reported green: the
+ * phrase had wrapped to `containment\n// rule`.
+ */
+const flattenedComments = (text: string): string[] =>
+  [
+    // Anchored: `"components/**\/*.tsx"` contains a `/*`, and test files are full
+    // of globs, so an unanchored strip treats one as a comment opener and
+    // swallows everything to the next `*\/`.
+    ...text.matchAll(/^[ \t]*\/\*[\s\S]*?\*\//gmu),
+    // Only HORIZONTAL whitespace joins consecutive comment lines. `\s*` spans
+    // newlines, so it fused two comments separated by a blank line into one
+    // sentence and could report a claim neither of them made.
+    ...text.matchAll(/(?:^|[^:])(\/\/.*(?:\n[ \t]*\/\/.*)*)/gmu),
+  ]
+    .map((match) => match[0])
+    .map((comment) =>
+      comment
+        .split("\n")
+        .map((line) => line.replace(/^\s*(?:\/\/+|\*+\/?|\/\*+)\s?/u, ""))
+        .join(" ")
+        .replace(/\s+/gu, " ")
+        .trim(),
+    );
+
 it("🔒 no comment still calls isSafeKitId merely a containment rule", () => {
   // The docblock above was corrected to say `isSafeKitId` is a
   // CONTAINMENT-AND-IDENTITY rule: alongside escapes it also refuses ids that
@@ -487,29 +520,27 @@ it("🔒 no comment still calls isSafeKitId merely a containment rule", () => {
   // caller re-deriving the check from one of those sentences would reimplement
   // traversal defence alone and drop the identity half.
   //
-  // Discovered, not enumerated. The same drift has now been corrected three
+  // Discovered, not enumerated. The same drift has now been corrected four
   // times in this review and each time a hand-listed set of sites left one
   // behind, so this asks the TREE which comments describe the predicate rather
   // than trusting a list to stay complete.
-  const srcRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const files = trackedFiles(srcRoot)
-    .filter((rel) => rel.endsWith(".ts") && !rel.endsWith(".test.ts"))
-    .map((rel) => path.join(srcRoot, rel));
+  //
+  // The corpus is the whole package, tests included. The previous version
+  // scanned `src/` only and skipped every `.test.ts`, so it could not see two
+  // of the three live offenders — a lock can be silent for several independent
+  // reasons at once, and fixing one of them would have left it silent.
+  const serverRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const SELF = trackedPath(serverRoot, fileURLToPath(import.meta.url));
+  const files = trackedFiles(serverRoot).filter((rel) => rel.endsWith(".ts") && rel !== SELF);
 
   const describing: string[] = [];
   const historical: string[] = [];
   const stale: string[] = [];
-  for (const file of files) {
-    const text = readFileSync(file, "utf-8");
+  for (const rel of files) {
     // Comments only. The predicate's NAME appears in live code at every call
     // site; it is the prose around it that can teach the wrong contract.
-    const comments = [
-      ...text.matchAll(/\/\*[\s\S]*?\*\//gu),
-      ...text.matchAll(/(?:^|[^:])(\/\/.*(?:\n\s*\/\/.*)*)/gmu),
-    ].map((match) => match[0]);
-    for (const comment of comments) {
+    for (const comment of flattenedComments(readFileSync(path.join(serverRoot, rel), "utf-8"))) {
       if (!comment.includes("isSafeKitId")) continue;
-      const rel = path.relative(srcRoot, file);
       describing.push(rel);
       // A comment that RECORDS a corrected claim has to keep quoting the wrong
       // words to stay legible; `preview.ts` deliberately preserves the old
@@ -519,11 +550,14 @@ it("🔒 no comment still calls isSafeKitId merely a containment rule", () => {
     }
   }
 
-  // Anti-vacuity, both arms. An empty walk would satisfy the assertion below
-  // while reading nothing, and if the historical exemption never fired it would
-  // be dead weight that could silently start excusing real drift.
+  // Anti-vacuity, three arms. An empty walk would satisfy the assertion below
+  // while reading nothing; if the historical exemption never fired it would be
+  // dead weight that could silently start excusing real drift; and the SELF
+  // exclusion has to be excluding something real, or a rename would quietly
+  // turn it into a no-op that lets this file's own prose drift.
   expect(describing.length).toBeGreaterThan(3);
   expect(historical.length).toBeGreaterThan(0);
+  expect(trackedFiles(serverRoot)).toContain(SELF);
 
   expect(
     [...new Set(stale)].sort(),
@@ -532,6 +566,24 @@ it("🔒 no comment still calls isSafeKitId merely a containment rule", () => {
       "added — say containment-and-identity, or point at the docblock in " +
       "kit-files.ts rather than restating a narrower version of it",
   ).toEqual([]);
+});
+
+it("🔒 the comment scan sees a claim that wrapped across two comment lines", () => {
+  // The regression that hid three offenders: the raw text between the words was
+  // `\n    // `, so a match on the phrase failed even though a reader sees one
+  // uninterrupted sentence.
+  const wrapped = [
+    "    // isSafeKitId — the containment",
+    "    // rule, as this module's docblock puts it",
+  ].join("\n");
+  const [flat] = flattenedComments(wrapped);
+  expect(flat).toBe("isSafeKitId — the containment rule, as this module's docblock puts it");
+  expect(/containment rule/u.test(flat ?? "")).toBe(true);
+  // And the flattener must not fuse two SEPARATE comments into one sentence, or
+  // it would invent claims nobody made.
+  expect(
+    flattenedComments(["    // ends with containment", "", "    // rule starts here"].join("\n")),
+  ).toEqual(["ends with containment", "rule starts here"]);
 });
 
 it("🔒 the publishable-package scan actually finds both published packages", () => {
