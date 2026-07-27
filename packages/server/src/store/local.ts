@@ -461,8 +461,11 @@ export class LocalFsKitStore implements KitStore {
    * DRO-581). This is the store-layer half of the shared `isSafeKitId` rule and
    * the defense-in-depth guard behind each tool's own kitId check: a
    * programmatic caller that bypasses the tool must not be able to pass `""`
-   * (whose `join(baseDir, "")` is the kits ROOT — letting a crafted `path` like
-   * `other-kit/secret.txt` read a SIBLING kit), `.`/`..`, or a separator.
+   * (whose `join(baseDir, "")` is the kits ROOT), `.`/`..`, or a separator.
+   * BOTH gated verbs would be exposed, by different routes: `readFile` would
+   * turn a crafted `path` like `other-kit/secret.txt` into a SIBLING kit's
+   * bytes, while `listFiles` — which takes no `path` at all — would recursively
+   * enumerate every kit under that root (and under `..`, its parent).
    *
    * An unsafe id names no valid kit, so it surfaces as the SAME `NotFoundError`
    * a genuinely-missing kit would — this never leaks a sibling's bytes and adds
@@ -470,10 +473,39 @@ export class LocalFsKitStore implements KitStore {
    * the same rule inline rather than trusting `kitDir` (see the guard there):
    * its `kitId?` parameter is caller-supplied, and unlike the verbs below it
    * CREATES the container, so an unsafe id there writes a new directory at a
-   * caller-chosen path instead of merely failing to resolve one. The remaining
-   * write/plan verbs (`deleteFile`/`openPlan`) keep using `kitDir` directly:
-   * their ids are server-minted or already plan-gated, and their behavior is
-   * unchanged.
+   * caller-chosen path instead of merely failing to resolve one. Every other
+   * write/plan verb keeps resolving through the UNGATED helpers and is
+   * unchanged: `deleteFile`/`writeFiles` via `kitDir`, and
+   * `openPlan`/`commitPlan`/`closePlan` via `planDir`. `safeKitDir` cannot
+   * SUPPLY a plan destination — it fuses the check with a `baseDir`-rooted
+   * resolve, and plan paths root at `plansDir` — but that binds only its
+   * RESOLUTION half; the check half is a root-independent predicate, so a plan
+   * verb wanting the same rule calls `isSafeKitId` directly. None does today:
+   * those ids are server-minted or already plan-gated. Treat the names as
+   * EXAMPLES, not a census: grep `this.kitDir(`/`this.planDir(` for current
+   * membership. This sentence has already shipped wrong twice — once reading
+   * as exhaustive while naming two of the five, once claiming `safeKitDir`
+   * could not gate the plan verbs at all.
+   *
+   * NOT every read verb routes through here, and the omission is deliberate.
+   * `getKit` and `listComponents` both resolve through the UNCHECKED `kitDir`,
+   * so neither is contained at this layer: `getKit` validates EXISTENCE and
+   * TYPE at whatever location it resolves (a `.kit.json` parsing as `KIT_TYPE`),
+   * never that the location is inside the kits root. `listComponents` resolves
+   * through that SAME `kitDir(kitId)` (its manifest sits under it), so it
+   * reaches no location `getKit` did not already admit — an absence of
+   * INDEPENDENT exposure, not containment. The invariant is the shared
+   * `kitDir` argument, NOT the `getKit` call that happens to precede it.
+   *
+   * The decision is recorded at `listKits`: the invariant is about what this
+   * store PUBLISHES, and a caller that constructs an unsafe id is stopped at
+   * the tool boundary, where `get_kit` and `list_components` both refine on
+   * `isSafeKitId`. Read that comment before "fixing" this. The short form: what
+   * separates the two sets is the BREADTH of what a verb can reach once the
+   * directory resolves — NOT whether it takes a `path`. `listFiles` takes none
+   * and is gated anyway, because it walks the entire tree. `getKit` reaches one
+   * fixed filename that must parse as `KIT_TYPE` meta or it throws, and
+   * `listComponents` reaches a second fixed path under that same directory.
    */
   private safeKitDir(kitId: KitId): string {
     if (!isSafeKitId(kitId)) throw new NotFoundError("Kit", kitId);
