@@ -67,7 +67,15 @@ describe("KIT_ID_SAFETY_MESSAGE", () => {
       },
       {
         kind: "containment",
-        operator: /\.includes\(/u,
+        // `.includes(...)`, or an UNANCHORED regex `.test(...)`. The lookbehind
+        // is what keeps the two regex shapes apart: an anchored `…$/u.test(`
+        // asks about the END of the id and is the `suffix` kind above, while
+        // any other `.test(` asks whether something appears ANYWHERE in it —
+        // which is a containment question and takes "contain". Widened when the
+        // unpaired-surrogate guard arrived: a character class cannot be spelled
+        // with `.includes`, but it is still a substring test, so classifying it
+        // as a fourth kind would have invented a verb the rule does not need.
+        operator: /\.includes\(|(?<!\$\/u?)\.test\(/u,
         verb: /\bcannot contain\b/iu,
         verbText: "cannot contain",
       },
@@ -262,6 +270,59 @@ describe("isSafeKitId", () => {
     // Guards the scope decision above: the NUL rule must not become a blanket
     // control-character denylist.
     for (const id of ["kit\u0001x", "kit\tx", "kit\u001fx"]) {
+      expect(isSafeKitId(id)).toBe(true);
+    }
+  });
+
+  it("🔒 rejects an id that is ill-formed UTF-16, exactly as isWellFormed does", () => {
+    // A JavaScript string is a UTF-16 code-unit sequence, so it may carry a
+    // surrogate with no partner — a value naming no Unicode scalar. Node's
+    // POSIX path conversion substitutes U+FFFD for it, so `"\uD800"` and
+    // `"\uFFFD"` are DIFFERENT strings that reach the filesystem as the SAME
+    // bytes: an accepted lone surrogate is a live alias for a sibling kit, and
+    // `writeFiles`/`deleteFile` route through this predicate alone.
+    //
+    // The rule is spelled as a regex rather than `String.prototype.isWellFormed`
+    // because that method is ES2024 and the shared tsconfig targets ES2022 (see
+    // `UNPAIRED_SURROGATE` in kit-files.ts). Hand-spelling a Unicode rule is
+    // exactly where a subtle off-by-one lives, so this does not merely sample
+    // some ids — it checks the predicate DIFFERENTIALLY against the built-in
+    // over the whole surrogate block and both its neighbours, singly and in
+    // every ordered pair. A drift of one code point at either boundary fails.
+    //
+    // Calling the ES2024 method HERE is not the contradiction it looks like, and
+    // the asymmetry is the point. An oracle has to be independent of the thing it
+    // judges: a second hand-spelling would only prove the regex agrees with
+    // itself. The built-in is the specification, so it is the only witness worth
+    // having. It is available because tests are the one place the ES2022 ceiling
+    // does not bind — `packages/server/tsconfig.json` excludes `*.test.ts` — and
+    // because the runtime is Node 22 (`isWellFormed` landed in Node 20). Should
+    // either ever stop holding, `id.isWellFormed` is `undefined` and this line
+    // throws, so the guarantee degrades to a loud failure and never to a false
+    // pass.
+    const units: string[] = [];
+    for (let c = 0xd7fe; c <= 0xe001; c += 1) units.push(String.fromCharCode(c));
+
+    const candidates = [...units];
+    for (const a of units) for (const b of units) candidates.push(a + b);
+
+    // None of these code units is `.`, ` `, `/`, `\` or NUL, and none of the
+    // candidates is empty, so no OTHER guard can fire and mask a disagreement.
+    const disagreements = candidates.filter((id) => isSafeKitId(id) !== id.isWellFormed());
+    expect(disagreements.map((id) => JSON.stringify(id))).toEqual([]);
+
+    // Anti-vacuity, both ways: the sample must actually contain ids of each
+    // kind, or an `isSafeKitId` that returned a constant would pass above.
+    expect(candidates.some((id) => !id.isWellFormed())).toBe(true);
+    expect(candidates.some((id) => id.isWellFormed())).toBe(true);
+  });
+
+  it("🔒 keeps admitting the astral kit names a lone surrogate must not cost", () => {
+    // Guards the scope decision above the same way the control-character test
+    // guards NUL's: the rule refuses ILL-FORMED UTF-16, not non-BMP text. A kit
+    // named with an emoji or a CJK extension character is well-formed and stays
+    // usable — refusing it would re-create this change's own defect.
+    for (const id of ["kit-\u{1F600}", "\u{1F600}", "\u{20BB7}-kit", "\uFFFD"]) {
       expect(isSafeKitId(id)).toBe(true);
     }
   });

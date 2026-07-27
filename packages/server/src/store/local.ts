@@ -158,11 +158,20 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 /**
- * The universal single-component limit. ext4, APFS, NTFS, XFS and btrfs all cap
- * a path component at 255 bytes, so an id longer than this is unrepresentable
- * everywhere rather than merely awkward here.
+ * The single-component limit, counted in UTF-16 code units.
+ *
+ * Filesystems disagree about the unit they cap. ext4, XFS and btrfs count
+ * BYTES; NTFS counts UTF-16 code units; APFS is Unicode-oriented and accepts
+ * names well past 255 bytes. Counting units is the conservative reading of that
+ * disagreement, because a code point never costs fewer UTF-8 bytes than UTF-16
+ * units (BMP 1-3 bytes / 1 unit, astral 4 / 2). An id above this many units is
+ * therefore also above 255 bytes, so no cap named here admits it.
+ *
+ * Counting bytes instead over-reports on the two Unicode-oriented filesystems,
+ * and over-reporting is the unsafe direction: it is what turns a name the
+ * filesystem would have accepted into a reported absence.
  */
-const NAME_MAX_BYTES = 255;
+const NAME_MAX_UNITS = 255;
 
 /** The characters Win32 reserves in a path component. */
 const WIN32_RESERVED = /[<>:"|?*]/u;
@@ -175,10 +184,11 @@ const WIN32_RESERVED = /[<>:"|?*]/u;
  * The error code alone cannot support that claim, because both codes have a
  * second cause that has nothing to do with `id`:
  *
- *   - `ENAMETOOLONG` is raised for NAME_MAX (one component too long — the id)
- *     and for PATH_MAX (the whole pathname too long — dominated by the
- *     configured root). A deep root would otherwise make every lookup answer
- *     "absent", including for ids as short as `ui`.
+ *   - `ENAMETOOLONG` is raised for NAME_MAX (one component too long — the id,
+ *     measured against {@link NAME_MAX_UNITS}) and for PATH_MAX (the whole
+ *     pathname too long — dominated by the configured root). A deep root would
+ *     otherwise make every lookup answer "absent", including for ids as short
+ *     as `ui`.
  *   - `EINVAL` is the Win32 answer for its reserved characters (`<>:"|?*`), but
  *     is also raised by unrelated argument faults.
  *
@@ -194,7 +204,7 @@ const WIN32_RESERVED = /[<>:"|?*]/u;
  */
 function isUnrepresentableNameError(error: unknown, id: string): boolean {
   if (!(error instanceof Error) || !("code" in error)) return false;
-  if (error.code === "ENAMETOOLONG") return Buffer.byteLength(id, "utf-8") > NAME_MAX_BYTES;
+  if (error.code === "ENAMETOOLONG") return id.length > NAME_MAX_UNITS;
   if (error.code === "EINVAL") return WIN32_RESERVED.test(id);
   return false;
 }

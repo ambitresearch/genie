@@ -115,6 +115,24 @@ export function sriSha256(bytes: Buffer | string): string {
 // ─── kitId traversal safety ──────────────────────────────────────────────────
 
 /**
+ * Matches an id carrying an unpaired surrogate — i.e. one that is ill-formed
+ * UTF-16. The first arm is a high surrogate with no low after it, the second a
+ * low surrogate with no high before it; a valid pair fails both.
+ *
+ * `String.prototype.isWellFormed` says exactly this in one call, but it is
+ * ES2024 and this repo compiles against `lib: ES2022`. Widening the shared
+ * `tsconfig.base.json` would change the emit target for all three packages to
+ * buy one predicate a method, so the rule is spelled out instead. Equivalence
+ * is not assumed: `kit-files.test.ts` differentially checks the two against
+ * each other across the surrogate block and its neighbours, singly and pairwise.
+ *
+ * No `g` flag, deliberately — a shared `g` regex carries `lastIndex` between
+ * `.test()` calls and would answer differently on alternate invocations.
+ */
+const UNPAIRED_SURROGATE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
+
+/**
  * The ONE kitId-safety rule shared by every kit-taking tool that applies it AND
  * both `KitStore` adapters, so their traversal defenses cannot silently drift
  * apart (DRO-509 / DRO-581 unification). Not every kit-taking tool does apply
@@ -190,7 +208,19 @@ export function sriSha256(bytes: Buffer | string): string {
  *     root to any caller who sends one byte. MCP arguments are JSON, which
  *     carries `\u0000` verbatim, so this is reachable input, not a theoretical
  *     one. NUL ONLY: the other control characters are legal POSIX directory
- *     names, and refusing them would re-create this rule's own defect.
+ *     names, and refusing them would re-create this rule's own defect;
+ *   - any id that is ill-formed UTF-16 — one carrying an unpaired surrogate.
+ *     This is the SIBLING-ALIAS case again, but on POSIX rather than Win32, and
+ *     it needs no exotic filesystem. A JavaScript string is a UTF-16 code-unit
+ *     sequence and may contain a surrogate with no partner, which corresponds
+ *     to no Unicode scalar; Node's POSIX path conversion therefore substitutes
+ *     U+FFFD REPLACEMENT CHARACTER for it. `"\uD800"` and `"\uFFFD"` are
+ *     different JavaScript strings that reach the filesystem as the SAME
+ *     bytes, so an accepted lone surrogate opens a live sibling kit under a
+ *     name `list_kits` never handed out — and `writeFiles`/`deleteFile` would
+ *     act on it. Like the trailing-[ .] case, refusing costs nothing: no
+ *     directory the store can LIST is ill-formed, because `readdir` decodes
+ *     names with replacement and so only ever yields well-formed strings.
  *
  * Ids that merely EMBED or LEAD with dots (`my..kit`, `..kit`, `. kit`) survive
  * unchanged through the Win32 trim — it only touches the trailing run — so they
@@ -264,6 +294,14 @@ export function isSafeKitId(kitId: string): boolean {
   // are legal POSIX directory names, and refusing them would make a
   // legitimately-named kit unusable.
   if (kitId.includes("\u0000")) return false;
+  // An unpaired surrogate is a well-typed JavaScript string that names no
+  // Unicode scalar. Node's POSIX path conversion substitutes U+FFFD for it, so
+  // `"\uD800"` and `"\uFFFD"` reach the filesystem as the SAME bytes — the
+  // sibling-alias hazard of the trailing-[ .] rule, without needing Win32. MCP
+  // arguments are JSON, which carries `"\ud800"` verbatim, so this is reachable
+  // input. Refusing costs nothing: `readdir` decodes with replacement, so no
+  // id the store can LIST is ill-formed.
+  if (UNPAIRED_SURROGATE.test(kitId)) return false;
   return true;
 }
 
@@ -278,13 +316,13 @@ export function isSafeKitId(kitId: string): boolean {
 export const KIT_ID_SAFETY_MESSAGE =
   "kitId must be one kit's name rather than a path: it cannot be empty, `.`, or `..`; " +
   "it cannot end in a dot or a space; " +
-  "and it cannot contain a path separator or a NUL byte.";
+  "and it cannot contain a path separator, a NUL byte, or an unpaired surrogate.";
 
 /**
  * The three kinds of defect `isSafeKitId` refuses, in the order the docblock
  * above introduces them, phrased to complete "This guards against …".
  *
- * These are DATA rather than prose because the count has drifted before. Five
+ * These are DATA rather than prose because the count has drifted before. Six
  * guards implement three categories, so a caller cannot infer one number from
  * the other, and `preview.ts` spent a release telling users a refusal guarded
  * "both" an escape and an alias — twenty lines above its own comment saying

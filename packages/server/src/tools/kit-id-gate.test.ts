@@ -511,6 +511,11 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     // The NUL entry is a third kind again — not an escape and not an alias but
     // an UNREPRESENTABLE path. See the disclosure test below for why it needs a
     // discriminating lock of its own that this loop cannot provide.
+    //
+    // The lone-surrogate entry is a FOURTH kind: ill-formed UTF-16. It is an
+    // alias like `victim.`, but on POSIX rather than Win32 — Node encodes an
+    // unpaired surrogate as U+FFFD's bytes, so it opens the sibling kit named
+    // `"\uFFFD"`. See the destructive suite below for the proof.
     for (const bad of [
       "",
       "..",
@@ -523,6 +528,8 @@ describe("kitId gate — an imported kit is usable end to end", () => {
       ".. ",
       "...",
       "a\u0000b",
+      "\uD800",
+      `a\uDFFFb`,
       `${IMPORTED_KIT_ID}.`,
     ]) {
       for (const [name, layer] of Object.entries(REFUSES_AT)) {
@@ -1602,6 +1609,99 @@ describe("kitId gate — what a tool may promise about the store adapters", () =
 });
 
 /**
+ * Ill-formed UTF-16 is a third alias spelling, and the only one that is
+ * destructive on POSIX.
+ *
+ * `isSafeKitId` is a rule about which BYTES reach the filesystem, but a
+ * JavaScript string is UTF-16 and may be ILL-FORMED — an unpaired surrogate is
+ * a perfectly ordinary `string` that no Unicode scalar corresponds to. Node has
+ * to put something on the wire, and its POSIX path conversion substitutes
+ * U+FFFD REPLACEMENT CHARACTER. So `"\uD800"` and `"\uFFFD"` are DIFFERENT
+ * JavaScript strings that name the SAME directory.
+ *
+ * That is the `victim.` hazard again — an accepted id resolving to a kit it does
+ * not spell — but it needs no Windows: it reproduces on APFS and ext4. And a
+ * lone surrogate is input-reachable, because MCP's JSON transport carries
+ * `"\ud800"` verbatim; `JSON.parse` does not reject it.
+ *
+ * The harm is a WRITE, not an escape. `"\uD800"` never leaves the kits root, so
+ * every containment framing accepts it; what it does is open a live sibling kit
+ * under another name, which is exactly the distinction the file header calls
+ * load-bearing.
+ */
+describe("kitId gate — an ill-formed kitId cannot open a well-formed kit", () => {
+  let kitsRoot: string;
+
+  /** Well-formed, gate-safe, and the kit that gets hit. */
+  const VICTIM_ID = "\uFFFD";
+  /** Ill-formed: a lone high surrogate. Encodes to U+FFFD's bytes. */
+  const ALIAS_ID = "\uD800";
+
+  beforeEach(async () => {
+    kitsRoot = await mkdtemp(join(tmpdir(), "genie-kitid-surrogate-"));
+    await seedKit(kitsRoot, VICTIM_ID, "Victim");
+  });
+
+  afterEach(async () => {
+    await rm(kitsRoot, { recursive: true, force: true });
+  });
+
+  it("🔒 a lone surrogate is refused even though it never leaves the kits root", async () => {
+    // The two strings are genuinely different, so this is not a tautology.
+    expect(ALIAS_ID).not.toBe(VICTIM_ID);
+    // The victim is an ordinary, usable kit — the alias must not borrow its
+    // safety.
+    expect(isSafeKitId(VICTIM_ID)).toBe(true);
+
+    expect(isSafeKitId(ALIAS_ID)).toBe(false);
+  });
+
+  it("🔒 the gate is what stops the alias, not containment", async () => {
+    // Containment alone accepts it: it resolves to a literal child of the root.
+    const resolved = join(kitsRoot, ALIAS_ID);
+    expect(resolved.startsWith(`${kitsRoot}/`) || resolved.startsWith(`${kitsRoot}\\`)).toBe(true);
+
+    // …and that child is the VICTIM's directory, which is the whole defect.
+    // Asserted by reading through the alias: if the two encoded differently this
+    // would be ENOENT.
+    const meta = await readFile(join(kitsRoot, ALIAS_ID, ".kit.json"), "utf-8");
+    expect(JSON.parse(meta).id).toBe(VICTIM_ID);
+  });
+
+  it("🔒 refuses before the store, so no write lands in the wrong kit", async () => {
+    const store = new LocalFsKitStore(kitsRoot);
+
+    // `getKit` is the shape the whole tool surface funnels through, and neither
+    // adapter gates it — so a schema that accepted the alias would resolve the
+    // victim under the attacker's spelling.
+    await expect(getKit(store, { kitId: ALIAS_ID })).rejects.toBeDefined();
+
+    // Anti-vacuity: the victim itself still resolves, so the refusal above is
+    // about the SPELLING and not about the kit being unreadable.
+    await expect(getKit(store, { kitId: VICTIM_ID })).resolves.toMatchObject({ id: VICTIM_ID });
+
+    // Nothing was planted. The alias write path is the destructive half: with
+    // the gate open, `writeFiles`/`deleteFile` resolve through the unsafe
+    // `kitDir`, so this file would appear INSIDE the victim.
+    expect(await readdir(join(kitsRoot, VICTIM_ID))).toEqual([".kit.json"]);
+  });
+
+  it("🔒 list_kits cannot advertise an ill-formed id", async () => {
+    // The Part H invariant, for this alias class: whatever survives the listing
+    // filter must clear the gate. A seeded victim keeps this from passing on an
+    // empty list.
+    const listed = await listWritableKits(new LocalFsKitStore(kitsRoot));
+
+    expect(listed.length).toBeGreaterThan(0);
+    for (const kit of listed) {
+      expect(isSafeKitId(kit.id), `advertised but gate-refused: ${JSON.stringify(kit.id)}`).toBe(
+        true,
+      );
+    }
+  });
+});
+
+/**
  * Widening the gate deleted an incidental guarantee.
  *
  * `KIT_ID_PATTERN`'s `{3,64}` was the only LENGTH bound anywhere in the system.
@@ -1691,6 +1791,63 @@ describe("kitId gate — a rejected id does not disclose the server's filesystem
       await expect(
         getKit(new LocalFsKitStore(shallowRoot), { kitId: "a".repeat(300) }),
       ).rejects.toBeInstanceOf(ProjectNotFoundError);
+    } finally {
+      await rm(shallowRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("🔒 attributes component overflow by code units, not UTF-8 bytes", async () => {
+    // The attribution above needs a portable "this component is too long"
+    // test, and UTF-8 BYTES are not one. Filesystems do not agree on the unit:
+    //
+    //   - ext4 / XFS / btrfs cap a component at 255 BYTES;
+    //   - NTFS caps it at 255 UTF-16 CODE UNITS;
+    //   - APFS is Unicode-oriented and accepts names well past 255 bytes.
+    //
+    // So a byte count over-reports on the two Unicode-oriented filesystems,
+    // and over-reporting is the unsafe direction: it re-creates #252's
+    // fault-as-absence for an id the filesystem can represent perfectly well.
+    //
+    // Code units are the sound conservative unit. Every code point costs at
+    // least as many UTF-8 bytes as UTF-16 units (BMP 1-3 bytes / 1 unit,
+    // astral 4 / 2), so "over 255 units" implies "over 255 bytes" and clears
+    // EVERY cap above. The cases it gives up fail in the safe direction: an
+    // operational fault stays a diagnosable fault instead of becoming a lie.
+    const unicodeId = "\u{1F600}".repeat(100);
+    expect(isSafeKitId(unicodeId)).toBe(true);
+    // The discriminator: 200 units, 400 bytes. A byte rule calls this
+    // unrepresentable; a code-unit rule does not — and the filesystem agrees
+    // with the code-unit rule.
+    expect(unicodeId.length).toBe(200);
+    expect(Buffer.byteLength(unicodeId, "utf-8")).toBe(400);
+
+    // Proof rather than assertion: the name really is creatable here, so
+    // classifying it "unrepresentable" is factually wrong on this platform.
+    const shallowRoot = await mkdtemp(join(tmpdir(), "genie-kit-id-units-"));
+    try {
+      let representable = true;
+      try {
+        await mkdir(join(shallowRoot, unicodeId));
+      } catch {
+        representable = false;
+      }
+      // Skip on a filesystem that genuinely refuses it (ext4 at 400 bytes)
+      // rather than assert a platform this test cannot see.
+      if (!representable) return;
+
+      const deepRoot = `/${Array.from({ length: 24 }, () => "d".repeat(200)).join("/")}`;
+      const error = await getKit(new LocalFsKitStore(deepRoot), { kitId: unicodeId }).then(
+        () => undefined,
+        (thrown: unknown) => thrown as NodeJS.ErrnoException,
+      );
+
+      expect(error).toBeDefined();
+      expect(
+        error,
+        "200 code units is inside every component cap, so the overflow came " +
+          "from the configured root — an operational fault, not a missing kit",
+      ).not.toBeInstanceOf(ProjectNotFoundError);
+      expect(error?.code).toBe("ENAMETOOLONG");
     } finally {
       await rm(shallowRoot, { recursive: true, force: true });
     }

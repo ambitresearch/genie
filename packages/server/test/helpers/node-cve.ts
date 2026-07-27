@@ -299,25 +299,40 @@ export function renderNodeRequirement(range: string): string {
  * would hand a Node-named row the next row's version number. Blank lines,
  * headings, fences, quotes, list markers and table rows therefore all break the
  * join, which is exactly CommonMark's own paragraph rule.
+ *
+ * Breaking the join is only half of the rule: a line also has to say whether it
+ * leaves a paragraph OPEN behind it, because that is what decides the NEXT line.
+ * A heading, a table row and a fence delimiter close one — the prose after
+ * `## Node` is a new paragraph rather than more of the heading — so the line
+ * after any of them continues nothing and must not be welded onto it. A list
+ * item and a block quote do leave one open, since each contains a paragraph that
+ * CommonMark allows a following unmarked line to continue lazily.
  */
 function logicalLines(text: string): string[] {
   // `>` opens a blockquote, but `>=` opens a version comparator — a wrapped
   // `Requires Node\n>=22.19.0` must keep joining, so the quote marker excludes it.
   const OPENS_BLOCK = /^\s*(?:[-*+]\s|\d+[.)]\s|#{1,6}\s|>(?!=)|\||```|~~~)/u;
+  // Opening a block and leaving one open are different questions, and it is the
+  // second one that governs the NEXT line. An ATX heading, a table row and a
+  // fence delimiter are single-line leaf blocks, so whatever follows one starts
+  // fresh. A list item or a block quote CONTAINS a paragraph, and CommonMark
+  // lets a following unmarked line lazily continue that paragraph, so those two
+  // leave it open.
+  const CLOSES_PARAGRAPH = /^\s*(?:#{1,6}\s|\||```|~~~)/u;
   const joined: string[] = [];
   let fenced = false;
+  let open = false;
 
   for (const raw of text.split("\n")) {
     if (/^\s*(?:```|~~~)/u.test(raw)) fenced = !fenced;
     const previous = joined.at(-1);
-    const continues =
-      !fenced &&
-      previous !== undefined &&
-      raw.trim() !== "" &&
-      previous.trim() !== "" &&
-      !OPENS_BLOCK.test(raw);
+    const blank = raw.trim() === "";
+    const continues = open && previous !== undefined && !fenced && !blank && !OPENS_BLOCK.test(raw);
     if (continues) joined[joined.length - 1] = `${previous} ${raw.trim()}`;
-    else joined.push(raw);
+    else {
+      joined.push(raw);
+      open = !fenced && !blank && !CLOSES_PARAGRAPH.test(raw);
+    }
   }
 
   return joined;

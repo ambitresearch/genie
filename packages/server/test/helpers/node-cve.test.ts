@@ -457,6 +457,61 @@ describe("statesNodeRequirement — soft-wrapped claims", () => {
       expect(statesNodeRequirement(doc), doc).toBe(false);
     }
   });
+
+  // Lazy continuation has TWO sides, and only one was being checked. A line is
+  // joined onto its predecessor when the predecessor left a paragraph OPEN —
+  // asking only "does the CURRENT line open a block?" makes every closed leaf
+  // block absorb the line that follows it, with no blank line required. A
+  // heading, a table row and a closing fence all close; the test above passes
+  // only because its fixtures happen to put a blank line or a second block
+  // marker after the boundary.
+  it("🔒 does not continue a paragraph out of a closed block", () => {
+    // Each pair is the same claim split across a block boundary and then welded
+    // by hand. The split form must NOT read as a requirement; the welded form
+    // MUST — a fixture that is false either way would pass against a helper that
+    // recognises nothing at all, so both directions are asserted.
+    const pairs: Array<{ split: string; welded: string }> = [
+      // A heading is a leaf block: the prose under it is a NEW paragraph, and
+      // welding them attributes the heading's subject to the prose's version.
+      {
+        split: "# Node 23\nThis migration is required.",
+        welded: "# Node 23 This migration is required.",
+      },
+      {
+        split: "## Node\nVersion 23 of the bundler is required.",
+        welded: "## Node Version 23 of the bundler is required.",
+      },
+      // A table row closes too, so the paragraph after a table is not part of
+      // the last row.
+      {
+        split: "| Node | pinned |\nVersion 23 is required for the bundler.",
+        welded: "| Node | pinned | Version 23 is required for the bundler.",
+      },
+    ];
+
+    expect(pairs.filter(({ split }) => statesNodeRequirement(split))).toEqual([]);
+    expect(pairs.filter(({ welded }) => !statesNodeRequirement(welded))).toEqual([]);
+  });
+
+  // `CLOSES_PARAGRAPH` lists fence delimiters alongside headings and table rows,
+  // and that limb is correct but has NO fixture here on purpose. Welding can only
+  // fabricate a claim when the line absorbed INTO carries the subject, and a bare
+  // ``` carries none — so every fence document this module can see reads the same
+  // whether the weld happens or not. The one arrangement that would expose it, a
+  // closing fence bearing an info string, is not a closing fence under CommonMark
+  // at all, so a fixture built on it would lock in a deviation rather than a rule.
+
+  it("🔒 still joins a genuinely open paragraph", () => {
+    // The counterweight: closing a paragraph at every block boundary must not
+    // stop the wrapped-prose case this helper exists for.
+    for (const doc of [
+      "Requires Node\n22.19.0 or newer",
+      "# Prerequisites\n\nRequires Node\n22.19.0 or newer",
+      "| Node | pinned |\n\nThis project requires Node\n>=22.19.0 to build",
+    ]) {
+      expect(statesNodeRequirement(doc), doc).toBe(true);
+    }
+  });
 });
 
 /**
