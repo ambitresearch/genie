@@ -7,7 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectStore } from "./create_project.js";
 import { LocalFsKitStore } from "../store/local.js";
-import { isSafeKitId } from "../store/kit-files.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 import {
   CONJURE_SCREEN_TOOL_NAME,
   LocalScaffoldScreenGenerator,
@@ -933,7 +933,17 @@ describe("mcp__genie__conjure_screen", () => {
     expect(payload.projectId).toBe(projectId);
   });
 
-  it("surfaces ERR_KIT_NOT_FOUND for a bad explicit kitId as a tool error payload", async () => {
+  // Named "absent", not "bad": `ghost-kit` is a perfectly well-formed kitId that
+  // simply does not exist, so this pins the store's not-found path and says
+  // nothing about malformed input. The previous name ("a bad explicit kitId")
+  // answered "is a malformed kitId covered here?" with a false yes — the same
+  // name-vs-body defect corrected in `bind_kit.test.ts` and
+  // `create_project.test.ts`, where "an invalid kitId" became "an absent kitId".
+  //
+  // This one outlived those two because it is spelled differently: a sweep for
+  // the token `invalid` cannot see a test that says `bad`. The malformed case
+  // this name used to imply is the protocol-layer sibling further down.
+  it("surfaces ERR_KIT_NOT_FOUND for an absent explicit kitId as a tool error payload", async () => {
     const { deps, projectId } = await fixture();
     const client = await connectClient(deps);
 
@@ -959,6 +969,62 @@ describe("mcp__genie__conjure_screen", () => {
       arguments: { projectId: "AB", prompt: "A valid length prompt here" },
     });
     expect(result.isError).toBe(true);
+    // `isError` alone was a proven false green. Replacing `projectIdSchema` with
+    // a bare `z.string()` left this file at 67/67 and the full 1560-test suite
+    // green — nothing in the repository detected the gate's removal. The reason
+    // generalises: a schema-invalid projectId is necessarily also *absent*,
+    // because the schema gates creation. So with the gate gone the call reaches
+    // the store, `ERR_PROJECT_NOT_FOUND` sets `isError`, and a bare boolean can
+    // never separate schema-rejection from entity-absence.
+    //
+    // Note the sibling `bind_kit` idiom (`.not.toContain("projectId")`) does NOT
+    // transfer here as a positive check: with the gate removed the payload is
+    // `{"code":"ERR_PROJECT_NOT_FOUND","message":"Project \"AB\" was not
+    // found.","projectId":"AB"}`, because the tool's catch spreads a literal
+    // `projectId` key. Asserting on that field would still pass. Observed by
+    // running the mutation, not inferred.
+    //
+    // Keyed on the schema message instead, which only the schema layer emits.
+    // Inline literal because — unlike KIT_ID_SAFETY_MESSAGE — the projectId
+    // message has no exported constant to point at.
+    expect(JSON.stringify(result)).toContain("projectId must be a 3-64 character slug");
+  });
+
+  // The sibling the test above has always implied but never had: `kitId` is
+  // `.optional()` here, so the projectId test omits it entirely and its
+  // isolation is structural rather than deliberate. Nothing in this file
+  // exercised a malformed kitId — deleting `conjure_screen`'s own kitId gate
+  // left all 67 tests green. (The cross-file lock in `kit-id-gate.test.ts` does
+  // catch it; the gap is that the verb's own suite does not, while `bind_kit`'s
+  // has since the equivalent sibling was added there.)
+  //
+  // Same contract as that sibling: `registerConjureScreenTool` declares
+  // `inputSchema`, so the MCP SDK validates arguments BEFORE the handler runs.
+  // The tool's own catch never sees a schema failure and there is no `ERR_*`
+  // code to match on — hence `JSON.stringify` rather than `errorPayload`, which
+  // parses `content[0].text` as JSON and would throw on a protocol-layer error.
+  it("rejects a malformed kitId at the MCP protocol layer", async () => {
+    const { deps, projectId } = await fixture();
+    const client = await connectClient(deps);
+
+    const result = await client.callTool({
+      name: CONJURE_SCREEN_TOOL_NAME,
+      arguments: { projectId, prompt: "A valid length prompt here", kitId: ".." },
+    });
+
+    expect(result.isError, `expected a protocol-layer rejection: ${JSON.stringify(result)}`).toBe(
+      true,
+    );
+    // Asserted against the shared constant rather than a copied literal, so the
+    // test tracks the single source of truth for the gate.
+    const text = JSON.stringify(result);
+    expect(text).toContain(KIT_ID_SAFETY_MESSAGE);
+    // `projectId` is real and would resolve, so only `kitId` can fail. The SDK
+    // reports just the failing issue and never echoes the input arguments —
+    // proving which gate fired rather than merely that something did.
+    expect(text).not.toContain("projectId");
+    // ...and the rejection had no side effect: no generation was attempted.
+    expect(deps.generator.calls).toHaveLength(0);
   });
 
   it("end-to-end with the real LocalScaffoldScreenGenerator records a fixture screen", async () => {
