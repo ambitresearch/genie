@@ -151,7 +151,7 @@ export async function deleteFiles(
   //     store-layer backstop behind it either.
   //
   //     Gated on the SHARED store rule. This previously used a local
-  //     `kitId.includes("/") || includes("\") || includes("..")` predicate,
+  //     `kitId.includes("/") || includes("\\") || includes("..")` predicate,
   //     which diverged from `isSafeKitId` in BOTH directions:
   //
   //       - it UNDER-rejected `""` and `"."` — neither contains `..`, yet
