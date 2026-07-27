@@ -41,6 +41,40 @@ const handSpelledComparison = (source: string): boolean =>
   /(?:path\.)?join\(\s*"[^"]*"\s*(?:,\s*"[^"]*"\s*)+\)/u.test(code(source));
 
 /**
+ * The banned shape: `readdir` asked about a directory inside this repository.
+ *
+ * The denylist ban below catches a disk walk that HIDES artefacts behind a
+ * skip-list. This catches the other half — a walk that never asked git at all.
+ * A directory derived from `import.meta.url` is a directory git tracks, so
+ * "what does it contain?" has two answers, differing by exactly the untracked
+ * files a working tree accumulates. A contract test wants the repository's.
+ *
+ * Derivation is followed only through path builders, which preserves the
+ * carve-out the sibling ban makes: a temp fixture is not derived from this
+ * file's location, so scanning one stays legal.
+ */
+const scansATrackedDirectory = (source: string): boolean => {
+  const text = code(source);
+  const derived = new Set<string>();
+  for (const [, name] of text.matchAll(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;\n]*fileURLToPath\(\s*import\.meta\.url\s*\)/gu,
+  ))
+    derived.add(name!);
+  // Two passes, because a directory is usually reached one `dirname` at a time.
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (const [, name, initialiser] of text.matchAll(
+      /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*((?:path\.)?(?:dirname|join|resolve)\([^;\n]*)/gu,
+    )) {
+      if ([...derived].some((seed) => new RegExp(String.raw`\b${seed}\b`, "u").test(initialiser!)))
+        derived.add(name!);
+    }
+  }
+  return [...text.matchAll(/\breaddir(?:Sync)?\s*\(\s*([A-Za-z_$][\w$]*)/gu)].some(([, argument]) =>
+    derived.has(argument!),
+  );
+};
+
+/**
  * A contract test asks what this repository publishes, so it has to ask git.
  *
  * Every repo-wide scan in this package once walked the disk and skipped a
@@ -90,6 +124,41 @@ describe("repo scans — asked of git, not of the disk", () => {
     expect(
       usesArtefactDenylist('// never read "node_modules"\nconst files = trackedFiles(root);'),
       "the detector fires on prose, so a scan could be banned for describing the rule",
+    ).toBe(false);
+  });
+
+  it("🔒 no test asks the disk what a directory this repository tracks contains", () => {
+    // The denylist ban above assumes a walk that at least tries to exclude
+    // artefacts. A walk of the test's OWN directory does not even try: it
+    // simply reports the working tree, so an untracked scratch file enrols
+    // itself into whatever the test is auditing. That fails on the machine
+    // holding the file and passes in CI, which is the least reproducible shape
+    // a contract test can take.
+    const offenders = scanned
+      .filter(({ relative }) => relative !== SELF)
+      .filter(({ relative }) => relative.endsWith(".test.ts") || relative.startsWith("test/"))
+      .filter(({ source }) => scansATrackedDirectory(source))
+      .map(({ relative }) => relative);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("🔒 the tracked-directory detector fires on the banned shape and not on the fixtures carve-out", () => {
+    // Pays for the self-exclusion above, in both directions. The strings below
+    // are the two shapes the rule turns on, so a detector that had stopped
+    // recognising either fails here rather than emptying the scan in silence.
+    expect(
+      scansATrackedDirectory(
+        "const here = dirname(fileURLToPath(import.meta.url));\nconst f = await readdir(here);",
+      ),
+      "the detector no longer recognises a scan of the file's own directory",
+    ).toBe(true);
+
+    expect(
+      scansATrackedDirectory(
+        'const root = await mkdtemp(join(tmpdir(), "kit-"));\nconst f = await readdir(root);',
+      ),
+      "the detector fires on a temp fixture, which git has never heard of",
     ).toBe(false);
   });
 

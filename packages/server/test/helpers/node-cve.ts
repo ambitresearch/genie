@@ -341,10 +341,18 @@ function logicalLines(text: string): string[] {
 /**
  * A line's clauses, each tagged with the bracket depth it was written at.
  *
- * Commas, semicolons and brackets all end a clause, but only the brackets carry
- * scope: `eachNodeClause` restores the subject when one closes, so it has to
- * know which clauses were inside. An unmatched `)` is clamped rather than
- * treated as an error, because this reads prose, not source.
+ * Commas, semicolons, sentence endings and brackets all end a clause, but only
+ * the brackets carry scope: `eachNodeClause` restores the subject when one
+ * closes, so it has to know which clauses were inside. An unmatched `)` is
+ * clamped rather than treated as an error, because this reads prose, not source.
+ *
+ * A sentence ends a clause for the same reason a comma does — a subject cannot
+ * outlive the sentence that named it, so `Node is required. pnpm 10.34.4 or
+ * newer` must not read as a Node floor. Only a `.`, `!` or `?` followed by
+ * whitespace counts, which keeps `Node.js` and `22.19.0` whole; an abbreviation
+ * that does split is harmless, because the fragment behind it names no tool and
+ * a clause naming no tool deliberately carries the previous subject forward.
+ * That same inheritance is what `Requires Node. 22 or newer.` relies on.
  */
 function clausesAtDepth(line: string): Array<{ clause: string; depth: number }> {
   const clauses: Array<{ clause: string; depth: number }> = [];
@@ -354,11 +362,19 @@ function clausesAtDepth(line: string): Array<{ clause: string; depth: number }> 
     if (buffer !== "") clauses.push({ clause: buffer, depth });
     buffer = "";
   };
-  for (const character of line) {
+  // Spread rather than indexed access: it iterates by code point, which is the
+  // unit the rest of this helper reads prose in.
+  const characters = [...line];
+  for (const [index, character] of characters.entries()) {
     if (character === "(" || character === ")") {
       flush();
       depth = character === "(" ? depth + 1 : Math.max(0, depth - 1);
     } else if (character === "," || character === ";") flush();
+    else if (
+      (character === "." || character === "!" || character === "?") &&
+      /^\s*$/u.test(characters[index + 1] ?? "")
+    )
+      flush();
     else buffer += character;
   }
   flush();

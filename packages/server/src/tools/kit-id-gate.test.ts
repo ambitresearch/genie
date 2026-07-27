@@ -1191,6 +1191,30 @@ describe("kitId gate — list_kits never advertises an id the gate refuses", () 
  */
 const KIT_ID_INPUT_DECL = /\bkitId\s*:\s*(?:z\s*\.|[A-Za-z_$][\w$]*[Ss]chema\b)/u;
 
+/**
+ * Every tool source file this repository publishes, by basename.
+ *
+ * Both audits below ask which tool files exist, and the answer has to be the
+ * REPOSITORY's rather than this checkout's. The two differ by exactly the
+ * untracked files a working tree accumulates, and one scratch file declaring a
+ * `kitId` schema enrols itself as an unregistered, ungated kit verb — failing
+ * the audits on the machine that has it while a clean CI checkout passes.
+ */
+function publishedToolSources(): string[] {
+  const toolsDir = dirname(fileURLToPath(import.meta.url));
+  const serverRoot = dirname(dirname(toolsDir));
+  const prefix = `${trackedPath(serverRoot, toolsDir)}/`;
+  return (
+    trackedFiles(serverRoot)
+      .filter((relative) => relative.startsWith(prefix))
+      .map((relative) => relative.slice(prefix.length))
+      // `!includes("/")` reproduces the non-recursive reach of the disk walk this
+      // replaced. `src/tools` has no subdirectories today, so it guards rather
+      // than changes anything.
+      .filter((file) => !file.includes("/") && file.endsWith(".ts") && !file.endsWith(".test.ts"))
+  );
+}
+
 describe("kitId gate — what list_kits may promise about other verbs", () => {
   it("🔒 does not promise a refusal from verbs that never apply the gate", async () => {
     // `list_kits` omits ids the shared gate refuses, and justified that by
@@ -1200,9 +1224,7 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
     // Derive the two sets rather than reasoning about them in prose, because
     // reasoning about a rule at a distance is the defect this PR exists to fix.
     const toolsDir = dirname(fileURLToPath(import.meta.url));
-    const files = (await readdir(toolsDir)).filter(
-      (file) => file.endsWith(".ts") && !file.endsWith(".test.ts"),
-    );
+    const files = publishedToolSources();
 
     const kitVerbs: string[] = [];
     const ungated: string[] = [];
@@ -1395,6 +1417,33 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
     ).toEqual(["create_project.ts", "validate.ts"]);
   });
 
+  /**
+   * The inventory both audits rest on is the repository's, not this checkout's.
+   *
+   * Asked of the disk, the question "which tool files exist?" answers with
+   * whatever is lying in the working tree — including a scratch file an agent
+   * left behind. One such file declaring a `kitId` schema enrols itself as an
+   * unregistered, ungated kit verb: the audit above fails on that machine, and
+   * a clean CI checkout passes, so the disagreement is unreproducible where it
+   * is reported. `test/helpers/tracked-files.ts` documents why a contract test
+   * asks git; this is that reasoning applied to the one directory these audits
+   * read.
+   */
+  it("🔒 derives the audited inventory from the repository, not from this checkout", async () => {
+    const toolsDir = dirname(fileURLToPath(import.meta.url));
+    const scratch = join(toolsDir, "zz_untracked_scratch.ts");
+    await writeFile(scratch, "export const schema = { kitId: z.string() };\n", "utf8");
+    try {
+      const files = publishedToolSources();
+      // Anti-vacuity: an inventory that had simply broken would satisfy the
+      // exclusion below while proving nothing about it.
+      expect(files, "the tool inventory has gone empty").toContain("get_kit.ts");
+      expect(files).not.toContain("zz_untracked_scratch.ts");
+    } finally {
+      await rm(scratch, { force: true });
+    }
+  });
+
   it("🔒 discovers kit-taking verbs from the registry, not from one schema spelling", async () => {
     // The audit above is only as good as the set it audits. Its discovery used
     // to be a source-text match for `kitId: z.` — one SPELLING of the
@@ -1438,9 +1487,7 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
     }
 
     const toolsDir = dirname(fileURLToPath(import.meta.url));
-    const files = (await readdir(toolsDir)).filter(
-      (file) => file.endsWith(".ts") && !file.endsWith(".test.ts"),
-    );
+    const files = publishedToolSources();
 
     // Anti-vacuity, both halves. An empty or tiny inventory would satisfy every
     // comparison below while checking nothing, and the tool-name-to-filename

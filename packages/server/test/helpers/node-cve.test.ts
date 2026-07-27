@@ -855,3 +855,47 @@ describe("findOpenEndedNodeFloors — one version grammar shared with discovery"
     expect(findOpenEndedNodeFloors("a Node test recomputing sha256 or newer")).toEqual([]);
   });
 });
+
+/**
+ * A sentence bounds a subject, because a subject cannot outlive the sentence
+ * that named it.
+ *
+ * Commas and semicolons already end a clause, so `Node.js, pnpm 10.34.4 or
+ * newer` attributes nothing to Node. A full stop did not, so the same two
+ * subjects written as two sentences handed pnpm's floor to Node: a document
+ * saying only that Node is required, beside an unrelated tool's version, was
+ * reported as over-claiming a version it never applied to Node at all.
+ *
+ * The inheritance a subject-less clause relies on is untouched. A sentence
+ * naming no tool still continues the subject in force, which is what
+ * `Requires Node. 22 or newer.` depends on — and it is also why an
+ * abbreviation splitting mid-sentence costs nothing.
+ */
+describe("clause attribution — a sentence bounds the subject it names", () => {
+  it("🔒 does not carry a subject past a full stop onto another tool's version", () => {
+    const text = "Node.js is required. pnpm 10.34.4 or newer";
+    expect(findOpenEndedNodeFloors(text)).toEqual([]);
+    // Both halves read prose through the same attribution, so the fix has to
+    // show on both: naming Node without pinning it is not a pinned Node claim.
+    expect(statesNodeRequirement(text)).toBe(false);
+  });
+
+  it("🔒 still reads a floor whose subject was named earlier in the same sentence", () => {
+    // The false-negative side, and the dangerous one. Resetting the subject at
+    // every word that is not a tool name would silence these, letting a
+    // document over-claim without the sweep ever seeing it.
+    expect(findOpenEndedNodeFloors("Node.js is required at 22.19.0 or newer")).toEqual(["22.19.0"]);
+    expect(findOpenEndedNodeFloors("Node.js 22.19.0-22.x, or 24.4.1 or newer")).toEqual(["24.4.1"]);
+  });
+
+  it("🔒 lets a sentence naming no tool continue the subject in force", () => {
+    expect(findOpenEndedNodeFloors("Requires Node. 22 or newer.")).toEqual(["22.0.0"]);
+    expect(findOpenEndedNodeFloors("Node is needed. 22.19.0 or newer works.")).toEqual(["22.19.0"]);
+  });
+
+  it("🔒 does not read a dot inside a name or a version as a sentence ending", () => {
+    expect(findOpenEndedNodeFloors("Node.js (LTS) 22.19.0 or newer")).toEqual(["22.19.0"]);
+    expect(findOpenEndedNodeFloors("Node.js e.g. 22.19.0 or newer")).toEqual(["22.19.0"]);
+    expect(findOpenEndedNodeFloors("pnpm 10.34.4 (Node 22 is required), or 10.35.0")).toEqual([]);
+  });
+});
