@@ -173,13 +173,19 @@ describe("deleteFiles", () => {
   });
 
   it("AC3 — a plan whose kitId escapes kitsRoot cannot delete outside the kit tree (defense in depth)", async () => {
-    // `plan` accepts kitId: z.string().min(1) with NO traversal guard, and
-    // createPlan stores it verbatim. A plan authored with a traversal kitId
-    // (e.g. "..") resolves a kitRoot OUTSIDE kitsRoot; a path that is in-bounds
-    // *relative to that escaped root* would then pass the per-path containment
-    // check and unlink a file outside the kit tree. delete_files is the first
-    // destructive consumer, so it must verify the resolved kitRoot stays within
-    // kitsRoot before deleting anything.
+    // This test reaches the guard by bypassing the `plan` TOOL, not because that
+    // tool is ungated. `plan` does gate its kitId on `isSafeKitId` (see the
+    // rationale block above that call in `plan.ts` — do not re-derive it here),
+    // and its schema is deliberately a bare `z.string()`, also explained there.
+    // What this test calls is the STORE-layer `createPlan` from `../plans/index.js`,
+    // which stores whatever kitId it is handed verbatim with no validation at all.
+    // So a plan carrying a traversal kitId genuinely reaches `deleteFiles`, which
+    // is what makes the guard below a live backstop rather than dead code.
+    // A plan authored with a traversal kitId (e.g. "..") resolves a kitRoot
+    // OUTSIDE kitsRoot; a path that is in-bounds *relative to that escaped root*
+    // would then pass the per-path containment check and unlink a file outside
+    // the kit tree. delete_files is the first destructive consumer, so it must
+    // verify the resolved kitRoot stays within kitsRoot before deleting anything.
     const outsideFile = join(harness.home, "outside-secret.txt");
     await writeFile(outsideFile, "do-not-delete", "utf8");
 
@@ -265,25 +271,58 @@ describe("deleteFiles", () => {
     expect(existsSync(join(victimDir, "secret.txt"))).toBe(true);
   });
 
-  it("🔒 AC3 — a kit whose id merely EMBEDS dots stays deletable (parity with plan/write_files)", async () => {
-    // The inverse failure of the same predicate drift: rejecting any id
-    // *containing* ".." also rejected `my..kit`, which `isSafeKitId` — and
-    // therefore `plan`, `write_files` and `list_files` — all accept. Such a kit
-    // could be planned and written but never cleaned up.
-    const kitId = "my..kit";
-    const dottedKitDir = join(harness.kitsRoot, kitId);
-    await mkdir(dottedKitDir, { recursive: true });
-    await writeFile(join(dottedKitDir, "stale.txt"), "x", "utf8");
+  it("AC3 — the kitId guard rejects EXACTLY the ids the shared store rule calls unsafe", async () => {
+    // The guard must agree with `isSafeKitId` — the rule `plan`, `read_file`,
+    // `list_files` and `write_files` all gate on. The pre-unification form
+    // (`kitId.includes("..")`) diverges in BOTH directions, and the dangerous
+    // direction is under-rejection: neither "" nor "." contains "..", so both
+    // slipped through the guard in the one verb that DELETES. `join(root, "")`
+    // and `join(root, ".")` are the kits ROOT itself.
+    const outsideFile = join(harness.home, "outside-secret.txt");
 
-    const state = await createPlan(kitId, ["**/*"], ["**/*"], process.cwd());
+    for (const unsafeKitId of ["", "."]) {
+      await writeFile(outsideFile, "do-not-delete", "utf8");
+      const state = await createPlan(unsafeKitId, ["**/*"], ["**/*"], process.cwd());
 
-    const result = await deleteFiles(harness.store, {
-      planId: state.planId,
-      paths: ["stale.txt"],
-    });
+      await expect(
+        deleteFiles(harness.store, {
+          planId: state.planId,
+          paths: ["kit-test/old/a.txt"],
+        }),
+      ).rejects.toMatchObject({ code: "PathOutsidePlanError" });
 
-    expect(result.deletedPaths).toEqual(["stale.txt"]);
-    expect(existsSync(join(dottedKitDir, "stale.txt"))).toBe(false);
+      expect(existsSync(outsideFile)).toBe(true);
+    }
+  });
+
+  it("AC3 — a kit whose id merely EMBEDS dots stays deletable", async () => {
+    // `isSafeKitId` allows `my..kit` by design: it is a literal child of the
+    // kits root, not a traversal. It is listable, resolvable and plannable, so
+    // rejecting it here made an adopted kit permanently undeletable — there is
+    // no `delete_kit` verb to fall back to.
+    //
+    // `kit..` is deliberately NOT in this list. It does not merely EMBED dots,
+    // it ENDS in them, which Win32 trims away — see the sibling case
+    // "🔒 AC3 — a plan kitId that Win32 trims to a SIBLING kit is rejected".
+    // `isSafeKitId` refuses a trailing `[ .]` run, and because it is the ONE
+    // shared rule that refusal is uniform: such an id is equally un-listable,
+    // un-plannable and un-writable, so no tool asymmetry is reintroduced.
+    for (const kitId of ["my..kit", "..kit"]) {
+      const kitDir = join(harness.kitsRoot, kitId);
+      await mkdir(join(kitDir, "old"), { recursive: true });
+      const target = join(kitDir, "old", "a.txt");
+      await writeFile(target, "x", "utf8");
+
+      const state = await createPlan(kitId, ["**/*"], ["old/**"], process.cwd());
+
+      const result = await deleteFiles(harness.store, {
+        planId: state.planId,
+        paths: ["old/a.txt"],
+      });
+
+      expect(result.deletedPaths).toEqual(["old/a.txt"]);
+      expect(existsSync(target)).toBe(false);
+    }
   });
 
   it("AC3 — a dot-segment path is rejected before glob-match/resolve even when a glob would match it", async () => {

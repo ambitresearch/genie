@@ -139,15 +139,34 @@ export async function deleteFiles(
   //    PlanNotFoundError (surfaced to the client, not swallowed here).
   const plan = await getPlan(parsed.planId);
 
-  // 2a. Defense in depth, via the SHARED store rule. `plan` stores `kitId`
-  //     verbatim, so a persisted plan can carry an id this tool never gated.
-  //     The tool no longer holds a `kitsRoot` and so cannot re-derive the kit
-  //     root to prove containment itself — and `LocalFsKitStore.deleteFile`
-  //     resolves through the UNSAFE `kitDir`, so there is no store-layer
-  //     backstop either. `isSafeKitId` is therefore the only guard standing
-  //     between a persisted plan and an unlink; see its docblock for the exact
-  //     rejection set. Running it here keeps the refusal whole-call, at the
-  //     atomic pre-flight, before anything is deleted.
+  // 2a. Defense in depth: a plan authored with an unsafe kitId (e.g. "..", ""
+  //     or ".") could make a LocalFs store resolve a kit dir outside — or AT —
+  //     the kits root. As the only destructive file verb, reject it before
+  //     deleting anything, so the whole call fails rather than part of it.
+  //
+  //     This guard is load-bearing, not merely redundant: the tool no longer
+  //     holds a `kitsRoot` and so cannot re-derive the kit root to prove
+  //     containment itself, and `LocalFsKitStore.deleteFile` resolves through
+  //     the UNSAFE `kitDir` rather than `safeKitDir`, so there is no
+  //     store-layer backstop behind it either.
+  //
+  //     Gated on the SHARED store rule. This previously used a local
+  //     `kitId.includes("/") || includes("\") || includes("..")` predicate,
+  //     which diverged from `isSafeKitId` in BOTH directions:
+  //
+  //       - it UNDER-rejected `""` and `"."` — neither contains `..`, yet
+  //         `join(kitsRoot, id)` resolves both to the kits ROOT itself. In the
+  //         one verb that deletes, that was the more serious half;
+  //       - it OVER-rejected ids that merely EMBED dots (`my..kit`, `..kit`,
+  //         `kit..`), which name a literal child of the root and which `plan`,
+  //         `list_files`, `read_file` and `write_files` all accept. An adopted
+  //         kit named that way was listable, plannable and writable but
+  //         permanently undeletable — there is no `delete_kit` verb to fall
+  //         back on. `isSafeKitId`'s own docblock names those ids as allowed
+  //         by design.
+  //
+  //     Centralising here makes this verb agree with every other kitId
+  //     consumer by construction, so the two cannot drift apart again.
   if (!isSafeKitId(plan.kitId)) {
     throw new DeleteFilesError(
       "PathOutsidePlanError",
