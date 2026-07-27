@@ -303,18 +303,40 @@ describe("isSafeKitId", () => {
     const units: string[] = [];
     for (let c = 0xd7fe; c <= 0xe001; c += 1) units.push(String.fromCharCode(c));
 
-    const candidates = [...units];
-    for (const a of units) for (const b of units) candidates.push(a + b);
+    // Checked as they are formed rather than collected first. The pairs alone
+    // are 2052² = 4,210,704 ids, and holding them costs ~184MB of heap against
+    // ~10MB for this shape — for no extra coverage, since both spellings put
+    // the same 4,212,756 ids through the same comparison. The failure path is
+    // the sharper reason: a regressed guard disagrees on 3,164,160 of them, and
+    // handing a differ an array that size buries the finding it is reporting.
+    // A count plus the first few examples says the same thing legibly.
+    const sample: string[] = [];
+    let disagreements = 0;
+    let sawIllFormed = false;
+    let sawWellFormed = false;
 
-    // None of these code units is `.`, ` `, `/`, `\` or NUL, and none of the
-    // candidates is empty, so no OTHER guard can fire and mask a disagreement.
-    const disagreements = candidates.filter((id) => isSafeKitId(id) !== id.isWellFormed());
-    expect(disagreements.map((id) => JSON.stringify(id))).toEqual([]);
+    // None of these code units is `.`, ` `, `/`, `\` or NUL, and no candidate is
+    // empty, so no OTHER guard can fire and mask a disagreement.
+    const check = (id: string): void => {
+      const wellFormed = id.isWellFormed();
+      if (wellFormed) sawWellFormed = true;
+      else sawIllFormed = true;
+      if (isSafeKitId(id) === wellFormed) return;
+      disagreements += 1;
+      if (sample.length < 8) sample.push(JSON.stringify(id));
+    };
+
+    for (const a of units) {
+      check(a);
+      for (const b of units) check(a + b);
+    }
+
+    expect({ disagreements, sample }).toEqual({ disagreements: 0, sample: [] });
 
     // Anti-vacuity, both ways: the sample must actually contain ids of each
     // kind, or an `isSafeKitId` that returned a constant would pass above.
-    expect(candidates.some((id) => !id.isWellFormed())).toBe(true);
-    expect(candidates.some((id) => id.isWellFormed())).toBe(true);
+    expect(sawIllFormed).toBe(true);
+    expect(sawWellFormed).toBe(true);
   });
 
   it("🔒 keeps admitting the astral kit names a lone surrogate must not cost", () => {

@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import { ts } from "ts-morph";
 
 import { commentTexts, stripComments, unwrapped } from "./source-text.js";
 import { trackedFiles, trackedPath } from "./tracked-files.js";
@@ -294,23 +295,58 @@ describe("source-text — prose that the anchored reading cannot see", () => {
    * place for a claim to hide — and silence is the failure mode these scans
    * exist to prevent. Flagging it converts the blind spot into a loud one.
    *
-   * The `//` must sit outside any string literal opened on that line, so that
-   * `"file:///etc/passwd"` is not reported as a hidden comment.
+   * Which means this detector's own blind spots are the thing to design
+   * against. Finding the comment by hand cannot be done a line at a time: `//`
+   * is two ordinary characters, legal inside a string, a template, or a regex,
+   * and a line may hold both a literal containing them AND a real comment after
+   * it. Reading as far as the first `//` therefore answers the wrong question —
+   * `"file:///x"` decides the line, and a claim written past it is never
+   * examined. Guarding that with quote-parity only moves the miss: parity is a
+   * property of the whole line, so it cannot say which side of the line a given
+   * `//` fell on.
+   *
+   * So the comments are taken from the parser rather than guessed at. Every
+   * `//` the language considers a comment is one, and every `//` it considers
+   * part of a literal is not, with no case analysis here to get wrong. The
+   * parser is already a first-class dependency of this package (`ts-morph`
+   * re-exports it, and `src/framework/*` compiles with it), so this costs no new
+   * dependency and roughly 2ms per file.
+   *
+   * Scope is single-line comments, deliberately. A block comment opened after
+   * code is a different shape with a different failure mode, and it has its own
+   * lock in the sibling `describe` below.
    */
   const hiddenContractProse = (source: string): number[] => {
-    const hits: number[] = [];
-    source.split("\n").forEach((line, index) => {
-      const at = line.indexOf("//");
-      if (at <= 0 || line.trimStart().startsWith("//")) return;
+    const parsed = ts.createSourceFile(
+      "scan.ts",
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
 
-      const before = line.slice(0, at);
-      const quoted = ['"', "'", "`"].some(
-        (mark) => (before.split(mark).length - 1) % 2 === 1 || before.endsWith(":"),
-      );
-      if (quoted) return;
-      if (CONTRACT_VOCABULARY.test(line.slice(at))) hits.push(index + 1);
-    });
-    return hits;
+    const comments = new Map<number, ts.CommentRange>();
+    const record = (ranges: readonly ts.CommentRange[] | undefined): void => {
+      for (const range of ranges ?? [])
+        if (!comments.has(range.pos)) comments.set(range.pos, range);
+    };
+    const walk = (node: ts.Node): void => {
+      record(ts.getLeadingCommentRanges(source, node.getFullStart()));
+      record(ts.getTrailingCommentRanges(source, node.getEnd()));
+      for (const child of node.getChildren(parsed)) walk(child);
+    };
+    walk(parsed);
+
+    const hits = new Set<number>();
+    for (const range of comments.values()) {
+      if (range.kind !== ts.SyntaxKind.SingleLineCommentTrivia) continue;
+      const { line, character } = parsed.getLineAndCharacterOfPosition(range.pos);
+      // Code before it on the line is what makes the comment hidden; a comment
+      // that starts the line is read by the anchored reading already.
+      if (source.slice(range.pos - character, range.pos).trim() === "") continue;
+      if (CONTRACT_VOCABULARY.test(source.slice(range.pos, range.end))) hits.add(line + 1);
+    }
+    return [...hits].sort((a, b) => a - b);
   };
 
   it("🔒 no contract prose in this package hides in a trailing comment", () => {
@@ -320,8 +356,9 @@ describe("source-text — prose that the anchored reading cannot see", () => {
       // No `SELF` exclusion here, unlike the block-comment scan below. That one
       // must exempt itself because its own detector spells the banned pattern
       // out as a regex; this one bans a shape, not a literal, and the fixtures
-      // in this file sit inside string literals that the quote guard skips. An
-      // exclusion that changed nothing would misreport what is covered.
+      // in this file are string and template literals, which the parser reads
+      // as literals rather than comments. An exclusion that changed nothing
+      // would misreport what is covered.
       scanned.push(relative);
       const lines = hiddenContractProse(readFileSync(path.join(SERVER_ROOT, relative), "utf-8"));
       for (const line of lines) offenders.push(`${relative}:${line}`);
@@ -337,14 +374,38 @@ describe("source-text — prose that the anchored reading cannot see", () => {
   });
 
   it("🔒 that scan can tell a hidden claim from a visible one", () => {
-    // Two-sided, and it has to clear the literal that motivated the anchor in
-    // the first place, or the empty result above would just mean the detector
-    // never fires.
+    // Two-sided, or the empty result above would just mean the detector never
+    // fires.
     expect(hiddenContractProse("const x = 1; // the kitId gate runs first")).toEqual([1]);
     expect(hiddenContractProse("// the kitId gate runs first")).toEqual([]);
     expect(hiddenContractProse("  // the kitId gate runs first")).toEqual([]);
-    expect(hiddenContractProse('expect(safe("file:///x")).toBe(false); // kitId')).toEqual([]);
     expect(hiddenContractProse("const a = 1; // unrelated note")).toEqual([]);
+  });
+
+  it("🔒 a `//` inside a literal neither raises nor silences the scan", () => {
+    // The detector has to clear the literal that motivated the anchor in the
+    // first place — `"file:///x"` is not a comment — WITHOUT letting that
+    // literal become the hiding place. Those are two separate claims about the
+    // same line, and reading only as far as the FIRST `//` conflates them: the
+    // slashes inside the URL answer "is there a comment here?" for the whole
+    // line, so a real trailing comment after it is never examined at all.
+    //
+    // That is a silent miss in a repository-wide lock, which is the one failure
+    // mode these scans exist to prevent, so each literal is asserted twice:
+    // once alone (must stay quiet) and once followed by contract prose (must
+    // fire). A reading that cannot separate them fails one half whichever way
+    // it errs.
+    for (const code of [
+      'expect(safe("file:///x")).toBe(false);',
+      "const url = `https://host/${id}/contents`;",
+      "const re = /a\\/\\/b/;",
+    ]) {
+      expect(hiddenContractProse(code), `${code} — no comment, must stay quiet`).toEqual([]);
+      expect(
+        hiddenContractProse(`${code} // the kitId gate runs first`),
+        `${code} — trailing claim, must be seen`,
+      ).toEqual([1]);
+    }
   });
 });
 
