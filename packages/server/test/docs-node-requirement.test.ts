@@ -340,6 +340,12 @@ describe("published Node requirement", () => {
     // and then swept as though it claimed nothing.
     expect(findOpenEndedNodeFloors("node-%3E%3D22.19.0-brightgreen.svg")).toContain("22.19.0");
     expect(findOpenEndedNodeFloors("Node.js 22.19 or newer")).toContain("22.19.0");
+    // The ARITY the sweep could not see. `>=23` is the most ordinary spelling of
+    // a floor, and demanding `major.minor` kept it out of the extractor while
+    // `statesNodeRequirement` read it — so a doc could keep the canonical
+    // sentence, add `Node >=23` beside it, and pass both halves of this file.
+    expect(findOpenEndedNodeFloors("Requires Node >=23")).toContain("23.0.0");
+    expect(findOpenEndedNodeFloors("Node.js 23 or later")).toContain("23.0.0");
     expect(nodeFloorOverclaim("22.19.0", range)).toBe("23.0.0");
   });
   it("\u{1f512} never restates how many claims or files the scan covers", async () => {

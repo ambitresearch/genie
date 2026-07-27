@@ -467,6 +467,16 @@ function eachNodeClause(text: string, visit: (clause: string, line: string) => v
  * README states its floor twice — once in prose and once inside a shields.io
  * badge URL, where `≥` is percent-encoded and would otherwise be invisible to a
  * search for the prose form.
+ *
+ * A floor may be written at any ARITY — `>=23`, `>=22.19`, `>=22.19.0` — and a
+ * missing minor or patch normalises to 0, the lowest release the claim in fact
+ * promises and therefore the one an over-claim must be judged against. This
+ * matches `statesNodeRequirement`, whose comparator accepts a comparator
+ * followed by any digit and whose span pattern accepts a bare major before the
+ * extension word. The two functions are meant to disagree about SHAPES — that
+ * is the whole point of the discovery/floor split — but never about how a
+ * version is SPELLED: where they did, a document was discovered and then swept
+ * as though it claimed nothing, which reads exactly like an honest document.
  */
 export function findOpenEndedNodeFloors(text: string): string[] {
   // Attribution is per clause within a logical line: a version counts only
@@ -505,8 +515,23 @@ export function findOpenEndedNodeFloors(text: string): string[] {
     // emits exactly `%3E%3D`, so it is the default output of every generator,
     // not a hand-typed variant. `statesNodeRequirement` has read it all along,
     // which is what made the omission here silent rather than merely narrow.
-    /(?:>=|≥|%E2%89%A5|%3E%3D)(?:\s|%20)*(\d+)\.(\d+)(?:\.(\d+))?((?:\s|%20)*(?:<|%3C))?/giu,
-    /(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/giu,
+    //
+    // Minor and patch are OPTIONAL, because `>=23` is the most ordinary way to
+    // write a floor and demanding `major.minor` excluded it from both patterns
+    // at once. Three comparators that discovery does read are still excluded
+    // here, deliberately: `<` and `<=` are CEILINGS, and `>` is an EXCLUSIVE
+    // floor with no exact form in the major.minor.patch vocabulary
+    // `nodeFloorOverclaim` consumes — normalising it either way would report a
+    // version the document never claimed.
+    /(?:>=|≥|%E2%89%A5|%3E%3D)(?:\s|%20)*(\d+)(?:\.(\d+))?(?:\.(\d+))?((?:\s|%20)*(?:<|%3C))?/giu,
+    // `or later` alongside `or newer`: `SPANNED` has always read both, so a doc
+    // saying "22.19 or later" was discovered and yielded no floor. The same
+    // arity rule applies, with `v?` for `Node v23 or newer` — but `.x` stays
+    // OUT, even though discovery accepts it, because admitting it would read
+    // `22.19.0–22.x or newer` (a span with an open tail) as a floor of 22.0.0,
+    // a version that prose does not claim. The lookbehind keeps a hash width
+    // out for the same reason a dot used to: `sha256 or newer` is not a floor.
+    /(?<![\w.])v?(\d+)(?:\.(\d+))?(?:\.(\d+))?\s+or (?:newer|later)/giu,
   ];
 
   const found: string[] = [];
@@ -514,7 +539,7 @@ export function findOpenEndedNodeFloors(text: string): string[] {
     for (const pattern of patterns) {
       for (const match of clause.matchAll(pattern)) {
         if (match[4] !== undefined) continue;
-        found.push(`${match[1]}.${match[2]}.${match[3] ?? "0"}`);
+        found.push(`${match[1]}.${match[2] ?? "0"}.${match[3] ?? "0"}`);
       }
     }
   });

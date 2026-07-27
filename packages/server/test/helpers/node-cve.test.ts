@@ -727,3 +727,131 @@ describe("node-cve — a badge's percent-encoding is case-insensitive", () => {
     expect(findOpenEndedNodeFloors("Node %e2%89%a5 22.19.0 <23")).toEqual([]);
   });
 });
+
+/**
+ * The two functions answer different QUESTIONS but must share one VERSION
+ * GRAMMAR.
+ *
+ * `statesNodeRequirement` asks "is a requirement stated?" and
+ * `findOpenEndedNodeFloors` asks "is an OPEN-ENDED floor claimed?", so they are
+ * meant to disagree about SHAPES: a bounded clause, a `.x` line and a bare
+ * "is required" are all discovered and all correctly yield no floor. That
+ * difference is deliberate and is locked elsewhere in this file.
+ *
+ * They are not meant to disagree about how a VERSION is spelled. Where they do,
+ * a document states a floor the extractor cannot see, `findOpenEndedNodeFloors`
+ * returns an empty list, and the over-claim sweep in `docs-node-requirement`
+ * passes over the claim in silence — the failure is indistinguishable from an
+ * honest document. That has now happened three times in this one function: the
+ * percent-encoded space, the percent-encoded `>=`, and the ARITY locked here —
+ * both floor patterns demanded `major.minor` while discovery's comparator
+ * accepts a comparator followed by any digit and its span pattern accepts a
+ * bare major before "or newer".
+ *
+ * So the invariant is pinned directly rather than one more spelling: every shape
+ * discovery reads AS an open-ended floor must produce one, and every shape it
+ * reads as something else must still produce none.
+ */
+describe("findOpenEndedNodeFloors — one version grammar shared with discovery", () => {
+  // Open-ended floors: discovery sees them, so the extractor must too. A missing
+  // minor or patch normalises to 0 — the lowest release the claim promises, and
+  // therefore the one an over-claim must be judged against.
+  const OPEN_ENDED: ReadonlyArray<readonly [string, string]> = [
+    // Comparator-led, major only. `>=23` is the most ordinary way to write a
+    // floor and was the one arity neither pattern admitted.
+    ["Requires Node >=23", "23.0.0"],
+    ["Requires Node >= 23", "23.0.0"],
+    ["Requires Node ≥23", "23.0.0"],
+    // …in the encodings the dotted form already covered, so the arity fix
+    // cannot re-open the badge gap on the major-only spelling.
+    ["node-%E2%89%A5%2023-brightgreen.svg", "23.0.0"],
+    ["node-%3E%3D23-brightgreen.svg", "23.0.0"],
+    // Extension-led, major only. `SPANNED` accepts a bare major before the
+    // extension word, so this is discovered exactly like the dotted form.
+    ["Node.js 23 or newer", "23.0.0"],
+    ["Node v23 or newer", "23.0.0"],
+    // `or later` is the other extension word discovery has always accepted and
+    // the extractor never learned — a gap at full arity, not just at major-only.
+    ["Node.js 22.19 or later", "22.19.0"],
+    ["Node.js 23 or later", "23.0.0"],
+    // Regression anchors: the arities that already worked must keep working.
+    ["Requires Node >=22.19.0", "22.19.0"],
+    ["Node.js 22.19 or newer", "22.19.0"],
+  ];
+
+  // Discovered, but NOT an open-ended floor. This is the containment half: the
+  // arity widening must not promote a bounded or unextended clause into a floor.
+  const NOT_A_FLOOR: readonly string[] = [
+    // Bounded, at both arities. `>=23 <24` promises nothing about 24.x, and it
+    // is the shape the widening is most likely to break, because the upper
+    // bound now has to be recognised without a dotted version anchoring it.
+    "Requires Node >=22.19.0 <23",
+    "Node >=23 <24 is required",
+    "Node %3E%3D23%20%3C24 is required",
+    // A line designator is not a floor, and neither is a closed span.
+    "Requires Node 23.x",
+    "Node.js 22.19.0–22.x",
+    // A version plus the requirement verb states a requirement, not an
+    // open-ended one — discovery's `dotted` and `bare` branches, which have no
+    // floor half by design.
+    "Requires Node.js 23.5.0",
+    "Node 23 is required",
+    // `<`, `<=` and `>` are comparators discovery reads and this function
+    // deliberately does not. The first two are CEILINGS. `>` is an EXCLUSIVE
+    // floor with no exact form in the major.minor.patch vocabulary
+    // `nodeFloorOverclaim` consumes, and normalising it would report a version
+    // the document never claimed.
+    "Requires Node >23",
+    "Requires Node <=23.5.0",
+    // `.x` stays out of the extension pattern on purpose: admitting it would
+    // read `22.19.0–22.x or newer` — a span with an open tail — as a floor of
+    // 22.0.0, a version that prose never claims.
+    "Node.js 22.19.0–22.x or newer",
+  ];
+
+  it("🔒 reports a floor for every open-ended shape discovery reads", () => {
+    for (const [text, floor] of OPEN_ENDED) {
+      expect(statesNodeRequirement(text), `${text} must be discovered`).toBe(true);
+      expect(findOpenEndedNodeFloors(text), `${text} must yield a floor`).toContain(floor);
+    }
+  });
+
+  it("🔒 reports no floor for a discovered shape that claims none", () => {
+    for (const text of NOT_A_FLOOR) {
+      expect(statesNodeRequirement(text), `${text} must be discovered`).toBe(true);
+      expect(findOpenEndedNodeFloors(text), `${text} must yield no floor`).toEqual([]);
+    }
+  });
+
+  /**
+   * The consequence, end to end, and the reason the arity matters at all.
+   *
+   * `engines.node` excludes the whole of 23.x to carry CVE-2025-27210, so a doc
+   * that adds `Node >=23` alongside the canonical sentence is over-claiming. It
+   * passed both halves of the documentation sweep: the exact-wording check
+   * because the canonical sentence is still present, and the over-claim check
+   * because the extractor returned nothing for it to judge. Asserting the
+   * counterexample here makes this a claim about the SWEEP rather than a regex.
+   */
+  it("🔒 hands the sweep a major-only over-claim it can refuse", () => {
+    const range = ">=22.19.0 <23 || >=24.4.1";
+    const floors = findOpenEndedNodeFloors("Requires Node >=23");
+    expect(floors).toEqual(["23.0.0"]);
+    expect(nodeFloorOverclaim(floors[0]!, range)).toBe("23.0.0");
+    // …and the honest floor is still read as honest, so this cannot pass by
+    // reporting every clause as an over-claim.
+    expect(nodeFloorOverclaim("24.4.1", range)).toBeNull();
+  });
+
+  /**
+   * Attribution is unchanged by the arity widening. A bare major is a far weaker
+   * signal than a dotted version, so the guards that keep an incidental number
+   * out are re-asserted against the newly admitted shape: a co-listed tool's
+   * floor is still not Node's, and a hash width is not a version.
+   */
+  it("🔒 admitting a bare major does not widen attribution", () => {
+    expect(findOpenEndedNodeFloors("Install Node >=22 and pnpm >=10.34.4")).toEqual(["22.0.0"]);
+    expect(findOpenEndedNodeFloors("Install Node 22.19.0 and pnpm >=10")).toEqual([]);
+    expect(findOpenEndedNodeFloors("a Node test recomputing sha256 or newer")).toEqual([]);
+  });
+});
