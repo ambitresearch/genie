@@ -7,6 +7,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectStore } from "./create_project.js";
 import { LocalFsKitStore } from "../store/local.js";
+import { KIT_TYPE } from "../store/interface.js";
+import type { KitMeta, KitStore } from "../store/interface.js";
 import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 import {
   CONJURE_SCREEN_TOOL_NAME,
@@ -88,6 +90,42 @@ async function fixture(
   });
   const generator = stubGenerator();
   return { deps: { projectStore: store, kitStore, generator }, store, kitStore, projectId };
+}
+
+/**
+ * A minimal `KitStore` whose `getKit` returns exactly the `KitMeta` it is
+ * handed — including shapes a real store can no longer produce. Every other
+ * method throws, so an accidental dependence on this stub is loud rather than
+ * silently returning an empty success.
+ *
+ * `LocalFsKitStore` cannot reach two of `assertExplicitKitExists`'s three catch
+ * arms: it refuses a non-`KIT_TYPE` meta with `NotFoundError` and hardcodes
+ * `type: KIT_TYPE` on the value it returns (so `WrongProjectTypeError` never
+ * fires), and `hasRequiredKitMetaFields` rejects an incomplete `.kit.json` at
+ * the store (so `getKit`'s *result* parse never raises `ZodError`). `KitStore`
+ * is a public injection point, so a third-party adapter still can produce both
+ * — which is precisely what those arms are defence in depth against, and this
+ * is the only caller shape that can exercise them.
+ */
+function kitStoreReturning(meta: KitMeta): KitStore {
+  const unused = (method: string) => (): never => {
+    throw new Error(`not used: ${method}`);
+  };
+  return {
+    async getKit() {
+      return meta;
+    },
+    listKits: unused("listKits"),
+    listFiles: unused("listFiles"),
+    listComponents: unused("listComponents"),
+    readFile: unused("readFile"),
+    deleteFile: unused("deleteFile"),
+    writeFiles: unused("writeFiles"),
+    createKit: unused("createKit"),
+    openPlan: unused("openPlan"),
+    commitPlan: unused("commitPlan"),
+    closePlan: unused("closePlan"),
+  };
 }
 
 let testClient: Client | null = null;
@@ -409,8 +447,23 @@ describe("conjureScreen (standalone function)", () => {
     expect(deps.generator.calls).toHaveLength(0);
   });
 
-  it("raises ERR_KIT_NOT_FOUND for an explicit kitId that does not exist", async () => {
+  // `assertExplicitKitExists` funnels three distinct failures onto the single
+  // ERR_KIT_NOT_FOUND code its `catch` names: ProjectNotFoundError (kit
+  // absent), WrongProjectTypeError (the id resolves to a non-kit) and ZodError
+  // (`getKit` rejects the id, or rejects its own result). The three tests below
+  // cover one arm each, in that order.
+  //
+  // Until now only the first arm was covered — twice, both times with the
+  // well-formed `"ghost-kit"`. #279 pinned all three arms of the twin this
+  // function's own docblock says it mirrors (`bind_kit`'s `assertKitExists`)
+  // and left this side at one arm of three, so the half that *declares* itself
+  // a mirror was the unpinned half.
+  //
+  // Named "absent", not "invalid": `"ghost-kit"` is a perfectly well-formed id
+  // that simply isn't there, so it exercises the ProjectNotFoundError arm only.
+  it("raises ERR_KIT_NOT_FOUND for an explicit kitId that does not exist (ProjectNotFoundError mapping)", async () => {
     const { deps, projectId } = await fixture();
+    expect(isSafeKitId("ghost-kit")).toBe(true);
     await expect(
       conjureScreen(deps, {
         projectId,
@@ -418,6 +471,59 @@ describe("conjureScreen (standalone function)", () => {
         kitId: "ghost-kit",
       }),
     ).rejects.toMatchObject({ code: "ERR_KIT_NOT_FOUND", kitId: "ghost-kit" });
+    expect(deps.generator.calls).toHaveLength(0);
+  });
+
+  it("raises ERR_KIT_NOT_FOUND when the explicit kitId resolves to a non-kit (WrongProjectTypeError mapping)", async () => {
+    // `getKit` throws WrongProjectTypeError when the resolved project is not a
+    // GENIE_KIT. To the caller that is still "not a bindable kit", so
+    // conjure_screen must map it onto the same code as an outright-absent kit
+    // rather than letting a raw store error escape as an unhandled throw.
+    const { deps, projectId } = await fixture();
+    const kitStore = kitStoreReturning({
+      id: "not-a-kit",
+      name: "Not A Kit",
+      type: "SOMETHING_ELSE" as typeof KIT_TYPE,
+      createdAt: new Date().toISOString(),
+    });
+
+    await expect(
+      conjureScreen(
+        { ...deps, kitStore },
+        { projectId, prompt: "A dashboard with cards", kitId: "not-a-kit" },
+      ),
+    ).rejects.toMatchObject({ code: "ERR_KIT_NOT_FOUND", kitId: "not-a-kit" });
+    expect(deps.generator.calls).toHaveLength(0);
+  });
+
+  it("raises ERR_KIT_NOT_FOUND when getKit's result parse rejects the store's KitMeta (ZodError mapping)", async () => {
+    // The third arm, and the one with no test until now.
+    //
+    // The kitId here is well-formed, and it MUST be: conjure_screen gates
+    // `kitId` with `kitIdSchema` — the byte-identical `isSafeKitId` expression
+    // `getKit` parses its own argument with — so a malformed id is rejected a
+    // frame earlier and can never reach this arm. `getKit`'s *result* parse is
+    // therefore the only route in, reached by a store that returns a KitMeta
+    // missing a required field (`createdAt` below).
+    //
+    // That unreachability is an invariant held by those two gates agreeing, not
+    // a structural guarantee, which is exactly why the arm must stay: re-tighten
+    // or relax either gate and this becomes reachable through the id again.
+    const { deps, projectId } = await fixture();
+    expect(isSafeKitId("acme-ui")).toBe(true);
+    const kitStore = kitStoreReturning({
+      id: "acme-ui",
+      name: "Acme UI",
+      type: KIT_TYPE,
+      createdAt: undefined as unknown as string,
+    });
+
+    await expect(
+      conjureScreen(
+        { ...deps, kitStore },
+        { projectId, prompt: "A dashboard with cards", kitId: "acme-ui" },
+      ),
+    ).rejects.toMatchObject({ code: "ERR_KIT_NOT_FOUND", kitId: "acme-ui" });
     expect(deps.generator.calls).toHaveLength(0);
   });
 
