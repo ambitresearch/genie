@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { CREATE_PROJECT_DESCRIPTION, ProjectStore, ProjectStoreError } from "./create_project.js";
+import { KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 import { LocalFsKitStore } from "../store/local.js";
 import { KIT_TYPE } from "../store/interface.js";
 import type { KitStore } from "../store/interface.js";
@@ -67,6 +68,47 @@ describe("ProjectStore", () => {
       name: "Admin Starter",
       kind: "blueprint",
       kitBindings: [],
+    });
+  });
+
+  it.each(["my/kit", "..", ".", "my\\kit", "victim."])(
+    "rejects unsafe kit binding %j before writing a project manifest",
+    async (kitId) => {
+      const root = await tempProjectsRoot();
+      const store = new ProjectStore(root);
+
+      await expect(
+        store.createProject({
+          name: "Unsafe Binding",
+          kind: "workspace",
+          kitBindings: [{ kitId }],
+        }),
+      ).rejects.toMatchObject({
+        issues: [
+          expect.objectContaining({
+            message: KIT_ID_SAFETY_MESSAGE,
+            path: ["kitBindings", 0, "kitId"],
+          }),
+        ],
+      });
+      await expect(readProjectManifest(root, "unsafe-binding")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
+  it("accepts a safe adapter-assigned kit id outside the create-kit slug shape", async () => {
+    const root = await tempProjectsRoot();
+    const store = new ProjectStore(root);
+
+    await store.createProject({
+      name: "Imported Binding",
+      kind: "workspace",
+      kitBindings: [{ kitId: "My_Kit.2" }],
+    });
+
+    await expect(readProjectManifest(root, "imported-binding")).resolves.toMatchObject({
+      kitBindings: [{ kitId: "My_Kit.2" }],
     });
   });
 

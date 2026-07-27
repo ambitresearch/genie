@@ -243,12 +243,8 @@ export interface KitStore {
    *    id through any other kit verb without it changing under them.
    * 2. **Every returned id satisfies `isSafeKitId`.** A kit whose routing key the
    *    shared gate refuses is OMITTED rather than advertised, so a listed id is
-   *    always one the shared gate admits. The guarantee is about what this
-   *    method returns, NOT about uniform enforcement downstream: `validate`
-   *    applies no kitId gate at all, and `create_project` persists
-   *    `kitBindings[].kitId` unresolved and ungated (its `getKit` call belongs
-   *    to `bindKit`). Stating it as "no verb would reject a listed
-   *    id" would teach a uniformity the tool layer does not provide.
+   *    always one that every gated kit-taking verb admits. `validate` does not
+   *    apply the shared gate, but accepts every id that passes it.
    *
    * Locked adapter-neutrally by `store-conformance.test.ts` →
    * `🔒 reports the routing key as the id when .kit.json embeds a divergent one`,

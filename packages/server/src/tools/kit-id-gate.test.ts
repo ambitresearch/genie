@@ -366,105 +366,18 @@ describe("kitId gate — an imported kit is usable end to end", () => {
     //
     // `conjure` and `refine` are in here despite calling a live model endpoint.
     // They are safe to exercise because the MCP SDK validates `inputSchema`
-    // BEFORE dispatching to the handler, so a containment-unsafe kitId is
+    // BEFORE dispatching to the handler, so an id rejected by the shared gate is
     // refused at the protocol boundary and no generation is ever attempted —
     // the same reason their handlers' `catch` blocks never see a schema
     // failure. Omitting them would leave both gates deletable in silence,
     // since the advertised-schema lock below cannot see a `.refine()` at all.
     //
-    // ⚠️ EXHAUSTIVE OVER CONTAINMENT-GATED VERBS, NOT OVER kitId-TAKING VERBS.
-    // TWO kitId-taking input surfaces apply no kit-id safety rule at all and
-    // are deliberately NOT here. Both are real asymmetries with the shared rule in
-    // `store/kit-files.ts`, both are PRE-EXISTING, and neither is a gate this
-    // file can pin. Reasons verified rather than assumed.
-    //
-    // (1) `validate` — takes a top-level `kitId`:
-    //   · it was never gated. At `de353bcd` (pre-#276) its input was already
-    //     `kitId: z.string().min(1)`, so the widening neither opened nor closed
-    //     it. `validate.ts` contains no `isSafeKitId`, no `KIT_ID_PATTERN` and
-    //     no `KIT_ID_SAFETY_MESSAGE` — it predates the split this file closes.
-    //   · its counts facet never builds a kit path, so there is no containment
-    //     boundary here to escape. The only two `join()`s in `validate.ts` are
-    //     `join(reportsDir, "<timestamp>-<rand>.json")` and the reportsDir
-    //     default `join(cwd, ".genie", "reports")`; NEITHER interpolates
-    //     `kitId`. The id reaches the report's JSON body and Prometheus metric
-    //     LABELS only. So the residual concern is label cardinality and
-    //     contract consistency, NOT path traversal.
-    //   · its full-scan facet does reach the store, whose adapters already
-    //     apply `isSafeKitId` — so that half is covered where the rule lives.
-    //
-    // (2) `create_project` — takes `kitBindings[].kitId`, a SECOND kitId input
-    //     surface that is not a top-level `kitId` parameter and so is invisible
-    //     to any sweep keyed on the parameter name:
-    //   · `kitBindingShape.kitId` is a bare `z.string().min(1)`
-    //     (`create_project.ts`), and `createProject` persists the bindings
-    //     straight into the project manifest. It never calls `assertKitExists`
-    //     — the sole call site is in `bindKit`, NOT on the create path.
-    //   · also never gated: at `de353bcd` `kitBindingShape` was byte-identical
-    //     and the whole file contained ZERO `isSafeKitId`/`KIT_ID_PATTERN`
-    //     references, so again the widening neither opened nor closed it.
-    //   · not a traversal: `conjure_screen.ts` imports no `node:path` at all —
-    //     every `join(` in it is `Array.prototype.join` building a string.
-    //   · ⚠️ but NOT harmless either, and an earlier revision of this comment
-    //     said the id "reaches only prompt text and JSON". That was WRONG.
-    //     `resolveKit` returns `project.defaultKitId` / `sole.kitId` RAW from
-    //     the manifest, `provenanceNote` interpolates it unescaped, and
-    //     `renderScaffold` emits it into GENERATED ARTIFACT BYTES at three
-    //     sinks with two different break-out mechanisms:
-    //       - `conjure_screen.ts:501` (html) + `:518` (vue) — inside
-    //         `<!-- ... -->`, broken out of by `-->`;
-    //       - `conjure_screen.ts:531` (react) — inside a `//` line comment,
-    //         broken out of by a bare NEWLINE, which `isSafeKitId` permits.
-    //     Both `--><img src=x onerror=alert(1)><!--` and `"kit\nalert(1)"`
-    //     satisfy `isSafeKitId` and are refused by `KIT_ID_PATTERN` — i.e.
-    //     squarely in the band this PR's subject widens into.
-    //     The tell that it is an oversight rather than a trust decision:
-    //     that file carries TWO escape helpers and applies the
-    //     framework-appropriate one to `title` on the line ADJACENT to
-    //     every sink, while skipping `note` at all three —
-    //       - html  `:501` note RAW │ `escapeHtml` `:506`, `:509`
-    //       - vue   `:518` note RAW │ `escapeHtml` `:521`
-    //       - react `:531` note RAW │ `escapeJsx`  `:535`
-    //     (`escapeHtml` defined `:545`, `escapeJsx` `:555`.) So `title` is
-    //     escaped at 4 of 4 interpolations and `note` at 0 of 3. The author
-    //     demonstrably reasoned about per-framework escaping — JSX needs
-    //     `{`/`}` handling that HTML does not — and still missed `note`,
-    //     which is a sharper tell than mere proximity would be.
-    //     An earlier revision of this comment cited only `:506`/`:509`/`:521`
-    //     and claimed an escape adjacent to "each sink". Those are the three
-    //     `escapeHtml` calls, i.e. html+vue only: keying the sweep on one
-    //     helper name silently dropped the react sink — the very one whose
-    //     break-out is the bare NEWLINE. Same defeat mode as this cycle's
-    //     literal censuses, in the evidence for a security finding.
-    //   · attribution, stated against my own interest: for `default`/`sole`
-    //     this is PRE-EXISTING — those ids come from bindings that were never
-    //     gated on either rule. For the `explicit` branch it is NOT: at
-    //     `de353bcd` that path was `.regex(KIT_ID_PATTERN)`, which bans `<`,
-    //     `>`, space and newline, so it refused these payloads BY ACCIDENT.
-    //     Widening to `isSafeKitId` was right but removed that incidental
-    //     cover without replacing it — the same shape as the Win32 trailing
-    //     `.`/space alias, and it needs the same remedy: escape at the sink,
-    //     not a narrower id rule. Source fix, tracked separately (below).
-    //   · ⚠️ but note `conjure_screen`'s `kitStore` docblock asserts that
-    //     "default/sole kits came from bindings already validated at bind
-    //     time". That is TRUE for bindings created via `bind_kit` (which does
-    //     call `assertKitExists`) and FALSE for bindings created via
-    //     `create_project`, which validates nothing. `resolveKit` validates
-    //     only its `explicit` branch; `default` and `sole` are returned
-    //     untouched. A comment asserting a symmetry that does not exist is the
-    //     precise mechanism by which the original eight-site drift survived
-    //     review — worth fixing at the source, in its own change.
-    // Gating EITHER is a wire-contract change (an id accepted today starts
-    // being refused) and belongs in its own change with its own reasoning,
-    // exactly as the deferred items in #276/#279/#281 were argued rather than
-    // smuggled. Documented here so the NEXT kitId input surface is placed in
-    // one bucket or the other CONSCIOUSLY — an unexplained absence from this
-    // table is how the original eight-site drift survived review in the first
-    // place. Note both exceptions were missed by every symbol-grep census this
-    // cycle: `validate` advertises a schema byte-identical to broad-gated
-    // siblings that gate in the HANDLER, and `create_project` carries its id on
-    // a nested `kitBindings[]` field rather than a `kitId` parameter.
+    // Exhaustive over shared-gated input surfaces. `validate` remains the
+    // only kitId-taking tool without this gate; it does not use the id as a path.
+    // `create_project` is special-cased below because its input is nested under
+    // `kitBindings[]` rather than exposed as a top-level `kitId`.
     const REFUSES_AT = {
+      mcp__genie__create_project: "schema",
       mcp__genie__get_kit: "schema",
       mcp__genie__preview: "schema",
       mcp__genie__bind_kit: "schema",
@@ -543,7 +456,14 @@ describe("kitId gate — an imported kit is usable end to end", () => {
           mcp__genie__refine: { componentName: "Button", instruction: "Make it wider." },
           mcp__genie__read_file: { path: "components/actions/Button/preview.html" },
         };
-        const args: Record<string, unknown> = { kitId: bad, ...(extraArgs[name] ?? {}) };
+        const args: Record<string, unknown> =
+          name === "mcp__genie__create_project"
+            ? {
+                name: "Unsafe Binding",
+                kind: "workspace",
+                kitBindings: [{ kitId: bad }],
+              }
+            : { kitId: bad, ...(extraArgs[name] ?? {}) };
 
         // A schema failure can surface either as a thrown `McpError` or as an
         // `isError` result depending on the path, so both are captured.
@@ -1237,12 +1157,8 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
       const code = stripComments(source);
       if (!KIT_ID_INPUT_DECL.test(code)) continue;
       kitVerbs.push(file);
-      // Read the file for the gate itself. Delegation is NOT credited: a file
-      // that imports a gated verb may still expose an ungated path of its own
-      // (`create_project` imports `get_kit` for `bindKit`, yet writes
-      // `kitBindings[].kitId` straight through), and crediting the import hid
-      // that verb from this list. Nothing legitimate is lost — every verb that
-      // resolves a kitId names the gate directly.
+      // Read the file for the gate itself. Delegation is not credited: every
+      // gated input surface names `isSafeKitId` or `assertKitLive` directly.
       //
       // Comments are stripped first, and that is not cosmetic. The most natural
       // sentence anyone would ever write in an UNGATED verb is why it is
@@ -1389,32 +1305,15 @@ describe("kitId gate — what list_kits may promise about other verbs", () => {
     // a hand-written exception list is only correct until the next verb lands —
     // so the list has to be checkable against the code it describes.
     //
-    // Both members are deliberate, and neither is a containment hole, because
-    // every verb that RESOLVES a kitId gates it:
-    //   - `validate.ts` takes a kitId and applies no gate at all; it never
-    //     joins the id into a path (see the note earlier in this file).
-    //   - `create_project.ts` declares `kitBindings[].kitId` as a bare
-    //     `z.string().min(1)` and `createProject()` PERSISTS it without
-    //     resolving it. Its `getKit` import serves `bindKit()` only, which is
-    //     the separate `bind_kit` verb. So a project can record a binding to an
-    //     id the shared gate refuses; the refusal surfaces at the first verb
-    //     that dereferences it, not at the write.
-    //
-    // That import is exactly why this derivation used to be wrong. Crediting a
-    // file as gated because it imports `get_kit` is FILE-granular, while gating
-    // is per input path: `create_project` imports the gated verb for one path
-    // and bypasses it on another, so the credit hid the very verb the prose was
-    // getting wrong. Every genuinely gated file names `isSafeKitId` or
-    // `assertKitLive` directly, so no delegation credit is needed to keep this
-    // list honest — several of them declare a bare `.min(1)` schema and apply
-    // the gate in the handler, which is why the check reads the file for the
-    // gate rather than requiring a refined schema.
+    // `validate.ts` is deliberate: it never joins the id into a path. Several
+    // gated tools enforce the rule in their handler, so this inventory reads
+    // the full source rather than requiring a refined schema.
     expect(
       ungated.sort(),
       "the kitId verbs that apply no shared gate — update the prose in " +
         "`list_kits.ts` and `store/interface.ts` that enumerates them whenever " +
         "this changes, since that prose cannot be derived from the code it describes",
-    ).toEqual(["create_project.ts", "validate.ts"]);
+    ).toEqual(["validate.ts"]);
   });
 
   /**
@@ -2079,90 +1978,5 @@ describe("kitId gate — the store contract does not over-promise id identity", 
     const prose = commentTexts(rule).join(" ").replace(/\s+/gu, " ");
     expect(prose).toContain("canonical-id identity");
     expect(prose).toContain("`list_kits` never handed out");
-  });
-});
-
-describe("kitId gate — a verb's rationale does not credit an ungated sibling", () => {
-  it("🔒 no rationale credits create_project with a gate it does not apply", async () => {
-    // `delete_files`' rationale listed `create_project` among the verbs that
-    // route a `kitId` to a path, "which inherits the rule transitively through
-    // `getKit`". It does not. `assertKitExists` — the only thing that reaches
-    // `getKit` on this store — has exactly ONE production call site, and it is
-    // in `bindKit`. `createProject` reads `kitBindings[].kitId` (a bare
-    // `z.string().min(1)`) and persists it into the manifest without ever
-    // calling it, which is why `store/interface.ts`, `store/kit-files.ts`,
-    // `tools/conjure_screen.ts` and this file's `🔒 every containment-gated
-    // kit-taking verb refuses an unsafe kitId at its own gate` all record
-    // `create_project` as UNGATED. That one paragraph contradicted all four.
-    //
-    // Crediting a verb with a gate it does not apply is the more dangerous
-    // direction of this PR's own defect class: it invites the "something
-    // upstream already checked" reasoning that makes deleting a real gate look
-    // safe. So derive the call sites from the code and hold the prose to them,
-    // rather than pinning the corrected sentence's wording.
-    const srcDir = dirname(dirname(fileURLToPath(import.meta.url)));
-    const source = await readFile(join(srcDir, "tools", "create_project.ts"), "utf8");
-
-    /** The `{...}` block introduced by `header`, by brace matching. */
-    const blockBody = (text: string, header: string): string => {
-      const start = text.indexOf(header);
-      expect(
-        start,
-        `"${header}" not found — this derivation is reading a stale shape`,
-      ).toBeGreaterThan(-1);
-      const open = text.indexOf("{", start);
-      let depth = 0;
-      for (let i = open; i < text.length; i += 1) {
-        if (text[i] === "{") depth += 1;
-        else if (text[i] === "}") {
-          depth -= 1;
-          if (depth === 0) return text.slice(open, i + 1);
-        }
-      }
-      throw new Error(`unbalanced braces reading "${header}"`);
-    };
-
-    const calls = (header: string): boolean =>
-      /\bassertKitExists\b/u.test(stripComments(blockBody(source, header)));
-
-    // The derivation, and its anti-vacuity twin: `bindKit` DOES call it, so a
-    // run where the symbol was renamed fails here instead of passing silently
-    // on a negative scan that can no longer find anything.
-    expect(
-      calls("async createProject("),
-      "createProject now gates — update the prose it is cited by",
-    ).toBe(false);
-    expect(
-      calls("async bindKit("),
-      "assertKitExists moved or was renamed — this derivation is stale",
-    ).toBe(true);
-
-    const prose = commentTexts(await readFile(join(srcDir, "tools", "delete_files.ts"), "utf8"))
-      .join(" ")
-      .replace(/\s+/gu, " ");
-
-    // "…`create_project`, which inherits the rule transitively through `getKit`"
-    const CREDITS = /\bcreate_project\b[^.]*?\b(?:inherits?|transitively)\b/u;
-    expect(
-      CREDITS.test(prose),
-      "delete_files.ts credits create_project with a gate it does not apply",
-    ).toBe(false);
-
-    // Anti-vacuity for the negative scan, in both directions: the regex must
-    // still catch the sentence that was there, and must not fire on the
-    // corrected one, which names `create_project` and `bind_kit` in one span.
-    expect(
-      CREDITS.test("plus `create_project`, which inherits the rule transitively through `getKit`."),
-    ).toBe(true);
-    expect(
-      CREDITS.test("`bind_kit` gates transitively. `create_project` does not gate at all."),
-    ).toBe(false);
-
-    // And the exception must stay NAMED. Deleting the mention would silence
-    // this lock while restoring the unexplained absence that let the original
-    // eight-site drift through review in the first place.
-    expect(prose, "delete_files.ts no longer names create_project as an exception").toContain(
-      "`create_project`",
-    );
   });
 });
