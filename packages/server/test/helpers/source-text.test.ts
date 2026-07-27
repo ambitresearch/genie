@@ -665,3 +665,119 @@ describe("source-text — a CRLF checkout reads the same as an LF one", () => {
     expect(HAND_ROLLED.test(`text = unwrapped(raw)`)).toBe(false);
   });
 });
+
+describe("source-text — a docblock documents the declaration below it", () => {
+  /**
+   * Docblocks that document nothing, reported as 1-based line numbers.
+   *
+   * TypeScript attaches only the NEAREST leading docblock to a declaration, so
+   * when two are stacked the upper one is silently orphaned. Nothing complains:
+   * it is a legal comment, it renders in the file, and it reads — to a human
+   * skimming — exactly like documentation. Only the tooling disagrees, and it
+   * disagrees quietly. The block stops appearing on hover, stops being pulled
+   * into generated docs, and drifts from the declaration it was written for
+   * while still sitting a few lines above it.
+   *
+   * That is a documentation defect this package is unusually exposed to, because
+   * several of its contracts are asserted ONLY in prose — the `isSafeKitId`
+   * docblock is the rule, not a gloss on it. A stranded block is therefore a
+   * contract statement that has quietly detached from the thing it constrains.
+   *
+   * The detector is the parser's own view rather than a text heuristic: for
+   * every node, the leading comment ranges at its full start, keeping the
+   * docblocks and reporting all but the last. Two things it must get right:
+   *
+   *   - Ranges are reported per NODE, and a parent and its first child share a
+   *     full start, so the same comment arrives several times. Deduping by
+   *     comment position rather than by node is what keeps the count honest.
+   *   - A file-level banner is NOT an orphan. A file-overview docblock at
+   *     position 0, followed by the first declaration's own docblock, is the
+   *     ordinary and correct shape — eight files in this package are written
+   *     that way — so position 0 is excluded. Running the scan WITHOUT that
+   *     exclusion first is how that was established, rather than assumed.
+   */
+  const orphanedDocblocks = (source: string): number[] => {
+    const parsed = ts.createSourceFile(
+      "scan.ts",
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+
+    const hits = new Set<number>();
+    const seenStarts = new Set<number>();
+    const walk = (node: ts.Node): void => {
+      const start = node.getFullStart();
+      if (!seenStarts.has(start)) {
+        seenStarts.add(start);
+        const docs = (ts.getLeadingCommentRanges(source, start) ?? []).filter(
+          (range) => source.slice(range.pos, range.pos + 3) === "/**" && range.pos !== 0,
+        );
+        for (const range of docs.slice(0, -1))
+          hits.add(parsed.getLineAndCharacterOfPosition(range.pos).line + 1);
+      }
+      for (const child of node.getChildren(parsed)) walk(child);
+    };
+    walk(parsed);
+
+    return [...hits].sort((a, b) => a - b);
+  };
+
+  it("🔒 no docblock in this package is stranded above another docblock", () => {
+    const scanned: string[] = [];
+    const offenders: string[] = [];
+    for (const relative of trackedFiles(SERVER_ROOT).filter((file) => file.endsWith(".ts"))) {
+      scanned.push(relative);
+      const source = readFileSync(path.join(SERVER_ROOT, relative), "utf-8");
+      for (const line of orphanedDocblocks(source)) offenders.push(`${relative}:${line}`);
+    }
+
+    expect(scanned, "the scan must cover the file that defines it").toContain(SELF);
+    expect(
+      offenders,
+      "these docblocks are followed by another docblock, so TypeScript attaches " +
+        "the lower one and this one documents nothing — move the declaration it " +
+        "describes up to sit directly beneath it",
+    ).toEqual([]);
+  });
+
+  it("🔒 that scan can tell a stranded docblock from a stacked-but-attached one", () => {
+    // Two-sided, or the empty result above would just mean the detector never
+    // fires. Assembled rather than written literally, so this file does not
+    // itself contain the shape it forbids.
+    const doc = (text: string): string => ["/**", ` * ${text}`, " */"].join("\n");
+    // Every fixture opens with a declaration, so the stacked pair under test is
+    // mid-file — the shape the real defect has. Without it the pair would start
+    // at position 0 and be excluded as a file banner, and this test would pass
+    // by measuring the exclusion instead of the rule.
+    const head = "export const head = 0;";
+
+    expect(
+      orphanedDocblocks([head, doc("stranded"), doc("attached"), "export const a = 1;"].join("\n")),
+      "the upper block of a stacked pair documents nothing",
+    ).toEqual([2]);
+    expect(
+      orphanedDocblocks([head, doc("attached"), "export const a = 1;"].join("\n")),
+      "one block, one declaration",
+    ).toEqual([]);
+    expect(
+      orphanedDocblocks(
+        [head, doc("first"), "export const a = 1;", doc("second"), "export const b = 2;"].join(
+          "\n",
+        ),
+      ),
+      "separated by a declaration, so neither is stranded",
+    ).toEqual([]);
+    expect(
+      orphanedDocblocks([doc("file banner"), doc("attached"), "export const a = 1;"].join("\n")),
+      "a banner at position 0 is the ordinary shape, not an orphan",
+    ).toEqual([]);
+    expect(
+      orphanedDocblocks(
+        [head, "// a line comment", doc("attached"), "export const a = 1;"].join("\n"),
+      ),
+      "only docblocks count; a line comment above one strands nothing",
+    ).toEqual([]);
+  });
+});

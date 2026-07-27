@@ -173,8 +173,23 @@ function isMissingPathError(error: unknown): boolean {
  */
 const NAME_MAX_UNITS = 255;
 
-/** The characters Win32 reserves in a path component. */
-const WIN32_RESERVED = /[<>:"|?*]/u;
+/**
+ * The characters Win32 reserves in a path component.
+ *
+ * `<>:"|?*` are the documented set, and C0 (U+0001–U+001F) is reserved with
+ * them: Win32 refuses every one of them in a filename, so `EINVAL` on such an
+ * id is a statement about the id and not about the server. U+0000 is absent on
+ * purpose — {@link isSafeKitId} already refuses it, so it can never reach here
+ * — and the range stops short of U+0020, which is a legal filename character.
+ *
+ * The `no-control-regex` suppression below is deliberate: the control characters
+ * ARE the subject here. That rule guards against one reaching a regex by
+ * accident — a stray escape, a pasted byte — and here the range is spelled with
+ * explicit `\uXXXX` escapes whose two endpoints are argued above, so the
+ * accident the rule detects cannot be what is happening.
+ */
+// eslint-disable-next-line no-control-regex
+const WIN32_RESERVED = /[<>:"|?*\u0001-\u001F]/u;
 
 /**
  * A name the filesystem cannot represent — which is a stronger statement than
@@ -189,8 +204,9 @@ const WIN32_RESERVED = /[<>:"|?*]/u;
  *     pathname too long — dominated by the configured root). A deep root would
  *     otherwise make every lookup answer "absent", including for ids as short
  *     as `ui`.
- *   - `EINVAL` is the Win32 answer for its reserved characters (`<>:"|?*`), but
- *     is also raised by unrelated argument faults.
+ *   - `EINVAL` is the Win32 answer for its reserved characters (`<>:"|?*` and
+ *     the C0 range, per {@link WIN32_RESERVED}), but is also raised by
+ *     unrelated argument faults.
  *
  * So the id is inspected directly, and only a fault it can actually account for
  * is treated as absence. Anything else stays a fault. That asymmetry is the

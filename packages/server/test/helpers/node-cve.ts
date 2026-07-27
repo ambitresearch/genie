@@ -481,9 +481,24 @@ export function findOpenEndedNodeFloors(text: string): string[] {
   // mention, so the arm that actually is open-ended was never reached.
   const patterns = [
     // A comparator followed by an upper bound is a bounded clause, not a floor:
-    // `>=22.19.0 <23` promises nothing whatsoever about 23.x.
-    /(?:>=|≥|%E2%89%A5)\s*(\d+)\.(\d+)(?:\.(\d+))?(\s*<)?/gu,
-    /(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/gu,
+    // `>=22.19.0 <23` promises nothing whatsoever about 23.x. The bound is
+    // matched in its encoded spellings too (`%20`, `%3C`) — and that half
+    // matters MORE than the floor half, because a bounded clause misread as
+    // open-ended is a promise the document never made.
+    //
+    // `i` for the percent-encoding and for `or newer` only: RFC 3986 §6.2.2.1
+    // makes `%e2%89%a5` and `%E2%89%A5` the SAME octets, and a shields.io badge
+    // URL is written either way. Everything else in these patterns is caseless
+    // by construction — `>=`, digits, `\s`, and `≥`, which case-folds to itself
+    // — so the flag widens the encoding and the English, never the attribution.
+    //
+    // `%20` alongside `\s` because a shields.io badge percent-encodes the space
+    // between comparator and version: `node-%E2%89%A5%2022.19.0-brightgreen` is
+    // the canonical rendering. Without it the badge is DISCOVERED as a
+    // requirement by `statesNodeRequirement` but yields no floor here — the
+    // discovery/floor split this function's own docblock warns against.
+    /(?:>=|≥|%E2%89%A5)(?:\s|%20)*(\d+)\.(\d+)(?:\.(\d+))?((?:\s|%20)*(?:<|%3C))?/giu,
+    /(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/giu,
   ];
 
   const found: string[] = [];
@@ -522,7 +537,10 @@ export function findOpenEndedNodeFloors(text: string): string[] {
  * number, and it is why this predicate can be pointed at the whole tree.
  */
 export function statesNodeRequirement(text: string): boolean {
-  const COMPARATOR = /(?:>=|<=|>|<|≥|%E2%89%A5|%3E%3D)\s*\d/u;
+  // `i` here for the same reason as in `findOpenEndedNodeFloors`, and for
+  // consistency with SPANNED below, which has always carried it: a percent-
+  // encoded comparator is case-insensitive per RFC 3986 §6.2.2.1.
+  const COMPARATOR = /(?:>=|<=|>|<|≥|%E2%89%A5|%3E%3D)(?:\s|%20)*\d/iu;
   const SPANNED = /\d+(?:\.\d+)*(?:\.x)?\s*(?:–|—|%E2%80%93|\bor newer\b|\bor later\b)/iu;
   const VERSION = /\d+\.(?:\d+|x)/u;
   // A major on its own: one or two digits that are not part of a longer number

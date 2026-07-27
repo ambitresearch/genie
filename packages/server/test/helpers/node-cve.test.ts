@@ -602,3 +602,84 @@ describe("node-cve prose — the contract its comments teach", () => {
     expect(stale).toEqual([]);
   });
 });
+
+describe("node-cve — a badge's percent-encoding is case-insensitive", () => {
+  /**
+   * RFC 3986 §6.2.2.1: the hexadecimal digits in a percent-encoded triplet are
+   * case-INSENSITIVE, and `%E2%89%A5` and `%e2%89%a5` are the same character.
+   * The README's floor is stated twice — once in prose and once inside a
+   * shields.io badge URL — and the badge spelling is the one no reader proofs,
+   * because it renders as `≥` either way.
+   *
+   * Which makes the encoding a silent escape hatch rather than an edge case.
+   * Every generator picks a case: `encodeURIComponent` emits upper, shields.io's
+   * own docs mix them, and a hand-typed URL is whatever the hand typed. So the
+   * lowercase spelling is not hypothetical — it is one paste away, and it takes
+   * the badge out of the sweep's sight without changing a single rendered pixel.
+   * The failure is therefore invisible in review AND invisible on the page,
+   * which is the exact shape of miss these locks exist to prevent.
+   */
+  it("🔒 reads a lowercase percent-encoded floor as a floor", () => {
+    expect(findOpenEndedNodeFloors("Node %e2%89%a5 22.19.0")).toEqual(["22.19.0"]);
+    expect(findOpenEndedNodeFloors("Node %E2%89%A5 22.19.0")).toEqual(["22.19.0"]);
+  });
+
+  it("🔒 discovers a requirement stated in either case", () => {
+    // Both spellings of both encodings the comparator knows: `≥` and `>=`.
+    expect(statesNodeRequirement("Node %e2%89%a5 22.19.0")).toBe(true);
+    expect(statesNodeRequirement("Node %3e%3d 22.19.0")).toBe(true);
+    expect(statesNodeRequirement("Node %3E%3D 22.19.0")).toBe(true);
+  });
+
+  /**
+   * A SEPARATE finding, surfaced while writing the case tests above and kept
+   * because it lives in the same two functions: the space between comparator
+   * and version is percent-encoded too in a badge URL, and `%20` is not `\s`.
+   *
+   * It is not a case bug — the uppercase spelling failed identically before
+   * this change — so it is recorded on its own rather than folded into the
+   * case argument. What makes it worth fixing here is that the two functions
+   * disagreed about it in the direction their own docblock names as the
+   * hazard: `statesNodeRequirement` DISCOVERS the document, and
+   * `findOpenEndedNodeFloors` then reads no floor from it, so the badge is
+   * swept as though it claimed nothing. Both halves are asserted below so a
+   * future edit cannot re-open the gap on one side only.
+   */
+  it("🔒 reads a badge's percent-encoded space as a space, on both sides", () => {
+    // The canonical shields.io rendering, which is where this shape comes from.
+    const badge = "node-%E2%89%A5%2022.19.0-brightgreen";
+    expect(statesNodeRequirement(badge)).toBe(true);
+    expect(findOpenEndedNodeFloors(badge)).toEqual(["22.19.0"]);
+    // …and it composes with the case-insensitivity this describe is about.
+    expect(statesNodeRequirement("Node %e2%89%a5%2022.19.0")).toBe(true);
+    expect(findOpenEndedNodeFloors("Node %e2%89%a5%2022.19.0")).toEqual(["22.19.0"]);
+    // Containment: `%20` is read as the separator it encodes, not as a digit
+    // source. A bounded clause stays bounded — in either spelling of the bound
+    // — so this cannot invent a floor the document never promised.
+    expect(findOpenEndedNodeFloors("Node %E2%89%A5%2022.19.0%20<23")).toEqual([]);
+    expect(findOpenEndedNodeFloors("Node %E2%89%A5%2022.19.0%20%3C23")).toEqual([]);
+    expect(findOpenEndedNodeFloors("Node >=22.19.0 <23")).toEqual([]);
+  });
+
+  it("🔒 reads `or newer` as an extension however it is capitalised", () => {
+    // Sentence case is the ordinary spelling at the start of a line or in a
+    // heading, so this is the prose half of the same miss. `statesNodeRequirement`
+    // already reads it — its `SPANNED` pattern carries `i` — which is what makes
+    // the floor sweep's silence here a genuine INCONSISTENCY rather than a
+    // uniform policy: the same document is discovered, then swept as if it
+    // claimed nothing.
+    expect(statesNodeRequirement("Node 22.19.0 Or Newer")).toBe(true);
+    expect(findOpenEndedNodeFloors("Node 22.19.0 Or Newer")).toEqual(["22.19.0"]);
+    expect(findOpenEndedNodeFloors("Node 22.19.0 or newer")).toEqual(["22.19.0"]);
+  });
+
+  it("🔒 case-folding widens the encoding only, never the attribution", () => {
+    // The containment half: `i` must not turn a co-listed tool's floor into
+    // Node's, nor read an upper-bounded clause as open-ended. Both rules are
+    // enforced elsewhere in this file; re-asserted against the newly admitted
+    // spelling because a flag change is exactly the kind of edit that widens
+    // more than its author intended.
+    expect(findOpenEndedNodeFloors("pnpm %e2%89%a5 10.34.4")).toEqual([]);
+    expect(findOpenEndedNodeFloors("Node %e2%89%a5 22.19.0 <23")).toEqual([]);
+  });
+});
