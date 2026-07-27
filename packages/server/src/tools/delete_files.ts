@@ -157,16 +157,35 @@ export async function deleteFiles(
   //       - it UNDER-rejected `""` and `"."` — neither contains `..`, yet
   //         `join(kitsRoot, id)` resolves both to the kits ROOT itself. In the
   //         one verb that deletes, that was the more serious half;
-  //       - it OVER-rejected ids that merely EMBED dots (`my..kit`, `..kit`,
-  //         `kit..`), which name a literal child of the root and which `plan`,
+  //       - it OVER-rejected ids that merely EMBED dots (`my..kit`, `..kit`),
+  //         which name a literal child of the root and which `plan`,
   //         `list_files`, `read_file` and `write_files` all accept. An adopted
   //         kit named that way was listable, plannable and writable but
   //         permanently undeletable — there is no `delete_kit` verb to fall
   //         back on. `isSafeKitId`'s own docblock names those ids as allowed
   //         by design.
   //
-  //     Centralising here makes this verb agree with every other kitId
-  //     consumer by construction, so the two cannot drift apart again.
+  //     `kit..` is deliberately NOT in that second list, even though the old
+  //     predicate refused it too. It does not merely EMBED dots, it ENDS in
+  //     them, and `isSafeKitId` refuses a trailing `[ .]` run because Win32
+  //     trims it — so the id aliases a SIBLING kit. The agreement is a
+  //     coincidence of outcome, not of reasoning: the old rule refused it for
+  //     containing `..`, the shared rule refuses it for normalizing to another
+  //     name. Pinned by `kit-files.test.ts` → `🔒 rejects the Win32
+  //     trailing-space/dot aliases of a SIBLING kit`, and excluded explicitly
+  //     by this file's `AC3 — a kit whose id merely EMBEDS dots stays
+  //     deletable`.
+  //
+  //     Centralising here makes this verb agree, by construction, with every
+  //     verb that routes a `kitId` to a kit PATH: those that gate directly
+  //     (`plan`, `list_files`, `read_file`, `write_files`, and the read/render
+  //     verbs widened alongside this one), plus `create_project`, which
+  //     inherits the rule transitively through `getKit`. `validate` is the one
+  //     deliberate exception — its schema is `z.string().min(1)` — and it is
+  //     safe without the gate because it never builds a path from `kitId`: the
+  //     report filename is timestamp-derived, the id travels only in the JSON
+  //     body and as a metric label, and its full-scan facet touches the disk
+  //     solely through store methods that apply the rule themselves.
   if (!isSafeKitId(plan.kitId)) {
     throw new DeleteFilesError(
       "PathOutsidePlanError",
