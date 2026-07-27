@@ -177,15 +177,39 @@ export async function deleteFiles(
   //     deletable`.
   //
   //     Centralising here makes this verb agree, by construction, with every
-  //     verb that routes a `kitId` to a kit PATH: those that gate directly
+  //     verb that RESOLVES a `kitId` to a kit PATH: those that gate directly
   //     (`plan`, `list_files`, `read_file`, `write_files`, and the read/render
-  //     verbs widened alongside this one), plus `create_project`, which
-  //     inherits the rule transitively through `getKit`. `validate` is the one
-  //     deliberate exception — its schema is `z.string().min(1)` — and it is
-  //     safe without the gate because it never builds a path from `kitId`: the
-  //     report filename is timestamp-derived, the id travels only in the JSON
-  //     body and as a metric label, and its full-scan facet touches the disk
-  //     solely through store methods that apply the rule themselves.
+  //     verbs widened alongside this one), plus `bind_kit`, which gates in its
+  //     own schema AND again downstream — `ProjectStore.bindKit` awaits
+  //     `assertKitExists`, which routes through `getKit`.
+  //
+  //     TWO verbs declare a `kitId` and gate it nowhere. Both are deliberate,
+  //     and neither is a traversal risk here, because neither makes the id a
+  //     path segment on its own path:
+  //       - `validate` — schema `z.string().min(1)`. The report filename is
+  //         timestamp-derived, the id travels only in the JSON body and as a
+  //         metric label, and its full-scan facet touches the disk solely
+  //         through store methods that apply the rule themselves.
+  //       - `create_project` — carries its id on a NESTED `kitBindings[].kitId`
+  //         (also `z.string().min(1)`), persisted straight into the project
+  //         manifest. `assertKitExists` is NOT reached on this path: its only
+  //         production call site is `bindKit`, and `createProject` never calls
+  //         it. Ungated is not the same as harmless — the recorded id is read
+  //         back downstream, where `conjure_screen` interpolates it into
+  //         generated artifact bytes unescaped — but that residual is tracked
+  //         on its own and is not what this gate is for.
+  //     Both exceptions are enumerated in `kit-id-gate.test.ts` → `🔒 every
+  //     containment-gated kit-taking verb refuses an unsafe kitId at its own
+  //     gate`, and agree with `store/kit-files.ts` and `store/interface.ts`.
+  //     An earlier revision of THIS paragraph instead listed `create_project`
+  //     among the gated verbs, on the theory that `getKit` would catch it —
+  //     false, and contradicted by all three of those. Crediting a verb with a
+  //     gate it does not apply is the dangerous direction: it invites the
+  //     "something upstream already checked" reasoning that makes deleting a
+  //     real gate look safe. Now pinned by `kit-id-gate.test.ts` → `🔒 no
+  //     rationale credits create_project with a gate it does not apply`, which
+  //     derives the call sites from the code rather than trusting this
+  //     sentence.
   if (!isSafeKitId(plan.kitId)) {
     throw new DeleteFilesError(
       "PathOutsidePlanError",

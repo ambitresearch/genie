@@ -2034,3 +2034,88 @@ describe("kitId gate — the store contract does not over-promise id identity", 
     expect(prose).toContain("`list_kits` never handed out");
   });
 });
+
+describe("kitId gate — a verb's rationale does not credit an ungated sibling", () => {
+  it("🔒 no rationale credits create_project with a gate it does not apply", async () => {
+    // `delete_files`' rationale listed `create_project` among the verbs that
+    // route a `kitId` to a path, "which inherits the rule transitively through
+    // `getKit`". It does not. `assertKitExists` — the only thing that reaches
+    // `getKit` on this store — has exactly ONE production call site, and it is
+    // in `bindKit`. `createProject` reads `kitBindings[].kitId` (a bare
+    // `z.string().min(1)`) and persists it into the manifest without ever
+    // calling it, which is why `store/interface.ts`, `store/kit-files.ts`,
+    // `tools/conjure_screen.ts` and this file's `🔒 every containment-gated
+    // kit-taking verb refuses an unsafe kitId at its own gate` all record
+    // `create_project` as UNGATED. That one paragraph contradicted all four.
+    //
+    // Crediting a verb with a gate it does not apply is the more dangerous
+    // direction of this PR's own defect class: it invites the "something
+    // upstream already checked" reasoning that makes deleting a real gate look
+    // safe. So derive the call sites from the code and hold the prose to them,
+    // rather than pinning the corrected sentence's wording.
+    const srcDir = dirname(dirname(fileURLToPath(import.meta.url)));
+    const source = await readFile(join(srcDir, "tools", "create_project.ts"), "utf8");
+
+    /** The `{...}` block introduced by `header`, by brace matching. */
+    const blockBody = (text: string, header: string): string => {
+      const start = text.indexOf(header);
+      expect(
+        start,
+        `"${header}" not found — this derivation is reading a stale shape`,
+      ).toBeGreaterThan(-1);
+      const open = text.indexOf("{", start);
+      let depth = 0;
+      for (let i = open; i < text.length; i += 1) {
+        if (text[i] === "{") depth += 1;
+        else if (text[i] === "}") {
+          depth -= 1;
+          if (depth === 0) return text.slice(open, i + 1);
+        }
+      }
+      throw new Error(`unbalanced braces reading "${header}"`);
+    };
+
+    const calls = (header: string): boolean =>
+      /\bassertKitExists\b/u.test(stripComments(blockBody(source, header)));
+
+    // The derivation, and its anti-vacuity twin: `bindKit` DOES call it, so a
+    // run where the symbol was renamed fails here instead of passing silently
+    // on a negative scan that can no longer find anything.
+    expect(
+      calls("async createProject("),
+      "createProject now gates — update the prose it is cited by",
+    ).toBe(false);
+    expect(
+      calls("async bindKit("),
+      "assertKitExists moved or was renamed — this derivation is stale",
+    ).toBe(true);
+
+    const prose = commentTexts(await readFile(join(srcDir, "tools", "delete_files.ts"), "utf8"))
+      .join(" ")
+      .replace(/\s+/gu, " ");
+
+    // "…`create_project`, which inherits the rule transitively through `getKit`"
+    const CREDITS = /\bcreate_project\b[^.]*?\b(?:inherits?|transitively)\b/u;
+    expect(
+      CREDITS.test(prose),
+      "delete_files.ts credits create_project with a gate it does not apply",
+    ).toBe(false);
+
+    // Anti-vacuity for the negative scan, in both directions: the regex must
+    // still catch the sentence that was there, and must not fire on the
+    // corrected one, which names `create_project` and `bind_kit` in one span.
+    expect(
+      CREDITS.test("plus `create_project`, which inherits the rule transitively through `getKit`."),
+    ).toBe(true);
+    expect(
+      CREDITS.test("`bind_kit` gates transitively. `create_project` does not gate at all."),
+    ).toBe(false);
+
+    // And the exception must stay NAMED. Deleting the mention would silence
+    // this lock while restoring the unexplained absence that let the original
+    // eight-site drift through review in the first place.
+    expect(prose, "delete_files.ts no longer names create_project as an exception").toContain(
+      "`create_project`",
+    );
+  });
+});
