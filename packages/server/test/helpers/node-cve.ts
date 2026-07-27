@@ -324,6 +324,33 @@ function logicalLines(text: string): string[] {
 }
 
 /**
+ * A line's clauses, each tagged with the bracket depth it was written at.
+ *
+ * Commas, semicolons and brackets all end a clause, but only the brackets carry
+ * scope: `eachNodeClause` restores the subject when one closes, so it has to
+ * know which clauses were inside. An unmatched `)` is clamped rather than
+ * treated as an error, because this reads prose, not source.
+ */
+function clausesAtDepth(line: string): Array<{ clause: string; depth: number }> {
+  const clauses: Array<{ clause: string; depth: number }> = [];
+  let depth = 0;
+  let buffer = "";
+  const flush = (): void => {
+    if (buffer !== "") clauses.push({ clause: buffer, depth });
+    buffer = "";
+  };
+  for (const character of line) {
+    if (character === "(" || character === ")") {
+      flush();
+      depth = character === "(" ? depth + 1 : Math.max(0, depth - 1);
+    } else if (character === "," || character === ";") flush();
+    else buffer += character;
+  }
+  flush();
+  return clauses;
+}
+
+/**
  * Visit every clause in `text` whose subject is Node, with the version it pins.
  *
  * Both the floor sweep and the discovery predicate read prose the same way, so
@@ -356,6 +383,15 @@ function logicalLines(text: string): string[] {
  * prose reads `or 24.4.1 or newer for the npm/source path, or Docker`, and
  * treating `for the npm/source path` as a new subject drops the very floor
  * the sweep exists to read.
+ *
+ * A PARENTHETICAL is an aside, so it changes the subject only for its own
+ * duration. Splitting on the brackets is right — a floor inside the aside
+ * belongs to whatever the aside names — but carrying the subject through the
+ * closing bracket let the aside decide everything after it, in both directions.
+ * `Node.js (LTS) 22.19.0 or newer` stated nothing, because `LTS` reset the
+ * subject and the version clause behind it has no words to set it back; and
+ * `pnpm 10.34.4 (Node 22 is required), or 10.35.0` handed pnpm's floor to Node.
+ * The subject in force before an aside is therefore restored after it.
  */
 function eachNodeClause(text: string, visit: (clause: string, line: string) => void): void {
   const CONTINUATION = new Set([
@@ -378,14 +414,27 @@ function eachNodeClause(text: string, visit: (clause: string, line: string) => v
   for (const line of logicalLines(text)) {
     if (!/node/iu.test(line)) continue;
     let subjectIsNode = false;
-    for (const clause of line.split(/[,;()]|\s+and\s+/u)) {
-      const firstVersion = clause.search(/\d/u);
-      const prefix = firstVersion === -1 ? clause : clause.slice(0, firstVersion);
-      const words = prefix.toLowerCase().match(/[a-z][a-z.]*/gu) ?? [];
-      if (words.some((word) => word.includes("node"))) subjectIsNode = true;
-      else if (words.some((word) => !CONTINUATION.has(word))) subjectIsNode = false;
-      if (!subjectIsNode) continue;
-      visit(clause, line);
+    // The subject in force at each open bracket, restored at its match.
+    const enclosing: boolean[] = [];
+    let depth = 0;
+    for (const { clause: bracketed, depth: at } of clausesAtDepth(line)) {
+      while (at > depth) {
+        enclosing.push(subjectIsNode);
+        depth += 1;
+      }
+      while (at < depth) {
+        subjectIsNode = enclosing.pop() ?? false;
+        depth -= 1;
+      }
+      for (const clause of bracketed.split(/\s+and\s+/u)) {
+        const firstVersion = clause.search(/\d/u);
+        const prefix = firstVersion === -1 ? clause : clause.slice(0, firstVersion);
+        const words = prefix.toLowerCase().match(/[a-z][a-z.]*/gu) ?? [];
+        if (words.some((word) => word.includes("node"))) subjectIsNode = true;
+        else if (words.some((word) => !CONTINUATION.has(word))) subjectIsNode = false;
+        if (!subjectIsNode) continue;
+        visit(clause, line);
+      }
     }
   }
 }

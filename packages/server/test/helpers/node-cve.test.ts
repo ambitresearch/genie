@@ -376,6 +376,53 @@ describe("statesNodeRequirement — discovery independent of the claim's shape",
   });
 });
 
+/**
+ * A parenthetical is an ASIDE, and the subject only changes for its duration.
+ *
+ * Clause splitting treats `(` and `)` as boundaries, which is right — the aside
+ * is its own clause and a floor inside it belongs to whatever the aside names.
+ * But the subject was carried straight through the closing paren, so the aside
+ * decided the subject of everything after it. `Node.js (LTS) 22.19.0 or newer`
+ * therefore stated nothing: `LTS` names no tool and is not a continuation word,
+ * so it reset the subject, and the version clause that followed it had an empty
+ * prefix and could not set the subject back.
+ *
+ * That silently removed an ordinary prerequisite spelling from a sweep that runs
+ * over every markdown file in the repository — the failure mode this predicate
+ * was written to end, in a new disguise.
+ *
+ * The rule cuts both ways, so both directions are pinned here: the subject in
+ * force before an aside survives it, and a subject introduced INSIDE an aside
+ * does not outlive it.
+ */
+describe("eachNodeClause — a parenthetical does not change the subject after it", () => {
+  it("🔒 reads a floor stated across a parenthetical qualifier", () => {
+    for (const prose of [
+      "Node.js (LTS) 22.19.0 or newer",
+      "Node.js (LTS): 22.19.0 or newer",
+      "Node.js (see the release schedule) 22.19.0 or newer",
+    ]) {
+      expect(statesNodeRequirement(prose), `${prose} must be discovered`).toBe(true);
+      expect(findOpenEndedNodeFloors(prose), `${prose} states a floor`).toEqual(["22.19.0"]);
+    }
+  });
+
+  it("🔒 a subject named only inside the aside does not outlive it", () => {
+    // The floor after the aside belongs to pnpm, the line's subject, not to the
+    // Node mentioned parenthetically. Without restoring the subject on the
+    // closing paren the aside would hand pnpm's floor to Node.
+    const prose = "pnpm 10.34.4 (Node 22 is required), or 10.35.0 or newer";
+    expect(findOpenEndedNodeFloors(prose), `${prose} states no Node floor`).toEqual([]);
+  });
+
+  it("🔒 still refuses a foreign floor stated inside the aside", () => {
+    // The pre-existing exclusions this must not trade away: the aside names
+    // pnpm, so neither its floor nor its requirement verb is Node's.
+    expect(statesNodeRequirement("Install Node 22 (pnpm >=10.34.4 is required)")).toBe(false);
+    expect(findOpenEndedNodeFloors("Install Node 22 (pnpm >=10.34.4)")).toEqual([]);
+  });
+});
+
 describe("statesNodeRequirement — soft-wrapped claims", () => {
   // Markdown hard-wraps prose. `docs/user/installation.md` already wraps its
   // prerequisite across two physical lines; the subject and the version only
