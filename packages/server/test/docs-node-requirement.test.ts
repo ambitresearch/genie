@@ -39,6 +39,7 @@ import {
   renderNodeRequirement,
   statesNodeRequirement,
 } from "./helpers/node-cve.js";
+import { stripComments } from "./helpers/source-text.js";
 import { trackedFiles, trackedPath } from "./helpers/tracked-files.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -67,11 +68,10 @@ const WRITE_CALL = /\b(?:writeFile|appendFile|cp|rm)\s*\(\s*([A-Za-z_$][\w$]*)/g
 export const fixedRepoPathWrites = (text: string, label: string): string[] => {
   // Comments first. This function's own docblock quotes the offending code as
   // prose, and the sweep reads raw file text — unstripped, the explanation of
-  // the bug reads as a fresh instance of it. Block comments are anchored to the
-  // line start because a glob inside a string (`"**/*.tsx"`) opens `/*`.
-  const source = text
-    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gmu, " ")
-    .replace(/(?:^|[^:])\/\/.*$/gmu, " ");
+  // the bug reads as a fresh instance of it. Both comment kinds are anchored to
+  // the line start by the shared reader: a glob inside a string (`"**/*.tsx"`)
+  // opens `/*`, and a `file:///` literal opens `//`.
+  const source = stripComments(text);
   const unique = new Set<string>();
   const repoFixed = new Set<string>();
   const mentions = (rhs: string, names: Set<string>): boolean =>

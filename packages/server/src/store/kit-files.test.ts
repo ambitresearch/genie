@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { assertRangePatchesCve202527210 } from "../../test/helpers/node-cve.js";
+import { commentTexts } from "../../test/helpers/source-text.js";
 import { trackedFiles, trackedPath } from "../../test/helpers/tracked-files.js";
 
 import {
@@ -480,37 +481,6 @@ const publishablePackages = trackedFiles(fileURLToPath(new URL("../../../", impo
   .filter(({ manifest }) => manifest.private !== true)
   .map(({ url, manifest }) => [manifest.name ?? String(url), manifest] as const);
 
-/**
- * Comments, flattened to one line each.
- *
- * Prettier reflows code but never comments, so where a sentence wraps is an
- * author's choice that changes on any edit. A prose check that matches raw text
- * therefore silently stops seeing a claim the moment someone rewraps it — which
- * is exactly how `store-conformance.test.ts` went on calling `isSafeKitId` "the
- * containment rule" for a whole review while the lock below reported green: the
- * phrase had wrapped to `containment\n// rule`.
- */
-const flattenedComments = (text: string): string[] =>
-  [
-    // Anchored: `"components/**\/*.tsx"` contains a `/*`, and test files are full
-    // of globs, so an unanchored strip treats one as a comment opener and
-    // swallows everything to the next `*\/`.
-    ...text.matchAll(/^[ \t]*\/\*[\s\S]*?\*\//gmu),
-    // Only HORIZONTAL whitespace joins consecutive comment lines. `\s*` spans
-    // newlines, so it fused two comments separated by a blank line into one
-    // sentence and could report a claim neither of them made.
-    ...text.matchAll(/(?:^|[^:])(\/\/.*(?:\n[ \t]*\/\/.*)*)/gmu),
-  ]
-    .map((match) => match[0])
-    .map((comment) =>
-      comment
-        .split("\n")
-        .map((line) => line.replace(/^\s*(?:\/\/+|\*+\/?|\/\*+)\s?/u, ""))
-        .join(" ")
-        .replace(/\s+/gu, " ")
-        .trim(),
-    );
-
 it("🔒 no comment still calls isSafeKitId merely a containment rule", () => {
   // The docblock above was corrected to say `isSafeKitId` is a
   // CONTAINMENT-AND-IDENTITY rule: alongside escapes it also refuses ids that
@@ -539,7 +509,7 @@ it("🔒 no comment still calls isSafeKitId merely a containment rule", () => {
   for (const rel of files) {
     // Comments only. The predicate's NAME appears in live code at every call
     // site; it is the prose around it that can teach the wrong contract.
-    for (const comment of flattenedComments(readFileSync(path.join(serverRoot, rel), "utf-8"))) {
+    for (const comment of commentTexts(readFileSync(path.join(serverRoot, rel), "utf-8"))) {
       if (!comment.includes("isSafeKitId")) continue;
       describing.push(rel);
       // A comment that RECORDS a corrected claim has to keep quoting the wrong
@@ -576,13 +546,13 @@ it("🔒 the comment scan sees a claim that wrapped across two comment lines", (
     "    // isSafeKitId — the containment",
     "    // rule, as this module's docblock puts it",
   ].join("\n");
-  const [flat] = flattenedComments(wrapped);
+  const [flat] = commentTexts(wrapped);
   expect(flat).toBe("isSafeKitId — the containment rule, as this module's docblock puts it");
   expect(/containment rule/u.test(flat ?? "")).toBe(true);
   // And the flattener must not fuse two SEPARATE comments into one sentence, or
   // it would invent claims nobody made.
   expect(
-    flattenedComments(["    // ends with containment", "", "    // rule starts here"].join("\n")),
+    commentTexts(["    // ends with containment", "", "    // rule starts here"].join("\n")),
   ).toEqual(["ends with containment", "rule starts here"]);
 });
 

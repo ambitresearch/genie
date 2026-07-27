@@ -158,25 +158,45 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 /**
+ * The universal single-component limit. ext4, APFS, NTFS, XFS and btrfs all cap
+ * a path component at 255 bytes, so an id longer than this is unrepresentable
+ * everywhere rather than merely awkward here.
+ */
+const NAME_MAX_BYTES = 255;
+
+/** The characters Win32 reserves in a path component. */
+const WIN32_RESERVED = /[<>:"|?*]/u;
+
+/**
  * A name the filesystem cannot represent — which is a stronger statement than
  * "not there right now": no file with this name can ever exist here, so it is
  * absent by definition rather than by accident.
  *
- * `ENAMETOOLONG` is reachable from pure input: kitIds are gated by
- * {@link isSafeKitId}, which bounds separators and aliasing but deliberately not
- * LENGTH, because length is not a containment property. `EINVAL` is the Win32
- * answer for the characters it reserves (`<>:"|?*`).
+ * The error code alone cannot support that claim, because both codes have a
+ * second cause that has nothing to do with `id`:
+ *
+ *   - `ENAMETOOLONG` is raised for NAME_MAX (one component too long — the id)
+ *     and for PATH_MAX (the whole pathname too long — dominated by the
+ *     configured root). A deep root would otherwise make every lookup answer
+ *     "absent", including for ids as short as `ui`.
+ *   - `EINVAL` is the Win32 answer for its reserved characters (`<>:"|?*`), but
+ *     is also raised by unrelated argument faults.
+ *
+ * So the id is inspected directly, and only a fault it can actually account for
+ * is treated as absence. Anything else stays a fault. That asymmetry is the
+ * point of #252: a configuration or platform problem reported as `kitNotFound`
+ * is a problem no caller can diagnose, whereas an id no filesystem would accept
+ * genuinely names nothing.
  *
  * Kept separate from {@link isMissingPathError} on purpose: that predicate
  * describes a path that is absent, this one an id that is unusable, and only the
  * second is an argument about the caller's input.
  */
-function isUnrepresentableNameError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error.code === "ENAMETOOLONG" || error.code === "EINVAL")
-  );
+function isUnrepresentableNameError(error: unknown, id: string): boolean {
+  if (!(error instanceof Error) || !("code" in error)) return false;
+  if (error.code === "ENAMETOOLONG") return Buffer.byteLength(id, "utf-8") > NAME_MAX_BYTES;
+  if (error.code === "EINVAL") return WIN32_RESERVED.test(id);
+  return false;
 }
 
 /**
@@ -455,12 +475,12 @@ function isEnoent(error: unknown): boolean {
  *
  * Scan loops want the opposite bias and use {@link readMetaIfReadable}.
  */
-async function readMeta<T>(filePath: string): Promise<T | undefined> {
+async function readMeta<T>(filePath: string, id: string): Promise<T | undefined> {
   try {
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw) as T;
   } catch (error) {
-    if (isMissingPathError(error) || isUnrepresentableNameError(error)) return undefined;
+    if (isMissingPathError(error) || isUnrepresentableNameError(error, id)) return undefined;
     throw withoutPath(error);
   }
 }
@@ -473,9 +493,9 @@ async function readMeta<T>(filePath: string): Promise<T | undefined> {
  * neighbours, and one bad entry must not fail the whole listing — so this keeps
  * the historic swallow-everything behaviour exactly where it is wanted.
  */
-async function readMetaIfReadable<T>(filePath: string): Promise<T | undefined> {
+async function readMetaIfReadable<T>(filePath: string, id: string): Promise<T | undefined> {
   try {
-    return await readMeta<T>(filePath);
+    return await readMeta<T>(filePath, id);
   } catch {
     return undefined;
   }
@@ -600,7 +620,7 @@ export class LocalFsKitStore implements KitStore {
       // the same filter: the clause is adapter-neutral, so enforcing it here
       // alone would leave the shared contract passing vacuously there.
       if (!isSafeKitId(entry.name)) continue;
-      const meta = await readMetaIfReadable<KitMetaFile>(this.kitMetaPath(entry.name));
+      const meta = await readMetaIfReadable<KitMetaFile>(this.kitMetaPath(entry.name), entry.name);
       // Same publishing invariant as the id filter above, applied to the SHAPE
       // rather than the name. `readMeta` is `JSON.parse(...) as KitMetaFile` —
       // an erased cast — so a .kit.json that parses but omits `name` or
@@ -631,7 +651,7 @@ export class LocalFsKitStore implements KitStore {
   }
 
   async getKit(kitId: KitId): Promise<KitMeta> {
-    const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId));
+    const meta = await readMeta<KitMetaFile>(this.kitMetaPath(kitId), kitId);
     // `!hasRequiredKitMetaFields` is NOT redundant with the listKits filter:
     // that one governs what this store PUBLISHES, this one governs what it
     // SERVES, and a caller can reach getKit with an id listKits never emitted.
@@ -943,7 +963,7 @@ export class LocalFsProjectStore implements ProjectStore {
     const projects: ProjectMeta[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const meta = await readMetaIfReadable<ProjectMetaFile>(this.metaPath(entry.name));
+      const meta = await readMetaIfReadable<ProjectMetaFile>(this.metaPath(entry.name), entry.name);
       if (meta) {
         projects.push({
           id: meta.id,
@@ -957,7 +977,7 @@ export class LocalFsProjectStore implements ProjectStore {
   }
 
   async getProject(projectId: ProjectId): Promise<ProjectMeta> {
-    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId));
+    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId), projectId);
     if (!meta) throw new NotFoundError("Project", projectId);
     return {
       id: meta.id,
@@ -982,20 +1002,20 @@ export class LocalFsProjectStore implements ProjectStore {
   }
 
   async deleteProject(projectId: ProjectId): Promise<void> {
-    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId));
+    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId), projectId);
     if (!meta) throw new NotFoundError("Project", projectId);
     await rm(this.projectDir(projectId), { recursive: true, force: true });
   }
 
   async bindKit(projectId: ProjectId, kitId: KitId): Promise<void> {
-    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId));
+    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId), projectId);
     if (!meta) throw new NotFoundError("Project", projectId);
     meta.kitId = kitId;
     await writeFile(this.metaPath(projectId), JSON.stringify(meta, null, 2));
   }
 
   async recordScreen(projectId: ProjectId, screenRef: string): Promise<void> {
-    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId));
+    const meta = await readMeta<ProjectMetaFile>(this.metaPath(projectId), projectId);
     if (!meta) throw new NotFoundError("Project", projectId);
     meta.screens.push(screenRef);
     await writeFile(this.metaPath(projectId), JSON.stringify(meta, null, 2));

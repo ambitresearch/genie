@@ -56,6 +56,56 @@ const unanchoredUses = (source: string): number[] => {
   return hits;
 };
 
+/**
+ * The line-comment opener as it is spelled inside a regex literal, assembled at
+ * runtime for the same reason as `UNANCHORED_OPENER`: this file is inside the
+ * corpus it scans.
+ */
+const LINE_OPENER = ["\\", "/", "\\", "/"].join("");
+
+/**
+ * Occurrences of the line-comment opener that are not anchored to a line start,
+ * reported as 1-based line numbers.
+ *
+ * Safety is decided by what precedes the opener inside the regex. Grouping
+ * punctuation and horizontal-whitespace classes are transparent — a marker strip
+ * legitimately reaches the opener through `^\s*(?:` — so those are peeled away
+ * before asking whether what remains ends at a line boundary, either `^` or an
+ * explicit newline.
+ */
+const unanchoredLineUses = (source: string): number[] => {
+  const hits: number[] = [];
+  const TRANSPARENT = /(?:\((?:\?:)?|\||\[[^\]]*\]\*|\\s\*|\s)+$/u;
+
+  source.split("\n").forEach((raw, index) => {
+    const trimmed = raw.trimStart();
+    if (trimmed.startsWith("*") || trimmed.startsWith("//") || trimmed.startsWith("/*")) return;
+
+    let from = 0;
+    for (;;) {
+      const at = raw.indexOf(LINE_OPENER, from);
+      if (at === -1) return;
+      from = at + LINE_OPENER.length;
+
+      let before = raw.slice(0, at);
+      for (;;) {
+        const peeled = before.replace(TRANSPARENT, "");
+        if (peeled === before) break;
+        before = peeled;
+      }
+      if (before.endsWith("^") || before.endsWith("\\n")) continue;
+      // A literal colon in front of the opener is a URL scheme, not a comment:
+      // `/^https:\\/\\/host\\//u` matches an address. No scan looking for comments
+      // writes a colon there — the colon-workaround arm ends in `)` — so this
+      // separates the two uses without weakening the check.
+      if (before.endsWith(":")) continue;
+      hits.push(index + 1);
+      return;
+    }
+  });
+  return hits;
+};
+
 describe("source-text — a glob is not a comment", () => {
   // A string literal holding a glob contains the two characters that open a
   // block comment. Read without an anchor, the pattern runs from there to the
@@ -302,9 +352,10 @@ describe("source-text — a block comment is recognised only at a line start", (
   it("🔒 no source in this package reads block comments without the anchor", () => {
     // Each contract test that scans source used to spell this separation
     // itself, and a copy is where the anchor gets dropped. What is enforced
-    // here is the anchor, not the import: `helpers/tracked-files.test.ts`
-    // spells its own line-anchored stripper and is deliberately left alone,
-    // because the property that matters is the reading, not who owns it.
+    // here is the anchor, not the import — a caller may still spell its own
+    // reading, provided it anchors. In practice every caller now delegates:
+    // three that spelled their own kept the block anchor but dropped the line
+    // one, which is the defect the sibling scan below was added for.
     //
     // Lines that are themselves comments are skipped, so prose describing the
     // shape — the helper's own docblock does, at length — is not an offence.
@@ -343,6 +394,64 @@ describe("source-text — a block comment is recognised only at a line start", (
     expect(
       unanchoredUses(["/**", ` * Never write ${UNANCHORED_OPENER} here.`, " */"].join("\n")),
     ).toEqual([]);
+  });
+});
+describe("source-text — a line comment is recognised only at a line start", () => {
+  it("🔒 no source in this package reads line comments without the anchor", () => {
+    // The sibling scan above covers the block opener. This one covers the line
+    // opener, which has its own near-miss spelling: a scan that wants to spare
+    // `https://` writes a "any character but a colon" arm in front of the two
+    // slashes. That arm reads `file:///x` as a comment — the colon is spent on
+    // the URL scheme, the first slash satisfies "not a colon", and the next two
+    // open a comment that runs to the end of the line, taking any code sharing
+    // that line with it.
+    //
+    // Self is excluded because this file has to spell both readings to compare
+    // them.
+    const offenders: string[] = [];
+    for (const relative of trackedFiles(SERVER_ROOT).filter((file) => file.endsWith(".ts"))) {
+      if (relative === SELF) continue;
+      const lines = unanchoredLineUses(readFileSync(path.join(SERVER_ROOT, relative), "utf-8"));
+      for (const line of lines) offenders.push(`${relative}:${line}`);
+    }
+
+    expect(
+      offenders,
+      "these match a line comment without anchoring it to a line start, so a " +
+        "`file:///` literal opens a comment that swallows the rest of the line " +
+        "— import `stripComments`/`commentTexts` from " +
+        "`test/helpers/source-text.ts` instead",
+    ).toEqual([]);
+  });
+
+  it("🔒 that scan tells the colon workaround from a real anchor", () => {
+    // Two-sided, and specifically over the near-miss: the "not a colon" arm has
+    // to be flagged and the line anchor cleared, or the empty result above is
+    // just an assertion that nothing in the package matches a line comment.
+    const colonArm = `const code = raw.replace(/(?:^|[^:])${LINE_OPENER}.*$/gmu, " ");`;
+    const anchored = `const code = raw.replace(/${ANCHOR}${LINE_OPENER}.*$/gmu, " ");`;
+    const newlineAnchored = `const runs = raw.matchAll(/(?:\\n[ \\t]*${LINE_OPENER}.*)*/gmu);`;
+
+    expect(unanchoredLineUses(colonArm)).toEqual([1]);
+    expect(unanchoredLineUses(anchored)).toEqual([]);
+    expect(unanchoredLineUses(newlineAnchored)).toEqual([]);
+
+    // A marker strip that runs from the line start is the third safe spelling,
+    // and it reaches the opener through a group rather than directly.
+    expect(unanchoredLineUses(`raw.replace(/^\\s*(?:${LINE_OPENER}+|\\*+)\\s?/u, "")`)).toEqual([]);
+
+    // A URL regex is cleared, and it has to be: matching an address is not
+    // reading a comment, and flagging it would push the next author to stop
+    // anchoring URLs rather than to anchor comments.
+    expect(
+      unanchoredLineUses(
+        `expect(url).toMatch(/^https:${LINE_OPENER}host\\.example${LINE_OPENER[0]}${LINE_OPENER[1]}/u);`,
+      ),
+    ).toEqual([]);
+
+    // Prose naming the spelling is not an offence, on the same grounds as the
+    // block scan: the explanation has to be writable somewhere.
+    expect(unanchoredLineUses(`// never write (?:^|[^:])${LINE_OPENER} here`)).toEqual([]);
   });
 });
 describe("source-text — comment order is positional across the whole package", () => {

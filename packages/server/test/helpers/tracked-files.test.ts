@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { stripComments } from "./source-text.js";
 import { trackedFiles, trackedPath } from "./tracked-files.js";
 
 const SERVER_ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
@@ -11,15 +12,15 @@ const SERVER_ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.
 /** This file, relative to SERVER_ROOT — see the self-exclusion note below. */
 const SELF = trackedPath(SERVER_ROOT, fileURLToPath(import.meta.url));
 
-/** Live code only: the rule below is explained in prose that must stay legal. */
-const code = (source: string): string =>
-  source
-    // A block comment is only recognised at the start of a line. Anchoring it
-    // matters: `"components/**/*.tsx"` contains `/*`, so an unanchored strip
-    // treats a glob inside a string as a comment opener and deletes everything
-    // up to the next `*/` — which silently swallowed a real offender below.
-    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gmu, " ")
-    .replace(/(?:^|[^:])\/\/.*$/gmu, " ");
+/**
+ * Live code only: the rule below is explained in prose that must stay legal.
+ *
+ * Delegated rather than spelled here. The local copy anchored its block half but
+ * not its line half, and the "any character but a colon" arm it used to spare
+ * `https://` reads `file:///x` as a comment — the colon is spent on the scheme,
+ * so the two slashes that open the "comment" are the second and third.
+ */
+const code = stripComments;
 
 /** The banned shape: a hand-written skip-list standing in for "untracked". */
 const usesArtefactDenylist = (source: string): boolean => code(source).includes('"node_modules"');

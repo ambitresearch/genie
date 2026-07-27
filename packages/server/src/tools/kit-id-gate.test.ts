@@ -1629,6 +1629,54 @@ describe("kitId gate — a rejected id does not disclose the server's filesystem
     }
   });
 
+  it("🔒 a deep kits root is an operational fault, not a missing kit", async () => {
+    // `ENAMETOOLONG` has two causes and only one is the caller's.
+    //
+    //   - NAME_MAX: one component is too long. That is the id, and it names no
+    //     kit on any filesystem, so absence is the honest answer.
+    //   - PATH_MAX: the WHOLE pathname is too long. With a short id that is the
+    //     configured root, and reporting it as absence hides a deployment fault
+    //     behind `kitNotFound` — #252's fault-as-absence, in the predicate that
+    //     was added to remove it.
+    //
+    // `readMeta` is shared by kits AND projects, so the misreading is not
+    // confined to one lookup: a deep `GENIE_HOME` makes the whole store answer
+    // "nothing is here".
+    //
+    // 24 x 200 chars clears PATH_MAX on both mainstream limits (1024 on macOS,
+    // 4096 on Linux) while every component stays well inside NAME_MAX. The root
+    // is deliberately not created: the classification is what is under test,
+    // and an absent root reaches ENOENT, not ENAMETOOLONG.
+    const deepRoot = `/${Array.from({ length: 24 }, () => "d".repeat(200)).join("/")}`;
+    const store = new LocalFsKitStore(deepRoot);
+
+    const error = await getKit(store, { kitId: "ui" }).then(
+      () => undefined,
+      (thrown: unknown) => thrown as NodeJS.ErrnoException,
+    );
+
+    expect(isSafeKitId("ui")).toBe(true);
+    expect(error).toBeDefined();
+    expect(
+      error,
+      "the id is 2 bytes — representable on every filesystem — so the overflow " +
+        "came from the configured root, which is an operational fault",
+    ).not.toBeInstanceOf(ProjectNotFoundError);
+    expect(error?.code).toBe("ENAMETOOLONG");
+
+    // Anti-vacuity, and the other half of the attribution: an id that really is
+    // unrepresentable still answers absence, so this is not simply "stop
+    // treating ENAMETOOLONG as absence".
+    const shallowRoot = await mkdtemp(join(tmpdir(), "genie-kit-id-attrib-"));
+    try {
+      await expect(
+        getKit(new LocalFsKitStore(shallowRoot), { kitId: "a".repeat(300) }),
+      ).rejects.toBeInstanceOf(ProjectNotFoundError);
+    } finally {
+      await rm(shallowRoot, { recursive: true, force: true });
+    }
+  });
+
   it("🔒 keeps the code but not the path when a kit exists and cannot be read", async () => {
     const kitsRoot = await mkdtemp(join(tmpdir(), "genie-kit-id-unreadable-"));
     const locked = join(kitsRoot, "locked");
