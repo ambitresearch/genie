@@ -285,6 +285,74 @@ function kitStoreContract(
       }
     });
 
+    it("🔒 honours the declared KitMeta shape when .kit.json omits a required field", async () => {
+      // `KitMeta` declares `name` and `createdAt` REQUIRED, but both adapters
+      // parse .kit.json with an erased cast (`JSON.parse(raw) as KitMetaFile`)
+      // and pass those fields straight out. A kit whose meta omits one — an
+      // older-format kit, a hand-made directory, a partially-restored backup,
+      // a kit adopted from a git host — therefore leaves the adapter emitting
+      // a value that violates its own declared return type, and every consumer
+      // downstream inherits the violation.
+      //
+      // This is the same visible-but-unusable defect this subsystem has been
+      // closing all cycle, arriving through the meta file instead of the id.
+      // The sibling test above pins the invariant for a DIVERGENT id; this one
+      // pins it for an INCOMPLETE meta, which is the likelier accident.
+      //
+      // Note the tolerance that already exists and does NOT cover this:
+      // `readMetaIfReadable`'s docblock promises "one bad entry must not fail
+      // the whole listing" — but it only catches bytes that fail to PARSE.
+      // Valid JSON with missing fields sails through, so the promise is kept
+      // for the rarer fault and broken for the commoner one.
+      // Deliberately asserts the SHAPE invariant and not a specific disposition,
+      // because the two adapters have different CORRECT answers here and a
+      // shared contract may only pin what is true of both:
+      //  - LocalFs has no other source of truth for these fields, so its only
+      //    honest option is to refuse the kit (skip it / NotFoundError).
+      //  - GitHost does: the repo carries `name` and `created_at`, and
+      //    `readKitMeta` already falls back to them when the file is missing
+      //    entirely. Falling back for an INCOMPLETE file too keeps the kit
+      //    usable on host-authoritative data, which is strictly better.
+      // Pinning "must not be listed" here would forbid the better behaviour.
+      const kit = await store.createKit("Legacy Kit", "legacy-kit");
+      await seedFile(
+        kit.id,
+        ".kit.json",
+        JSON.stringify({ id: "legacy-kit", name: "Legacy Kit", type: "GENIE_KIT" }),
+      );
+
+      // A healthy neighbour, created AFTER the corruption, pins the tolerance
+      // `readMetaIfReadable`'s docblock promises: one bad entry must not fail
+      // the whole listing.
+      const healthy = await store.createKit("Healthy Kit", "healthy-kit");
+      const listed = await store.listKits();
+      expect(listed.map((k) => k.id)).toContain(healthy.id);
+
+      // THE INVARIANT: nothing this store publishes may violate `KitMeta`.
+      for (const k of listed) {
+        expect(typeof k.name, `listed kit must carry a name: ${k.id}`).toBe("string");
+        expect(typeof k.createdAt, `listed kit must carry a createdAt: ${k.id}`).toBe("string");
+      }
+
+      // Visible ⟺ usable, extended to the shape. The sibling test above pins
+      // that a listed id resolves; this pins that what it resolves TO is also
+      // shape-complete — so a caller round-tripping the listing can never be
+      // handed `undefined` in a slot the interface declares `string`.
+      for (const k of listed) {
+        const fetched = await store.getKit(k.id);
+        expect(fetched.id).toBe(k.id);
+        expect(typeof fetched.name, `getKit must carry a name: ${k.id}`).toBe("string");
+        expect(typeof fetched.createdAt, `getKit must carry a createdAt: ${k.id}`).toBe("string");
+      }
+
+      // Whichever disposition the adapter chose, it must be self-consistent:
+      // a kit it declines to list must also decline to serve, so "not found"
+      // is TRUE rather than the lie this whole subsystem has been removing.
+      if (!listed.some((k) => k.id === "legacy-kit")) {
+        await expect(store.getKit("legacy-kit")).rejects.toThrow(NotFoundError);
+      }
+    });
+
     it("listFiles returns files in a kit", async () => {
       const kit = await store.createKit("file-kit");
       // Write files via openPlan
@@ -901,6 +969,47 @@ describe("LocalFsKitStore — adapter-specific", () => {
     }
   });
 
+  it("🔒 omits a kit whose .kit.json lacks a required field, and getKit refuses it", async () => {
+    // DISPOSITION half of the shared contract's KitMeta-shape invariant. The
+    // shared test pins only what is adapter-NEUTRAL — nothing a store publishes
+    // may violate `KitMeta`, and every listed kit must resolve. It deliberately
+    // permits either answer to "what happens to the malformed kit?", because the
+    // two adapters have genuinely DIFFERENT correct answers and encoding this
+    // one as the contract would force GitHost to regress (see its sibling test).
+    //
+    // LocalFsKitStore has NO other source for `name`/`createdAt` — `.kit.json`
+    // is the only record. So an incomplete file leaves nothing to serve, and the
+    // only shape-honest answers are: skip it in `listKits`, refuse it in
+    // `getKit`. That pairing is the point — publishing it while refusing to
+    // serve it, or serving `undefined`, are the two failures this pins against.
+    //
+    // Without the guard `listKits` published `{ createdAt: undefined }`, which
+    // `list_kits` then failed against its own output schema — taking the healthy
+    // neighbour seeded below down with it. That is why the neighbour is here:
+    // the blast radius is the WHOLE response, not the one bad kit.
+    await store.createKit("Legacy Kit", "legacy-kit");
+    await writeFile(
+      join(tmpDir, "legacy-kit", ".kit.json"),
+      // Valid JSON, correct `type`, plausible `id` — and no `createdAt`. The
+      // shape of a hand-made kit dir, a restored backup, or an adopted kit.
+      JSON.stringify({ id: "legacy-kit", name: "Legacy Kit", type: "GENIE_KIT" }),
+      "utf-8",
+    );
+    await store.createKit("Healthy Kit", "healthy-kit");
+
+    const listed = await store.listKits();
+    expect(listed.map((k) => k.id)).not.toContain("legacy-kit");
+    // The malformed neighbour must not cost the healthy kit its listing.
+    expect(listed.map((k) => k.id)).toContain("healthy-kit");
+
+    // Refused as ABSENT, not as malformed. `NotFoundError` is the same answer a
+    // missing `.kit.json` gets, which is correct here: a meta that cannot be
+    // read as a kit does not describe a kit this store can serve. A distinct
+    // shape error would be wrong — it would leak that the directory exists to a
+    // caller the store has just decided cannot address it.
+    await expect(store.getKit("legacy-kit")).rejects.toThrow(NotFoundError);
+  });
+
   it("🔒 rejects a custom kitId isSafeKitId rejects, before writing anything", async () => {
     // `createKit(name, kitId?)` is public on `KitStore`, so the optional id is
     // caller-supplied — NOT server-minted, whatever the tool layer does. Without
@@ -1048,6 +1157,66 @@ describe("GitHostKitStore — adapter-specific", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+  });
+
+  it("🔒 serves a kit whose .kit.json lacks a required field from host-authoritative data", async () => {
+    // DISPOSITION half of the shared contract's KitMeta-shape invariant, and the
+    // reason that contract pins the invariant rather than the disposition: this
+    // adapter's correct answer is the OPPOSITE of LocalFs's.
+    //
+    // A git host knows the repo's name and creation time independently of any
+    // file inside it, so `readKitMeta` returning undefined is a FALLBACK TRIGGER
+    // here, not an error — `listKits` and `getKit` both fall back to
+    // `repo.name` / `repo.created_at`. Skipping or refusing the kit (LocalFs's
+    // correct answer) would therefore be a REGRESSION here: it would hide a kit
+    // the host can fully describe, over a file the adapter already declares
+    // non-authoritative for identity.
+    //
+    // KEY DETECTOR: `name` must be the REPO name "legacy-kit", not "Legacy Kit"
+    // from the file. Delete `hasRequiredKitMetaFields` from `readKitMeta` and the
+    // incomplete file is trusted, so `name` becomes "Legacy Kit" and
+    // `createdAt` becomes undefined — both assertions below red. Asserting only
+    // that the kit resolves would pass either way and pin nothing.
+    const mockFetch = createMockGitHostFactory();
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
+
+    const store = new GitHostKitStore({
+      baseUrl: "https://mock-git-host.test/api/v1",
+      owner: "test-org",
+      token: "mock-token",
+    });
+
+    await store.createKit("Legacy Kit", "legacy-kit");
+    // Overwrite the well-formed `.kit.json` createKit just wrote with one that
+    // omits `createdAt`. Valid JSON and correct `type`, so it survives every
+    // parse-level tolerance the adapter has — which is the whole point: the
+    // fault is a SHAPE fault, invisible to a try/catch around JSON.parse.
+    const incomplete = JSON.stringify({
+      id: "legacy-kit",
+      name: "Legacy Kit",
+      type: "GENIE_KIT",
+    });
+    await mockFetch(
+      "https://mock-git-host.test/api/v1/repos/test-org/legacy-kit/contents/.kit.json",
+      {
+        method: "POST",
+        body: JSON.stringify({ content: Buffer.from(incomplete).toString("base64") }),
+      },
+    );
+
+    const listed = await store.listKits();
+    const entry = listed.find((k) => k.id === "legacy-kit");
+    expect(entry, "a host-describable kit must stay listed").toBeDefined();
+    expect(entry?.name).toBe("legacy-kit");
+    expect(typeof entry?.createdAt).toBe("string");
+    expect(entry?.createdAt).not.toBe("");
+
+    // Visible ⟹ usable, satisfied through the fallback rather than the file.
+    const kit = await store.getKit("legacy-kit");
+    expect(kit.name).toBe("legacy-kit");
+    expect(typeof kit.createdAt).toBe("string");
+    expect(kit.createdAt).not.toBe("");
   });
 
   it("deleteFile on a directory target throws EISDIR, not a silent no-op (DRO-568)", async () => {

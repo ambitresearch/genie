@@ -8,6 +8,7 @@ import { assertRangePatchesCve202527210 } from "../../test/helpers/node-cve.js";
 import { trackedFiles, trackedPath } from "../../test/helpers/tracked-files.js";
 
 import {
+  hasRequiredKitMetaFields,
   isSafeKitId,
   KIT_ID_SAFETY_CATEGORIES,
   KIT_ID_SAFETY_MESSAGE,
@@ -575,6 +576,61 @@ it("🔒 the source checkout declares a Node range with no vulnerable release in
   const range = root.engines?.node ?? "";
   expect(range, "root must declare engines.node").not.toBe("");
   assertRangePatchesCve202527210(range, "monorepo root");
+});
+
+/**
+ * `KitMeta` declares `name` and `createdAt` REQUIRED, but `.kit.json` is parsed
+ * with `JSON.parse(raw) as T` — an erased cast that checks nothing. So a file
+ * missing a field produced a `KitMeta` violating its own declared type, and the
+ * damage landed at the MCP boundary: `list_kits` validates its output against
+ * `listKitsEntryShape`, so ONE malformed kit failed the WHOLE response and every
+ * other kit vanished with it.
+ *
+ * This predicate is the shared shape check both adapters apply before they
+ * publish or serve a meta. It deliberately checks ONLY `name` and `createdAt`:
+ * `id` is discarded by both adapters in favour of the routing key (#282), and
+ * `type` is gated by LocalFs but not by GitHost, so folding it in here would
+ * silently change which git-host repos resolve.
+ */
+describe("hasRequiredKitMetaFields", () => {
+  it("accepts a meta carrying both required fields", () => {
+    expect(
+      hasRequiredKitMetaFields({
+        id: "acme-kit",
+        name: "Acme Kit",
+        type: "GENIE_KIT",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a meta missing either required field", () => {
+    // The real-world seeds: a hand-made kit dir, a kit adopted from a git host,
+    // or an older-format `.kit.json` written before the field existed.
+    expect(hasRequiredKitMetaFields({ id: "k", name: "K", type: "GENIE_KIT" })).toBe(false);
+    expect(hasRequiredKitMetaFields({ id: "k", type: "GENIE_KIT", createdAt: "2026-01-01" })).toBe(
+      false,
+    );
+    expect(hasRequiredKitMetaFields({})).toBe(false);
+  });
+
+  it("rejects a present-but-wrong-typed field", () => {
+    // `JSON.parse` happily yields numbers, nulls and objects here. The MCP
+    // output schema requires strings, so a non-string is exactly as fatal as
+    // an absent field — the predicate must not accept it merely for existing.
+    expect(hasRequiredKitMetaFields({ name: "K", createdAt: 1735689600000 })).toBe(false);
+    expect(hasRequiredKitMetaFields({ name: null, createdAt: "2026-01-01" })).toBe(false);
+    expect(hasRequiredKitMetaFields({ name: "K", createdAt: { iso: "2026-01-01" } })).toBe(false);
+  });
+
+  it("rejects non-objects without throwing", () => {
+    // `readMetaIfReadable` tolerates unreadable bytes but NOT shape, so these
+    // reach the predicate as-is. A throw here would defeat the very tolerance
+    // the listing walk depends on: one bad entry must not fail the listing.
+    for (const notAnObject of [null, undefined, "meta", 42, true, []]) {
+      expect(hasRequiredKitMetaFields(notAnObject)).toBe(false);
+    }
+  });
 });
 
 /**

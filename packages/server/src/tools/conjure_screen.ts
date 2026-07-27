@@ -307,9 +307,22 @@ function entryFileName(framework: ScreenFramework): string {
 
 /**
  * Validate an explicit `kitId` resolves to a real `GENIE_KIT`, mapping every
- * shape `getKit` can reject with — malformed id (Zod), missing kit
- * (`ProjectNotFoundError`), non-kit project (`WrongProjectTypeError`) — onto the
- * single `ERR_KIT_NOT_FOUND` code (mirrors `bind_kit`'s `assertKitExists`).
+ * shape `getKit` can reject with — Zod, missing kit (`ProjectNotFoundError`),
+ * non-kit project (`WrongProjectTypeError`) — onto the single
+ * `ERR_KIT_NOT_FOUND` code (mirrors `bind_kit`'s `assertKitExists`).
+ *
+ * ⚠️ The `z.ZodError` arm is DEFENCE IN DEPTH here too, for the reasons spelled
+ * out on `ProjectStore.assertKitExists` in `create_project.ts` — read that
+ * docblock rather than re-deriving this one. In short: `getKit`'s malformed-id
+ * parse is stopped by this module's own `kitIdSchema`, the byte-identical
+ * expression that gates `parsed.kitId` before `resolveKit` is ever reached;
+ * and `getKit`'s *result* parse no longer fires on a `.kit.json` missing a
+ * required `KitMeta` field, because `hasRequiredKitMetaFields` now rejects
+ * that at the store.
+ *
+ * `resolveKit`'s explicit arm is the sole caller, so `kitId` here has always
+ * passed `kitIdSchema`. That unreachability is an invariant held by those
+ * gates agreeing, not a structural guarantee — do not delete the arm.
  */
 async function assertExplicitKitExists(kitStore: KitStore, kitId: string): Promise<void> {
   try {

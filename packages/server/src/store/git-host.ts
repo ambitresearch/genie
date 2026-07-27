@@ -40,6 +40,7 @@ import {
 import {
   buildIgnoreMatcher,
   classifyFileContent,
+  hasRequiredKitMetaFields,
   isSafeKitId,
   parseGenieignore,
   sriSha256,
@@ -234,6 +235,27 @@ export class GitHostKitStore implements KitStore {
       // edited or corrupted .kit.json could embed a divergent `id`; trusting it
       // would make listKits/getKit return an ID that resolves to no repo. So we
       // take only the human-readable fields (name, createdAt) from the file.
+      //
+      // …and only if the file actually carries them. The parse above is
+      // `JSON.parse(...) as KitMetaFile`, an erased cast, so a file that parses
+      // but omits `name`/`createdAt` would return a KitMeta with `undefined` in
+      // a field the interface declares required — which `list_kits` then emits
+      // as structuredContent the MCP SDK rejects against its own outputSchema,
+      // failing the WHOLE response rather than the one kit.
+      //
+      // Returning `undefined` here is deliberate and is NOT "kit not found": it
+      // is the same signal this method already returns for a MISSING .kit.json,
+      // and both callers (listKits, getKit) answer it by falling back to
+      // host-authoritative repo metadata — `repo.name` and `repo.created_at`.
+      // Extending that path from "file absent" to "file incomplete" keeps the
+      // kit USABLE on data the host itself vouches for, which is strictly
+      // better than refusing a kit the host can fully describe.
+      //
+      // This is why the shared store contract pins only the invariant (nothing
+      // published may violate KitMeta's declared shape) and not the disposition:
+      // LocalFsKitStore has no second source for these fields and must refuse,
+      // this adapter does and must not.
+      if (!hasRequiredKitMetaFields(meta)) return undefined;
       return {
         id: kitId,
         name: meta.name,
@@ -774,7 +796,11 @@ export class GitHostKitStore implements KitStore {
       // of 404ing. Same byte shape `LocalFsKitStore` seeds, same
       // best-effort posture: this repo already has a valid `.kit.json` by
       // this point, so a failure here still leaves a gettable kit.
-      await this.writeRepoFile(meta.id, MANIFEST_PATH, Buffer.from(serializeEmptyManifest(name), "utf-8"));
+      await this.writeRepoFile(
+        meta.id,
+        MANIFEST_PATH,
+        Buffer.from(serializeEmptyManifest(name), "utf-8"),
+      );
       return meta;
     } catch (err: unknown) {
       // Check if it's a 409 Conflict indicating repo already exists

@@ -299,6 +299,44 @@ export const KIT_ID_SAFETY_RATIONALE = `This guards against ${KIT_ID_SAFETY_CATE
   ", against ",
 )}.`;
 
+/**
+ * Does a parsed `.kit.json` actually carry the fields an adapter copies out of it?
+ *
+ * `KitMeta` declares `name` and `createdAt` REQUIRED, but both adapters read the
+ * file with an erased cast — `JSON.parse(raw) as KitMetaFile` — and pass those
+ * two straight through. TypeScript checks the cast, not the bytes. A meta file
+ * that omits one therefore yields a `KitMeta` holding `undefined` in a slot the
+ * interface promises is a `string`, and every consumer downstream inherits it:
+ * `list_kits` computes `updatedAt: kit.updatedAt ?? kit.createdAt`, gets
+ * `undefined`, and the MCP SDK rejects the WHOLE response against the tool's
+ * `outputSchema` — so ONE malformed kit hides EVERY kit, naming an array index
+ * and no kit id.
+ *
+ * That is the failure `readMetaIfReadable`'s own docblock rules out ("one bad
+ * entry must not fail the whole listing"). Its tolerance only catches bytes that
+ * fail to PARSE; valid JSON missing a required field sails through. The promise
+ * was kept for the rarer fault and broken for the commoner one — a hand-made kit
+ * dir, an adopted/imported kit, a restored backup, or an older-format kit.
+ *
+ * Deliberately narrow, checking ONLY the two pass-through fields:
+ *  - `id` is NOT checked. Both adapters discard it and report the routing key
+ *    instead (see `GitHostKitStore.readKitMeta` and, since #282, `LocalFsKitStore`).
+ *  - `type` is NOT checked. `LocalFsKitStore` already gates on it and raises its
+ *    own `NotFoundError`; `GitHostKitStore` deliberately never has. Folding that
+ *    in here would change which repos resolve — a different question from this one.
+ *
+ * Lives beside `isSafeKitId` for the same reason that rule does: `store/*` must
+ * not import from `tools/*`, so this is the only home BOTH adapters can reach.
+ * A plain type guard, so this module still needs no `zod` dependency.
+ */
+export function hasRequiredKitMetaFields(
+  meta: unknown,
+): meta is { name: string; createdAt: string } {
+  if (typeof meta !== "object" || meta === null) return false;
+  const { name, createdAt } = meta as { name?: unknown; createdAt?: unknown };
+  return typeof name === "string" && typeof createdAt === "string";
+}
+
 // ─── Default + .genieignore exclusion ────────────────────────────────────────
 
 /** A predicate over a kit-root-relative, forward-slash path. */

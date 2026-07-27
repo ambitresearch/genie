@@ -504,10 +504,31 @@ export class ProjectStore {
    * Verify `kitId` resolves to a writable `GENIE_KIT`, reusing `get_kit`'s own
    * validation (Implementation Notes: "Reuse get_kit validation before writing
    * the project manifest") rather than re-deriving kit-lookup semantics here.
-   * Maps every rejection shape `getKit` can throw — a malformed id (Zod), a
-   * missing kit (`ProjectNotFoundError`), or a non-kit project
-   * (`WrongProjectTypeError`) — onto the single `ERR_KIT_NOT_FOUND` code
-   * `bind_kit`'s own AC6 specifies.
+   * Maps every rejection shape `getKit` can throw — Zod, a missing kit
+   * (`ProjectNotFoundError`), or a non-kit project (`WrongProjectTypeError`) —
+   * onto the single `ERR_KIT_NOT_FOUND` code `bind_kit`'s own AC6 specifies.
+   *
+   * ⚠️ The `z.ZodError` arm is DEFENCE IN DEPTH; it does not fire through
+   * `bind_kit`. `getKit` has exactly two `.parse()` calls, and neither reaches
+   * here from the tool:
+   *
+   *   - `getKitArgsSchema.parse` — a malformed id. `bind_kit`'s `kitIdSchema`
+   *     is the byte-identical expression and runs one frame earlier, so the
+   *     inner gate cannot reject what the outer one accepted.
+   *   - `getKitResultSchema.parse` — a malformed `.kit.json`. This one WAS
+   *     reachable: a kit whose meta omitted a required `KitMeta` field failed
+   *     output validation, and this catch relabelled it "kit not found" —
+   *     the same misdiagnosis the kitId widening existed to remove. Closed at
+   *     the store by `hasRequiredKitMetaFields`, so `LocalFsKitStore.getKit`
+   *     now raises `NotFoundError`, which `get_kit` translates into the
+   *     `ProjectNotFoundError` arm above.
+   *
+   * The arm therefore survives only for callers that reach `bindKit` directly
+   * and bypass the tool gate — which is the shape `create_project.test.ts`
+   * uses to pin it. Do NOT delete it as dead code: its unreachability is an
+   * invariant maintained by `bind_kit` and `get_kit` carrying the same
+   * predicate, not a structural guarantee. `kit-id-gate.test.ts`'s
+   * `REFUSES_AT` table is what fails if they drift apart.
    */
   private async assertKitExists(kitId: string): Promise<void> {
     if (!this.kitStore) {
