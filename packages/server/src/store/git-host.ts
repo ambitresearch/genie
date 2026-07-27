@@ -1094,6 +1094,25 @@ export class GitHostProjectStore implements ProjectStore {
     );
   }
 
+  /**
+   * Bind a kit to a project. Throws NotFoundError if the project is missing.
+   *
+   * ⚠️ This is NOT the `bindKit` the `bind_kit` tool invokes. That tool depends
+   * on the narrow `ProjectBindKitStore` port in `src/tools/bind_kit.ts`, whose
+   * `bindKit` takes a single args object and resolves to a `ProjectSummary`;
+   * the unrelated `ProjectStore` *class* in `src/tools/create_project.ts`
+   * satisfies that port structurally. Tell them apart by signature — this one
+   * takes `(projectId, kitId)` and returns `void`. See the ⚠️ NAME COLLISION
+   * table in `src/store/interface.ts` for the full disambiguation.
+   *
+   * Kit existence is deliberately not checked *here*. That is a property of the
+   * `ProjectStore` interface this class implements; whether `bind_kit` rejects
+   * an absent kit is decided on the tool's own path, not on this one. So do not
+   * conclude from this method that `bind_kit` accepts a nonexistent kit, and do
+   * not "fix" it by adding a check. This note sits on the implementation
+   * because that is where a search for `bindKit` lands, not only on the
+   * interface.
+   */
   async bindKit(projectId: ProjectId, kitId: KitId): Promise<void> {
     const meta = await this.getProject(projectId);
     meta.kitId = kitId;
