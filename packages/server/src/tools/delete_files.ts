@@ -139,77 +139,10 @@ export async function deleteFiles(
   //    PlanNotFoundError (surfaced to the client, not swallowed here).
   const plan = await getPlan(parsed.planId);
 
-  // 2a. Defense in depth: a plan authored with an unsafe kitId (e.g. "..", ""
-  //     or ".") could make a LocalFs store resolve a kit dir outside — or AT —
-  //     the kits root. As the only destructive file verb, reject it before
-  //     deleting anything, so the whole call fails rather than part of it.
-  //
-  //     This guard is load-bearing, not merely redundant: the tool no longer
-  //     holds a `kitsRoot` and so cannot re-derive the kit root to prove
-  //     containment itself, and `LocalFsKitStore.deleteFile` resolves through
-  //     the UNSAFE `kitDir` rather than `safeKitDir`, so there is no
-  //     store-layer backstop behind it either.
-  //
-  //     Gated on the SHARED store rule. This previously used a local
-  //     `kitId.includes("/") || includes("\\") || includes("..")` predicate,
-  //     which diverged from `isSafeKitId` in BOTH directions:
-  //
-  //       - it UNDER-rejected `""` and `"."` — neither contains `..`, yet
-  //         `join(kitsRoot, id)` resolves both to the kits ROOT itself. In the
-  //         one verb that deletes, that was the more serious half;
-  //       - it OVER-rejected ids that merely EMBED dots (`my..kit`, `..kit`),
-  //         which name a literal child of the root and which `plan`,
-  //         `list_files`, `read_file` and `write_files` all accept. An adopted
-  //         kit named that way was listable, plannable and writable but
-  //         permanently undeletable — there is no `delete_kit` verb to fall
-  //         back on. `isSafeKitId`'s own docblock names those ids as allowed
-  //         by design.
-  //
-  //     `kit..` is deliberately NOT in that second list, even though the old
-  //     predicate refused it too. It does not merely EMBED dots, it ENDS in
-  //     them, and `isSafeKitId` refuses a trailing `[ .]` run because Win32
-  //     trims it — so the id aliases a SIBLING kit. The agreement is a
-  //     coincidence of outcome, not of reasoning: the old rule refused it for
-  //     containing `..`, the shared rule refuses it for normalizing to another
-  //     name. Pinned by `kit-files.test.ts` → `🔒 rejects the Win32
-  //     trailing-space/dot aliases of a SIBLING kit`, and excluded explicitly
-  //     by this file's `AC3 — a kit whose id merely EMBEDS dots stays
-  //     deletable`.
-  //
-  //     Centralising here makes this verb agree, by construction, with every
-  //     verb that RESOLVES a `kitId` to a kit PATH: those that gate directly
-  //     (`plan`, `list_files`, `read_file`, `write_files`, and the read/render
-  //     verbs widened alongside this one), plus `bind_kit`, which gates in its
-  //     own schema AND again downstream — `ProjectStore.bindKit` awaits
-  //     `assertKitExists`, which routes through `getKit`.
-  //
-  //     TWO verbs declare a `kitId` and gate it nowhere. Both are deliberate,
-  //     and neither is a traversal risk here, because neither makes the id a
-  //     path segment on its own path:
-  //       - `validate` — schema `z.string().min(1)`. The report filename is
-  //         timestamp-derived, the id travels only in the JSON body and as a
-  //         metric label, and its full-scan facet touches the disk solely
-  //         through store methods that apply the rule themselves.
-  //       - `create_project` — carries its id on a NESTED `kitBindings[].kitId`
-  //         (also `z.string().min(1)`), persisted straight into the project
-  //         manifest. `assertKitExists` is NOT reached on this path: its only
-  //         production call site is `bindKit`, and `createProject` never calls
-  //         it. Ungated is not the same as harmless — the recorded id is read
-  //         back downstream, where `conjure_screen` interpolates it into
-  //         generated artifact bytes unescaped — but that residual is tracked
-  //         on its own and is not what this gate is for.
-  //     Both exceptions are enumerated in `kit-id-gate.test.ts` → `🔒 every
-  //     containment-gated kit-taking verb refuses an unsafe kitId at its own
-  //     gate`, and agree with `store/kit-files.ts` and `store/interface.ts`.
-  //     An earlier revision of THIS paragraph instead listed `create_project`
-  //     among the gated verbs, on the theory that `getKit` would catch it —
-  //     false, and contradicted by all three of those. Crediting a verb with a
-  //     gate it does not apply is the dangerous direction: it invites the
-  //     "something upstream already checked" reasoning that makes deleting a
-  //     real gate look safe. Now pinned by `kit-id-gate.test.ts` → `🔒 no
-  //     rationale credits create_project with a gate it does not apply`, which
-  //     derives the call sites from the code rather than trusting this
-  //     sentence.
+  // 2a. Defense in depth: plans are persisted data, so reject an unsafe kitId
+  //     again before this destructive verb reaches `LocalFsKitStore.deleteFile`,
+  //     which resolves through `kitDir`. The shared predicate also keeps ids
+  //     that merely embed dots (for example `my..kit`) deletable.
   if (!isSafeKitId(plan.kitId)) {
     throw new DeleteFilesError(
       "PathOutsidePlanError",

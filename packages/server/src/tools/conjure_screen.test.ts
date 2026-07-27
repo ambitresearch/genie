@@ -608,9 +608,8 @@ describe("LocalScaffoldScreenGenerator", () => {
   // ── 🔒 provenance-note injection (the header comment is a sink) ─────────────
   //
   // Still true, and why the payloads below are reachable ids rather than
-  // hypotheticals: `note` carries `kitId`, and `isSafeKitId` is a *containment*
-  // rule about path segments — it deliberately permits `>` and newlines,
-  // neither of which can escape a directory.
+  // hypotheticals: `note` carries `kitId`, and the shared input-safety rule
+  // deliberately permits output-significant characters such as `>` and newlines.
   //
   // No longer true, as of this PR: `renderScaffold` escaped `title` at all four
   // of its sinks (`escapeHtml` ×3, `escapeJsx` ×1) but embedded `note` raw at
@@ -619,12 +618,8 @@ describe("LocalScaffoldScreenGenerator", () => {
   // (`escapeHtmlComment` ×2, `escapeLineComment` ×1). The `it`s below are what
   // keep that a fact rather than a claim.
   //
-  // Attribution, precisely: `KIT_ID_PATTERN` banned these characters *by
-  // accident*, as a side effect of being a narrow slug allowlist. #276 widened
-  // the gate — correctly — and removed that incidental cover without replacing
-  // it. Pre-existing for the `default`/`sole` arms (which `resolveKit` returns
-  // raw from persisted bindings, and `create_project`'s `kitBindingShape` gates
-  // only with `z.string().min(1)`); a partial #276 regression for `explicit`.
+  // `KIT_ID_PATTERN` once banned these characters by accident. The shared gate
+  // correctly permits them, so output escaping remains required at every sink.
   //
   // The remedy — taken here — is to escape at the SINK, not to re-narrow the id
   // rule; re-narrowing would re-create the visible-but-unusable defect the
@@ -656,74 +651,6 @@ describe("LocalScaffoldScreenGenerator", () => {
       }
     });
 
-    // Raised in review: `provenanceNote`'s docblock used to claim the interpolated
-    // kitId "is gated by isSafeKitId". True for ONE of `resolveKit`'s three arms.
-    // `default` and `sole` are read straight off the project record, which is only
-    // ever schema-checked as `z.string().min(1)` — and `create_project` accepts
-    // caller-supplied `kitBindings` under exactly that shape. So the ungated arms
-    // admit a STRICTLY WIDER set, including the `/` and `\` that `isSafeKitId`
-    // exists to reject.
-    //
-    // Every other assertion in this block runs through `explicit`, i.e. the narrow
-    // arm. Without this one the suite would prove the escape holds only where a
-    // gate happens to exist, and say nothing about the wider, ungated majority —
-    // the "passes for a different reason than its name claims" shape that let the
-    // original asymmetry survive review in the first place.
-    const UNGATED_BREAKOUT = "evil/--><img src=x onerror=alert(1)><!--";
-
-    // Raised in review (round 5): the version of this block that shipped first
-    // *fabricated* the request object, so it demonstrated that the escape holds
-    // for an input we asserted was reachable rather than one we had observed
-    // arriving. The premise was true — but "true" and "shown" are different, and
-    // this file has already been bitten twice this cycle by assertions that were
-    // argued in prose and pinned by nothing.
-    //
-    // So the seam moved. These now drive the real pipeline end to end:
-    // `create_project` persists the binding, `conjure_screen` resolves it, and
-    // the request handed to the real generator is the one the recording stub
-    // *observed the pipeline emit* — never one this test wrote. If the ungated
-    // arms are ever tightened, `emitted.kit` stops matching and this fails at the
-    // premise rather than silently passing on a fabrication.
-    const UNGATED_BINDINGS: [string, { kitId: string; default?: boolean }[]][] = [
-      ["default", [{ kitId: UNGATED_BREAKOUT, default: true }]],
-      ["sole", [{ kitId: UNGATED_BREAKOUT }]],
-    ];
-
-    it.each(UNGATED_BINDINGS)(
-      "%s — an UNGATED kitId reaches the generator raw and still cannot terminate the comment",
-      async (via, kitBindings) => {
-        // Unreachable through `explicit`: this pins the two-source claim in
-        // `provenanceNote`'s docblock so it cannot quietly go stale.
-        expect(isSafeKitId(UNGATED_BREAKOUT)).toBe(false);
-
-        const { deps, projectId } = await fixture({ kitBindings });
-        await conjureScreen(deps, {
-          projectId,
-          prompt: "A page with cards",
-          framework: "html",
-        });
-
-        // The premise, established by execution rather than asserted: a
-        // containment-unsafe id was persisted by `create_project` under its
-        // `z.string().min(1)` binding shape and handed to the generator
-        // unchanged, through the arm named in the test title.
-        const emitted = deps.generator.calls[0];
-        if (!emitted) throw new Error("conjure_screen never reached the generator");
-        expect(emitted.kit).toEqual({ kitId: UNGATED_BREAKOUT, via });
-
-        const result = await generator.generate(emitted);
-        const content = result.files[0]?.content ?? "";
-        const header = content.split("\n").find((l) => l.includes("genie conjure_screen")) ?? "";
-        expect(header).not.toBe("");
-        expect(header.split("-->").length - 1).toBe(1);
-        expect(header.trimEnd().endsWith("-->")).toBe(true);
-        const note = header.slice(header.indexOf(":") + 1, header.lastIndexOf("-->"));
-        expect(note).not.toContain("<");
-        expect(note).not.toContain(">");
-        expect(content).not.toContain("<img src=x onerror=alert(1)>");
-      },
-    );
-
     // A control character is the one caller-supplied byte class the `<`/`>`
     // escape does not touch, and it is NOT a containment problem: nothing here
     // can close `-->` or end a `//` line. It is a *conformance* one — but for
@@ -753,30 +680,13 @@ describe("LocalScaffoldScreenGenerator", () => {
     it.each(["html", "vue", "react"] as const)(
       "%s — a control character in the kitId is neutralised, not passed through",
       async (framework) => {
-        // Reachability here is the *binding* path, not the explicit one:
-        // `conjure_screen` is addressed by `projectId`, and the kitId comes from
-        // `create_project`'s recorded `kitBindings[]`, which applies no
-        // `isSafeKitId` check. That is what keeps this escape load-bearing.
-        //
-        // The explicit `kitId` arm does refuse NUL — `isSafeKitId` rejects it,
-        // because a NUL in a path argument made `get_kit` fail with a raw
-        // `ERR_INVALID_ARG_VALUE` quoting the absolute kits root. Pinned as
-        // `false` rather than dropped, so that re-admitting NUL at the gate
-        // cannot happen silently.
+        // NUL is outside the public kitId contract. Keep the generator total for
+        // direct callers, while pinning that the shared gate still rejects it.
         expect(isSafeKitId(NUL_KIT_ID)).toBe(false);
 
-        const { deps, projectId } = await fixture({
-          kitBindings: [{ kitId: NUL_KIT_ID, default: true }],
-        });
-        await conjureScreen(deps, { projectId, prompt: "A page with cards", framework });
-
-        const emitted = deps.generator.calls[0];
-        if (!emitted) throw new Error("conjure_screen never reached the generator");
-        // Raw on the way in — the neutralisation is the generator's job, and
-        // this pins that it has something to do.
-        expect(emitted.kit?.kitId).toContain("\u0000");
-
-        const result = await generator.generate(emitted);
+        const result = await generator.generate(
+          request({ framework, kit: { kitId: NUL_KIT_ID, via: "default" } }),
+        );
         const content = result.files[0]?.content ?? "";
         expect(content).not.toContain("\u0000");
         expect(content).toContain("\uFFFD");
@@ -838,33 +748,12 @@ describe("LocalScaffoldScreenGenerator", () => {
       "%s — neutralised in the note iff it is in the advertised class",
       async (_name, char, expected) => {
         const kitId = `acme${char}ui`;
-        // What reaches the sink is decided by the *binding* path, not by the
-        // gate: `conjure_screen` is addressed by `projectId` here, and the
-        // `kitId` it uses comes from `create_project`'s recorded
-        // `kitBindings[]`, which applies no `isSafeKitId` check. So every row
-        // arrives raw regardless of what the gate would say — `emitted.kit
-        // ?.kitId` below is the assertion that actually pins that, and it is
-        // unconditional.
-        //
-        // The gate is still worth stating, because it says how much of this is
-        // defence in depth. Eleven of these twelve are in-band on the explicit
-        // `kitId` arm too. NUL is the exception: it is the one member
-        // `isSafeKitId` refuses outright, because a NUL in a path argument made
-        // `get_kit` fail with a raw `ERR_INVALID_ARG_VALUE` that quoted the
-        // absolute kits root. Derived from the character rather than hand-listed
-        // so that widening the gate cannot leave a stale `true` here.
+        // Eleven members are valid public ids; NUL is the one rejected member.
         expect(isSafeKitId(kitId)).toBe(!kitId.includes("\u0000"));
 
-        const { deps, projectId } = await fixture({ kitBindings: [{ kitId, default: true }] });
-        await conjureScreen(deps, { projectId, prompt: "A page with cards", framework: "html" });
-
-        const emitted = deps.generator.calls[0];
-        if (!emitted) throw new Error("conjure_screen never reached the generator");
-        // Raw on the way in, so the assertion below is about the generator's
-        // escape and not about something upstream having already sanitised it.
-        expect(emitted.kit?.kitId).toContain(char);
-
-        const result = await generator.generate(emitted);
+        const result = await generator.generate(
+          request({ framework: "html", kit: { kitId, via: "default" } }),
+        );
         const content = result.files[0]?.content ?? "";
         expect(content).toContain(`acme${expected}ui`);
         if (expected !== char) expect(content).not.toContain(char);

@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { KitStore } from "../store/interface.js";
+import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 import { getKit, ProjectNotFoundError, WrongProjectTypeError } from "./get_kit.js";
 
 export const CREATE_PROJECT_TOOL_NAME = "mcp__genie__create_project";
@@ -17,7 +18,7 @@ const projectKindSchema = z.enum(["workspace", "blueprint"]);
  * already declare for the same field (mirrors the `projectSummaryShape` pattern
  * just below). */
 export const kitBindingShape = {
-  kitId: z.string().min(1),
+  kitId: z.string().refine(isSafeKitId, KIT_ID_SAFETY_MESSAGE),
   default: z.boolean().optional(),
 };
 

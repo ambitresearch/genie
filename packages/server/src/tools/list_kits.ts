@@ -7,7 +7,7 @@ import { isSafeKitId } from "../store/kit-files.js";
 export const LIST_KITS_TOOL_NAME = "mcp__genie__list_kits";
 
 export const LIST_KITS_DESCRIPTION =
-  "List the user's writable UI kits. Returns the genie-native kits in the current store as an array of { id, name, owner, updatedAt, canEdit }; every id it returns has passed the shared kitId safety gate, so no kit verb that applies that gate will refuse it as malformed — not every kit verb does, `validate` applies none and `create_project` records `kitBindings[].kitId` without applying one. Two kinds of record are omitted to keep that true: those whose stored type is not GENIE_KIT (interop adapters map Anthropic project types separately), and those whose id that gate refuses, which a store adapter can surface because it reports whatever the filesystem or git host holds. Passing that gate is not a promise the kit still resolves — a store can report an id that no longer fetches — so still handle a not-found from a later verb. Reach for this as the discovery step before conjure, plan, or bind_kit — each needs a valid kitId from here (or from create_kit for a brand-new kit).";
+  "List the user's writable UI kits. Returns the genie-native kits in the current store as an array of { id, name, owner, updatedAt, canEdit }; every id it returns has passed the shared kitId safety gate, so no kit-taking verb that applies that gate will refuse it as malformed. `validate` applies no input gate but accepts every id that passes it. Two kinds of record are omitted to keep that true: those whose stored type is not GENIE_KIT (interop adapters map Anthropic project types separately), and those whose id that gate refuses, which a store adapter can surface because it reports whatever the filesystem or git host holds. Passing that gate is not a promise the kit still resolves — a store can report an id that no longer fetches — so still handle a not-found from a later verb. Reach for this as the discovery step before conjure, plan, or bind_kit — each needs a valid kitId from here (or from create_kit for a brand-new kit).";
 
 export interface ListKitsEntry extends Record<string, unknown> {
   id: string;
@@ -40,10 +40,7 @@ type ListableKitMeta = KitMeta & {
  *
  *   - `type === KIT_TYPE` drops non-genie records an interop adapter may share
  *     the same store with.
- *   - `isSafeKitId` drops ids the verbs that apply that gate would refuse.
- *     Not every kit verb does — `validate` applies none, and `create_project`
- *     records `kitBindings[].kitId` (a bare `z.string().min(1)`) without
- *     resolving it, so its `get_kit` import gates `bind_kit`'s path only. Both SHIPPED
+ *   - `isSafeKitId` drops ids the shared tool gate would refuse. Both shipped
  *     adapters already skip such ids at the source (#282 added the same guard to
  *     `LocalFsKitStore.listKits` and `GitHostKitStore.listKits`), so this filter
  *     is defence-in-depth: `KitStore` is a public interface and this function

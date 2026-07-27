@@ -144,19 +144,8 @@ export interface ConjureScreenProjectStore {
 export interface ConjureScreenDeps {
   projectStore: ConjureScreenProjectStore;
   /** Used only to validate an *explicit* `kitId` resolves to a real kit before
-   * generating against it.
-   *
-   * ⚠️ An earlier revision of this comment added "— default/sole kits came from
-   * bindings already validated at bind time". That is TRUE for bindings created
-   * via `bind_kit` (whose `ProjectStore.bindKit` calls `assertKitExists`) and
-   * FALSE for bindings created via `create_project`, whose `kitBindingShape.kitId`
-   * is a bare `z.string().min(1)` persisted straight into the manifest —
-   * `assertKitExists`'s only production call site is in `bindKit`.
-   *
-   * That mattered: `resolveKit` returns `default`/`sole` ids RAW, so the false
-   * symmetry was load-bearing cover for un-escaped ids reaching `renderScaffold`'s
-   * comment sinks. The escaping there does not rely on this claim — see
-   * `provenanceNote` — but the claim itself must not be restored. */
+   * generating against it. Project bindings pass the shared safety gate, but
+   * `create_project` deliberately does not check that each referenced kit exists. */
   kitStore: KitStore;
   generator: ScreenGenerator;
 }
@@ -501,35 +490,10 @@ export class LocalScaffoldScreenGenerator implements ScreenGenerator {
   }
 }
 
-/** An honest provenance note for the scaffold header comment.
- *
- * ⚠️ Returns RAW, UNESCAPED, POSSIBLY MULTI-LINE text. It interpolates `kitId`,
- * which arrives here from TWO sources with DIFFERENT validation. Rely on
- * neither:
- *
- *   - `via: "explicit"` — the caller's own `kitId`, gated by this tool's
- *     `.refine(isSafeKitId, …)`. That is a *containment* rule about path
- *     segments: it deliberately permits `>`, `<` and newlines, because none of
- *     them can escape a directory. It was never an output-safety rule.
- *   - `via: "default" | "sole"` — read straight off the project record by
- *     `resolveKit`, which applies NO gate on those two arms. The stored value is
- *     only ever schema-checked as `z.string().min(1)` (`kitBindingShape`, and
- *     `projectManifestSchema` on the way back off disk — both in
- *     `create_project.ts`), and `create_project` accepts caller-supplied
- *     `kitBindings` under that same shape. So these arms admit a STRICTLY WIDER
- *     set than `explicit`: additionally `.`, `..`, `/` and `\`, i.e. precisely
- *     the ids `isSafeKitId` exists to reject.
- *
- * Every sink must therefore escape this UNCONDITIONALLY — never conditioned on
- * provenance — with the helper appropriate to the comment syntax it embeds
- * into: `escapeHtmlComment` for `<!-- … -->`, `escapeLineComment` for `//`.
- * Adding a fourth sink without one re-opens the injection.
- *
- * That includes flattening. This function does NOT call `toSingleLine`, so its
- * return value spans multiple lines whenever `kitId` does — and `isSafeKitId`
- * permits `\n`, so that is reachable on the *gated* arm too, not only the
- * ungated ones. Both helpers flatten, so "one line" is a property of the SINK,
- * never of this function; it is deliberately not claimed above. */
+/** An honest provenance note for the scaffold header comment. Returns raw,
+ * possibly multi-line text: the shared input-safety rule deliberately permits
+ * output-significant characters and newlines. Every sink must escape this
+ * unconditionally with the helper for its comment syntax. */
 function provenanceNote(request: ScreenGenerationRequest): string {
   const parts: string[] = [];
   if (request.kit) {
