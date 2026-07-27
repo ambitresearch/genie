@@ -335,6 +335,10 @@ describe("published Node requirement", () => {
     // the first place. Assert both halves detect the state this test was born in.
     expect(findOpenEndedNodeFloors("Requires Node ≥ 22.19.0")).toContain("22.19.0");
     expect(findOpenEndedNodeFloors("node-%E2%89%A522.19.0-brightgreen.svg")).toContain("22.19.0");
+    // The plain comparator's encoded form, which `statesNodeRequirement` has
+    // always read: a badge spelled this way was discovered by the loop above
+    // and then swept as though it claimed nothing.
+    expect(findOpenEndedNodeFloors("node-%3E%3D22.19.0-brightgreen.svg")).toContain("22.19.0");
     expect(findOpenEndedNodeFloors("Node.js 22.19 or newer")).toContain("22.19.0");
     expect(nodeFloorOverclaim("22.19.0", range)).toBe("23.0.0");
   });

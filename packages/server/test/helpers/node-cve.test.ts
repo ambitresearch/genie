@@ -661,6 +661,50 @@ describe("node-cve — a badge's percent-encoding is case-insensitive", () => {
     expect(findOpenEndedNodeFloors("Node >=22.19.0 <23")).toEqual([]);
   });
 
+  /**
+   * The `>=` half of the very split the test above locks for `≥`.
+   *
+   * `statesNodeRequirement` has read `%3E%3D` since it was written — the test
+   * two above this one asserts it in both cases — but `findOpenEndedNodeFloors`
+   * never learned the spelling. So `Node-%3E%3D22.19.0` is DISCOVERED as a
+   * requirement and then yields no floor, and the over-claim sweep passes over a
+   * document that re-promises the whole of 23.x: exactly the hole
+   * `engines.node` carries CVE-2025-27210 to exclude. `nodeFloorOverclaim` is
+   * asserted below on the extracted floor so this is a claim about the SWEEP,
+   * not about a regex — without the floor there is nothing for it to judge.
+   *
+   * `encodeURIComponent(">=")` is `%3E%3D`, so this is not a hand-typed
+   * curiosity; it is what every generator emits for the most ordinary spelling
+   * of a floor. And that is what made it invisible: the encoded form of the
+   * RARER glyph (`≥`) was covered while the encoded form of the COMMON one was
+   * not, so the gap sat behind a line that already looked encoding-aware.
+   */
+  it("🔒 reads a percent-encoded `>=` floor as a floor, on both sides", () => {
+    // Both halves, in both cases, per the convention the `%20` test sets: a
+    // future edit must not be able to re-open the gap on one side only.
+    for (const text of ["Node %3E%3D 22.19.0", "Node %3e%3d 22.19.0"]) {
+      expect(statesNodeRequirement(text)).toBe(true);
+      expect(findOpenEndedNodeFloors(text)).toEqual(["22.19.0"]);
+    }
+
+    // The canonical shields.io rendering — no space, and the encoded space.
+    expect(findOpenEndedNodeFloors("node-%3E%3D22.19.0-brightgreen")).toEqual(["22.19.0"]);
+    expect(findOpenEndedNodeFloors("node-%3E%3D%2022.19.0-brightgreen")).toEqual(["22.19.0"]);
+
+    // The consequence, end to end: once the floor is visible the sweep refuses
+    // it. This is the assertion that would still fail if someone "fixed" the
+    // extractor by teaching it a spelling it then reported as harmless.
+    expect(nodeFloorOverclaim("22.19.0", ">=22.19.0 <23 || >=24.4.1")).toBe("23.0.0");
+
+    // Containment: widening the comparator must not invent a floor from a
+    // clause that carries an upper bound, in either spelling of the bound.
+    expect(findOpenEndedNodeFloors("Node %3E%3D22.19.0 <23")).toEqual([]);
+    expect(findOpenEndedNodeFloors("Node %3E%3D22.19.0%20%3C23")).toEqual([]);
+    // …and `%3C%3D` (`<=`) is not mistaken for the floor comparator it rhymes
+    // with: it differs in one hex digit, and only the bound half may claim it.
+    expect(findOpenEndedNodeFloors("Node %3E%3D22.19.0%20%3C%3D22.20.0")).toEqual([]);
+  });
+
   it("🔒 reads `or newer` as an extension however it is capitalised", () => {
     // Sentence case is the ordinary spelling at the start of a line or in a
     // heading, so this is the prose half of the same miss. `statesNodeRequirement`

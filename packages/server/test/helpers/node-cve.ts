@@ -497,7 +497,15 @@ export function findOpenEndedNodeFloors(text: string): string[] {
     // the canonical rendering. Without it the badge is DISCOVERED as a
     // requirement by `statesNodeRequirement` but yields no floor here — the
     // discovery/floor split this function's own docblock warns against.
-    /(?:>=|≥|%E2%89%A5)(?:\s|%20)*(\d+)\.(\d+)(?:\.(\d+))?((?:\s|%20)*(?:<|%3C))?/giu,
+    //
+    // `%3E%3D` for the same reason, one comparator over. The floor may be
+    // spelled four ways — `>=`, `≥`, and either of their encodings — and this
+    // list carried three of them, missing the encoding of the COMMONEST glyph
+    // while covering the encoding of the rarer one. `encodeURIComponent(">=")`
+    // emits exactly `%3E%3D`, so it is the default output of every generator,
+    // not a hand-typed variant. `statesNodeRequirement` has read it all along,
+    // which is what made the omission here silent rather than merely narrow.
+    /(?:>=|≥|%E2%89%A5|%3E%3D)(?:\s|%20)*(\d+)\.(\d+)(?:\.(\d+))?((?:\s|%20)*(?:<|%3C))?/giu,
     /(\d+)\.(\d+)(?:\.(\d+))?\s+or newer/giu,
   ];
 
