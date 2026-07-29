@@ -369,6 +369,73 @@ describe("AC6 — MCP Apps-capable VS Code build (Stable 1.109+ or Insiders) ren
     }
   });
 
+  // The live leg below is the ONE live-conjure call site among the four suites
+  // #301 touched that does not reach `client.callTool` directly — it goes
+  // through `harness.call`, which forwards `options` as callTool's THIRD
+  // argument.
+  //
+  // `m5-live-llm-timeouts.test.ts` asserts that forwarding structurally, but a
+  // structural check can only ever describe the shape of the source. Prove the
+  // real request boundary here, deterministically and without an endpoint:
+  // stub `chat` so the conjure handler cannot settle for HANGING_CHAT_DELAY_MS,
+  // then give the REQUEST a budget orders of magnitude smaller. The only way
+  // the call can reject is if `options.timeout` reached the SDK's Protocol
+  // layer.
+  //   forwarding intact  -> rejects in ~FORWARDING_PROBE_TIMEOUT_MS
+  //   forwarding dropped -> the SDK's 60s default applies, the stub settles
+  //                         first, the call RESOLVES, and this test fails.
+  const FORWARDING_PROBE_TIMEOUT_MS = 150;
+  const FORWARDING_PROOF_CEILING_MS = 2_000;
+  const HANGING_CHAT_DELAY_MS = 5_000;
+
+  it("Harness.call forwards `options` to callTool, so the live leg's raised request budget reaches the wire (#301)", async () => {
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const hangingChat: ChatCompletionFn = () =>
+      new Promise<ChatCompletionResult>((_resolve, reject) => {
+        settle = setTimeout(
+          () =>
+            reject(
+              new Error(
+                "timeout-forwarding probe: the chat stub settled, so the request " +
+                  "budget was NOT forwarded to callTool",
+              ),
+            ),
+          HANGING_CHAT_DELAY_MS,
+        );
+      });
+
+    const probe = await newHarness(undefined, { conjureDeps: { chat: hangingChat } });
+    try {
+      const kitResult = await probe.call("mcp__genie__create_kit", {
+        name: "Copilot Timeout Forwarding Kit",
+      });
+      const kitId = (payload(kitResult) as { kitId: string }).kitId;
+
+      const startedAt = Date.now();
+      await expect(
+        probe.call(
+          "mcp__genie__conjure",
+          {
+            kitId,
+            kit: "Warm-instrument kit: clay accent, 8px radius.",
+            prompt: "A component whose generation never returns",
+          },
+          { timeout: FORWARDING_PROBE_TIMEOUT_MS },
+        ),
+      ).rejects.toThrow(/timed out/i);
+
+      // Rejecting is necessary but not sufficient — it has to reject on OUR
+      // budget rather than any larger default that happened to fire.
+      expect(Date.now() - startedAt).toBeLessThan(FORWARDING_PROOF_CEILING_MS);
+    } finally {
+      // Clearing the timer leaves the stub's promise permanently pending, which
+      // holds no handle open; letting it fire would reject into a request the
+      // client has already abandoned.
+      if (settle) clearTimeout(settle);
+      await probe.close();
+    }
+  });
+
   const hasLlmConfig = Boolean(
     process.env["GENIE_LLM_BASE_URL"]?.trim() && process.env["GENIE_LLM_API_KEY"]?.trim(),
   );

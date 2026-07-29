@@ -71,6 +71,27 @@ interface LiveSuite {
    * the `CONJURE_TOOL_NAME` constant instead.
    */
   conjureCallMarker: string;
+  /**
+   * Set only when the live call does NOT reach `client.callTool` directly.
+   * `m5-smoke-copilot` goes through a local `Harness.call` wrapper, so AC1
+   * proves the CALLER supplied `{ timeout }` and nothing more — the wrapper in
+   * between must also forward it as callTool's THIRD argument, or the request
+   * silently reverts to the SDK default while every assertion here stays
+   * green. That is the #301 defect re-entering through the indirection.
+   *
+   * Suites without this field are asserted to be direct callers instead, so a
+   * newly-introduced wrapper cannot quietly slip past this check either.
+   */
+  wrapperForwarding?: {
+    /** Source text where the wrapper's delegation begins. */
+    marker: string;
+    /**
+     * Required delegation shape. Anchored on the result-schema argument so a
+     * regressed two-argument `callTool(params, CallToolResultSchema)` — which
+     * is exactly what drops the budget back to 60s — cannot match.
+     */
+    pattern: RegExp;
+  };
 }
 
 const LIVE_SUITES: LiveSuite[] = [
@@ -91,6 +112,14 @@ const LIVE_SUITES: LiveSuite[] = [
     liveTestMarker:
       "against a REAL GENIE_LLM_*-configured endpoint, conjure -> plan -> write_files -> preview succeeds",
     conjureCallMarker: '"mcp__genie__conjure"',
+    // This suite alone reaches the SDK through a wrapper. The behavioural
+    // companion proof lives in the suite itself ("Harness.call forwards
+    // `options` ..."), which drives a real request against a stalled tool
+    // handler; this is the cheap structural half of the same guarantee.
+    wrapperForwarding: {
+      marker: "call: (name, args, options) =>",
+      pattern: /client\.callTool\(\s*\{[^}]*\}\s*,\s*CallToolResultSchema\s*,\s*options\s*,?\s*\)/,
+    },
   },
   {
     // Runs live in CI via the manual-dispatch `M5-09 Claude Code smoke` job,
@@ -131,42 +160,75 @@ describe("#301 — live-LLM call sites carry an explicit request timeout", () =>
     expect(DEFAULT_REQUEST_TIMEOUT_MSEC).toBeLessThan(OBSERVED_WORST_CASE_CONJURE_MS);
   });
 
-  describe.each(LIVE_SUITES)("$file", ({ file, liveTestMarker, conjureCallMarker }) => {
-    // AC1 — the actual bug: the call must stop inheriting the SDK default.
-    it("passes an explicit timeout to the live conjure callTool", () => {
-      const callSite = liveConjureCallSite(sourceOf(file), liveTestMarker, conjureCallMarker);
-      expect(callSite).toContain("timeout: LIVE_CONJURE_TIMEOUT_MS");
-    });
+  describe.each(LIVE_SUITES)(
+    "$file",
+    ({ file, liveTestMarker, conjureCallMarker, wrapperForwarding }) => {
+      // AC1 — the actual bug: the call must stop inheriting the SDK default.
+      it("passes an explicit timeout to the live conjure callTool", () => {
+        const callSite = liveConjureCallSite(sourceOf(file), liveTestMarker, conjureCallMarker);
+        expect(callSite).toContain("timeout: LIVE_CONJURE_TIMEOUT_MS");
+      });
 
-    // AC2 — sized from measured reality, with real margin.
-    it("sizes that timeout above the observed worst-case conjure, with margin", () => {
-      const source = sourceOf(file);
-      const requestTimeout = numericConst(source, "LIVE_CONJURE_TIMEOUT_MS");
-      expect(requestTimeout, "LIVE_CONJURE_TIMEOUT_MS is not declared").toBeDefined();
-      expect(requestTimeout!).toBeGreaterThan(DEFAULT_REQUEST_TIMEOUT_MSEC);
-      expect(requestTimeout!).toBeGreaterThanOrEqual(
-        OBSERVED_WORST_CASE_CONJURE_MS * REQUIRED_MARGIN_MULTIPLIER,
-      );
-    });
+      // AC2 — sized from measured reality, with real margin.
+      it("sizes that timeout above the observed worst-case conjure, with margin", () => {
+        const source = sourceOf(file);
+        const requestTimeout = numericConst(source, "LIVE_CONJURE_TIMEOUT_MS");
+        expect(requestTimeout, "LIVE_CONJURE_TIMEOUT_MS is not declared").toBeDefined();
+        expect(requestTimeout!).toBeGreaterThan(DEFAULT_REQUEST_TIMEOUT_MSEC);
+        expect(requestTimeout!).toBeGreaterThanOrEqual(
+          OBSERVED_WORST_CASE_CONJURE_MS * REQUIRED_MARGIN_MULTIPLIER,
+        );
+      });
 
-    // AC3 — vitest must not be the binding constraint, or a hung call gets
-    // killed by the runner before the SDK can report a clean MCP error.
-    it("gives the test a larger budget than the request timeout, and stays under the CI cap", () => {
-      const source = sourceOf(file);
-      const requestTimeout = numericConst(source, "LIVE_CONJURE_TIMEOUT_MS");
-      const testBudget = numericConst(source, "LIVE_CHAIN_TEST_TIMEOUT_MS");
-      expect(testBudget, "LIVE_CHAIN_TEST_TIMEOUT_MS is not declared").toBeDefined();
-      expect(testBudget!).toBeGreaterThan(requestTimeout!);
-      expect(testBudget!).toBeLessThan(CI_JOB_CEILING_MS);
-    });
+      // AC3 — vitest must not be the binding constraint, or a hung call gets
+      // killed by the runner before the SDK can report a clean MCP error.
+      it("gives the test a larger budget than the request timeout, and stays under the CI cap", () => {
+        const source = sourceOf(file);
+        const requestTimeout = numericConst(source, "LIVE_CONJURE_TIMEOUT_MS");
+        const testBudget = numericConst(source, "LIVE_CHAIN_TEST_TIMEOUT_MS");
+        expect(testBudget, "LIVE_CHAIN_TEST_TIMEOUT_MS is not declared").toBeDefined();
+        expect(testBudget!).toBeGreaterThan(requestTimeout!);
+        expect(testBudget!).toBeLessThan(CI_JOB_CEILING_MS);
+      });
 
-    // The constant is only meaningful if the test actually runs under it.
-    // Matched in argument position (`, LIVE_..._MS,` or `, LIVE_..._MS)`) so
-    // both the trailing-comma and inline `}, TIMEOUT);` call styles qualify.
-    it("applies that budget as the live test's vitest timeout argument", () => {
-      const source = sourceOf(file);
-      const liveBlock = source.slice(source.indexOf(liveTestMarker));
-      expect(liveBlock).toMatch(/LIVE_CHAIN_TEST_TIMEOUT_MS\s*[,)]/);
-    });
-  });
+      // The constant is only meaningful if the test actually runs under it.
+      // Matched in argument position (`, LIVE_..._MS,` or `, LIVE_..._MS)`) so
+      // both the trailing-comma and inline `}, TIMEOUT);` call styles qualify.
+      it("applies that budget as the live test's vitest timeout argument", () => {
+        const source = sourceOf(file);
+        const liveBlock = source.slice(source.indexOf(liveTestMarker));
+        expect(liveBlock).toMatch(/LIVE_CHAIN_TEST_TIMEOUT_MS\s*[,)]/);
+      });
+
+      // AC1 proves the caller's INTENT. This proves the request BOUNDARY: that
+      // the timeout actually lands in `callTool`'s third argument, including
+      // across any wrapper sitting between the two. Without it, a wrapper that
+      // stopped forwarding `options` would silently restore the 60s default
+      // while every other assertion in this file still passed.
+      it("lands that timeout in callTool's third argument, through any wrapper", () => {
+        const source = sourceOf(file);
+
+        if (wrapperForwarding) {
+          const wrapperAt = source.indexOf(wrapperForwarding.marker);
+          expect(
+            wrapperAt,
+            `wrapper marker not found: ${wrapperForwarding.marker}`,
+          ).toBeGreaterThan(-1);
+          expect(
+            source.slice(wrapperAt, wrapperAt + 400),
+            "the wrapper must forward `options` as callTool's third argument",
+          ).toMatch(wrapperForwarding.pattern);
+          return;
+        }
+
+        // No wrapper declared, so the live call site must itself be the direct
+        // caller — the timeout immediately following the result schema. This
+        // also fails if a wrapper is introduced without registering it above.
+        const callSite = liveConjureCallSite(source, liveTestMarker, conjureCallMarker);
+        expect(callSite).toMatch(
+          /CallToolResultSchema\s*,\s*\{\s*timeout:\s*LIVE_CONJURE_TIMEOUT_MS\s*,?\s*\}/,
+        );
+      });
+    },
+  );
 });
