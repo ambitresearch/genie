@@ -1067,7 +1067,7 @@ export function registerGridResource(server: McpServer, options: GridResourceOpt
   // nonce-free base is what keeps a replayed `resourceUri` serviceable.
   // `list: undefined` — the static above is what `resources/list` advertises;
   // this is a routing device, not a separately discoverable resource.
-  const template = new ResourceTemplate(`${GRID_RESOURCE_BASE_URI}{+rest}`, { list: undefined });
+  const template = new ResourceTemplate(`${GRID_RESOURCE_BASE_URI}?{+rest}`, { list: undefined });
   server.registerResource(
     "genie-grid-query",
     template,
