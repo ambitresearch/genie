@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.3](https://github.com/ambitresearch/genie/compare/server-v1.3.2...server-v1.3.3) (2026-07-29)
+
+
+### Bug Fixes
+
+* **server:** route ui://genie/grid reads on the nonce-free base URI ([#299](https://github.com/ambitresearch/genie/issues/299)) ([#300](https://github.com/ambitresearch/genie/issues/300)) ([52351bb](https://github.com/ambitresearch/genie/commit/52351bbb27ca5683435253515127b0da04d3c101))
+
 ## [1.3.2](https://github.com/ambitresearch/genie/compare/server-v1.3.1...server-v1.3.2) (2026-07-27)
 
 
