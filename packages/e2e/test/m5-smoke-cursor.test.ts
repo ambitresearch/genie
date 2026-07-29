@@ -51,6 +51,7 @@ import { spawnSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVER_CLI = resolve(here, "../../server/dist/cli.js");
@@ -62,6 +63,28 @@ const hasBuiltServer =
 const hasLlmEnv = Boolean(
   process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim(),
 );
+
+// A single live `conjure` against the real endpoint has been measured at ~101s,
+// ~114s, and as high as ~125s — see `m2-generation.test.ts:128-156`, which
+// raised its own ceiling to 360s after concluding that this class of failure
+// "was a test-infra timeout, not a generation failure".
+//
+// `client.callTool(params, resultSchema, options)` takes its request budget as
+// the THIRD argument. Omitting `options` silently applies the SDK's
+// `DEFAULT_REQUEST_TIMEOUT_MSEC` (60_000) no matter what the surrounding
+// `it(...)` declares. The sibling Claude Desktop suite hit exactly that and
+// failed `main` at 60032ms; this suite carried the identical latent defect and
+// is fixed alongside it (#301).
+//
+// So there are two independent budgets and both have to be set:
+//   LIVE_CONJURE_TIMEOUT_MS    — the wire budget (~1.9x the observed worst case)
+//   LIVE_CHAIN_TEST_TIMEOUT_MS — the vitest budget, deliberately LARGER, so a
+//                                hang surfaces as a clean MCP error instead of
+//                                being killed by the runner first.
+// Both stay well inside this job's `timeout-minutes: 25` in `ci.yml`.
+// Enforced by `m5-live-llm-timeouts.test.ts`.
+const LIVE_CONJURE_TIMEOUT_MS = 240_000;
+const LIVE_CHAIN_TEST_TIMEOUT_MS = 300_000;
 
 interface ToolResult {
   isError?: boolean;
@@ -189,14 +212,18 @@ describe.skipIf(!hasBuiltServer)(
           expect(kitResult.isError, JSON.stringify(kitResult)).not.toBe(true);
           const kitId = (payload(kitResult) as { kitId: string }).kitId;
 
-          const conjureResult = (await client.callTool({
-            name: "mcp__genie__conjure",
-            arguments: {
-              kitId,
-              kit: "A minimal UI kit. Uses semantic HTML and plain CSS.",
-              prompt: "a small button component",
+          const conjureResult = (await client.callTool(
+            {
+              name: "mcp__genie__conjure",
+              arguments: {
+                kitId,
+                kit: "A minimal UI kit. Uses semantic HTML and plain CSS.",
+                prompt: "a small button component",
+              },
             },
-          })) as ToolResult;
+            CallToolResultSchema,
+            { timeout: LIVE_CONJURE_TIMEOUT_MS },
+          )) as ToolResult;
           expect(conjureResult.isError, JSON.stringify(conjureResult)).not.toBe(true);
           // Shape per packages/server/src/tools/conjure.ts `conjureOutputShape`:
           // { componentName, group, files: [{path, content, mimeType, encoding}], manifestEntry, usage }.
@@ -247,7 +274,7 @@ describe.skipIf(!hasBuiltServer)(
           expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/genie\/grid/);
           expect(meta?.ui?.resourceUri).toContain(`kitId=${kitId}`);
         },
-        180_000,
+        LIVE_CHAIN_TEST_TIMEOUT_MS,
       );
     });
 

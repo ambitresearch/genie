@@ -55,6 +55,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { GenericContainer as GenericContainerType } from "testcontainers";
 import type { InlineConfig } from "vite";
 
@@ -104,6 +105,31 @@ const hasLlmConfig = Boolean(
   process.env["GENIE_LLM_BASE_URL"]?.trim() && process.env["GENIE_LLM_API_KEY"]?.trim(),
 );
 const smokeModel = process.env["GENIE_SMOKE_MODEL"]?.trim();
+
+// A single live `conjure` against the real endpoint has been measured at ~101s,
+// ~114s, and as high as ~125s — see `m2-generation.test.ts:128-156`, which
+// raised its own ceiling to 360s after concluding that this class of failure
+// "was a test-infra timeout, not a generation failure".
+//
+// `client.callTool(params, resultSchema, options)` takes its request budget as
+// the THIRD argument. Omitting `options` silently applies the SDK's
+// `DEFAULT_REQUEST_TIMEOUT_MSEC` (60_000) no matter what the surrounding
+// `it(...)` declares. The sibling Claude Desktop suite hit exactly that and
+// failed `main` at 60032ms; the M5-09 leg below carried the identical latent
+// defect — and it runs live in CI via the manual-dispatch job, which sets
+// GENIE_REQUIRE_LLM=1 against real secrets (#301).
+//
+// So there are two independent budgets and both have to be set:
+//   LIVE_CONJURE_TIMEOUT_MS    — the wire budget (~1.9x the observed worst case)
+//   LIVE_CHAIN_TEST_TIMEOUT_MS — the vitest budget, deliberately LARGER, so a
+//                                hang surfaces as a clean MCP error instead of
+//                                being killed by the runner first. The previous
+//                                120_000 here was itself below the observed
+//                                worst case, so it had to rise too.
+// Both stay well inside this job's `timeout-minutes: 25` in `ci.yml`.
+// Enforced by `m5-live-llm-timeouts.test.ts`.
+const LIVE_CONJURE_TIMEOUT_MS = 240_000;
+const LIVE_CHAIN_TEST_TIMEOUT_MS = 300_000;
 if (!hasLlmConfig) {
   console.info(
     "[m5-smoke-claude-code] GENIE_LLM_BASE_URL and/or GENIE_LLM_API_KEY is not set — " +
@@ -1231,79 +1257,87 @@ describe.skipIf(!hasLlmConfig)(
       }
     });
 
-    it("runs conjure → write_files → preview → validate and every call returns non-error (AC5)", async () => {
-      // create_kit isn't one of the four AC-named verbs but is the
-      // prerequisite every doc snippet assumes ("ask for a component" inside
-      // an existing kit) — not itself asserted as a chain step.
-      const createKit = await client.callTool({
-        name: CREATE_KIT_TOOL_NAME,
-        arguments: { name: "m5-smoke-claude-code" },
-      });
-      expect(createKit.isError, JSON.stringify(createKit)).toBeFalsy();
-      const { kitId } = payload(createKit as ToolResult) as { kitId: string };
+    it(
+      "runs conjure → write_files → preview → validate and every call returns non-error (AC5)",
+      async () => {
+        // create_kit isn't one of the four AC-named verbs but is the
+        // prerequisite every doc snippet assumes ("ask for a component" inside
+        // an existing kit) — not itself asserted as a chain step.
+        const createKit = await client.callTool({
+          name: CREATE_KIT_TOOL_NAME,
+          arguments: { name: "m5-smoke-claude-code" },
+        });
+        expect(createKit.isError, JSON.stringify(createKit)).toBeFalsy();
+        const { kitId } = payload(createKit as ToolResult) as { kitId: string };
 
-      // 1. conjure — generate one component against the real LLM endpoint.
-      // `model` defaults to genie's own deployed alias ("design-default"),
-      // resolved by that operator's litellm config — not guaranteed to
-      // exist on every environment's gateway. Allow an explicit override
-      // (GENIE_SMOKE_MODEL) so this suite proves the tool chain itself
-      // rather than depending on one specific alias being provisioned.
-      const conjureResult = await client.callTool({
-        name: CONJURE_TOOL_NAME,
-        arguments: {
-          kitId,
-          kit: "Acme kit: clay accent #c87c5e, 8px radius, Inter type scale.",
-          prompt: "A simple primary Button component with a label prop.",
-          ...(smokeModel ? { model: smokeModel } : {}),
-        },
-      });
-      expect(conjureResult.isError, JSON.stringify(conjureResult)).toBeFalsy();
-      const conjured = payload(conjureResult as ToolResult) as {
-        componentName: string;
-        group: string;
-        files: ConjuredFile[];
-        manifestEntry: unknown;
-      };
-      expect(conjured.files.length).toBeGreaterThan(0);
+        // 1. conjure — generate one component against the real LLM endpoint.
+        // `model` defaults to genie's own deployed alias ("design-default"),
+        // resolved by that operator's litellm config — not guaranteed to
+        // exist on every environment's gateway. Allow an explicit override
+        // (GENIE_SMOKE_MODEL) so this suite proves the tool chain itself
+        // rather than depending on one specific alias being provisioned.
+        const conjureResult = await client.callTool(
+          {
+            name: CONJURE_TOOL_NAME,
+            arguments: {
+              kitId,
+              kit: "Acme kit: clay accent #c87c5e, 8px radius, Inter type scale.",
+              prompt: "A simple primary Button component with a label prop.",
+              ...(smokeModel ? { model: smokeModel } : {}),
+            },
+          },
+          CallToolResultSchema,
+          { timeout: LIVE_CONJURE_TIMEOUT_MS },
+        );
+        expect(conjureResult.isError, JSON.stringify(conjureResult)).toBeFalsy();
+        const conjured = payload(conjureResult as ToolResult) as {
+          componentName: string;
+          group: string;
+          files: ConjuredFile[];
+          manifestEntry: unknown;
+        };
+        expect(conjured.files.length).toBeGreaterThan(0);
 
-      // 2. write_files — persist what conjure returned (requires a plan,
-      // same MCP write-gate every write_files caller goes through). This
-      // MUST run before `preview` — see the file header note on ordering.
-      const plan = await client.callTool({
-        name: "mcp__genie__plan",
-        arguments: { kitId, writes: conjured.files.map((f) => f.path) },
-      });
-      expect(plan.isError, JSON.stringify(plan)).toBeFalsy();
-      const { planId } = payload(plan as ToolResult) as { planId: string };
+        // 2. write_files — persist what conjure returned (requires a plan,
+        // same MCP write-gate every write_files caller goes through). This
+        // MUST run before `preview` — see the file header note on ordering.
+        const plan = await client.callTool({
+          name: "mcp__genie__plan",
+          arguments: { kitId, writes: conjured.files.map((f) => f.path) },
+        });
+        expect(plan.isError, JSON.stringify(plan)).toBeFalsy();
+        const { planId } = payload(plan as ToolResult) as { planId: string };
 
-      const writeResult = await client.callTool({
-        name: WRITE_FILES_TOOL_NAME,
-        arguments: {
-          kitId,
-          planId,
-          files: conjured.files.map(toWriteFileInput),
-          manifestEntry: conjured.manifestEntry,
-        },
-      });
-      expect(writeResult.isError, JSON.stringify(writeResult)).toBeFalsy();
+        const writeResult = await client.callTool({
+          name: WRITE_FILES_TOOL_NAME,
+          arguments: {
+            kitId,
+            planId,
+            files: conjured.files.map(toWriteFileInput),
+            manifestEntry: conjured.manifestEntry,
+          },
+        });
+        expect(writeResult.isError, JSON.stringify(writeResult)).toBeFalsy();
 
-      // 3. preview — compile + serve the grid; asserts a viewer URL or an
-      // inline ui:// resource comes back, not that a browser renders it
-      // (that's m4-viewer.test.ts's job).
-      const previewResult = await client.callTool({
-        name: PREVIEW_TOOL_NAME,
-        arguments: { kitId },
-      });
-      expect(previewResult.isError, JSON.stringify(previewResult)).toBeFalsy();
+        // 3. preview — compile + serve the grid; asserts a viewer URL or an
+        // inline ui:// resource comes back, not that a browser renders it
+        // (that's m4-viewer.test.ts's job).
+        const previewResult = await client.callTool({
+          name: PREVIEW_TOOL_NAME,
+          arguments: { kitId },
+        });
+        expect(previewResult.isError, JSON.stringify(previewResult)).toBeFalsy();
 
-      // 4. validate — full-scan facet over the kit that now has the
-      // just-written component.
-      const validateResult = await client.callTool({
-        name: VALIDATE_TOOL_NAME,
-        arguments: { kitId },
-      });
-      expect(validateResult.isError, JSON.stringify(validateResult)).toBeFalsy();
-    }, 120_000);
+        // 4. validate — full-scan facet over the kit that now has the
+        // just-written component.
+        const validateResult = await client.callTool({
+          name: VALIDATE_TOOL_NAME,
+          arguments: { kitId },
+        });
+        expect(validateResult.isError, JSON.stringify(validateResult)).toBeFalsy();
+      },
+      LIVE_CHAIN_TEST_TIMEOUT_MS,
+    );
   },
 );
 

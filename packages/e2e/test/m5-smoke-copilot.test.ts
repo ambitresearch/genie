@@ -67,6 +67,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { createServer } from "../../server/src/server.js";
 import { MCP_APP_MIME, UI_EXTENSION_ID } from "../../server/src/tools/preview.js";
 import type { ChatCompletionFn, ConjureDeps } from "../../server/src/tools/conjure.js";
@@ -85,10 +87,42 @@ function payload(result: ToolResult): unknown {
   return text ? JSON.parse(text) : undefined;
 }
 
+// A single live `conjure` against the real endpoint has been measured at ~101s,
+// ~114s, and as high as ~125s — see `m2-generation.test.ts:128-156`, which
+// raised its own ceiling to 360s after concluding that this class of failure
+// "was a test-infra timeout, not a generation failure".
+//
+// `client.callTool(params, resultSchema, options)` takes its request budget as
+// the THIRD argument. Omitting `options` silently applies the SDK's
+// `DEFAULT_REQUEST_TIMEOUT_MSEC` (60_000) no matter what the surrounding
+// `it(...)` declares. That is a Protocol-level cap, so it applies here too even
+// though this suite runs over `InMemoryTransport` rather than a stdio child.
+// The sibling Claude Desktop suite hit exactly that and failed `main` at
+// 60032ms; this suite carried the identical latent defect (#301).
+//
+// So there are two independent budgets and both have to be set:
+//   LIVE_CONJURE_TIMEOUT_MS    — the wire budget (~1.9x the observed worst case)
+//   LIVE_CHAIN_TEST_TIMEOUT_MS — the vitest budget, deliberately LARGER, so a
+//                                hang surfaces as a clean MCP error instead of
+//                                being killed by the runner first.
+// Both stay well inside this job's `timeout-minutes: 25` in `ci.yml`.
+// Enforced by `m5-live-llm-timeouts.test.ts`.
+const LIVE_CONJURE_TIMEOUT_MS = 240_000;
+const LIVE_CHAIN_TEST_TIMEOUT_MS = 300_000;
+
 interface Harness {
   client: Client;
   roots: { projectsRoot: string; kitsRoot: string; reportsDir: string };
-  call: (name: string, args: Record<string, unknown>) => Promise<ToolResult>;
+  /**
+   * `options` is threaded through to `callTool` so ONLY the slow live-LLM leg
+   * raises its request budget; every other call keeps the SDK default, so a
+   * hung fast call still surfaces quickly.
+   */
+  call: (
+    name: string,
+    args: Record<string, unknown>,
+    options?: RequestOptions,
+  ) => Promise<ToolResult>;
   close: () => Promise<void>;
 }
 
@@ -119,7 +153,12 @@ async function newHarness(
   return {
     client,
     roots,
-    call: (name, args) => client.callTool({ name, arguments: args }) as Promise<ToolResult>,
+    call: (name, args, options) =>
+      client.callTool(
+        { name, arguments: args },
+        CallToolResultSchema,
+        options,
+      ) as Promise<ToolResult>,
     close: async () => {
       await client.close();
       await rm(base, { recursive: true, force: true });
@@ -354,11 +393,15 @@ describe("AC6 — MCP Apps-capable VS Code build (Stable 1.109+ or Insiders) ren
       });
       const kitId = (payload(kitResult) as { kitId: string }).kitId;
 
-      const conjureResult = await harness.call("mcp__genie__conjure", {
-        kitId,
-        kit: "Warm-instrument kit: clay accent, 8px radius, Inter type scale.",
-        prompt: "A primary button",
-      });
+      const conjureResult = await harness.call(
+        "mcp__genie__conjure",
+        {
+          kitId,
+          kit: "Warm-instrument kit: clay accent, 8px radius, Inter type scale.",
+          prompt: "A primary button",
+        },
+        { timeout: LIVE_CONJURE_TIMEOUT_MS },
+      );
       expect(conjureResult.isError).not.toBe(true);
       const conjured = payload(conjureResult) as {
         files: { path: string; content: string; mimeType: string; encoding: string }[];
@@ -388,7 +431,7 @@ describe("AC6 — MCP Apps-capable VS Code build (Stable 1.109+ or Insiders) ren
       const meta = previewResult._meta as { ui?: { resourceUri?: string } } | undefined;
       expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/genie\/grid/);
     },
-    180_000,
+    LIVE_CHAIN_TEST_TIMEOUT_MS,
   );
 });
 
