@@ -1,6 +1,6 @@
 {
   "name": "@ambitresearch/genie",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "type": "module",
   "description": "genie MCP server — harness-agnostic AI UI-component generation.",
   "repository": {
