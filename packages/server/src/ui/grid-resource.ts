@@ -60,12 +60,27 @@ import type { CardAssetBroker, CardAssetKit } from "./card-asset-broker.js";
 // ─── Public constants (AC1) ──────────────────────────────────────────────────
 
 /**
- * The embedded preview resource URI. `v` identifies the wire contract while
- * the process-scoped nonce prevents hosts from reusing a stale app document
- * after the MCP server restarts. It remains stable for every read in one
- * process, so resource registration and tool metadata always agree.
+ * The routing key for the embedded preview resource — the URI with no query.
+ *
+ * Routing is deliberately anchored here rather than on {@link GRID_RESOURCE_URI}:
+ * that URI's `instance` nonce is re-rolled every process, so keying routes on it
+ * makes a host replaying a previously advertised URI — after a server restart, or
+ * from persisted conversation history — fail with `-32602` instead of simply
+ * receiving a fresh document (#299).
  */
-export const GRID_RESOURCE_URI = `ui://genie/grid?v=2&instance=${randomBytes(16).toString("hex")}`;
+export const GRID_RESOURCE_BASE_URI = "ui://genie/grid";
+
+/**
+ * The embedded preview resource URI as ADVERTISED to hosts. `v` identifies the
+ * wire contract while the process-scoped nonce prevents hosts from reusing a
+ * stale app document after the MCP server restarts. It remains stable for every
+ * read in one process, so resource registration and tool metadata always agree.
+ *
+ * That cache-busting only needs this advertised *string* to change; serving a
+ * nonce from an earlier process is still correct, so the nonce is not a routing
+ * key — see {@link GRID_RESOURCE_BASE_URI}.
+ */
+export const GRID_RESOURCE_URI = `${GRID_RESOURCE_BASE_URI}?v=2&instance=${randomBytes(16).toString("hex")}`;
 
 /** The spec-mandated MCP-Apps MIME (stable spec 2026-01-26; RFC §6.5). */
 export const GRID_RESOURCE_MIME = "text/html;profile=mcp-app";
@@ -976,12 +991,18 @@ async function prepareCardBroker(
  *
  * Routing (verified against the installed SDK): the SDK matches a static
  * resource by EXACT `uri.toString()` and a template via `UriTemplate.match`.
- * `preview` emits `ui://genie/grid?kitId=…` with optional extra params, so a
- * single static registration (no query) or a rigid `{?kitId,…}` template (all-
- * or-nothing) would miss most real URIs. We therefore register BOTH a static
- * `ui://genie/grid` (the bare URI) and a `{+rest}` catch-all template that
- * matches any query-bearing URI; both dispatch to the same handler, which reads
- * its params off the full `URL`. Legacy sibling assets remain plain statics.
+ * `preview` emits `ui://genie/grid?v=2&instance=…` with optional extra params, so
+ * a single static registration (no query) or a rigid `{?kitId,…}` template (all-
+ * or-nothing) would miss most real URIs. We therefore register a static on the
+ * ADVERTISED {@link GRID_RESOURCE_URI} — that is what `resources/list` publishes,
+ * so each restart still shows hosts a fresh nonce — PLUS two unlisted routing
+ * templates anchored at the nonce-free {@link GRID_RESOURCE_BASE_URI}: a
+ * `{+rest}` catch-all covering any query-bearing variant, including one carrying
+ * an `instance` minted by an earlier process (#299), and a variable-free one for
+ * the literal bare URI (which `{+rest}` cannot reach — the SDK compiles it to
+ * `(.+)`). All three dispatch to the same handler, which reads its params off the
+ * full `URL`. Legacy sibling assets remain plain statics: the catch-all's prefix
+ * ends at `grid`, so `ui://genie/viewer.js` / `viewer.css` are never shadowed.
  */
 export function registerGridResource(server: McpServer, options: GridResourceOptions): void {
   const deps: ResolvedDeps = {
@@ -1031,7 +1052,8 @@ export function registerGridResource(server: McpServer, options: GridResourceOpt
     };
   };
 
-  // Bare URI (exact match) — e.g. a host that reads `ui://genie/grid` directly.
+  // Advertised URI (exact match) — what `resources/list` publishes and `preview`
+  // hands hosts, so its per-process nonce still busts host-side caches.
   server.registerResource(
     "genie-grid",
     GRID_RESOURCE_URI,
@@ -1039,13 +1061,29 @@ export function registerGridResource(server: McpServer, options: GridResourceOpt
     (uri) => readGrid(uri),
   );
 
-  // Query-bearing URIs (`?kitId=…[&componentName=…][&group=…]`) via a catch-all
-  // template. `list: undefined` — the bare static above is what `resources/list`
-  // advertises; the template is a routing device, not a discoverable resource.
-  const template = new ResourceTemplate(`${GRID_RESOURCE_URI}{+rest}`, { list: undefined });
+  // Every other shape routes through this catch-all: query-bearing URIs
+  // (`?kitId=…[&componentName=…][&group=…]`) and — critically — any URI whose
+  // `instance` nonce was minted by an earlier process (#299). Anchoring it at the
+  // nonce-free base is what keeps a replayed `resourceUri` serviceable.
+  // `list: undefined` — the static above is what `resources/list` advertises;
+  // this is a routing device, not a separately discoverable resource.
+  const template = new ResourceTemplate(`${GRID_RESOURCE_BASE_URI}{+rest}`, { list: undefined });
   server.registerResource(
     "genie-grid-query",
     template,
+    { ...baseGridConfig, _meta: registrationMeta },
+    (uri) => readGrid(uri),
+  );
+
+  // The literal bare URI. The catch-all above cannot reach it: the SDK compiles
+  // `{+rest}` to `(.+)`, which requires at least one character. Registered as a
+  // variable-free (therefore exact-matching) template rather than a second static
+  // so that it routes WITHOUT appearing as a duplicate grid entry in
+  // `resources/list` — a host picking a listed URI must get the nonce-bearing,
+  // cache-busting one.
+  server.registerResource(
+    "genie-grid-bare",
+    new ResourceTemplate(GRID_RESOURCE_BASE_URI, { list: undefined }),
     { ...baseGridConfig, _meta: registrationMeta },
     (uri) => readGrid(uri),
   );

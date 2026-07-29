@@ -912,6 +912,71 @@ describe("registerGridResource — MCP route (AC1/AC3)", () => {
     expect(String(res.contents[0]?.text)).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
   });
 
+  // ─── #299 — routing must not be keyed on the per-process `instance` nonce ───
+  //
+  // `GRID_RESOURCE_URI`'s nonce is re-rolled on every process start, purely to
+  // bust host-side caches after a restart (see its doc comment). A host that
+  // persists a tool result and loads the app later — Codex does — presents an
+  // older nonce. Serving it a current document is correct; refusing with -32602
+  // is not, because cache-busting only needs the advertised *string* to change.
+
+  /** The exact nonce from the #299 field report — never this process's. */
+  const FOREIGN_INSTANCE = "396031f3d7e8f650798b022e0ef0fb70";
+
+  function foreignNonceUri(params: Record<string, string> = {}): string {
+    const uri = new URL(gridUri(params));
+    uri.searchParams.set("instance", FOREIGN_INSTANCE);
+    return uri.toString();
+  }
+
+  it("reads a URI carrying a foreign instance nonce (#299 AC1)", async () => {
+    const { client } = await connectedClient(okCompiler(manifest()));
+    const uri = foreignNonceUri();
+    expect(uri).not.toBe(GRID_RESOURCE_URI);
+    const res = await client.readResource({ uri });
+    expect(res.contents[0]?.mimeType).toBe(GRID_RESOURCE_MIME);
+    expect(String(res.contents[0]?.text)).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
+  });
+
+  it("reads the literal bare ui://genie/grid with no query at all (#299 AC2)", async () => {
+    const { client } = await connectedClient(okCompiler(manifest()));
+    const res = await client.readResource({ uri: "ui://genie/grid" });
+    expect(res.contents[0]?.mimeType).toBe(GRID_RESOURCE_MIME);
+    expect(String(res.contents[0]?.text)).toContain(`id="${MANIFEST_ELEMENT_ID}"`);
+  });
+
+  it("still advertises the nonce-bearing URI so host caches bust (#299 AC3)", async () => {
+    const { client } = await connectedClient(okCompiler(manifest()));
+    const { resources } = await client.listResources();
+    expect(resources.map((resource) => resource.uri)).toContain(GRID_RESOURCE_URI);
+    expect(new URL(GRID_RESOURCE_URI).searchParams.get("instance")).toMatch(/^[a-f0-9]{32}$/);
+  });
+
+  it("still applies query filtering on a foreign-nonce URI (#299 AC4)", async () => {
+    const full = manifest([
+      card({ name: "Button", group: "Actions" }),
+      card({ name: "Card", group: "Surfaces", path: "components/surfaces/Card/preview.html" }),
+    ]);
+    const { client } = await connectedClient(okCompiler(full));
+    const res = await client.readResource({
+      uri: foreignNonceUri({ kitId: "acme-abc123", group: "Actions" }),
+    });
+    const island = String(res.contents[0]?.text).match(
+      /<script type="application\/json" id="manifest">(.*?)<\/script>/,
+    );
+    expect(island).not.toBeNull();
+    expect((island as RegExpMatchArray)[1]).toContain('"name":"Button"');
+    expect((island as RegExpMatchArray)[1]).not.toContain('"name":"Card"');
+  });
+
+  it("does not shadow the sibling viewer assets (#299 AC5)", async () => {
+    const { client } = await connectedClient(okCompiler(manifest()));
+    const js = await client.readResource({ uri: VIEWER_JS_URI });
+    expect(js.contents[0]?.mimeType).toBe("text/javascript");
+    const css = await client.readResource({ uri: VIEWER_CSS_URI });
+    expect(css.contents[0]?.mimeType).toBe("text/css");
+  });
+
   it("starts the broker for the bare shell without scanning kits and advertises its stable origin", async () => {
     const kitsRoot = await mkdtemp(join(tmpdir(), "genie-grid-no-scan-"));
     try {
