@@ -717,7 +717,16 @@ async function readTokenState(page: Page): Promise<{ token: string; background: 
   // `expect.poll` attempt sit on Playwright's 30s default auto-wait, so the
   // test burns its whole budget and reports a bare "timed out" with nothing
   // about WHICH element never arrived.
-  await frame.locator("#swatch").waitFor({ state: "attached", timeout: 10_000 });
+  //
+  // `waitFor` on a chained contentFrame locator cannot distinguish "no iframe"
+  // from "frame unreachable" from "frame served the wrong bytes", so on failure
+  // we go and look: what iframes exist, what frames the page actually has, and
+  // what the server returns for the card URL.
+  try {
+    await frame.locator("#swatch").waitFor({ state: "attached", timeout: 10_000 });
+  } catch (cause) {
+    throw new Error(`#swatch never attached — ${await describeCardFrames(page)}`, { cause });
+  }
   await expect
     .poll(() => frame.locator("body").getAttribute("data-preview-ready"), { timeout: 10_000 })
     .toBe("true");
@@ -732,6 +741,39 @@ async function readTokenState(page: Page): Promise<{ token: string; background: 
       background: view.getComputedStyle(swatch).backgroundColor,
     };
   }, FIXTURE_TOKEN_NAME);
+}
+
+/**
+ * Failure context for {@link readTokenState}: the card iframes the grid painted,
+ * the frames the browser actually attached, and — decisively — what the server
+ * returns when the card URL is fetched directly. A card that renders on one
+ * vehicle and not another is usually a transport question, not a DOM one.
+ */
+async function describeCardFrames(page: Page): Promise<string> {
+  const iframes = await page
+    .locator("iframe")
+    .evaluateAll((els) =>
+      els.map((el) => ({ src: el.getAttribute("src"), path: el.getAttribute("data-path") })),
+    );
+  const frameUrls = page.frames().map((f) => f.url().slice(0, 160));
+
+  let served = "(not fetched)";
+  const src = iframes[0]?.src;
+  if (src !== undefined && src !== null && !src.startsWith("data:")) {
+    try {
+      const response = await page.request.get(new URL(src, page.url()).href);
+      const body = await response.text();
+      served = `status=${response.status()} bytes=${body.length} head=${JSON.stringify(body.slice(0, 300))}`;
+    } catch (error) {
+      served = `fetch failed: ${String(error)}`;
+    }
+  }
+
+  return (
+    `page=${page.url().slice(0, 120)} ` +
+    `iframes=${JSON.stringify(iframes.map((f) => ({ ...f, src: f.src?.slice(0, 120) })))} ` +
+    `frames=${JSON.stringify(frameUrls)} served=${served}`
+  );
 }
 
 /** Write a full-page screenshot into the report dir (AC7). */
