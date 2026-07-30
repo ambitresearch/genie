@@ -567,52 +567,66 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
   // an empty box, so "byte-identical" and "identical bytes rendered" are not
   // the same claim. This closes the second half: navigate INTO the card frame
   // and read the computed custom property back out of a live document.
-  it("G-5 — a token-driven card resolves its custom properties in all three vehicles", async () => {
-    const tokens = await createViewerFixture([TOKEN_FIXTURE_COMPONENT]);
-    const fileVehicle = await buildFileVehicle(tokens);
-    const vite = await startViteVehicle(tokens.kitDir);
-    const ui = await startUiVehicle(tokens);
-    const page = await browser.newPage();
+  // One test PER VEHICLE, sharing a single token fixture. Deliberately not one
+  // test driving all three: when a leg breaks, the failing test name has to say
+  // WHICH transport broke — a combined test can only report "the token did not
+  // resolve" and leaves you bisecting three servers by hand.
+  describe("G-5 — the rendered half: a token-driven card", () => {
+    /** What every vehicle must independently produce. */
+    const RESOLVED = { token: FIXTURE_TOKEN_VALUE, background: FIXTURE_TOKEN_RGB };
 
-    try {
-      await gotoAndWaitForGrid(page, fileVehicle.url);
-      const fileState = await readTokenState(page);
+    let tokens: ViewerFixture;
 
-      await gotoAndWaitForGrid(page, vite.url);
-      const localhostState = await readTokenState(page);
+    beforeAll(async () => {
+      tokens = await createViewerFixture([TOKEN_FIXTURE_COMPONENT]);
+    }, 60_000);
 
-      await gotoAndWaitForGrid(page, ui.url);
-      const uiState = await readTokenState(page);
+    afterAll(async () => {
+      await tokens?.cleanup();
+    });
 
-      // The token resolves to its authored value, and the property that
-      // CONSUMES it actually paints — `var(--clay)` on an undefined custom
-      // property is not an error, it silently yields the initial value
-      // (`background-color: rgba(0, 0, 0, 0)`), which is exactly how this bug
-      // presents: a transparent card, no console error, a valid manifest.
-      for (const [vehicle, state] of [
-        ["file://", fileState],
-        ["localhost", localhostState],
-        ["ui://", uiState],
-      ] as const) {
-        expect(state, vehicle).toEqual({
-          token: FIXTURE_TOKEN_VALUE,
-          background: FIXTURE_TOKEN_RGB,
-        });
+    it("resolves its custom properties under file://", async () => {
+      const { url } = await buildFileVehicle(tokens);
+      const page = await browser.newPage();
+      try {
+        await gotoAndWaitForGrid(page, url);
+        expect(await readTokenState(page)).toEqual(RESOLVED);
+
+        // The vehicle root carries `components/` but NOT `tokens/`
+        // (buildFileVehicle copies only the previews). That the card painted
+        // anyway proves it carries its own token values rather than reaching
+        // for a sibling file this vehicle cannot serve.
+        const root = dirname(url.slice("file://".length));
+        await expect(stat(join(root, FIXTURE_TOKENS_PATH))).rejects.toThrow();
+      } finally {
+        await page.close();
       }
+    }, 30_000);
 
-      // The `file://` vehicle root carries `components/` but NOT `tokens/`
-      // (buildFileVehicle copies only the previews). That the card still
-      // painted proves it carries its own token values rather than reaching
-      // for a sibling file that this vehicle cannot serve.
-      const fileRoot = dirname(fileVehicle.url.slice("file://".length));
-      await expect(stat(join(fileRoot, FIXTURE_TOKENS_PATH))).rejects.toThrow();
-    } finally {
-      await page.close();
-      await vite.close();
-      await ui.close();
-      await tokens.cleanup();
-    }
-  }, 45_000);
+    it("resolves its custom properties under localhost (Vite)", async () => {
+      const vite = await startViteVehicle(tokens.kitDir);
+      const page = await browser.newPage();
+      try {
+        await gotoAndWaitForGrid(page, vite.url);
+        expect(await readTokenState(page)).toEqual(RESOLVED);
+      } finally {
+        await page.close();
+        await vite.close();
+      }
+    }, 30_000);
+
+    it("resolves its custom properties under ui:// (data: transport)", async () => {
+      const ui = await startUiVehicle(tokens);
+      const page = await browser.newPage();
+      try {
+        await gotoAndWaitForGrid(page, ui.url);
+        expect(await readTokenState(page)).toEqual(RESOLVED);
+      } finally {
+        await page.close();
+        await ui.close();
+      }
+    }, 30_000);
+  });
 
   // Negative control — without this, the assertion above could pass for a card
   // that happens to work rather than one that is vehicle-independent. Pins the
@@ -699,7 +713,14 @@ async function readCardPaths(page: Page): Promise<string[]> {
  */
 async function readTokenState(page: Page): Promise<{ token: string; background: string }> {
   const frame = page.locator("iframe").first().contentFrame();
-  await expect.poll(() => frame.locator("body").getAttribute("data-preview-ready")).toBe("true");
+  // Bounded explicitly. Without this, a frame that never resolves makes every
+  // `expect.poll` attempt sit on Playwright's 30s default auto-wait, so the
+  // test burns its whole budget and reports a bare "timed out" with nothing
+  // about WHICH element never arrived.
+  await frame.locator("#swatch").waitFor({ state: "attached", timeout: 10_000 });
+  await expect
+    .poll(() => frame.locator("body").getAttribute("data-preview-ready"), { timeout: 10_000 })
+    .toBe("true");
   return frame.locator("#swatch").evaluate((swatch, name) => {
     const view = swatch.ownerDocument.defaultView;
     if (view === null) throw new Error("card frame has no default view");
