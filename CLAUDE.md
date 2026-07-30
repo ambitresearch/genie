@@ -56,6 +56,24 @@ app to open.
    **`@ambitresearch/genie-viewer`** — both scoped, public, and published with npm
    provenance. npm provenance requires this source repository to be public before the
    first live publish. See `.github/workflows/release.yml` (DRO-278 / M5-06).
+8. **Anything the server lazily `import()`s is an OPTIONAL PEER, never a runtime
+   dependency.** Today: `@ambitresearch/genie-viewer` (`preview`) and `playwright`
+   (`refine`). A devDependency is invisible to consumers, so the import can only ever
+   resolve inside this workspace — that was #311, where `preview` silently fell back to
+   `file://` for every npm user. `dependencies`/`optionalDependencies` would fix
+   reachability by pulling the whole preview framework into every install, breaking
+   rule 6's spirit and the `.mcpb` size budget. `peerDependencies` +
+   `peerDependenciesMeta.optional` is the only npm relationship meaning "the server can
+   drive this but will not install it for you." When you add a lazy import, add it to
+   `packages/server/test/optional-peers.test.ts` — and remember optional peers are
+   excluded from the published SBOM's runtime closure (`scripts/generate-package-sbom.mjs`).
+   Keep peer ranges bounded (`^`, not `>=`): the lazy import sites cast the module to a
+   hand-written shape, so a range that admits an untested major — or an untested `0.x`
+   minor — declares a compatibility we never exercised. Bumping the viewer therefore means
+   bumping the peer range; the drift guard in that same file fails when they part ways.
+   Any remedy genie prints for a missing peer must cover BOTH launch modes — Node resolves
+   the peer from genie's own location, so a global install is unreachable from an `npx`
+   genie, and a global-only remedy loops the user (#311 round 2).
 
 ## Conventions
 

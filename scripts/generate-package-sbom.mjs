@@ -172,10 +172,22 @@ export function selectPackageClosure(workspaceBom, manifest, additionalEdges = n
     throw new Error(`Workspace SBOM has no dependency graph for ${manifest.name}`);
   }
 
+  // Optional peers are deliberately NOT part of the shipped runtime closure.
+  // `peerDependenciesMeta.optional` means "the server can drive this but will
+  // not install it for you" (see `packages/server/package.json`: the Vite viewer
+  // and Playwright), so npm and pnpm both skip them and a consumer install
+  // contains no such component. Including them here would both misdescribe the
+  // artifact and hard-fail: a workspace-linked optional peer has no component
+  // record in the workspace BOM to walk.
+  const optionalPeers = new Set(
+    Object.entries(manifest.peerDependenciesMeta ?? {})
+      .filter(([, meta]) => meta?.optional === true)
+      .map(([name]) => name),
+  );
   const runtimeNames = new Set([
     ...Object.keys(manifest.dependencies ?? {}),
     ...Object.keys(manifest.optionalDependencies ?? {}),
-    ...Object.keys(manifest.peerDependencies ?? {}),
+    ...Object.keys(manifest.peerDependencies ?? {}).filter((name) => !optionalPeers.has(name)),
   ]);
   const directRefs = [
     ...new Set([

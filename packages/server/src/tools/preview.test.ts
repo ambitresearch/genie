@@ -33,10 +33,14 @@ import {
   InvalidKitIdError,
   KitNotFoundError,
   ViewerRegistry,
+  ViewerPackageMissingError,
+  VIEWER_PACKAGE_NAME,
+  SERVER_PACKAGE_NAME,
   autoOpenDisabledByEnv,
   buildResourceUri,
   getUiExtensionCapability,
   hasUiExtensionCapability,
+  isModuleNotFoundFor,
   MCP_APP_MIME,
   UI_EXTENSION_ID,
   resolveKitDir,
@@ -942,11 +946,123 @@ describe("runPreview (AC3, AC6)", () => {
     );
 
     expect(result.structuredContent.viewerUrl).toBeUndefined();
-    expect(result.structuredContent.embeddedError).toContain("viewer could not start");
+    expect(result.structuredContent.viewerError).toContain("could not start");
+    // The viewer's reason belongs on its own channel, never the inline path's.
+    expect(result.structuredContent.embeddedError).toBeUndefined();
     expect(result.structuredContent.kitId).toBe("acme-abc123");
     expect(result.structuredContent.fileUrl).toBe(
       pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href,
     );
+  });
+
+  // ── #311: viewer reachability + independent failure channels ───────────────
+
+  it("classifies an unresolvable viewer package as ViewerPackageMissingError", async () => {
+    // The verbatim shape Node raises on a consumer install where the optional
+    // peer was never installed — the #311 report's own log line.
+    const error: NodeJS.ErrnoException = new Error(
+      `Cannot find package '${VIEWER_PACKAGE_NAME}' imported from /usr/lib/node_modules/@ambitresearch/genie/dist/tools/preview.js`,
+    );
+    error.code = "ERR_MODULE_NOT_FOUND";
+
+    expect(isModuleNotFoundFor(error, VIEWER_PACKAGE_NAME)).toBe(true);
+  });
+
+  it("does not blame the viewer package for a missing dependency INSIDE it", async () => {
+    // Same error code, different specifier. "Install the viewer" is useless
+    // advice when the viewer is present and its own `vite` is what is missing,
+    // so this must stay a plain boot failure with no install remedy.
+    const error: NodeJS.ErrnoException = new Error(
+      `Cannot find package 'vite' imported from /usr/lib/node_modules/@ambitresearch/genie-viewer/dist/index.js`,
+    );
+    error.code = "ERR_MODULE_NOT_FOUND";
+
+    expect(isModuleNotFoundFor(error, VIEWER_PACKAGE_NAME)).toBe(false);
+  });
+
+  it("does not treat an arbitrary boot failure as a missing package", async () => {
+    const portClash: NodeJS.ErrnoException = new Error("listen EADDRINUSE 127.0.0.1:5173");
+    portClash.code = "EADDRINUSE";
+
+    expect(isModuleNotFoundFor(portClash, VIEWER_PACKAGE_NAME)).toBe(false);
+    expect(isModuleNotFoundFor(null, VIEWER_PACKAGE_NAME)).toBe(false);
+    expect(isModuleNotFoundFor("not an error", VIEWER_PACKAGE_NAME)).toBe(false);
+  });
+
+  it("names the optional package and its install command when the viewer is not installed", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const registry = new ViewerRegistry(() =>
+      Promise.reject(
+        new ViewerPackageMissingError(VIEWER_PACKAGE_NAME, new Error("ERR_MODULE_NOT_FOUND")),
+      ),
+    );
+
+    const result = await runPreview(
+      { kitsRoot, registry },
+      { kitId: "acme-abc123" },
+      { uiCapable: false, transportKind: "stdio" },
+    );
+
+    const { viewerError } = result.structuredContent;
+    expect(viewerError).toContain(VIEWER_PACKAGE_NAME);
+    expect(viewerError).toContain("not installed");
+    // BOTH install modes, because the viewer has to be resolvable from wherever
+    // genie itself runs. The global command alone sent an npx user in a loop:
+    // it left the specifier unresolvable, the identical ERR_MODULE_NOT_FOUND was
+    // re-classified as "not installed", and genie reprinted the same command.
+    expect(viewerError).toContain(`npm i -g ${VIEWER_PACKAGE_NAME}`);
+    expect(viewerError).toContain(
+      `npx --package ${SERVER_PACKAGE_NAME} --package ${VIEWER_PACKAGE_NAME}`,
+    );
+    // The remedy must reach the model-visible text, not just structuredContent.
+    expect(result.content[0]?.text).toContain(VIEWER_PACKAGE_NAME);
+    expect(result.content[0]?.text).toContain("--package");
+  });
+
+  it("does not tell the user to install anything when the viewer is present but fails to boot", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const registry = new ViewerRegistry(failBooter("EADDRINUSE"));
+
+    const result = await runPreview(
+      { kitsRoot, registry },
+      { kitId: "acme-abc123" },
+      { uiCapable: false, transportKind: "stdio" },
+    );
+
+    const { viewerError } = result.structuredContent;
+    expect(viewerError).toContain("installed but could not start");
+    expect(viewerError).not.toContain("npm i");
+    expect(viewerError).not.toContain(VIEWER_PACKAGE_NAME);
+  });
+
+  it("reports the inline AND viewer failures independently so neither masks the other", async () => {
+    // The reported #311 session exactly: a sandbox EPERM killed the card broker
+    // and the viewer was never installed. The viewer diagnosis used to be
+    // discarded because embeddedError was already occupied, leaving the user
+    // pointed at the broker with the actually-missing piece unnamed.
+    const kitsRoot = await makeKitsRoot();
+    await seedKitWithComponent(kitsRoot, "acme-abc123");
+    const getCardAssetBroker = vi.fn(async (): Promise<CardAssetBroker> => {
+      throw new Error("listen EPERM 127.0.0.1");
+    });
+    const registry = new ViewerRegistry(() =>
+      Promise.reject(
+        new ViewerPackageMissingError(VIEWER_PACKAGE_NAME, new Error("ERR_MODULE_NOT_FOUND")),
+      ),
+    );
+
+    const result = await runPreview(
+      { kitsRoot, registry, env: {}, getCardAssetBroker },
+      { kitId: "acme-abc123" },
+      // Omitted capability = the Codex hybrid, the only shape that prepares both.
+      { clientName: "codex-mcp-client", transportKind: "stdio", locality: "local" },
+    );
+
+    expect(result.structuredContent.embeddedError).toContain("card asset broker could not start");
+    expect(result.structuredContent.viewerError).toContain(VIEWER_PACKAGE_NAME);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("card asset broker");
+    expect(text).toContain(VIEWER_PACKAGE_NAME);
   });
 
   it("uiCapable: true marks the host ui-supported regardless of client name (no auto-open)", async () => {

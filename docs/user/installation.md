@@ -32,6 +32,48 @@ passed with `--secrets-from`; never commit them.
 npx -y @ambitresearch/genie --transport stdio
 ```
 
+### Optional: the live preview viewer
+
+`@ambitresearch/genie-viewer` ships as a separate package and is declared as an
+**optional peer** — genie can drive it, but will not install it for you, so a
+plain install never pulls Vite in.
+
+Whether you need it depends on how your harness delivers a preview:
+
+| Harness                                               | `preview` delivery                    | Needs the viewer |
+| ----------------------------------------------------- | ------------------------------------- | ---------------- |
+| Claude Code / Claude Desktop, Cursor, VS Code Copilot | inline `ui://genie/grid`, in-panel    | No               |
+| Codex Desktop, Codex CLI                              | inline manifest **plus** a viewer URL | Yes              |
+| Cline, Continue, other tools-only clients             | viewer URL, else `file://`            | Yes              |
+
+Hosts that render MCP Apps get the grid inline from the server package itself.
+Everything else falls back to the local Vite viewer.
+
+Install it **where genie itself runs**. Node resolves the viewer by walking the
+directories above genie's own location, so the two launch modes need different
+commands — a globally installed viewer is invisible to a genie started with
+`npx`, because npm exec runs from its own cache.
+
+If you launch genie with `npx` (the command at the top of this section), name
+both packages in the one command so they land in the same exec environment:
+
+```bash
+npx --package @ambitresearch/genie --package @ambitresearch/genie-viewer -- genie --transport stdio
+```
+
+That is the full command your harness should run — replace the `npx -y
+@ambitresearch/genie --transport stdio` entry in its config with this one.
+
+If you instead install genie globally and point your harness at the `genie`
+binary, install both globally:
+
+```bash
+npm i -g @ambitresearch/genie @ambitresearch/genie-viewer
+```
+
+Without it, `preview` still works but degrades to a static
+`file://<kitDir>/index.html` and says so in its result.
+
 For a source checkout:
 
 ```bash

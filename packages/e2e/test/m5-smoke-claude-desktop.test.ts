@@ -330,6 +330,7 @@ describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", ()
       viewerUrl?: string;
       fileUrl?: string;
       embeddedError?: string;
+      viewerError?: string;
       locality?: string;
     };
     expect(preview.locality).toBe("local");
@@ -339,7 +340,12 @@ describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", ()
         preview.viewerUrl,
         `preview took the fallback path with the viewer built: ${JSON.stringify(preview)}`,
       ).toMatch(/^http:\/\/(127\.0\.0\.1|localhost):\d+\//);
-      expect(preview.embeddedError ?? "").not.toContain("local preview viewer could not start");
+      // #311 — viewer failures now land on `viewerError`, never on the inline
+      // path's `embeddedError`. This assertion used to substring-match
+      // `embeddedError`, which after the split can no longer carry a viewer
+      // diagnosis at all: it would pass vacuously forever. Assert the viewer's
+      // own channel is clean instead.
+      expect(preview.viewerError ?? "").toBe("");
       const response = await fetch(preview.viewerUrl ?? "");
       expect(response.ok, `viewer URL ${preview.viewerUrl} did not serve`).toBe(true);
     }

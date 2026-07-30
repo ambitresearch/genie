@@ -91,6 +91,7 @@ import {
 import { isSafeKitId, KIT_ID_SAFETY_MESSAGE } from "../store/kit-files.js";
 import type { CardAssetBroker } from "../ui/card-asset-broker.js";
 import { publishDraftPreview } from "../ui/draft-preview.js";
+import { isModuleNotFoundFor } from "./preview.js";
 
 export const REFINE_TOOL_NAME = "mcp__genie__refine";
 
@@ -306,7 +307,11 @@ interface PlaywrightModule {
 }
 
 /** Load Playwright at runtime, or `null` if it is not installed. The non-literal
- * specifier keeps `tsc` from resolving the (non-dependency) module at build. */
+ * specifier keeps `tsc` from resolving it at build. It is a declared OPTIONAL
+ * PEER of the server (CLAUDE.md rule 8) — a consumer install does not receive it
+ * unless they ask, but it is at least declared, which is what makes it
+ * obtainable at all. As a devDependency it was reachable only inside this
+ * workspace, so this seam could never have worked for an npm user (#311). */
 async function importPlaywright(): Promise<PlaywrightModule | null> {
   const specifier = "playwright";
   try {
@@ -314,7 +319,12 @@ async function importPlaywright(): Promise<PlaywrightModule | null> {
   } catch (error) {
     logStderr({
       event: "refine.region.unavailable",
-      reason: "playwright-not-installed",
+      // The same discrimination `preview` makes: "the package is absent" has a
+      // remedy, "it is present but would not load" does not, and reporting the
+      // former for the latter sends the reader off to install what they have.
+      reason: isModuleNotFoundFor(error, specifier)
+        ? "playwright-not-installed"
+        : "playwright-load-failed",
       error: String(error),
     });
     return null;

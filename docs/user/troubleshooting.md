@@ -26,6 +26,30 @@ browser fallback. Set `GENIE_PREVIEW_NO_OPEN=1` to disable that behavior. For HT
 configure a client-reachable preview origin with `GENIE_PREVIEWS_BASE_URL` when inline
 card assets cannot use the server-local broker.
 
+## `preview` falls back to a `file://` URL
+
+The result names which delivery path failed, on its own line:
+
+- **"Live viewer unavailable: … is not installed"** — the optional
+  `@ambitresearch/genie-viewer` package is not present. Install it where genie
+  itself runs; Node resolves it from genie's own location, so which command you
+  need depends on how your harness launches genie:
+  - **`npx`** (the documented default) — a global install will _not_ be found,
+    because npm exec runs genie from its own cache. Name both packages in the
+    one command and use that as your harness's command:
+    `npx --package @ambitresearch/genie --package @ambitresearch/genie-viewer -- genie --transport stdio`
+  - **global `genie` binary** — `npm i -g @ambitresearch/genie-viewer`.
+
+  Then call `preview` again. See
+  [Installation](./installation.md#optional-the-live-preview-viewer) for which
+  harnesses need the viewer at all.
+
+- **"Live viewer unavailable: … installed but could not start"** — the package is
+  there but its Vite server could not bind. Free port `5173` and retry;
+  installing anything will not help.
+- **"Inline preview unavailable: …"** — the inline MCP App path failed. This is
+  independent of the viewer, and both lines can appear at once.
+
 ## My reviewed component was not saved
 
 Review drafts are session-only until Apply completes. Generate, Refine, Approve, Request
