@@ -50,6 +50,24 @@ const hasLlmEnv = Boolean(
   process.env.GENIE_LLM_BASE_URL?.trim() && process.env.GENIE_LLM_API_KEY?.trim(),
 );
 
+// DRO-1255 — `preview`'s local path lazily imports @ambitresearch/genie-viewer's
+// COMPILED entrypoint. A clean checkout has no packages/viewer/dist, so the boot
+// throws, `preview.fallback`/`viewer-boot-failed` is logged, and the tool degrades
+// to the file:// vehicle — gracefully, silently, and green. That is exactly how the
+// self-hosted canary went two milestones without ever exercising the real viewer
+// boot. `test:e2e:claude-desktop` now builds the viewer first; this constant lets
+// the assertion below demand the NON-fallback path whenever dist/ is present, so a
+// future viewer-boot regression fails loudly instead of degrading quietly.
+const VIEWER_DIST_ENTRY = resolve(here, "../../viewer/dist/index.js");
+const hasBuiltViewer = existsSync(VIEWER_DIST_ENTRY);
+
+if (requireBuiltServer && !hasBuiltViewer) {
+  throw new Error(
+    "GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE=1 but packages/viewer/dist/index.js is missing. " +
+      "Build @ambitresearch/genie-viewer so `preview` exercises the real viewer boot (DRO-1255).",
+  );
+}
+
 // A single live `conjure` against the real endpoint has been measured at ~101s,
 // ~114s, and as high as ~125s — see `m2-generation.test.ts:128-156`, which
 // raised its own ceiling to 360s after concluding that this class of failure
@@ -303,7 +321,29 @@ describe.skipIf(!hasBuiltServer)("Desktop stdio coverage (not AC6 evidence)", ()
     const meta = previewResult._meta as { ui?: { resourceUri?: string } } | undefined;
     expect(meta?.ui?.resourceUri).toMatch(/^ui:\/\/genie\/grid/);
     expect(meta?.ui?.resourceUri).toContain(`kitId=${kitId}`);
-  }, 30_000);
+
+    // DRO-1255 — the SDK client declares no `ui` capability, so `preview` prepares
+    // BOTH deliveries and the local viewer really has to boot. When the viewer is
+    // built (CI always, since `test:e2e:claude-desktop` builds it first), require a
+    // live `viewerUrl` rather than accepting the file:// degradation.
+    const preview = payload(previewResult) as {
+      viewerUrl?: string;
+      fileUrl?: string;
+      embeddedError?: string;
+      locality?: string;
+    };
+    expect(preview.locality).toBe("local");
+    expect(preview.fileUrl).toMatch(/^file:\/\//);
+    if (hasBuiltViewer) {
+      expect(
+        preview.viewerUrl,
+        `preview took the fallback path with the viewer built: ${JSON.stringify(preview)}`,
+      ).toMatch(/^http:\/\/(127\.0\.0\.1|localhost):\d+\//);
+      expect(preview.embeddedError ?? "").not.toContain("local preview viewer could not start");
+      const response = await fetch(preview.viewerUrl ?? "");
+      expect(response.ok, `viewer URL ${preview.viewerUrl} did not serve`).toBe(true);
+    }
+  }, 60_000);
 
   it("list_kits is reachable over real stdio and reflects a kit created earlier in this chain", async () => {
     const kitResult = (await client.callTool({
