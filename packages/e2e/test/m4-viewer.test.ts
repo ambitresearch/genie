@@ -765,7 +765,15 @@ async function readTokenState(page: Page): Promise<{ token: string; background: 
   try {
     await frame.locator("#swatch").waitFor({ state: "attached", timeout: 10_000 });
   } catch (cause) {
-    throw new Error(`#swatch never attached — ${await describeCardFrames(page)}`, { cause });
+    // The diagnostic must never replace the failure it explains. It walks a page
+    // that has already misbehaved, and `evaluateAll`/`frames()` reject outright
+    // on a closed or crashed one — awaited inline, that rejection would escape
+    // before `new Error` is ever constructed, losing both the message and its
+    // `cause` in exactly the broken-vehicle case the helper exists for.
+    const detail = await describeCardFrames(page).catch(
+      (error) => `(diagnostic failed: ${String(error)})`,
+    );
+    throw new Error(`#swatch never attached — ${detail}`, { cause });
   }
   await expect
     .poll(() => frame.locator("body").getAttribute("data-preview-ready"), { timeout: 10_000 })

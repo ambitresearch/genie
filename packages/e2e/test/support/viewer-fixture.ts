@@ -135,8 +135,14 @@ const FIXTURE_TOKENS_CSS = `/* Fixture kit design tokens. */\n${FIXTURE_TOKEN_BL
  * | reference form                    | file:// | Vite root | ui:// `data:` | ui:// broker |
  * | --------------------------------- | ------- | --------- | ------------- | ------------ |
  * | `href="/tokens/colors.css"`       | ✗       | ✓         | ✗             | ✗            |
- * | `href="../../../tokens/…"`        | ✓       | ✓         | ✗             | ✓            |
+ * | `href="../../../tokens/…"`        | ✓ †     | ✓         | ✗             | ✓            |
  * | inlined `<style>` (this)          | ✓       | ✓         | ✓             | ✓            |
+ *
+ * † URL resolution only, and only in a POPULATED kit directory. This suite's
+ * `file://` vehicle is not one: `buildFileVehicle` copies `components/` and
+ * deliberately omits `tokens/`, so a kit-relative href misses there too —
+ * measured against that vehicle, `token=""` and `bg=rgba(0, 0, 0, 0)`. Nothing
+ * in the fixture links tokens, which is the point, so this costs no behavior.
  *
  * A root-absolute href resolves against the FILESYSTEM root under `file://`
  * (`file:///tokens/colors.css`), so the stylesheet silently 404s and every
