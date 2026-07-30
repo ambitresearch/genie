@@ -135,8 +135,14 @@ const FIXTURE_TOKENS_CSS = `/* Fixture kit design tokens. */\n${FIXTURE_TOKEN_BL
  * | reference form                    | file:// | Vite root | ui:// `data:` | ui:// broker |
  * | --------------------------------- | ------- | --------- | ------------- | ------------ |
  * | `href="/tokens/colors.css"`       | ✗       | ✓         | ✗             | ✗            |
- * | `href="../../../tokens/…"`        | ✓       | ✓         | ✗             | ✓            |
+ * | `href="../../../tokens/…"`        | ✓ †     | ✓         | ✗             | ✓            |
  * | inlined `<style>` (this)          | ✓       | ✓         | ✓             | ✓            |
+ *
+ * † URL resolution only, and only in a POPULATED kit directory. This suite's
+ * `file://` vehicle is not one: `buildFileVehicle` copies `components/` and
+ * deliberately omits `tokens/`, so a kit-relative href misses there too —
+ * measured against that vehicle, `token=""` and `bg=rgba(0, 0, 0, 0)`. Nothing
+ * in the fixture links tokens, which is the point, so this costs no behavior.
  *
  * A root-absolute href resolves against the FILESYSTEM root under `file://`
  * (`file:///tokens/colors.css`), so the stylesheet silently 404s and every
@@ -153,11 +159,54 @@ const FIXTURE_TOKENS_CSS = `/* Fixture kit design tokens. */\n${FIXTURE_TOKEN_BL
  * kit's stylesheet") — encoded here as something a test can actually fail on.
  */
 export function tokenCardHtml(component: ViewerFixtureComponent): string {
+  return swatchCardHtml(component, { tokenBlock: FIXTURE_TOKEN_BLOCK });
+}
+
+/**
+ * The same swatch card with its token block DELEGATED to `href` instead of
+ * inlined — the NEGATIVE control for {@link tokenCardHtml}.
+ *
+ * Authored through the same builder on purpose. The two cards differ in exactly
+ * one thing, the one under test: where `--clay` comes from. Everything else —
+ * the marker, the `<style>` block carrying the card's own rules, the `#swatch`
+ * button, the readiness script — is byte-for-byte shared.
+ *
+ * That shared idiom is what makes the control portable across vehicles. Giving
+ * the swatch its `background` through an inline `style=` ATTRIBUTE instead
+ * (which this deliberately does not do) reaches the right answer under `file://`
+ * for the wrong reason, and the wrong answer under `ui://`: the embedded tier
+ * serves cards under a hashed `style-src`, which admits a `<style>` element but
+ * blocks style attributes outright, so the declaration never applies at all and
+ * the button paints the UA's `buttonface` instead of the transparent an
+ * unresolved `var()` yields. Measured on the `ui://` leg (DRO-1402):
+ *
+ * | delivery         | declaration applies? | computed background  |
+ * | ---------------- | -------------------- | -------------------- |
+ * | inline `style=`  | ✗ (CSP-blocked)      | `rgb(239, 239, 239)` |
+ * | `<style>` (this) | ✓                    | `rgba(0, 0, 0, 0)`   |
+ *
+ * With the `<style>` block the failure is the one being tested everywhere it
+ * runs: the stylesheet does not load, `var(--clay)` is invalid at computed-value
+ * time, and `background-color` falls back to its initial `transparent`.
+ */
+export function linkedTokenCardHtml(component: ViewerFixtureComponent, href: string): string {
+  return swatchCardHtml(component, { head: `<link rel="stylesheet" href="${href}" />` });
+}
+
+/**
+ * The swatch card both token-delivery variants are built from: `head` is
+ * prepended inside `<head>`, and `tokenBlock` leads the card's own `<style>`.
+ */
+function swatchCardHtml(
+  component: ViewerFixtureComponent,
+  parts: { head?: string; tokenBlock?: string },
+): string {
   const { group, name, viewport } = component;
   return (
     `<!-- @genie group="${group}" viewport="${viewport}" name="${name}" -->\n` +
     `<!doctype html>\n<html lang="en"><head><meta charset="utf-8" />` +
-    `<style>${FIXTURE_TOKEN_BLOCK}` +
+    (parts.head ?? "") +
+    `<style>${parts.tokenBlock ?? ""}` +
     `body{margin:0;display:grid;place-items:center;height:100vh;font-family:system-ui}` +
     `#swatch{background:var(${FIXTURE_TOKEN_NAME});color:#fff;` +
     `border:0;padding:12px 24px;border-radius:8px;font-size:16px}</style>` +
@@ -328,10 +377,17 @@ export async function readCardIdentities(page: Page): Promise<CardIdentity[]> {
  * attribute inside the likewise-`hidden` `[data-route-view="browse"]` section,
  * and `viewer.js` keeps it that way: Browse "re-projects the grid into the
  * workbench on every update" (see `initBrowse`), so `#grid` is a HIDDEN MIRROR
- * of the visible `#browse-workbench` on every route, not just `generate`. This
- * clears exactly the two `hidden` attributes `initBrowse`'s own fallback path
- * clears when the workbench is unavailable — a real shell state, not a
- * test-only DOM edit.
+ * of the visible `#browse-workbench` on every route, not just `generate`.
+ *
+ * Clearing both attributes reveals the browse route and its grid — the same
+ * GRID-VISIBLE state the shell reaches on its own, via two different mechanisms:
+ * `renderRoute` un-hides `[data-route-view="browse"]` when you navigate to
+ * Browse, and `initBrowse`'s fallback un-hides `#grid` when `viewer-browse.js`
+ * fails to load. That fallback also HIDES `#browse-workbench`, which this
+ * deliberately does not mirror: a hidden workbench has no bearing on whether
+ * the grid's frames load, and leaving it alone keeps the shell nearer its
+ * normal state. So this is the shortest path to a rendered grid, not a replay
+ * of either mechanism.
  *
  * ── Why this cannot be skipped, measured per transport ──────────────────────
  * `createCard` marks every preview iframe `loading="lazy"`, and a lazy frame in
