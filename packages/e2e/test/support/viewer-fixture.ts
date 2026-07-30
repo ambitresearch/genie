@@ -70,6 +70,13 @@ export interface ViewerFixtureComponent {
   group: string;
   name: string;
   viewport: string;
+  /**
+   * Optional full preview bytes, replacing the generic {@link previewHtml} body.
+   * Additive and defaulted, so every existing caller keeps the same fixture; the
+   * G-5 token check ({@link tokenCardHtml}) uses it to scaffold a card whose
+   * rendered appearance actually depends on the kit's design tokens.
+   */
+  html?: string;
 }
 
 export const FIXTURE_COMPONENTS: ReadonlyArray<ViewerFixtureComponent> = [
@@ -89,6 +96,74 @@ export const FIXTURE_COMPONENTS: ReadonlyArray<ViewerFixtureComponent> = [
 
 /** The kitId the fixture is scaffolded under (must satisfy KIT_ID_PATTERN). */
 export const FIXTURE_KIT_ID = "acme-kit";
+
+// ── Design tokens: the G-5 cross-vehicle resolution check ───────────────────
+
+/** Kit-relative path of the fixture's token source — the `tokens/` convention
+ * `viewer.js`'s `TOKENS_DIR_PREFIX` and every scaffolded kit already use. */
+export const FIXTURE_TOKENS_PATH = "tokens/colors.css";
+
+/** The custom property the token check asserts on, and its authored value. */
+export const FIXTURE_TOKEN_NAME = "--clay";
+export const FIXTURE_TOKEN_VALUE = "#c87c5e";
+/** {@link FIXTURE_TOKEN_VALUE} as Chromium reports it from `getComputedStyle`. */
+export const FIXTURE_TOKEN_RGB = "rgb(200, 124, 94)";
+
+/** The `:root` block every token-consuming card inlines verbatim. */
+const FIXTURE_TOKEN_BLOCK = `:root{${FIXTURE_TOKEN_NAME}:${FIXTURE_TOKEN_VALUE}}`;
+
+/** The kit's on-disk token stylesheet — what a real kit keeps under `tokens/`. */
+const FIXTURE_TOKENS_CSS = `/* Fixture kit design tokens. */\n${FIXTURE_TOKEN_BLOCK}\n`;
+
+/**
+ * A card whose rendered appearance DEPENDS on a design token, authored the only
+ * way that survives all three vehicles: the token block is **inlined**, never
+ * `<link>`-ed.
+ *
+ * There is no href that works everywhere, which is the whole point of this
+ * fixture — measured in a real browser against each transport:
+ *
+ * | reference form                    | file:// | Vite root | ui:// `data:` | ui:// broker |
+ * | --------------------------------- | ------- | --------- | ------------- | ------------ |
+ * | `href="/tokens/colors.css"`       | ✗       | ✓         | ✗             | ✗            |
+ * | `href="../../../tokens/…"`        | ✓       | ✓         | ✗             | ✓            |
+ * | inlined `<style>` (this)          | ✓       | ✓         | ✓             | ✓            |
+ *
+ * A root-absolute href resolves against the FILESYSTEM root under `file://`
+ * (`file:///tokens/colors.css`), so the stylesheet silently 404s and every
+ * `var(--clay)` falls back to its initial value — a card that still reports the
+ * right `(group, name, viewport)` identity while rendering as an empty box.
+ * The solo-dev `ui://` tier is harsher still: cards travel as
+ * `data:text/html;base64,…` iframes (`grid-resource.ts`'s `rewriteCardPaths`),
+ * and a `data:` document has an opaque origin and no base URL, so NO relative
+ * subresource resolves at all.
+ *
+ * This is the same rule `llm/prompts/generate-component.system.md` states for
+ * generated cards ("Inline the CSS in a `<style>` block", "Honor the kit's
+ * tokens … as literal CSS values in the preview, since it cannot import the
+ * kit's stylesheet") — encoded here as something a test can actually fail on.
+ */
+export function tokenCardHtml(component: ViewerFixtureComponent): string {
+  const { group, name, viewport } = component;
+  return (
+    `<!-- @genie group="${group}" viewport="${viewport}" name="${name}" -->\n` +
+    `<!doctype html>\n<html lang="en"><head><meta charset="utf-8" />` +
+    `<style>${FIXTURE_TOKEN_BLOCK}` +
+    `body{margin:0;display:grid;place-items:center;height:100vh;font-family:system-ui}` +
+    `#swatch{background:var(${FIXTURE_TOKEN_NAME});color:#fff;` +
+    `border:0;padding:12px 24px;border-radius:8px;font-size:16px}</style>` +
+    `</head><body><button id="swatch" data-component="${name}">${name}</button>` +
+    `<script>document.body.dataset.previewReady="true"</script></body></html>\n`
+  );
+}
+
+/** The one-component kit the cross-vehicle token check renders. */
+export const TOKEN_FIXTURE_COMPONENT: ViewerFixtureComponent = {
+  group: "actions",
+  name: "TokenSwatch",
+  viewport: "480x240",
+  html: tokenCardHtml({ group: "actions", name: "TokenSwatch", viewport: "480x240" }),
+};
 
 /** One card's cross-vehicle identity — the G-5 invariant (see module header). */
 export interface CardIdentity {
@@ -116,6 +191,11 @@ function previewHtml(group: string, name: string, viewport: string): string {
   // The marker line MUST match validate/marker.ts's MARKER_REGEX (group first);
   // the body is a trivial, self-contained document (no external assets) so a
   // card renders identically under file:// (no server to resolve `/tokens/...`).
+  //
+  // Self-containment is the reason these cards render everywhere — but because
+  // nothing here depends on a design token, a card whose stylesheet silently
+  // failed to load would still satisfy every identity assertion in this suite.
+  // {@link tokenCardHtml} is the component that closes that gap.
   return (
     `<!-- @genie group="${group}" viewport="${viewport}" name="${name}" -->\n` +
     `<!doctype html>\n<html lang="en"><head><meta charset="utf-8" />` +
@@ -138,11 +218,22 @@ export async function createViewerFixture(
   const kitId = FIXTURE_KIT_ID;
   const kitDir = join(kitsRoot, kitId);
 
-  for (const { group, name, viewport } of components) {
+  for (const component of components) {
+    const { group, name, viewport, html } = component;
     const dir = join(kitDir, "components", group, name);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, `${name}.html`), previewHtml(group, name, viewport), "utf8");
+    await writeFile(join(dir, `${name}.html`), html ?? previewHtml(group, name, viewport), "utf8");
   }
+
+  // A real kit keeps its design tokens under `tokens/` (viewer.js's
+  // TOKENS_DIR_PREFIX). Written so the fixture mirrors that layout — but NOT
+  // linked by any card: `tokenCardHtml` inlines the same values, because no
+  // href resolves across all three vehicles (see its table). Its presence is
+  // what makes the G-5 check meaningful: a card that reached for this file
+  // instead of inlining it would still render here on `file://`/Vite and go
+  // blank under the solo-dev `data:` transport.
+  await mkdir(join(kitDir, dirname(FIXTURE_TOKENS_PATH)), { recursive: true });
+  await writeFile(join(kitDir, FIXTURE_TOKENS_PATH), FIXTURE_TOKENS_CSS, "utf8");
 
   // A scaffolded kit (DRO-764) has the viewer shell as its root index.html.
   await copyViewerShell(kitDir);
