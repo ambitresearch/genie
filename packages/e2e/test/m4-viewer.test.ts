@@ -87,6 +87,7 @@ import {
   launchBrowser,
   readCardIdentities,
   readViewerAsset,
+  revealCardGrid,
   serveDir,
   startUiVehicle,
   startViteVehicle,
@@ -710,8 +711,14 @@ async function readCardPaths(page: Page): Promise<string[]> {
  * this guards leaves the bytes untouched and identical across vehicles; only
  * the resolution differs. Waits on the preview's own `data-preview-ready`
  * marker first so the styles are measured against a settled document.
+ *
+ * Reveals the grid before reading anything: the viewer keeps `#grid` hidden and
+ * its cards `loading="lazy"`, so an http-transported preview never loads while
+ * it is hidden — and `file://`/`data:` ones load anyway. See
+ * {@link revealCardGrid} for the per-transport measurements.
  */
 async function readTokenState(page: Page): Promise<{ token: string; background: string }> {
+  await revealCardGrid(page);
   const frame = page.locator("iframe").first().contentFrame();
   // Bounded explicitly. Without this, a frame that never resolves makes every
   // `expect.poll` attempt sit on Playwright's 30s default auto-wait, so the

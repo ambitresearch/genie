@@ -309,6 +309,50 @@ export async function readCardIdentities(page: Page): Promise<CardIdentity[]> {
   return raw.sort(compareIdentity);
 }
 
+/**
+ * Make the card grid a RENDERED subtree, so its lazy preview iframes are
+ * eligible to load. Required before anything reads a card's rendered state; a
+ * no-op for anything that only reads the viewer's chrome.
+ *
+ * The shipped shell (`static/index.html`) ships `#grid` with a `hidden`
+ * attribute inside the likewise-`hidden` `[data-route-view="browse"]` section,
+ * and `viewer.js` keeps it that way: Browse "re-projects the grid into the
+ * workbench on every update" (see `initBrowse`), so `#grid` is a HIDDEN MIRROR
+ * of the visible `#browse-workbench` on every route, not just `generate`. This
+ * clears exactly the two `hidden` attributes `initBrowse`'s own fallback path
+ * clears when the workbench is unavailable — a real shell state, not a
+ * test-only DOM edit.
+ *
+ * ── Why this cannot be skipped, measured per transport ──────────────────────
+ * `createCard` marks every preview iframe `loading="lazy"`, and a lazy frame in
+ * a `display:none` subtree never becomes viewport-eligible, so it never loads.
+ * Chromium only applies lazy-loading to NETWORK-fetched frames, which splits
+ * the three vehicles apart:
+ *
+ * | card transport            | loads while `#grid` is hidden? |
+ * | ------------------------- | ------------------------------ |
+ * | `file://` preview         | ✓ (lazy-loading does not apply) |
+ * | `data:` preview (`ui://`) | ✓ (lazy-loading does not apply) |
+ * | `http://` preview (Vite)  | ✗ — frame URL stays `""`        |
+ *
+ * That asymmetry is a trap for exactly this suite: a rendered-state assertion
+ * that forgets to reveal the grid still PASSES on `file://` and `ui://` — while
+ * measuring a frame that only loaded because its transport ignores the
+ * viewer's own laziness — and fails on Vite alone, which reads as "Vite is
+ * broken" rather than "the grid was never shown."
+ */
+export async function revealCardGrid(page: Page): Promise<void> {
+  // Reached through `body.ownerDocument` rather than the `document` global:
+  // this package's tsconfig carries no DOM lib, so an evaluate body may only
+  // use types reachable from its element argument — the same route
+  // `readCardIdentities` and `readTokenState` already take.
+  await page.locator("body").evaluate((body) => {
+    const doc = body.ownerDocument;
+    doc.querySelector("[data-route-view='browse']")?.removeAttribute("hidden");
+    doc.getElementById("grid")?.removeAttribute("hidden");
+  });
+}
+
 // ── Vehicle (b): the real Vite dev server ───────────────────────────────────
 
 /** A booted Vite viewer for the fixture kit; `close()` tears it down. */
