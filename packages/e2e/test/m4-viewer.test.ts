@@ -22,6 +22,10 @@
  *   AC4 — canonical card identity and kit-relative `data-path` agree across ✅
  *         all vehicles. The ui:// tier keeps its data/absolute transport URL
  *         in `path` and preserves the compiler path separately as sourcePath.
+ *         Identity is manifest METADATA, so it agrees even when a card's own
+ *         CSS never loaded; the token check below covers the rendered half —
+ *         a card whose appearance depends on a design token must resolve that
+ *         token in all three vehicles, measured from inside the card frame.
  *   AC7 — screenshots of all three vehicles, written to reports/m4-viewer/. ✅
  *   AC8 — the whole suite runs well under 90 s (a soft budget is asserted). ✅
  *
@@ -59,7 +63,7 @@
  * less machine stays green; CI's dedicated `viewer-e2e` job sets
  * `GENIE_REQUIRE_VIEWER_E2E=1` so a broken install there fails loudly instead.
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -74,6 +78,10 @@ import {
   createViewerFixture,
   expectedIdentities,
   FIXTURE_COMPONENTS,
+  FIXTURE_TOKEN_NAME,
+  FIXTURE_TOKEN_RGB,
+  FIXTURE_TOKEN_VALUE,
+  FIXTURE_TOKENS_PATH,
   identityKey,
   isChromiumAvailable,
   launchBrowser,
@@ -82,6 +90,7 @@ import {
   serveDir,
   startUiVehicle,
   startViteVehicle,
+  TOKEN_FIXTURE_COMPONENT,
   type CardIdentity,
   type ViewerFixture,
   type ViewerFixtureComponent,
@@ -550,6 +559,110 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
     }
   }, 45_000);
 
+  // ── G-5, the rendered half: do the kit's TOKENS actually resolve? ──────────
+  //
+  // The identity assertion above compares what the viewer's own chrome paints
+  // (group / name / viewport), which is manifest metadata. A card whose
+  // stylesheet never loaded still reports a perfect identity while rendering as
+  // an empty box, so "byte-identical" and "identical bytes rendered" are not
+  // the same claim. This closes the second half: navigate INTO the card frame
+  // and read the computed custom property back out of a live document.
+  it("G-5 — a token-driven card resolves its custom properties in all three vehicles", async () => {
+    const tokens = await createViewerFixture([TOKEN_FIXTURE_COMPONENT]);
+    const fileVehicle = await buildFileVehicle(tokens);
+    const vite = await startViteVehicle(tokens.kitDir);
+    const ui = await startUiVehicle(tokens);
+    const page = await browser.newPage();
+
+    try {
+      await gotoAndWaitForGrid(page, fileVehicle.url);
+      const fileState = await readTokenState(page);
+
+      await gotoAndWaitForGrid(page, vite.url);
+      const localhostState = await readTokenState(page);
+
+      await gotoAndWaitForGrid(page, ui.url);
+      const uiState = await readTokenState(page);
+
+      // The token resolves to its authored value, and the property that
+      // CONSUMES it actually paints — `var(--clay)` on an undefined custom
+      // property is not an error, it silently yields the initial value
+      // (`background-color: rgba(0, 0, 0, 0)`), which is exactly how this bug
+      // presents: a transparent card, no console error, a valid manifest.
+      for (const [vehicle, state] of [
+        ["file://", fileState],
+        ["localhost", localhostState],
+        ["ui://", uiState],
+      ] as const) {
+        expect(state, vehicle).toEqual({
+          token: FIXTURE_TOKEN_VALUE,
+          background: FIXTURE_TOKEN_RGB,
+        });
+      }
+
+      // The `file://` vehicle root carries `components/` but NOT `tokens/`
+      // (buildFileVehicle copies only the previews). That the card still
+      // painted proves it carries its own token values rather than reaching
+      // for a sibling file that this vehicle cannot serve.
+      const fileRoot = dirname(fileVehicle.url.slice("file://".length));
+      await expect(stat(join(fileRoot, FIXTURE_TOKENS_PATH))).rejects.toThrow();
+    } finally {
+      await page.close();
+      await vite.close();
+      await ui.close();
+      await tokens.cleanup();
+    }
+  }, 45_000);
+
+  // Negative control — without this, the assertion above could pass for a card
+  // that happens to work rather than one that is vehicle-independent. Pins the
+  // reported failure: a ROOT-ABSOLUTE token href resolves against the
+  // filesystem root under `file://` (`file:///tokens/colors.css`), so the
+  // stylesheet never loads and the button paints transparent.
+  it("G-5 — a root-absolute token href silently fails to resolve under file://", async () => {
+    const linked = await createViewerFixture([
+      {
+        group: "actions",
+        name: "LinkedSwatch",
+        viewport: "480x240",
+        html:
+          `<!-- @genie group="actions" viewport="480x240" name="LinkedSwatch" -->\n` +
+          `<!doctype html>\n<html lang="en"><head><meta charset="utf-8" />` +
+          `<link rel="stylesheet" href="/${FIXTURE_TOKENS_PATH}" />` +
+          `</head><body><button id="swatch" style="background:var(${FIXTURE_TOKEN_NAME})">` +
+          `LinkedSwatch</button>` +
+          `<script>document.body.dataset.previewReady="true"</script></body></html>\n`,
+      },
+    ]);
+    const fileVehicle = await buildFileVehicle(linked);
+    const page = await browser.newPage();
+
+    try {
+      await gotoAndWaitForGrid(page, fileVehicle.url);
+      const state = await readTokenState(page);
+      expect(state.token).toBe("");
+      expect(state.background).toBe("rgba(0, 0, 0, 0)");
+
+      // The href resolves off the FILESYSTEM root, not the kit — the root cause.
+      // Resolved against the document's own base URI rather than read off the
+      // element, so the assertion states the rule (how a browser resolves a
+      // root-absolute href under `file://`) instead of trusting a DOM property.
+      const resolved = await page
+        .locator("iframe")
+        .first()
+        .contentFrame()
+        .locator("link[rel=stylesheet]")
+        .evaluate((link) => {
+          const href = link.getAttribute("href") ?? "";
+          return new URL(href, link.ownerDocument.baseURI).href;
+        });
+      expect(resolved).toBe(`file:///${FIXTURE_TOKENS_PATH}`);
+    } finally {
+      await page.close();
+      await linked.cleanup();
+    }
+  }, 30_000);
+
   // ── AC8 — the whole gate stays well under the 90 s budget ──────────────────
   it("AC8 — the suite completes well under 90 s", () => {
     const elapsedMs = performanceNow() - suiteStart;
@@ -573,6 +686,31 @@ async function readCardPaths(page: Page): Promise<string[]> {
   return page
     .locator("iframe[data-path]")
     .evaluateAll((frames) => frames.map((frame) => frame.getAttribute("data-path") ?? "").sort());
+}
+
+/**
+ * Read the first card's token state from INSIDE its iframe: the computed value
+ * of the kit's custom property, and the `background-color` that consumes it.
+ *
+ * Deliberately reads a COMPUTED style rather than the card's bytes — the bug
+ * this guards leaves the bytes untouched and identical across vehicles; only
+ * the resolution differs. Waits on the preview's own `data-preview-ready`
+ * marker first so the styles are measured against a settled document.
+ */
+async function readTokenState(page: Page): Promise<{ token: string; background: string }> {
+  const frame = page.locator("iframe").first().contentFrame();
+  await expect.poll(() => frame.locator("body").getAttribute("data-preview-ready")).toBe("true");
+  return frame.locator("#swatch").evaluate((swatch, name) => {
+    const view = swatch.ownerDocument.defaultView;
+    if (view === null) throw new Error("card frame has no default view");
+    return {
+      token: view
+        .getComputedStyle(swatch.ownerDocument.documentElement)
+        .getPropertyValue(name)
+        .trim(),
+      background: view.getComputedStyle(swatch).backgroundColor,
+    };
+  }, FIXTURE_TOKEN_NAME);
 }
 
 /** Write a full-page screenshot into the report dir (AC7). */
