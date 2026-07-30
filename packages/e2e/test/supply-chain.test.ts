@@ -667,6 +667,85 @@ fi
     expect(generator).toContain('"--strict"');
   });
 
+  it("excludes optional peers from the shipped runtime closure, and only optional ones", () => {
+    // #311 / DRO-1363. The closure folded EVERY `peerDependencies` entry into
+    // the set of runtime dependencies it required to be present in the
+    // workspace BOM. Correct for a required peer; wrong for an optional one,
+    // which is precisely the dependency a consumer install does not contain.
+    // Declaring the viewer as an optional peer therefore hard-failed the
+    // publish dry-run on a package the artifact does not ship — and, had it
+    // resolved, would have misdescribed a signed SBOM.
+    //
+    // The pre-existing closure test above uses a manifest with no peers at all,
+    // so it passed either way. This is the case that pins the behaviour.
+    const optionalPeer = "@ambitresearch/genie-viewer";
+    const manifest = {
+      name: "@ambitresearch/example",
+      version: "1.2.3",
+      dependencies: { direct: "1.0.0" },
+      peerDependencies: { "required-peer": "2.0.0", [optionalPeer]: ">=0.2.0" },
+      peerDependenciesMeta: { [optionalPeer]: { optional: true } },
+    };
+    const rootRef = "pkg:npm/@ambitresearch/example@1.2.3";
+    const directRef = "pkg:npm/direct@1.0.0";
+    const requiredPeerRef = "pkg:npm/required-peer@2.0.0";
+    const optionalPeerRef = `pkg:npm/${optionalPeer}@0.2.0`;
+    const component = (ref: string, group: string, name: string, version: string) => ({
+      "bom-ref": ref,
+      purl: ref,
+      group,
+      name,
+      version,
+      type: "library",
+    });
+    const workspaceBom = {
+      metadata: {
+        tools: { components: [] },
+        component: {
+          components: [component(rootRef, "@ambitresearch", "example", "1.2.3")],
+        },
+      },
+      // No component record for the optional peer — the real shape, because a
+      // workspace-linked optional peer is not a resolved registry package. That
+      // absence is what threw "has no component record" before the fix.
+      components: [
+        component(directRef, "", "direct", "1.0.0"),
+        component(requiredPeerRef, "", "required-peer", "2.0.0"),
+      ],
+      dependencies: [
+        { ref: rootRef, dependsOn: [directRef, requiredPeerRef, optionalPeerRef] },
+        { ref: directRef, dependsOn: [] },
+        { ref: requiredPeerRef, dependsOn: [] },
+      ],
+    };
+
+    const bom = selectPackageClosure(workspaceBom, manifest);
+    const refs = bom.components.map((entry: { "bom-ref": string }) => entry["bom-ref"]);
+    expect(refs).toEqual([directRef, requiredPeerRef].sort());
+    // Named nowhere in the document, not merely absent from the component list:
+    // the artifact genuinely does not ship it.
+    expect(JSON.stringify(bom)).not.toContain(optionalPeer);
+
+    // The optional flag is doing the work — drop it and the old failure returns.
+    expect(() =>
+      selectPackageClosure(workspaceBom, { ...manifest, peerDependenciesMeta: {} }),
+    ).toThrow(new RegExp(`${optionalPeerRef.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`));
+
+    // …and required peers still bind, so the filter did not simply drop peers.
+    expect(() =>
+      selectPackageClosure(
+        {
+          ...workspaceBom,
+          dependencies: [
+            { ref: rootRef, dependsOn: [directRef] },
+            { ref: directRef, dependsOn: [] },
+          ],
+        },
+        manifest,
+      ),
+    ).toThrow(/missing runtime dependencies for @ambitresearch\/example: required-peer/);
+  });
+
   it("fails closed when the workspace SBOM is stale or incomplete", () => {
     const manifest = {
       name: "@ambitresearch/example",

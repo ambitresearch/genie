@@ -56,6 +56,17 @@ app to open.
    **`@ambitresearch/genie-viewer`** — both scoped, public, and published with npm
    provenance. npm provenance requires this source repository to be public before the
    first live publish. See `.github/workflows/release.yml` (DRO-278 / M5-06).
+8. **Anything the server lazily `import()`s is an OPTIONAL PEER, never a runtime
+   dependency.** Today: `@ambitresearch/genie-viewer` (`preview`) and `playwright`
+   (`refine`). A devDependency is invisible to consumers, so the import can only ever
+   resolve inside this workspace — that was #311, where `preview` silently fell back to
+   `file://` for every npm user. `dependencies`/`optionalDependencies` would fix
+   reachability by pulling the whole preview framework into every install, breaking
+   rule 6's spirit and the `.mcpb` size budget. `peerDependencies` +
+   `peerDependenciesMeta.optional` is the only npm relationship meaning "the server can
+   drive this but will not install it for you." When you add a lazy import, add it to
+   `packages/server/test/optional-peers.test.ts` — and remember optional peers are
+   excluded from the published SBOM's runtime closure (`scripts/generate-package-sbom.mjs`).
 
 ## Conventions
 

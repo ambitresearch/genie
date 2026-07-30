@@ -20,18 +20,26 @@
  * would satisfy "reachable" while breaking both, so it is rejected too.
  */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, describe, expect, it } from "vitest";
 
+import { isModuleNotFoundFor } from "../src/tools/preview.js";
+// The layout plumbing lives in `scripts/` rather than here on purpose; see the
+// header of that module for why.
+import { consumerModulePath, installPackedPackage } from "../scripts/consumer-install-layout.mjs";
+
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const serverDir = join(repoRoot, "packages", "server");
+const viewerDir = join(repoRoot, "packages", "viewer");
 const serverPackagePath = join(serverDir, "package.json");
 
 interface PackageManifest {
+  name: string;
+  version: string;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
@@ -153,4 +161,116 @@ describe("the packed consumer tarball keeps the optional peers", () => {
       expect(packedManifest.dependencies?.[name]).toBeUndefined();
     }
   });
+});
+
+/**
+ * The manifest checks above assert what the package DECLARES. This one asserts
+ * what Node actually DOES, from inside a real consumer layout — the only place
+ * standing outside this workspace, which is exactly the vantage point #311 had
+ * no check from.
+ *
+ * Deliberately hermetic: it packs local tarballs and never contacts a registry,
+ * so it can gate every CI run rather than only release. It also needs no build
+ * — the axis under test is whether the PACKAGE is found, which Node answers
+ * from `package.json` alone, and both directions are asserted on the specific
+ * error rather than on "it threw." (An earlier draft ran `pnpm build` inside
+ * the test to avoid a feared vacuous pass; that wrote `dist/` into the working
+ * tree and silently un-skipped `describe.skipIf(hasBuiltServer)` suites
+ * elsewhere, making the run order-dependent. The assertions below hold built or
+ * unbuilt, so the side effect bought nothing.)
+ *
+ * Scoped to the viewer because it is the peer this repo can pack. `playwright`
+ * has the identical defect and the identical fix, but it is a third-party
+ * package with no workspace tarball to lay down; the declaration invariants
+ * above are what cover it.
+ */
+describe("a real consumer install can reach the viewer (hermetic — no registry)", () => {
+  const viewerPackage = JSON.parse(
+    readFileSync(join(viewerDir, "package.json"), "utf8"),
+  ) as PackageManifest;
+  const viewerName = "@ambitresearch/genie-viewer";
+
+  let consumer: string | undefined;
+
+  afterAll(() => {
+    if (consumer !== undefined) rmSync(consumer, { recursive: true, force: true });
+  });
+
+  it(
+    "resolves the viewer specifier only once the viewer is installed alongside",
+    () => {
+      consumer = mkdtempSync(join(tmpdir(), "genie-consumer-"));
+      installPackedPackage(serverDir, serverPackage.name, consumer);
+
+      // Survives packing: `npm pack` could not have stripped the declaration on
+      // the way out. (`npm` does rewrite manifests silently — release.yml greps
+      // the publish log for "auto-corrected" for exactly that reason.)
+      const installed = JSON.parse(
+        readFileSync(consumerModulePath(consumer, serverPackage.name, "package.json"), "utf8"),
+      ) as PackageManifest;
+      expect(installed.peerDependenciesMeta?.[viewerName]?.optional).toBe(true);
+
+      // The probe sits at the depth `dist/tools/preview.js` sits at, so Node's
+      // upward `node_modules` walk starts exactly where the real lazy import's
+      // does. It imports the bare specifier directly rather than loading
+      // `preview.js`, which would drag in the server's own runtime deps that a
+      // registry-free layout does not have — resolution is the only axis here.
+      const probePath = consumerModulePath(
+        consumer,
+        serverPackage.name,
+        "dist",
+        "tools",
+        "peer-probe.mjs",
+      );
+      mkdirSync(dirname(probePath), { recursive: true });
+      writeFileSync(
+        probePath,
+        [
+          `const specifier = ${JSON.stringify(viewerName)};`,
+          `try {`,
+          `  await import(specifier);`,
+          `  console.log(JSON.stringify({ resolved: true }));`,
+          `} catch (error) {`,
+          `  console.log(JSON.stringify({`,
+          `    resolved: false, code: error?.code, message: String(error?.message),`,
+          `  }));`,
+          `}`,
+        ].join("\n"),
+        "utf8",
+      );
+      const probe = (): { resolved: boolean; code?: string; message?: string } =>
+        JSON.parse(
+          execFileSync("node", [probePath], { encoding: "utf8", timeout: 120_000, stdio: "pipe" })
+            .trim()
+            .split("\n")
+            .at(-1) as string,
+        ) as { resolved: boolean; code?: string; message?: string };
+
+      // Server alone — #311 reproduced against a real packed install, not
+      // simulated. `isModuleNotFoundFor` must recognise Node's actual error,
+      // because that classification is what earns the user the install hint
+      // instead of the dead-end "installed but could not start" message.
+      const serverOnly = probe();
+      expect(serverOnly.resolved).toBe(false);
+      expect(
+        isModuleNotFoundFor({ code: serverOnly.code, message: serverOnly.message }, viewerName),
+        `unclassified: ${serverOnly.code} ${serverOnly.message}`,
+      ).toBe(true);
+
+      // Viewer installed alongside, exactly as `npm i -g <server> <viewer>`
+      // lays it out: both under one `node_modules/@ambitresearch/`, which the
+      // bare specifier resolves. This is what makes the documented remedy real
+      // rather than aspirational.
+      installPackedPackage(viewerDir, viewerPackage.name, consumer);
+      const withViewer = probe();
+      // The viewer's own runtime deps (vite, ws, …) are absent from this
+      // registry-free layout, so the import may still fail — but never again
+      // for the reason that the viewer package itself cannot be found.
+      expect(
+        isModuleNotFoundFor({ code: withViewer.code, message: withViewer.message }, viewerName),
+        `still reported missing: ${withViewer.code} ${withViewer.message}`,
+      ).toBe(false);
+    },
+    5 * 60_000,
+  );
 });
