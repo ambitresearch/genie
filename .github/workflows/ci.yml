@@ -516,7 +516,8 @@ jobs:
             echo "Skipping Claude Desktop live-generation smoke: LLM secrets are not configured."
             exit 0
           fi
-          pnpm --filter @ambitresearch/genie-viewer build
+          # The viewer build is a prerequisite of test:e2e:claude-desktop and
+          # lives in that package script, so it is not repeated here.
           pnpm --filter @ambitresearch/genie build
           GENIE_REQUIRE_CLAUDE_DESKTOP_SMOKE=1 \
             CI=false VITEST_JUNIT=0 pnpm --filter @ambitresearch/genie-e2e test:e2e:claude-desktop
