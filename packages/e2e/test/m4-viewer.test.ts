@@ -85,6 +85,7 @@ import {
   identityKey,
   isChromiumAvailable,
   launchBrowser,
+  linkedTokenCardHtml,
   readCardIdentities,
   readViewerAsset,
   revealCardGrid,
@@ -631,52 +632,84 @@ describe.skipIf(!chromiumAvailable)("M4-10 viewer E2E — three vehicles (DRO-27
 
   // Negative control — without this, the assertion above could pass for a card
   // that happens to work rather than one that is vehicle-independent. Pins the
-  // reported failure: a ROOT-ABSOLUTE token href resolves against the
-  // filesystem root under `file://` (`file:///tokens/colors.css`), so the
-  // stylesheet never loads and the button paints transparent.
-  it("G-5 — a root-absolute token href silently fails to resolve under file://", async () => {
-    const linked = await createViewerFixture([
-      {
-        group: "actions",
-        name: "LinkedSwatch",
-        viewport: "480x240",
-        html:
-          `<!-- @genie group="actions" viewport="480x240" name="LinkedSwatch" -->\n` +
-          `<!doctype html>\n<html lang="en"><head><meta charset="utf-8" />` +
-          `<link rel="stylesheet" href="/${FIXTURE_TOKENS_PATH}" />` +
-          `</head><body><button id="swatch" style="background:var(${FIXTURE_TOKEN_NAME})">` +
-          `LinkedSwatch</button>` +
-          `<script>document.body.dataset.previewReady="true"</script></body></html>\n`,
-      },
-    ]);
-    const fileVehicle = await buildFileVehicle(linked);
-    const page = await browser.newPage();
+  // reported failure: the SAME swatch card with its token block delegated to a
+  // root-absolute `<link>` instead of inlined, so the stylesheet never loads and
+  // the button paints transparent.
+  //
+  // The control is authored through the same builder as the positive fixture
+  // (`linkedTokenCardHtml`), varying only the href form — the reason it can run
+  // on more than one vehicle at all. See that function for the measurement of
+  // what an inline `style=` attribute does to the `ui://` leg instead.
+  //
+  // Two legs, not three: `file://` resolves a root-absolute href against the
+  // FILESYSTEM root and the embedded tier's `data:` frames have no base URL to
+  // resolve against at all, but a Vite dev server serves the kit AS its web
+  // root, where `/tokens/colors.css` legitimately loads. That one vehicle
+  // succeeding is precisely why the card is broken — a card that renders for
+  // the developer who wrote it and nowhere else.
+  describe("G-5 — a root-absolute token href does not resolve off the web root", () => {
+    let linked: ViewerFixture;
 
-    try {
-      await gotoAndWaitForGrid(page, fileVehicle.url);
-      const state = await readTokenState(page);
-      expect(state.token).toBe("");
-      expect(state.background).toBe("rgba(0, 0, 0, 0)");
+    beforeAll(async () => {
+      linked = await createViewerFixture([
+        {
+          group: "actions",
+          name: "LinkedSwatch",
+          viewport: "480x240",
+          html: linkedTokenCardHtml(
+            { group: "actions", name: "LinkedSwatch", viewport: "480x240" },
+            `/${FIXTURE_TOKENS_PATH}`,
+          ),
+        },
+      ]);
+    }, 60_000);
 
-      // The href resolves off the FILESYSTEM root, not the kit — the root cause.
-      // Resolved against the document's own base URI rather than read off the
-      // element, so the assertion states the rule (how a browser resolves a
-      // root-absolute href under `file://`) instead of trusting a DOM property.
-      const resolved = await page
-        .locator("iframe")
-        .first()
-        .contentFrame()
-        .locator("link[rel=stylesheet]")
-        .evaluate((link) => {
-          const href = link.getAttribute("href") ?? "";
-          return new URL(href, link.ownerDocument.baseURI).href;
-        });
-      expect(resolved).toBe(`file:///${FIXTURE_TOKENS_PATH}`);
-    } finally {
-      await page.close();
-      await linked.cleanup();
-    }
-  }, 30_000);
+    afterAll(async () => {
+      await linked?.cleanup();
+    });
+
+    /** The unresolved-token rendering: `var(--clay)` falls back to `initial`. */
+    const UNRESOLVED = { token: "", background: "rgba(0, 0, 0, 0)" };
+
+    it("silently fails under file:// (href resolves off the filesystem root)", async () => {
+      const fileVehicle = await buildFileVehicle(linked);
+      const page = await browser.newPage();
+      try {
+        await gotoAndWaitForGrid(page, fileVehicle.url);
+        expect(await readTokenState(page)).toEqual(UNRESOLVED);
+
+        // The href resolves off the FILESYSTEM root, not the kit — the root
+        // cause. Resolved against the document's own base URI rather than read
+        // off the element, so the assertion states the rule (how a browser
+        // resolves a root-absolute href under `file://`) instead of trusting a
+        // DOM property.
+        const resolved = await page
+          .locator("iframe")
+          .first()
+          .contentFrame()
+          .locator("link[rel=stylesheet]")
+          .evaluate((link) => {
+            const href = link.getAttribute("href") ?? "";
+            return new URL(href, link.ownerDocument.baseURI).href;
+          });
+        expect(resolved).toBe(`file:///${FIXTURE_TOKENS_PATH}`);
+      } finally {
+        await page.close();
+      }
+    }, 30_000);
+
+    it("silently fails under ui:// (a data: frame has no base URL)", async () => {
+      const ui = await startUiVehicle(linked);
+      const page = await browser.newPage();
+      try {
+        await gotoAndWaitForGrid(page, ui.url);
+        expect(await readTokenState(page)).toEqual(UNRESOLVED);
+      } finally {
+        await page.close();
+        await ui.close();
+      }
+    }, 30_000);
+  });
 
   // ── AC8 — the whole gate stays well under the 90 s budget ──────────────────
   it("AC8 — the suite completes well under 90 s", () => {
