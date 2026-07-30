@@ -99,8 +99,17 @@ export const FIXTURE_KIT_ID = "acme-kit";
 
 // ── Design tokens: the G-5 cross-vehicle resolution check ───────────────────
 
-/** Kit-relative path of the fixture's token source — the `tokens/` convention
- * `viewer.js`'s `TOKENS_DIR_PREFIX` and every scaffolded kit already use. */
+/**
+ * Kit-relative path of the fixture's token source — the SUPPORTED token-source
+ * convention, i.e. the one `viewer.js` resolves against (`TOKENS_DIR_PREFIX`)
+ * and `watch/watcher.ts` arms a watch group for.
+ *
+ * Deliberately not "what every scaffolded kit has": `LocalFsKitStore.createKit`
+ * writes only `.kit.json`, the viewer shell and an empty `.genie/manifest.json`
+ * — `tokens/` does not exist until the first `write_files`/`conjure` lands,
+ * which is exactly the fresh-kit case `watcher.ts` calls out and pre-creates
+ * directories for.
+ */
 export const FIXTURE_TOKENS_PATH = "tokens/colors.css";
 
 /** The custom property the token check asserts on, and its authored value. */
@@ -225,8 +234,9 @@ export async function createViewerFixture(
     await writeFile(join(dir, `${name}.html`), html ?? previewHtml(group, name, viewport), "utf8");
   }
 
-  // A real kit keeps its design tokens under `tokens/` (viewer.js's
-  // TOKENS_DIR_PREFIX). Written so the fixture mirrors that layout — but NOT
+  // A populated kit keeps its design tokens under `tokens/` (viewer.js's
+  // TOKENS_DIR_PREFIX); `create_kit` does not scaffold it, the first
+  // `write_files`/`conjure` does. Written so the fixture mirrors that — but NOT
   // linked by any card: `tokenCardHtml` inlines the same values, because no
   // href resolves across all three vehicles (see its table). Its presence is
   // what makes the G-5 check meaningful: a card that reached for this file
