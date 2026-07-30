@@ -60,6 +60,77 @@ export const PREVIEW_TOOL_NAME = "mcp__genie__preview";
 export const DEFAULT_VIEWER_PORT = 5173;
 
 /**
+ * The optional viewer package, and how a user obtains it.
+ *
+ * `@ambitresearch/genie-viewer` is declared in this package's
+ * `peerDependencies` with `peerDependenciesMeta.optional: true` — the only npm
+ * relationship that means "the server can drive this, but will not install it
+ * for you." A plain `dependencies`/`optionalDependencies` edge would pull Vite
+ * into every server install, which contradicts the server core's independence
+ * from the preview framework (CLAUDE.md; RFC §4) and the `.mcpb` bundle's size
+ * budget, which asserts the viewer is *absent* from the bundle.
+ *
+ * The consequence is that `npm i -g @ambitresearch/genie` alone can never
+ * resolve the specifier below, so the boot failure must say so and name the
+ * remedy — see {@link describeViewerFailure}. A side-by-side install
+ * (`npm i -g @ambitresearch/genie @ambitresearch/genie-viewer`) puts both under
+ * the same `node_modules/@ambitresearch/`, which the bare specifier resolves.
+ */
+export const VIEWER_PACKAGE_NAME = "@ambitresearch/genie-viewer";
+
+/** The actionable half of the not-installed message; also asserted by the docs test. */
+export const VIEWER_INSTALL_HINT = `install it alongside genie with \`npm i -g ${VIEWER_PACKAGE_NAME}\`, or run it directly with \`npx ${VIEWER_PACKAGE_NAME} <kit-dir>\``;
+
+/** Which half of the viewer boot failed. */
+export type ViewerUnavailableReason = "not-installed" | "boot-failed";
+
+/**
+ * A viewer boot failure that remembers WHICH half failed. "not-installed" is
+ * the only reason with a remedy the caller can act on, so it must not be
+ * flattened into the generic case on the way to the user-facing text.
+ */
+export class ViewerUnavailableError extends Error {
+  constructor(
+    readonly reason: ViewerUnavailableReason,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "ViewerUnavailableError";
+  }
+}
+
+/**
+ * True when Node is reporting that the OPTIONAL viewer package itself is
+ * absent, as opposed to the package being present but unloadable (a broken
+ * install, a missing transitive dependency, a syntax error inside the viewer).
+ * Both surface as import rejections, but only the first is fixed by installing
+ * it — promising an install for the second would send the user down a dead end.
+ * Node names the unresolved specifier in the message, and that is precisely
+ * what separates "the viewer is missing" from "something the viewer imports is
+ * missing," so the specifier is matched rather than the error code alone.
+ */
+export function isViewerPackageMissing(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  if (code !== "ERR_MODULE_NOT_FOUND" && code !== "MODULE_NOT_FOUND") return false;
+  return typeof message === "string" && message.includes(`'${VIEWER_PACKAGE_NAME}'`);
+}
+
+/**
+ * The user-facing sentence for a failed viewer boot. A missing optional package
+ * is the one case with a remedy, so it names the package and the command;
+ * every other failure (port in use, invalid kit dir, broken viewer install)
+ * keeps the generic sentence.
+ */
+export function describeViewerFailure(error: unknown): string {
+  if (error instanceof ViewerUnavailableError && error.reason === "not-installed") {
+    return `The live preview viewer (${VIEWER_PACKAGE_NAME}) is not installed — ${VIEWER_INSTALL_HINT}.`;
+  }
+  return "The local preview viewer could not start; use the returned file URL or start it manually.";
+}
+
+/**
  * The MCP Apps extension identifier (ext-apps spec 2026-01-26, "Client<>Server
  * Capability Negotiation"): a host that renders `ui://` app resources
  * advertises `capabilities.extensions["io.modelcontextprotocol/ui"]` in its
@@ -382,9 +453,13 @@ export class ViewerRegistry {
 
 // ─── Default (production) booter: lazy @ambitresearch/genie-viewer, graceful degradation ────
 //
-// `@ambitresearch/genie-viewer` is an OPTIONAL peer (a workspace devDependency here) — the
-// server core must not hard-depend on the preview framework (CLAUDE.md; RFC
-// §4). Loaded through a NON-LITERAL specifier so `tsc` doesn't resolve it at
+// `@ambitresearch/genie-viewer` is a declared OPTIONAL peer dependency (plus a
+// `workspace:*` devDependency so the monorepo builds and tests against it) —
+// the server core must not hard-depend on the preview framework (CLAUDE.md; RFC
+// §4). npm and pnpm both skip optional peers, so a consumer install has it only
+// if the user asked for it; see {@link VIEWER_PACKAGE_NAME} for why that is the
+// intended shape and what the failure must therefore tell them.
+// Loaded through a NON-LITERAL specifier so `tsc` doesn't resolve it at
 // build; when it (or Vite) is absent, or the boot throws, the rejection flows
 // up to `runPreview` and becomes AC6's `file://` fallback. Structural types are
 // declared locally rather than imported, so this file carries no type edge to
@@ -423,17 +498,26 @@ interface ViewerModuleLike {
  */
 export const defaultViewerBooter: ViewerBooter = async ({ kitDir, port, open }) => {
   // Non-literal specifier: keeps `tsc` from resolving the optional dep at build.
-  const specifier = "@ambitresearch/genie-viewer";
+  const specifier: string = VIEWER_PACKAGE_NAME;
   let mod: ViewerModuleLike;
   try {
     mod = (await import(specifier)) as ViewerModuleLike;
   } catch (error) {
+    // Classified here, at the only place that knows an import (rather than a
+    // boot) failed, so `runPreview` can tell the user which remedy applies.
+    const missing = isViewerPackageMissing(error);
     logStderr({
       event: "preview.viewer.unavailable",
-      reason: "viewer-package-not-installed",
+      reason: missing ? "viewer-package-not-installed" : "viewer-package-unloadable",
       error: String(error),
     });
-    throw error;
+    throw new ViewerUnavailableError(
+      missing ? "not-installed" : "boot-failed",
+      missing
+        ? `${VIEWER_PACKAGE_NAME} is not installed`
+        : `${VIEWER_PACKAGE_NAME} could not be loaded`,
+      { cause: error },
+    );
   }
 
   // Route the viewer's stdout to stderr; keep its stderr on stderr.
@@ -718,6 +802,8 @@ export async function runPreview(
   let text: string;
   let viewerUrl: string | undefined;
   let fileUrl: string | undefined;
+  /** Why the local Vite viewer is missing — independent of `embeddedError`. */
+  let viewerError: string | undefined;
   if (locality === "remote") {
     text =
       embeddedManifest !== undefined
@@ -775,19 +861,22 @@ export async function runPreview(
         viewerUrl = url.toString();
         if (autoOpen) await deps.registry.open(kitDir, viewerUrl);
       } catch (error) {
-        // AC6 — the local viewer could not boot (Vite/@ambitresearch/genie-viewer absent,
+        // AC6 — the local viewer could not boot (@ambitresearch/genie-viewer absent,
         // port unbindable, …). Preserve any independently prepared inline
         // manifest, otherwise degrade to the file:// vehicle.
+        //
+        // Recorded on its own channel rather than into `embeddedError`. Those
+        // are two independent delivery paths, and folding the viewer's failure
+        // into the inline path's field meant an earlier inline error silently
+        // swallowed the viewer diagnosis — the user was told the card asset
+        // broker had failed while the actual missing piece went unnamed.
         logStderr({
           event: "preview.fallback",
           kitId: args.kitId,
           reason: "viewer-boot-failed",
           error: String(error),
         });
-        if (embeddedManifest === undefined && embeddedError === undefined) {
-          embeddedError =
-            "The local preview viewer could not start; use the returned file URL or start it manually.";
-        }
+        viewerError = describeViewerFailure(error);
       }
     }
 
@@ -804,8 +893,12 @@ export async function runPreview(
         `Preview running at ${viewerUrl}\n` +
         `Or open the kit directly: ${fileUrl}`;
     } else {
+      // Both delivery paths are gone: report BOTH reasons. Reporting only the
+      // first left the user staring at an unrelated failure with no mention of
+      // the viewer that is actually missing.
+      const reasons = [embeddedError, viewerError].filter((reason) => reason !== undefined);
       text =
-        `Preview unavailable: ${embeddedError ?? "no supported delivery path"}\n` +
+        `Preview unavailable: ${reasons.length > 0 ? reasons.join(" ") : "no supported delivery path"}\n` +
         `Open the kit directly: ${fileUrl}`;
     }
   }
@@ -821,6 +914,7 @@ export async function runPreview(
       ...(ctx.transportKind !== undefined ? { transportKind: ctx.transportKind } : {}),
       locality,
       ...(embeddedError !== undefined ? { embeddedError } : {}),
+      ...(viewerError !== undefined ? { viewerError } : {}),
     },
     // Same resourceUri under both the MCP-Apps key (`ui.resourceUri`) and the
     // ChatGPT Apps SDK key (`openai/outputTemplate`, AC6) — cross-vendor link.
@@ -864,6 +958,12 @@ const previewOutputSchema = {
   transportKind: z.enum(["stdio", "http"]).optional(),
   locality: z.enum(["local", "remote"]),
   embeddedError: z.string().optional(),
+  /**
+   * Why the local Vite viewer is unavailable. Separate from `embeddedError`:
+   * the inline MCP App and the viewer are independent delivery paths, and one
+   * failing must not hide the other's reason.
+   */
+  viewerError: z.string().optional(),
 } as const;
 
 /** Options for {@link registerPreviewTool}. `booter` defaults to the lazy one. */

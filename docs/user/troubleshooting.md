@@ -26,6 +26,25 @@ browser fallback. Set `GENIE_PREVIEW_NO_OPEN=1` to disable that behavior. For HT
 configure a client-reachable preview origin with `GENIE_PREVIEWS_BASE_URL` when inline
 card assets cannot use the server-local broker.
 
+## Preview falls back to a `file://` URL
+
+`preview` reports each delivery path's failure separately. Read the tool result's
+`viewerError` (the live Vite viewer) and `embeddedError` (the inline MCP App)
+fields — they are independent, and either can fail on its own.
+
+`viewerError` naming `@ambitresearch/genie-viewer` means the optional viewer
+package is not installed. It ships separately from genie by design; install it
+alongside the server:
+
+```bash
+npm i -g @ambitresearch/genie-viewer
+```
+
+See [the installation guide](installation.md) for why it is separate. Any other
+`viewerError` is a boot failure rather than a missing install — the usual causes
+are port 5173 already in use or an unsynced kit directory — and installing
+anything will not fix it.
+
 ## My reviewed component was not saved
 
 Review drafts are session-only until Apply completes. Generate, Refine, Approve, Request

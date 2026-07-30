@@ -39,6 +39,9 @@ import {
   hasUiExtensionCapability,
   MCP_APP_MIME,
   UI_EXTENSION_ID,
+  VIEWER_PACKAGE_NAME,
+  ViewerUnavailableError,
+  describeViewerFailure,
   resolveKitDir,
   runPreview,
   registerPreviewTool,
@@ -77,6 +80,42 @@ function failBooter(message = "port in use"): ViewerBooter & { calls: BootReques
   const fn = (req: BootRequest): Promise<BootedViewer> => {
     calls.push(req);
     return Promise.reject(new Error(message));
+  };
+  return Object.assign(fn, { calls });
+}
+
+describe("describeViewerFailure", () => {
+  it("names the package and the install command only when it is genuinely absent", () => {
+    const missing = describeViewerFailure(
+      new ViewerUnavailableError("not-installed", `${VIEWER_PACKAGE_NAME} is not installed`),
+    );
+    expect(missing).toContain(VIEWER_PACKAGE_NAME);
+    expect(missing).toContain(`npm i -g ${VIEWER_PACKAGE_NAME}`);
+    expect(missing).toContain(`npx ${VIEWER_PACKAGE_NAME}`);
+  });
+
+  it("falls back to the generic sentence for every other failure", () => {
+    // An installed-but-unloadable viewer is NOT an install problem: the package
+    // resolved, something inside it threw. Same for a port clash or a bad kit dir.
+    for (const error of [
+      new ViewerUnavailableError("boot-failed", `${VIEWER_PACKAGE_NAME} could not be loaded`),
+      new Error("EADDRINUSE: address already in use 127.0.0.1:5173"),
+      "not even an Error",
+      undefined,
+    ]) {
+      const text = describeViewerFailure(error);
+      expect(text).toContain("could not start");
+      expect(text).not.toContain("npm i -g");
+    }
+  });
+});
+
+/** A booter that rejects with a specific error object (not just a message). */
+function failViewerBooter(error: unknown): ViewerBooter & { calls: BootRequest[] } {
+  const calls: BootRequest[] = [];
+  const fn = (req: BootRequest): Promise<BootedViewer> => {
+    calls.push(req);
+    return Promise.reject(error);
   };
   return Object.assign(fn, { calls });
 }
@@ -664,6 +703,56 @@ describe("runPreview (AC3, AC6)", () => {
     expect(result.content[0]?.text).toContain("http://127.0.0.1:5173/");
   });
 
+  /**
+   * The exact shape reported from an npm install: `@ambitresearch/genie-viewer`
+   * is not installed (it is an optional peer, so `npm i -g @ambitresearch/genie`
+   * never brings it), AND the card broker independently fails. Before the fix,
+   * the broker's message was the only one the user saw — the viewer, the thing
+   * actually missing, went unnamed and the text pointed at a different failure.
+   */
+  it("names BOTH the broker failure and the missing viewer when both paths fail", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const booter = failViewerBooter(
+      new ViewerUnavailableError("not-installed", `${VIEWER_PACKAGE_NAME} is not installed`),
+    );
+    const getCardAssetBroker = vi.fn(async (): Promise<CardAssetBroker> => {
+      throw new Error("listen EPERM 127.0.0.1");
+    });
+
+    const result = await runPreview(
+      { kitsRoot, registry: new ViewerRegistry(booter), env: {}, getCardAssetBroker },
+      { kitId: "acme-abc123" },
+      { transportKind: "stdio", locality: "local" },
+    );
+
+    const text = result.content[0]?.text ?? "";
+    expect(result.structuredContent.embeddedError).toContain("card asset broker could not start");
+    expect(result.structuredContent.viewerError).toContain(VIEWER_PACKAGE_NAME);
+    expect(text).toContain("card asset broker could not start");
+    expect(text).toContain(VIEWER_PACKAGE_NAME);
+    expect(text).toContain("npm i -g @ambitresearch/genie-viewer");
+    expect(text).toContain(pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href);
+  });
+
+  it("keeps the not-installed remedy out of unrelated boot failures", async () => {
+    const kitsRoot = await makeKitsRoot();
+    const registry = new ViewerRegistry(failBooter("EADDRINUSE"));
+
+    const result = await runPreview(
+      { kitsRoot, registry },
+      { kitId: "acme-abc123" },
+      {
+        uiCapable: false,
+        transportKind: "stdio",
+      },
+    );
+
+    // A port clash is not fixed by installing anything; promising an install
+    // would send the user down a dead end.
+    expect(result.structuredContent.viewerError).toContain("could not start");
+    expect(result.structuredContent.viewerError).not.toContain("npm i -g");
+  });
+
   it("does not start the lazy card broker for a local tools-only client", async () => {
     const kitsRoot = await makeKitsRoot();
     const booter = okBooter();
@@ -942,7 +1031,7 @@ describe("runPreview (AC3, AC6)", () => {
     );
 
     expect(result.structuredContent.viewerUrl).toBeUndefined();
-    expect(result.structuredContent.embeddedError).toContain("viewer could not start");
+    expect(result.structuredContent.viewerError).toContain("viewer could not start");
     expect(result.structuredContent.kitId).toBe("acme-abc123");
     expect(result.structuredContent.fileUrl).toBe(
       pathToFileURL(join(kitsRoot, "acme-abc123", "index.html")).href,

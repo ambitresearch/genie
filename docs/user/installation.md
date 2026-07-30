@@ -32,6 +32,31 @@ passed with `--secrets-from`; never commit them.
 npx -y @ambitresearch/genie --transport stdio
 ```
 
+### Optional: the live preview viewer
+
+`preview` has two delivery paths. The inline MCP App grid ships inside the
+server package and needs nothing extra. The **live Vite viewer** — the
+`http://127.0.0.1:5173` grid used by harnesses that cannot render MCP Apps —
+lives in a separate package and is **not installed with genie**:
+
+```bash
+npm i -g @ambitresearch/genie @ambitresearch/genie-viewer
+```
+
+It is declared as an _optional peer dependency_, so npm and pnpm deliberately
+skip it. That keeps Vite out of every server install and keeps the server core
+independent of the preview framework. Install it side by side with genie (the
+same `node_modules`, as above) and `preview` boots it automatically.
+
+Without it, `preview` still works and returns a `file://` URL for the kit, and
+says so explicitly — look for `viewerError` in the tool result.
+
+You can also run it ad hoc without installing:
+
+```bash
+npx @ambitresearch/genie-viewer <kit-dir>
+```
+
 For a source checkout:
 
 ```bash

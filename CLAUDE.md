@@ -56,6 +56,13 @@ app to open.
    **`@ambitresearch/genie-viewer`** — both scoped, public, and published with npm
    provenance. npm provenance requires this source repository to be public before the
    first live publish. See `.github/workflows/release.yml` (DRO-278 / M5-06).
+8. **`@ambitresearch/genie-viewer` is an OPTIONAL PEER of the server, never a runtime
+   dependency.** The inline `ui://genie/grid` app ships inside the server package
+   and must keep working with the viewer absent; the Vite viewer is a separate install
+   (`npm i -g @ambitresearch/genie-viewer`). Moving it into `dependencies` or
+   `optionalDependencies` would pull Vite into every server install and break both rule 6's
+   spirit and the `.mcpb` size budget. Enforced by
+   `packages/server/test/viewer-optional-peer.test.ts`.
 
 ## Conventions
 
