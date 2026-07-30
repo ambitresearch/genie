@@ -78,6 +78,28 @@ function releaseStep(jobName: string, stepName: string): string {
   return script!;
 }
 
+// DRO-1254: these fixtures spawn real `/bin/bash` steps. Spreading `...process.env`
+// made them non-hermetic — any test sharing the vitest worker that sets or deletes a
+// `FAKE_*` / `GENIE_*` / `GITHUB_*` variable (and several do, some restoring only
+// when the variable was previously defined) could leak into a release step's view of
+// the world and flip a happy-path assertion under parallel CI load. Pass an explicit
+// allow-list instead: only the handful of variables bash and the fake commands
+// genuinely need, never the ambient process environment.
+const INHERITED_ENV_KEYS = ["HOME", "LANG", "LC_ALL", "SHELL", "TMPDIR", "TZ"] as const;
+
+function hermeticEnv(fakeBin: string, overrides: Record<string, string>): Record<string, string> {
+  const base: Record<string, string> = {};
+  for (const key of INHERITED_ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined) base[key] = value;
+  }
+  return {
+    ...base,
+    PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+    ...overrides,
+  };
+}
+
 function runReleaseStep(
   jobName: string,
   stepName: string,
@@ -98,14 +120,12 @@ function runReleaseStep(
     const result = spawnSync("/bin/bash", ["-c", releaseStep(jobName, stepName)], {
       cwd: fakeBin,
       encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      env: hermeticEnv(fakeBin, {
         FAKE_LOG: logFile,
         GITHUB_REPOSITORY: "ambitresearch/genie",
         GITHUB_RUN_ATTEMPT: "1",
         ...options.env,
-      },
+      }),
     });
     return {
       status: result.status ?? 1,
@@ -445,9 +465,7 @@ fi
         chmodSync(join(fakeBin, "gh"), 0o755);
 
         execFileSync("/bin/bash", ["-c", script!], {
-          env: {
-            ...process.env,
-            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          env: hermeticEnv(fakeBin, {
             GH_TOKEN: "test-token",
             OWNER: "ambitresearch",
             REPO: "genie",
@@ -455,7 +473,7 @@ fi
             FAKE_USED: String(used),
             FAKE_ONLINE: String(online),
             FAKE_TARGET_FILE: targetFile,
-          },
+          }),
           stdio: "pipe",
         });
 
