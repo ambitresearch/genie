@@ -78,6 +78,21 @@ function releaseStep(jobName: string, stepName: string): string {
   return script!;
 }
 
+// Variables the spawned `/bin/bash` genuinely needs from the ambient process.
+// Everything else (notably any `FAKE_*`, `GITHUB_*`, `GH_*` or `GENIE_*` value
+// set by CI or by a sibling test sharing this vitest worker) is deliberately
+// dropped so each fixture starts from a known-empty world. See DRO-1254.
+const HERMETIC_ENV_ALLOWLIST = ["HOME", "LANG", "LC_ALL", "SHELL", "TMPDIR", "TZ", "USER"] as const;
+
+function hermeticBaseEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of HERMETIC_ENV_ALLOWLIST) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
+}
+
 function runReleaseStep(
   jobName: string,
   stepName: string,
@@ -99,7 +114,13 @@ function runReleaseStep(
       cwd: fakeBin,
       encoding: "utf8",
       env: {
-        ...process.env,
+        // DRO-1254: keep this fixture hermetic. Spreading `process.env` let
+        // ambient `FAKE_*`/`GITHUB_*` values — from CI, or from a sibling e2e
+        // test in the same worker that mutates `process.env` — leak into the
+        // release step and flip assertions nondeterministically under parallel
+        // load. Only an explicit allow-list of process-level variables crosses
+        // the boundary; everything else must come from the fixture itself.
+        ...hermeticBaseEnv(),
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
         FAKE_LOG: logFile,
         GITHUB_REPOSITORY: "ambitresearch/genie",
@@ -446,7 +467,8 @@ fi
 
         execFileSync("/bin/bash", ["-c", script!], {
           env: {
-            ...process.env,
+            // DRO-1254: hermetic env, same rationale as `runReleaseStep`.
+            ...hermeticBaseEnv(),
             PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
             GH_TOKEN: "test-token",
             OWNER: "ambitresearch",
@@ -1376,6 +1398,47 @@ fi
       invalidSignature.status,
       `${invalidSignature.stdout}\n${invalidSignature.stderr}\n${invalidSignature.log}`,
     ).not.toBe(0);
+  });
+
+  // DRO-1254: the release-step fixture used to spread `process.env` into the
+  // spawned shell, so an ambient `FAKE_*`/`GITHUB_*` value — set by CI or by a
+  // sibling e2e test sharing this vitest worker — could override the fixture
+  // and flip the happy-path assertion nondeterministically under parallel
+  // load. Pollute the ambient env with exactly the values that reproduced the
+  // reported failure and assert the fixture still reads its own world.
+  it("runs release-step fixtures hermetically, ignoring ambient env pollution", () => {
+    const step = "Verify existing npm provenance and signed release assets";
+    const commands = {
+      gh: recoveryFinalizeGhCommand,
+      npm: recoveryFinalizeNpmCommand,
+      cosign: recoveryFinalizeCosignCommand,
+    };
+    const pollution: Record<string, string> = {
+      FAKE_SERVER_ASSETS: "ambitresearch-genie-1.3.1.tgz",
+      FAKE_SERVER_DRAFT: "false",
+      FAKE_SERVER_PROVENANCE: "invalid",
+      FAKE_COSIGN_FAIL: "1",
+      GITHUB_RUN_ATTEMPT: "7",
+      GITHUB_REPOSITORY: "attacker/repo",
+    };
+    const previous = new Map(
+      Object.keys(pollution).map((name) => [name, process.env[name]] as const),
+    );
+    try {
+      for (const [name, value] of Object.entries(pollution)) process.env[name] = value;
+      const result = runReleaseStep("recovery-finalize-releases", step, {
+        commands,
+        env: recoveryFinalizeEnv,
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}\n${result.log}`).toBe(0);
+    } finally {
+      // Restore unconditionally — including deleting vars that were unset —
+      // so this test cannot itself become a source of cross-test leakage.
+      for (const [name, value] of previous) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 
   it("retries finalization without republishing an already-published component", () => {
