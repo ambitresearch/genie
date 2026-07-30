@@ -74,6 +74,38 @@ export const DEFAULT_VIEWER_PORT = 5173;
  */
 export const VIEWER_PACKAGE_NAME = "@ambitresearch/genie-viewer";
 
+/** The package a consumer launches genie itself from. */
+export const SERVER_PACKAGE_NAME = "@ambitresearch/genie";
+
+/**
+ * The remedy printed when the viewer package cannot be resolved.
+ *
+ * It names BOTH install modes on purpose. Node resolves a bare specifier only by
+ * walking the ANCESTOR directories of the importing file, so the viewer has to
+ * live in a `node_modules` above wherever genie itself is running — and the two
+ * install modes this project documents put genie in two different places:
+ *
+ * - `npm i -g @ambitresearch/genie` runs from the global root, where a globally
+ *   installed viewer is a resolvable sibling;
+ * - `npx -y @ambitresearch/genie` (the default in `docs/user/installation.md` and
+ *   `docs/harness/claude-desktop.md`) runs from npm exec's private cache, which
+ *   the global root is NOT an ancestor of.
+ *
+ * An earlier version of this string offered only the global command. For an npx
+ * user that produced a LOOP: the remedy left the specifier just as unresolvable,
+ * `isModuleNotFoundFor` re-classified the identical `ERR_MODULE_NOT_FOUND` as
+ * "not installed", and genie printed the same command again — after the user had
+ * done exactly what it asked. Verified in both directions: two packages under one
+ * `_npx/<hash>/node_modules` resolve each other; across separate roots they do not.
+ * Multiple `--package` flags are what land both in a single exec environment.
+ */
+export const VIEWER_INSTALL_REMEDY =
+  `Install it where genie itself runs — Node resolves it from genie's own location, ` +
+  `so a global install does not reach a genie started with npx. ` +
+  `Global genie: \`npm i -g ${VIEWER_PACKAGE_NAME}\`. ` +
+  `npx genie: add it to the same command, ` +
+  `\`npx --package ${SERVER_PACKAGE_NAME} --package ${VIEWER_PACKAGE_NAME} -- genie --transport stdio\`.`;
+
 /**
  * The MCP Apps extension identifier (ext-apps spec 2026-01-26, "Client<>Server
  * Capability Negotiation"): a host that renders `ui://` app resources
@@ -860,8 +892,7 @@ export async function runPreview(
         // different failure entirely (#311).
         viewerError = packageMissing
           ? `The live preview viewer is not installed. It ships separately as the optional ` +
-            `package ${VIEWER_PACKAGE_NAME}; install it alongside genie ` +
-            `(npm i -g ${VIEWER_PACKAGE_NAME}) and call preview again.`
+            `package ${VIEWER_PACKAGE_NAME}. ${VIEWER_INSTALL_REMEDY} Then call preview again.`
           : `The live preview viewer is installed but could not start; ` +
             `use the returned file URL, or free port ${DEFAULT_VIEWER_PORT} and retry.`;
       }

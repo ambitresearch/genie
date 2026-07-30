@@ -47,8 +47,25 @@ Whether you need it depends on how your harness delivers a preview:
 | Cline, Continue, other tools-only clients             | viewer URL, else `file://`            | Yes              |
 
 Hosts that render MCP Apps get the grid inline from the server package itself.
-Everything else falls back to the local Vite viewer, so install it alongside
-genie:
+Everything else falls back to the local Vite viewer.
+
+Install it **where genie itself runs**. Node resolves the viewer by walking the
+directories above genie's own location, so the two launch modes need different
+commands — a globally installed viewer is invisible to a genie started with
+`npx`, because npm exec runs from its own cache.
+
+If you launch genie with `npx` (the command at the top of this section), name
+both packages in the one command so they land in the same exec environment:
+
+```bash
+npx --package @ambitresearch/genie --package @ambitresearch/genie-viewer -- genie --transport stdio
+```
+
+That is the full command your harness should run — replace the `npx -y
+@ambitresearch/genie --transport stdio` entry in its config with this one.
+
+If you instead install genie globally and point your harness at the `genie`
+binary, install both globally:
 
 ```bash
 npm i -g @ambitresearch/genie @ambitresearch/genie-viewer

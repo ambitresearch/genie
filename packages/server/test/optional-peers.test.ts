@@ -21,6 +21,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,6 +60,46 @@ const LAZILY_IMPORTED_PACKAGES = [
 ] as const;
 
 const serverPackage = JSON.parse(readFileSync(serverPackagePath, "utf8")) as PackageManifest;
+
+/** Resolves each peer the way the server's own lazy `import()` would. */
+const requireFromServer = createRequire(join(serverDir, "noop.js"));
+
+/**
+ * Minimal `^` / `>=` range check.
+ *
+ * Deliberately NOT the `semver` package. `semver` appears in no manifest in this
+ * repo — it resolves here only as a hoisted transitive of something else — and
+ * leaning on a package that merely HAPPENS to be reachable inside this workspace
+ * is the exact defect this file exists to catch (#311). A guard built on one
+ * would be self-defeating.
+ *
+ * It therefore understands only the two shapes this manifest uses and throws on
+ * anything else, so a future range it cannot reason about fails the suite instead
+ * of passing vacuously. `describe("rangeAdmits …")` below tests it directly.
+ */
+export function rangeAdmits(range: string, version: string): boolean {
+  type Triple = [number, number, number];
+  const parse = (value: string): Triple => {
+    const core = /^(\d+)\.(\d+)\.(\d+)/.exec(value);
+    if (core === null) throw new Error(`unsupported version "${value}"`);
+    return [Number(core[1]), Number(core[2]), Number(core[3])];
+  };
+  const compare = (a: Triple, b: Triple): number => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+  const actual = parse(version);
+  if (range.startsWith("^")) {
+    const min = parse(range.slice(1));
+    if (compare(actual, min) < 0) return false;
+    // Caret bumps the LEFTMOST NON-ZERO component: `^0.2.0` stops at `0.3.0`
+    // while `^1.58.2` stops at `2.0.0`. That 0.x rule is the whole reason an
+    // open `>=0.2.0` was wrong for the viewer.
+    const upper: Triple =
+      min[0] !== 0 ? [min[0] + 1, 0, 0] : min[1] !== 0 ? [0, min[1] + 1, 0] : [0, 0, min[2] + 1];
+    return compare(actual, upper) < 0;
+  }
+  if (range.startsWith(">=")) return compare(actual, parse(range.slice(2))) >= 0;
+  throw new Error(`peer range "${range}" uses a form this guard cannot evaluate; extend it`);
+}
 
 describe("optional runtime peers are reachable from a consumer install", () => {
   it.each(LAZILY_IMPORTED_PACKAGES)(
@@ -114,6 +155,69 @@ describe("optional runtime peers are reachable from a consumer install", () => {
       expect(range).toMatch(/\d+\.\d+\.\d+/);
     },
   );
+
+  it.each(LAZILY_IMPORTED_PACKAGES)(
+    "bounds the $name peer range to the version this repo actually exercises",
+    ({ name }) => {
+      // Drift guard. The ranges were once open-ended (`>=0.2.0`, `>=1.58.2`),
+      // which declared every future release compatible: `>=0.2.0` accepts viewer
+      // `0.3.0` even though SemVer permits breaking changes between `0.x` minors,
+      // and `defaultViewerBooter` does an unchecked `as ViewerModuleLike` cast
+      // over `bootViewer`'s CURRENT shape — a signature change would be declared
+      // compatible and then fail at the cast, in a consumer's install.
+      //
+      // Bounding them alone would rot silently: `release-please-config.json`
+      // versions server and viewer as independent components and nothing in
+      // `release.yml` rewrites peer ranges, so the next viewer minor would leave
+      // this range stale with nothing to notice. Hence the assertion is not
+      // "the range is a caret" but "the range still admits the version CI runs
+      // against" — which fails loudly at the bump instead of at a user's install.
+      const range = serverPackage.peerDependencies?.[name] ?? "";
+      const manifestPath = requireFromServer.resolve(`${name}/package.json`);
+      const { version } = JSON.parse(readFileSync(manifestPath, "utf8")) as PackageManifest;
+
+      expect(
+        rangeAdmits(range, version),
+        `The ${name} peer range "${range}" does not admit ${version}, the version this ` +
+          `workspace installs and every in-repo suite exercises. Consumers would be told a ` +
+          `version we never test. Verify the new version against the lazy import site, then ` +
+          `widen the range deliberately.`,
+      ).toBe(true);
+    },
+  );
+});
+
+/**
+ * The guard above is only worth having if it can actually fail, and it is
+ * hand-rolled (see `rangeAdmits`), so it gets its own table rather than being
+ * trusted. The `^0.2.0` / `0.3.0` row is the one that matters: it is the exact
+ * case the open `>=0.2.0` range used to wave through.
+ */
+describe("rangeAdmits — the drift guard's own semantics", () => {
+  it.each([
+    // Caret on 0.x bumps the MINOR, so a 0.x minor is breaking and excluded.
+    { range: "^0.2.0", version: "0.2.0", admits: true },
+    { range: "^0.2.0", version: "0.2.9", admits: true },
+    { range: "^0.2.0", version: "0.3.0", admits: false },
+    { range: "^0.2.0", version: "0.1.9", admits: false },
+    // Caret on 1.x bumps the MAJOR.
+    { range: "^1.58.2", version: "1.58.2", admits: true },
+    { range: "^1.58.2", version: "1.61.1", admits: true },
+    { range: "^1.58.2", version: "2.0.0", admits: false },
+    { range: "^1.58.2", version: "1.58.1", admits: false },
+    // The open form the peers used to carry — accepts everything upward, which
+    // is precisely why it was replaced.
+    { range: ">=0.2.0", version: "0.3.0", admits: true },
+  ])("$range admits $version → $admits", ({ range, version, admits }) => {
+    expect(rangeAdmits(range, version)).toBe(admits);
+  });
+
+  it("throws on a range shape it cannot evaluate rather than passing it", () => {
+    // Fail closed: a future range written as `0.2.x` or `>=0.2.0 <0.4.0` must
+    // break this suite, not be silently treated as satisfied.
+    expect(() => rangeAdmits("0.2.x", "0.2.0")).toThrow(/cannot evaluate/);
+    expect(() => rangeAdmits("*", "0.2.0")).toThrow(/cannot evaluate/);
+  });
 });
 
 /**

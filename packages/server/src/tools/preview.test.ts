@@ -35,6 +35,7 @@ import {
   ViewerRegistry,
   ViewerPackageMissingError,
   VIEWER_PACKAGE_NAME,
+  SERVER_PACKAGE_NAME,
   autoOpenDisabledByEnv,
   buildResourceUri,
   getUiExtensionCapability,
@@ -1005,9 +1006,17 @@ describe("runPreview (AC3, AC6)", () => {
     const { viewerError } = result.structuredContent;
     expect(viewerError).toContain(VIEWER_PACKAGE_NAME);
     expect(viewerError).toContain("not installed");
+    // BOTH install modes, because the viewer has to be resolvable from wherever
+    // genie itself runs. The global command alone sent an npx user in a loop:
+    // it left the specifier unresolvable, the identical ERR_MODULE_NOT_FOUND was
+    // re-classified as "not installed", and genie reprinted the same command.
     expect(viewerError).toContain(`npm i -g ${VIEWER_PACKAGE_NAME}`);
+    expect(viewerError).toContain(
+      `npx --package ${SERVER_PACKAGE_NAME} --package ${VIEWER_PACKAGE_NAME}`,
+    );
     // The remedy must reach the model-visible text, not just structuredContent.
     expect(result.content[0]?.text).toContain(VIEWER_PACKAGE_NAME);
+    expect(result.content[0]?.text).toContain("--package");
   });
 
   it("does not tell the user to install anything when the viewer is present but fails to boot", async () => {

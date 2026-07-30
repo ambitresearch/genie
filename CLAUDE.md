@@ -67,6 +67,13 @@ app to open.
    drive this but will not install it for you." When you add a lazy import, add it to
    `packages/server/test/optional-peers.test.ts` — and remember optional peers are
    excluded from the published SBOM's runtime closure (`scripts/generate-package-sbom.mjs`).
+   Keep peer ranges bounded (`^`, not `>=`): the lazy import sites cast the module to a
+   hand-written shape, so a range that admits an untested major — or an untested `0.x`
+   minor — declares a compatibility we never exercised. Bumping the viewer therefore means
+   bumping the peer range; the drift guard in that same file fails when they part ways.
+   Any remedy genie prints for a missing peer must cover BOTH launch modes — Node resolves
+   the peer from genie's own location, so a global install is unreachable from an `npx`
+   genie, and a global-only remedy loops the user (#311 round 2).
 
 ## Conventions
 
