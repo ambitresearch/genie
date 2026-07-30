@@ -32,6 +32,31 @@ passed with `--secrets-from`; never commit them.
 npx -y @ambitresearch/genie --transport stdio
 ```
 
+### Optional: the live preview viewer
+
+`@ambitresearch/genie-viewer` ships as a separate package and is declared as an
+**optional peer** — genie can drive it, but will not install it for you, so a
+plain install never pulls Vite in.
+
+Whether you need it depends on how your harness delivers a preview:
+
+| Harness                                               | `preview` delivery                    | Needs the viewer |
+| ----------------------------------------------------- | ------------------------------------- | ---------------- |
+| Claude Code / Claude Desktop, Cursor, VS Code Copilot | inline `ui://genie/grid`, in-panel    | No               |
+| Codex Desktop, Codex CLI                              | inline manifest **plus** a viewer URL | Yes              |
+| Cline, Continue, other tools-only clients             | viewer URL, else `file://`            | Yes              |
+
+Hosts that render MCP Apps get the grid inline from the server package itself.
+Everything else falls back to the local Vite viewer, so install it alongside
+genie:
+
+```bash
+npm i -g @ambitresearch/genie @ambitresearch/genie-viewer
+```
+
+Without it, `preview` still works but degrades to a static
+`file://<kitDir>/index.html` and says so in its result.
+
 For a source checkout:
 
 ```bash

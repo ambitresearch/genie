@@ -47,6 +47,18 @@
     "undici": "^7.28.0",
     "zod": "^4.4.3"
   },
+  "peerDependencies": {
+    "@ambitresearch/genie-viewer": ">=0.2.0",
+    "playwright": ">=1.58.2"
+  },
+  "peerDependenciesMeta": {
+    "@ambitresearch/genie-viewer": {
+      "optional": true
+    },
+    "playwright": {
+      "optional": true
+    }
+  },
   "engines": {
     "node": ">=22.19.0 <23 || >=24.4.1"
   },
